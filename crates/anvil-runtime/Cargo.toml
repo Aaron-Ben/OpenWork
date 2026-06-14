@@ -1,0 +1,10 @@
+[package]
+name = "anvil-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anvil-core = { path = "../anvil-core" }
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true

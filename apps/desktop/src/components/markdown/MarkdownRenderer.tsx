@@ -1,0 +1,415 @@
+import { memo, useMemo, type ReactNode } from 'react'
+
+type MarkdownVariant = 'default' | 'document' | 'compact'
+
+interface MarkdownRendererProps {
+  content: string
+  variant?: MarkdownVariant
+  className?: string
+  streaming?: boolean
+}
+
+type Block =
+  | { type: 'heading'; level: number; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'blockquote'; text: string }
+  | { type: 'list'; ordered: boolean; items: string[] }
+  | { type: 'code'; language?: string; code: string }
+  | { type: 'table'; headers: string[]; rows: string[][] }
+  | { type: 'hr' }
+
+interface InlineContext {
+  inTable?: boolean
+}
+
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})\s*([\w+-]*)?.*$/
+const ORDERED_LIST_RE = /^\s*\d+\.\s+(.+)$/
+const UNORDERED_LIST_RE = /^\s*[-*+]\s+(.+)$/
+const HEADING_RE = /^(#{1,6})\s+(.+)$/
+
+export const MarkdownRenderer = memo(function MarkdownRenderer({
+  content,
+  variant = 'default',
+  className,
+  streaming = false,
+}: MarkdownRendererProps) {
+  const blocks = useMemo(() => parseMarkdownBlocks(content), [content])
+  const classes = getMarkdownClasses(variant, className)
+
+  return (
+    <div className={classes}>
+      {blocks.map((block, index) => renderBlock(block, index, variant))}
+      {streaming ? <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-teal-700 align-text-bottom" /> : null}
+    </div>
+  )
+})
+
+function parseMarkdownBlocks(content: string): Block[] {
+  const lines = content.replace(/\r\n?/g, '\n').split('\n')
+  const blocks: Block[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index] ?? ''
+
+    if (!line.trim()) {
+      index += 1
+      continue
+    }
+
+    const fence = FENCE_RE.exec(line)
+    if (fence) {
+      const marker = fence[1]![0]
+      const language = fence[2]?.trim() || undefined
+      const codeLines: string[] = []
+      index += 1
+
+      while (index < lines.length) {
+        const current = lines[index] ?? ''
+        const closeFence = FENCE_RE.exec(current)
+        if (closeFence && closeFence[1]?.[0] === marker) {
+          index += 1
+          break
+        }
+        codeLines.push(current)
+        index += 1
+      }
+
+      blocks.push({ type: 'code', language, code: codeLines.join('\n') })
+      continue
+    }
+
+    const heading = HEADING_RE.exec(line)
+    if (heading) {
+      blocks.push({
+        type: 'heading',
+        level: Math.min(heading[1]!.length, 6),
+        text: heading[2]!.trim(),
+      })
+      index += 1
+      continue
+    }
+
+    if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+      blocks.push({ type: 'hr' })
+      index += 1
+      continue
+    }
+
+    if (isTableStart(lines, index)) {
+      const headers = splitTableRow(lines[index]!)
+      index += 2
+      const rows: string[][] = []
+      while (index < lines.length && isTableRow(lines[index] ?? '')) {
+        rows.push(splitTableRow(lines[index]!))
+        index += 1
+      }
+      blocks.push({ type: 'table', headers, rows })
+      continue
+    }
+
+    const unordered = UNORDERED_LIST_RE.exec(line)
+    const ordered = ORDERED_LIST_RE.exec(line)
+    if (unordered || ordered) {
+      const items: string[] = []
+      const isOrdered = !!ordered
+      while (index < lines.length) {
+        const current = lines[index] ?? ''
+        const match = isOrdered ? ORDERED_LIST_RE.exec(current) : UNORDERED_LIST_RE.exec(current)
+        if (!match) break
+        items.push(match[1]!.trim())
+        index += 1
+      }
+      blocks.push({ type: 'list', ordered: isOrdered, items })
+      continue
+    }
+
+    if (line.trimStart().startsWith('>')) {
+      const quoteLines: string[] = []
+      while (index < lines.length && (lines[index] ?? '').trimStart().startsWith('>')) {
+        quoteLines.push((lines[index] ?? '').replace(/^\s*>\s?/, ''))
+        index += 1
+      }
+      blocks.push({ type: 'blockquote', text: quoteLines.join('\n') })
+      continue
+    }
+
+    const paragraphLines: string[] = []
+    while (index < lines.length) {
+      const current = lines[index] ?? ''
+      if (!current.trim()) break
+      if (FENCE_RE.test(current) || HEADING_RE.test(current) || isTableStart(lines, index)) break
+      if (UNORDERED_LIST_RE.test(current) || ORDERED_LIST_RE.test(current)) break
+      if (current.trimStart().startsWith('>')) break
+      paragraphLines.push(current)
+      index += 1
+    }
+    blocks.push({ type: 'paragraph', text: paragraphLines.join('\n') })
+  }
+
+  return blocks
+}
+
+function renderBlock(block: Block, index: number, variant: MarkdownVariant): ReactNode {
+  switch (block.type) {
+    case 'heading': {
+      return renderHeading(block.level, block.text, index)
+    }
+    case 'paragraph':
+      return <p key={index} className={paragraphClass(variant)}>{renderInline(block.text)}</p>
+    case 'blockquote':
+      return (
+        <blockquote key={index} className={blockquoteClass(variant)}>
+          {renderInline(block.text)}
+        </blockquote>
+      )
+    case 'list': {
+      const Tag = block.ordered ? 'ol' : 'ul'
+      return (
+        <Tag key={index} className={listClass(variant, block.ordered)}>
+          {block.items.map((item, itemIndex) => (
+            <li key={itemIndex} className={listItemClass(variant)}>{renderInline(item)}</li>
+          ))}
+        </Tag>
+      )
+    }
+    case 'code':
+      return (
+        <div key={index} className={codeBlockClass(variant)}>
+          {block.language ? <div className="border-b border-white/10 px-2.5 py-1.5 text-xs text-slate-300">{block.language}</div> : null}
+          <pre className={preClass(variant)}>
+            <code className="border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed whitespace-pre text-slate-200">{block.code}</code>
+          </pre>
+        </div>
+      )
+    case 'table':
+      return (
+        <div key={index} className={tableWrapClass(variant)}>
+          <table className="w-full min-w-[560px] table-fixed border-collapse text-sm">
+            <colgroup>{renderTableColumns(block.headers.length)}</colgroup>
+            <thead>
+              <tr>
+                {block.headers.map((header, cellIndex) => (
+                  <th key={cellIndex} className={tableHeaderCellClass(cellIndex, block.headers.length)}>
+                    {renderInline(header, { inTable: true })}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr key={rowIndex} className="odd:bg-white even:bg-slate-50/45">
+                  {block.headers.map((_, cellIndex) => (
+                    <td key={cellIndex} className={tableBodyCellClass(cellIndex, block.headers.length)}>
+                      {renderInline(row[cellIndex] ?? '', { inTable: true })}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+    case 'hr':
+      return <hr key={index} className="my-4 border-0 border-t border-slate-200" />
+  }
+}
+
+function renderHeading(level: number, text: string, key: number): ReactNode {
+  switch (level) {
+    case 1:
+      return <h1 key={key} className={headingClass(1)}>{renderInline(text)}</h1>
+    case 2:
+      return <h2 key={key} className={headingClass(2)}>{renderInline(text)}</h2>
+    case 3:
+      return <h3 key={key} className={headingClass(3)}>{renderInline(text)}</h3>
+    case 4:
+      return <h4 key={key} className={headingClass(4)}>{renderInline(text)}</h4>
+    case 5:
+      return <h5 key={key} className={headingClass(5)}>{renderInline(text)}</h5>
+    default:
+      return <h6 key={key} className={headingClass(6)}>{renderInline(text)}</h6>
+  }
+}
+
+function renderTableColumns(columnCount: number): ReactNode {
+  if (columnCount === 2) {
+    return (
+      <>
+        <col className="w-[38%]" />
+        <col className="w-[62%]" />
+      </>
+    )
+  }
+
+  return Array.from({ length: columnCount }, (_, index) => <col key={index} />)
+}
+
+function renderInline(text: string, context: InlineContext = {}): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const normalized = text.replace(/  \n/g, '\n')
+  const tokenRe = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\([^)]+\)|\n)/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tokenRe.exec(normalized))) {
+    if (match.index > cursor) {
+      nodes.push(normalized.slice(cursor, match.index))
+    }
+
+    const token = match[0]
+    const key = nodes.length
+    if (token === '\n') {
+      nodes.push(<br key={key} />)
+    } else if (token.startsWith('`')) {
+      nodes.push(<code key={key} className={inlineCodeClass(context)}>{token.slice(1, -1)}</code>)
+    } else if (token.startsWith('**') || token.startsWith('__')) {
+      nodes.push(<strong key={key}>{renderInline(token.slice(2, -2), context)}</strong>)
+    } else if (token.startsWith('*') || token.startsWith('_')) {
+      nodes.push(<em key={key}>{renderInline(token.slice(1, -1), context)}</em>)
+    } else if (token.startsWith('[')) {
+      const parsed = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token)
+      const label = parsed?.[1] ?? token
+      const href = parsed?.[2] ?? ''
+      nodes.push(
+        isSafeHref(href) ? (
+          <a key={key} href={href} target="_blank" rel="noreferrer noopener">
+            {renderInline(label, context)}
+          </a>
+        ) : (
+          label
+        ),
+      )
+    }
+
+    cursor = match.index + token.length
+  }
+
+  if (cursor < normalized.length) {
+    nodes.push(normalized.slice(cursor))
+  }
+
+  return nodes
+}
+
+function inlineCodeClass(context: InlineContext): string {
+  return [
+    'font-mono',
+    context.inTable
+      ? 'rounded border border-slate-200 bg-slate-50 px-1 py-0.5 text-[0.82rem] leading-5 text-slate-800'
+      : 'rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[0.82rem] text-slate-900',
+  ].join(' ')
+}
+
+function isSafeHref(href: string): boolean {
+  return /^(https?:|mailto:|#|\/)/i.test(href)
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  const header = lines[index] ?? ''
+  const divider = lines[index + 1] ?? ''
+  return isTableRow(header) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(divider)
+}
+
+function isTableRow(line: string): boolean {
+  return line.includes('|') && line.trim().length > 0
+}
+
+function splitTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+function getMarkdownClasses(variant: MarkdownVariant, className?: string): string {
+  return [
+    'min-w-0 max-w-none break-words [overflow-wrap:anywhere] [&>:first-child]:mt-0 [&>:last-child]:mb-0',
+    variant === 'compact' ? 'text-xs leading-5 text-slate-600' : 'text-sm leading-relaxed text-slate-700',
+    variant === 'document' ? 'text-[0.94rem] leading-7' : '',
+    '[&_a]:text-teal-700 [&_a]:no-underline hover:[&_a]:underline',
+    '[&_strong]:font-semibold [&_strong]:text-slate-900',
+    className ?? '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function headingClass(level: number): string {
+  const size = {
+    1: 'text-2xl',
+    2: 'text-xl border-b border-slate-200 pb-1.5',
+    3: 'text-base',
+    4: 'text-sm',
+    5: 'text-sm',
+    6: 'text-xs',
+  }[level] ?? 'text-xs'
+
+  return `mt-5 mb-2 font-semibold leading-tight text-slate-900 ${size}`
+}
+
+function paragraphClass(variant: MarkdownVariant): string {
+  return variant === 'compact' ? 'my-1 whitespace-normal' : 'my-2 whitespace-normal'
+}
+
+function blockquoteClass(variant: MarkdownVariant): string {
+  return [
+    'border-l-4 border-slate-300 bg-slate-50 text-slate-600',
+    variant === 'compact' ? 'my-2 px-3 py-1.5 text-xs' : 'my-3 px-4 py-2',
+  ].join(' ')
+}
+
+function listClass(variant: MarkdownVariant, ordered: boolean): string {
+  return [
+    ordered ? 'list-decimal' : 'list-disc',
+    'list-outside',
+    variant === 'compact' ? 'my-1 pl-4' : 'my-2 pl-5',
+  ].join(' ')
+}
+
+function listItemClass(variant: MarkdownVariant): string {
+  return variant === 'compact' ? 'my-0.5 leading-5' : 'my-1'
+}
+
+function codeBlockClass(variant: MarkdownVariant): string {
+  return [
+    'overflow-hidden rounded-lg border border-slate-200 bg-slate-900',
+    variant === 'compact' ? 'my-2' : 'my-4',
+  ].join(' ')
+}
+
+function preClass(variant: MarkdownVariant): string {
+  return [
+    'm-0 overflow-x-auto',
+    variant === 'compact' ? 'p-2' : 'p-3',
+  ].join(' ')
+}
+
+function tableWrapClass(variant: MarkdownVariant): string {
+  return [
+    'overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm',
+    variant === 'compact' ? 'my-2' : 'my-4',
+  ].join(' ')
+}
+
+function tableHeaderCellClass(cellIndex: number, columnCount: number): string {
+  return [
+    'border-b border-slate-200 bg-slate-50 px-3 py-2 text-left align-top font-semibold text-slate-900',
+    'whitespace-normal break-words [overflow-wrap:anywhere]',
+    cellIndex < columnCount - 1 ? 'border-r border-slate-200' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function tableBodyCellClass(cellIndex: number, columnCount: number): string {
+  return [
+    'border-t border-slate-200 px-3 py-2 align-top text-slate-700',
+    'whitespace-normal break-words [overflow-wrap:anywhere]',
+    cellIndex < columnCount - 1 ? 'border-r border-slate-200' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
