@@ -149,6 +149,7 @@ pub async fn test_provider(config: &ProviderConfig, model: &str) -> TestResult {
         max_tokens: Some(16),
         stream: false,
         thinking: None,
+        tools: Vec::new(),
     };
     match provider.generate(request).await {
         Ok(_) => TestResult {

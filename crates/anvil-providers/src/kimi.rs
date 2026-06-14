@@ -59,6 +59,13 @@ impl KimiProvider {
         &self,
         req: &GenerateRequest,
     ) -> Result<Value, ProviderError> {
+        if !req.tools.is_empty() {
+            return Err(ProviderError::InvalidRequest {
+                message:
+                    "tool calling is not supported for the Kimi provider yet; use openai_compatible"
+                        .to_string(),
+            });
+        }
         let mut base_req = req.clone();
         base_req.thinking = None;
         let mut body = self.base_chat.chat_completions_request_body(&base_req)?;
@@ -158,6 +165,7 @@ impl LlmProvider for KimiProvider {
             },
             usage: None,
             raw: Value::Array(raw_events),
+            tool_calls: Vec::new(),
         })
     }
 }

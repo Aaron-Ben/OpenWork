@@ -8,5 +8,5 @@ pub use types::{
     Base64Source, ContentBlock, DataBlock, DataSource, EmbeddingRequest, EmbeddingResponse,
     GenerateRequest, GenerateResponse, GenerateStreamEvent, Message, ModelCapability, ModelSpec,
     Role, TextBlock, ThinkingBlock, ThinkingConfig, ThinkingMode, TokenUsage, ToolCallBlock,
-    ToolCallState, ToolResultBlock, ToolResultState,
+    ToolCallState, ToolDefinition, ToolResultBlock, ToolResultState,
 };

@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from "react";
-import { Check, Loader2, Pencil, Plus, Trash2, Zap } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Pencil, Plus, Trash2, Zap } from "lucide-react";
 
 import { useProviderStore } from "../stores/providerStore";
 import type { ProviderConfig, TestResult } from "../type/providers";
@@ -7,7 +7,7 @@ import { ProviderFormModal } from "./ProviderFormModal";
 
 type TestState = Record<string, TestResult | "loading">;
 
-export function ProviderSettings() {
+export function ProviderSettings({ onBack }: { onBack: () => void }) {
   const providers = useProviderStore((state) => state.providers);
   const activeId = useProviderStore((state) => state.activeId);
   const activate = useProviderStore((state) => state.activate);
@@ -58,6 +58,14 @@ export function ProviderSettings() {
 
   return (
     <div className="grid content-start gap-5 p-6 max-[560px]:px-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1.5 self-start text-sm font-medium text-slate-600 hover:text-slate-900"
+      >
+        <ArrowLeft size={16} />
+        Back
+      </button>
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
@@ -67,7 +75,7 @@ export function ProviderSettings() {
           <button
             onClick={openCreate}
             type="button"
-            className="flex items-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-sm font-medium text-white hover:bg-teal-800"
+            className="flex items-center gap-2 rounded-lg bg-orange-700 px-3 py-2 text-sm font-medium text-white hover:bg-orange-800"
           >
             <Plus size={16} /> Add
           </button>

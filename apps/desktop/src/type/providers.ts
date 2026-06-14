@@ -63,11 +63,27 @@ export interface ChatGenerateResponse {
   reasoningText?: string | null
 }
 
-export type ChatStreamEventName = 'text_delta' | 'reasoning_delta' | 'done' | 'error'
+export type ChatStreamEventName =
+  | 'text_delta'
+  | 'reasoning_delta'
+  | 'step'
+  | 'tool_call_start'
+  | 'tool_call_delta'
+  | 'tool_call_end'
+  | 'tool_result'
+  | 'finished'
+  | 'done'
+  | 'error'
 
 export interface ChatStreamEventPayload {
   requestId: string
   event: ChatStreamEventName
   delta?: string | null
   message?: string | null
+  step?: number | null
+  toolCallId?: string | null
+  toolName?: string | null
+  partialInput?: string | null
+  toolOutput?: string | null
+  isError?: boolean | null
 }

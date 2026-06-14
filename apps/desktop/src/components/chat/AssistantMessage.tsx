@@ -1,12 +1,14 @@
 import { memo } from 'react'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import { ThinkingBlock } from './ThinkingBlock'
+import { ToolCallBlock, type ToolCallState } from './ToolCallBlock'
 
 interface AssistantMessageProps {
   content: string
   reasoningText?: string | null
   isStreaming?: boolean
   model?: string
+  toolCalls?: ToolCallState[]
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -14,11 +16,13 @@ export const AssistantMessage = memo(function AssistantMessage({
   reasoningText,
   isStreaming = false,
   model,
+  toolCalls,
 }: AssistantMessageProps) {
   const hasContent = content.trim().length > 0
   const hasReasoning = !!reasoningText?.trim()
+  const hasToolCalls = !!toolCalls && toolCalls.length > 0
 
-  if (!hasContent && !hasReasoning && !isStreaming) return null
+  if (!hasContent && !hasReasoning && !isStreaming && !hasToolCalls) return null
 
   const documentLayout = shouldUseDocumentLayout(content)
 
@@ -32,6 +36,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           {model ? <div className="mb-2 text-xs text-slate-400">{model}</div> : null}
           {hasReasoning || isStreaming ? <ThinkingBlock content={reasoningText ?? ''} isActive={isStreaming && !hasContent} /> : null}
+          {hasToolCalls ? (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {toolCalls!.map((toolCall) => (
+                <ToolCallBlock key={toolCall.id} toolCall={toolCall} />
+              ))}
+            </div>
+          ) : null}
           {hasContent ? (
             <MarkdownRenderer content={content} variant={documentLayout ? 'document' : 'default'} streaming={isStreaming} />
           ) : isStreaming ? (

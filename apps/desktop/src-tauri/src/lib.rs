@@ -1,8 +1,11 @@
-use anvil_core::ai::{GenerateRequest, GenerateStreamEvent, Message, Role};
+use std::path::PathBuf;
+
+use anvil_core::ai::{ContentBlock, GenerateRequest, Message, Role};
 use anvil_providers::{
     build_provider, test_provider, ProviderConfig, ProviderIndex, ProviderInput, ProviderPreset,
     ProviderStore, TestResult, BUILTIN_PRESETS,
 };
+use anvil_runtime::{Agent, AgentConfig, AgentEvent};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -61,6 +64,29 @@ struct ChatStreamEventPayload {
     event: &'static str,
     delta: Option<String>,
     message: Option<String>,
+    step: Option<usize>,
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+    partial_input: Option<String>,
+    tool_output: Option<String>,
+    is_error: Option<bool>,
+}
+
+impl ChatStreamEventPayload {
+    fn simple(request_id: &str, event: &'static str) -> Self {
+        Self {
+            request_id: request_id.to_string(),
+            event,
+            delta: None,
+            message: None,
+            step: None,
+            tool_call_id: None,
+            tool_name: None,
+            partial_input: None,
+            tool_output: None,
+            is_error: None,
+        }
+    }
 }
 
 #[tauri::command]
@@ -128,6 +154,7 @@ async fn chat_generate(
         max_tokens: None,
         stream: false,
         thinking: None,
+        tools: Vec::new(),
     };
 
     let response = provider
@@ -147,62 +174,41 @@ async fn chat_generate_stream(
     store: tauri::State<'_, ProviderStore>,
     request: ChatGenerateStreamRequest,
 ) -> Result<ChatGenerateResponse, String> {
-    let request_id = request.request_id;
+    let request_id = request.request_id.clone();
     let config = store
         .get(&request.provider_id)
         .ok_or_else(|| format!("provider not found: {}", request.provider_id))?;
 
     let provider = build_provider(&config);
-    let generate_request = GenerateRequest {
-        model: request.model,
-        messages: request
-            .messages
-            .into_iter()
-            .map(|message| Message::text(message.role.into(), message.content))
-            .collect(),
-        temperature: None,
-        max_tokens: None,
-        stream: true,
-        thinking: None,
-    };
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let agent = Agent::new(AgentConfig::new(provider, request.model, working_dir));
+
+    let history: Vec<Message> = request
+        .messages
+        .into_iter()
+        .map(|message| Message::text(message.role.into(), message.content))
+        .collect();
 
     let event_app = app.clone();
     let event_request_id = request_id.clone();
-    let response = provider
-        .stream_generate(
-            generate_request,
-            Box::new(move |event| {
-                let (event_name, delta) = match event {
-                    GenerateStreamEvent::TextDelta { delta } => ("text_delta", delta),
-                    GenerateStreamEvent::ReasoningDelta { delta } => ("reasoning_delta", delta),
-                };
-                let _ = event_app.emit(
-                    "chat-stream-event",
-                    ChatStreamEventPayload {
-                        request_id: event_request_id.clone(),
-                        event: event_name,
-                        delta: Some(delta),
-                        message: None,
-                    },
-                );
-            }),
-        )
+    let result = agent
+        .run(history, move |event| {
+            let _ = event_app.emit(
+                "chat-stream-event",
+                map_agent_event(&event_request_id, &event),
+            );
+        })
         .await;
 
-    match response {
-        Ok(response) => {
+    match result {
+        Ok(text) => {
             let _ = app.emit(
                 "chat-stream-event",
-                ChatStreamEventPayload {
-                    request_id: request_id.clone(),
-                    event: "done",
-                    delta: None,
-                    message: None,
-                },
+                ChatStreamEventPayload::simple(&request_id, "done"),
             );
             Ok(ChatGenerateResponse {
-                text: response.text,
-                reasoning_text: response.reasoning_text,
+                text,
+                reasoning_text: None,
             })
         }
         Err(error) => {
@@ -210,15 +216,74 @@ async fn chat_generate_stream(
             let _ = app.emit(
                 "chat-stream-event",
                 ChatStreamEventPayload {
-                    request_id,
-                    event: "error",
-                    delta: None,
                     message: Some(message.clone()),
+                    ..ChatStreamEventPayload::simple(&request_id, "error")
                 },
             );
             Err(message)
         }
     }
+}
+
+/// 把 agent loop 的事件映射成前端可消费的流式 payload。
+fn map_agent_event(request_id: &str, event: &AgentEvent) -> ChatStreamEventPayload {
+    let mut payload = ChatStreamEventPayload::simple(request_id, "");
+    match event {
+        AgentEvent::Step(n) => {
+            payload.event = "step";
+            payload.step = Some(*n);
+        }
+        AgentEvent::TextDelta(delta) => {
+            payload.event = "text_delta";
+            payload.delta = Some(delta.clone());
+        }
+        AgentEvent::ReasoningDelta(delta) => {
+            payload.event = "reasoning_delta";
+            payload.delta = Some(delta.clone());
+        }
+        AgentEvent::ToolCallStart { id, name } => {
+            payload.event = "tool_call_start";
+            payload.tool_call_id = Some(id.clone());
+            payload.tool_name = Some(name.clone());
+        }
+        AgentEvent::ToolCallDelta { id, partial_input } => {
+            payload.event = "tool_call_delta";
+            payload.tool_call_id = Some(id.clone());
+            payload.partial_input = Some(partial_input.clone());
+        }
+        AgentEvent::ToolCallEnd { id } => {
+            payload.event = "tool_call_end";
+            payload.tool_call_id = Some(id.clone());
+        }
+        AgentEvent::ToolResult {
+            id,
+            name,
+            output,
+            is_error,
+        } => {
+            payload.event = "tool_result";
+            payload.tool_call_id = Some(id.clone());
+            payload.tool_name = Some(name.clone());
+            payload.tool_output = Some(extract_text(output));
+            payload.is_error = Some(*is_error);
+        }
+        AgentEvent::Finished(text) => {
+            payload.event = "finished";
+            payload.delta = Some(text.clone());
+        }
+    }
+    payload
+}
+
+fn extract_text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

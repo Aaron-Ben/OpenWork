@@ -185,6 +185,15 @@ pub enum ToolResultState {
     Running,
 }
 
+/// 声明给模型的工具定义(对应 OpenAI `tools[].function`)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema,描述工具参数结构。
+    pub parameters: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenerateRequest {
     pub model: String,
@@ -193,6 +202,10 @@ pub struct GenerateRequest {
     pub max_tokens: Option<u32>,
     pub stream: bool,
     pub thinking: Option<ThinkingConfig>,
+    /// 可用工具声明。OpenAI-compatible chat 走 function calling;
+    /// 未适配 tool calling 的 provider 在非空时应返回 `InvalidRequest`。
+    #[serde(default)]
+    pub tools: Vec<ToolDefinition>,
 }
 
 impl GenerateRequest {
@@ -204,6 +217,7 @@ impl GenerateRequest {
             max_tokens: None,
             stream: false,
             thinking: None,
+            tools: Vec::new(),
         }
     }
 
@@ -219,6 +233,9 @@ pub struct GenerateResponse {
     pub reasoning_text: Option<String>,
     pub usage: Option<TokenUsage>,
     pub raw: serde_json::Value,
+    /// 模型本轮请求的工具调用(按到达顺序)。流式与非流式路径都应填充。
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +243,12 @@ pub struct GenerateResponse {
 pub enum GenerateStreamEvent {
     TextDelta { delta: String },
     ReasoningDelta { delta: String },
+    /// 工具调用开始:模型给出了工具 `id` 与 `name`(参数可能随后以增量到达)。
+    ToolCallStart { id: String, name: String },
+    /// 工具调用参数增量:一段 JSON 片段,需按 `id` 拼接成完整参数字符串。
+    ToolCallDelta { id: String, partial_input: String },
+    /// 工具调用结束:`id` 的参数已全部到达。
+    ToolCallEnd { id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

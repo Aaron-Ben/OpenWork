@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anvil-core = { path = "../anvil-core" }
-serde.workspace = true
-thiserror.workspace = true
+anvil-core = { workspace = true }
+anvil-providers = { workspace = true }
+anvil-tools = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 toml.workspace = true
+
+[dev-dependencies]
+async-trait = { workspace = true }

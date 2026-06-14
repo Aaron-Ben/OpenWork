@@ -46,6 +46,12 @@ impl OpenAiProvider {
     }
 
     pub(crate) fn responses_request_body(req: &GenerateRequest) -> Result<Value, ProviderError> {
+        if !req.tools.is_empty() {
+            return Err(ProviderError::InvalidRequest {
+                message: "tool calling is not supported for the OpenAI Responses API provider yet; use openai_compatible"
+                    .to_string(),
+            });
+        }
         if req.thinking.is_some() {
             return Err(ProviderError::InvalidRequest {
                 message: "OpenAI thinking mode is not mapped yet".to_string(),
@@ -100,6 +106,7 @@ impl OpenAiProvider {
             reasoning_text: None,
             usage,
             raw,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -208,6 +215,7 @@ impl LlmProvider for OpenAiProvider {
             },
             usage: None,
             raw: Value::Array(raw_events),
+            tool_calls: Vec::new(),
         })
     }
 }
@@ -335,6 +343,7 @@ mod tests {
             max_tokens: Some(128),
             stream: false,
             thinking: None,
+            tools: Vec::new(),
         };
 
         let body = OpenAiProvider::responses_request_body(&req).unwrap();

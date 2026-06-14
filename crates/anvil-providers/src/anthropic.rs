@@ -61,6 +61,11 @@ impl AnthropicProvider {
     }
 
     pub(crate) fn messages_request_body(req: &GenerateRequest) -> Result<Value, ProviderError> {
+        if !req.tools.is_empty() {
+            return Err(ProviderError::InvalidRequest {
+                message: "tool calling is not supported for the Anthropic provider yet".to_string(),
+            });
+        }
         if req.thinking.is_some() {
             return Err(ProviderError::InvalidRequest {
                 message: "Anthropic thinking mode is not mapped yet".to_string(),
@@ -143,6 +148,7 @@ impl AnthropicProvider {
             reasoning_text: None,
             usage,
             raw,
+            tool_calls: Vec::new(),
         }
     }
 }
@@ -218,6 +224,7 @@ impl LlmProvider for AnthropicProvider {
             },
             usage: None,
             raw: Value::Array(raw_events),
+            tool_calls: Vec::new(),
         })
     }
 }
@@ -306,6 +313,7 @@ mod tests {
             max_tokens: Some(128),
             stream: false,
             thinking: None,
+            tools: Vec::new(),
         };
 
         let body = AnthropicProvider::messages_request_body(&req).unwrap();
@@ -326,6 +334,7 @@ mod tests {
             max_tokens: None,
             stream: false,
             thinking: None,
+            tools: Vec::new(),
         };
 
         assert!(AnthropicProvider::messages_request_body(&req).is_err());

@@ -20,6 +20,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anvil-core = { workspace = true }
 anvil-providers = { workspace = true }
+anvil-runtime = { workspace = true }
+anvil-tools = { workspace = true }
 async-trait = { workspace = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

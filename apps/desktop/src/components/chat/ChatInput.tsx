@@ -43,41 +43,17 @@ export function ChatInput({
   }
 
   return (
-    <form
-      className="m-6 mt-0 rounded-lg border border-slate-300 bg-white max-[560px]:m-4 max-[560px]:mt-0"
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSubmit()
-      }}
-    >
-      <div className="flex flex-wrap items-center gap-2 px-3 pt-3 text-xs text-slate-500">
-        <span className="rounded-full bg-slate-100 px-2 py-1">{activeProviderName}</span>
-        <select
-          className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 outline-none"
-          value={model}
-          onChange={(event) => onModelChange(event.target.value)}
-          disabled={isSending}
-        >
-          {modelOptions.length === 0 ? (
-            <option value="">no model</option>
-          ) : (
-            modelOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))
-          )}
-        </select>
-        {isSending ? (
-          <span className="flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-sky-700">
-            <Loader2 size={12} className="animate-spin" /> Streaming
-          </span>
-        ) : null}
-      </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_44px] items-end gap-2 p-3">
+    <div className="mx-auto w-full max-w-[980px] px-4 pb-7">
+      <form
+        className="overflow-hidden rounded-[18px] border border-stone-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.10)]"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSubmit()
+        }}
+      >
         <textarea
           ref={textareaRef}
-          className="max-h-44 min-h-20 w-full resize-none border-0 bg-transparent leading-6 text-slate-900 outline-none focus:ring-0"
+          className="max-h-48 min-h-[118px] w-full resize-none border-0 bg-transparent px-5 py-5 text-base leading-7 text-slate-900 outline-none placeholder:text-stone-400 focus:ring-0"
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -87,19 +63,55 @@ export function ChatInput({
           onCompositionEnd={() => {
             composingRef.current = false
           }}
-          placeholder="Ask Anvil anything..."
-          rows={3}
+          placeholder="随便问点什么..."
+          rows={4}
           disabled={disabled}
         />
-        <button
-          className="grid size-11 place-items-center rounded-lg bg-teal-700 text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-          type="submit"
-          aria-label="Send"
-          disabled={disabled || isSending || !model || !value.trim()}
-        >
-          {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-        </button>
-      </div>
-    </form>
+
+        <div className="mx-5 border-t border-stone-200" />
+
+        <div className="flex flex-nowrap items-center gap-3 px-5 py-3 max-[720px]:flex-wrap">
+          <div className="min-w-0 flex-1" />
+
+          {isSending ? (
+            <span className="inline-flex h-10 items-center gap-1.5 rounded-full bg-sky-50 px-3 text-sm font-medium text-sky-700">
+              <Loader2 size={14} className="animate-spin" /> Streaming
+            </span>
+          ) : null}
+
+          <span className="inline-flex h-10 max-w-[180px] items-center gap-2 rounded-full border border-stone-200 bg-white px-3 text-sm text-stone-600">
+            <span className={`size-2 rounded-full ${disabled ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+            <span className="truncate">{activeProviderName}</span>
+          </span>
+
+          <select
+            className="h-10 max-w-[260px] rounded-full border border-stone-200 bg-stone-100 px-4 text-sm font-semibold text-slate-800 outline-none hover:bg-stone-200"
+            value={model}
+            onChange={(event) => onModelChange(event.target.value)}
+            disabled={isSending}
+          >
+            {modelOptions.length === 0 ? (
+              <option value="">no model</option>
+            ) : (
+              modelOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))
+            )}
+          </select>
+
+          <button
+            className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl bg-orange-700 px-5 text-sm font-semibold text-white hover:bg-orange-800 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-500"
+            type="submit"
+            aria-label="Send"
+            disabled={disabled || isSending || !model || !value.trim()}
+          >
+            {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+            运行
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }

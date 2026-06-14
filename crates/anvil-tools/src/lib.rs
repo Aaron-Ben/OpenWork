@@ -1,14 +1,10 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! 工具执行层:Tool trait、ToolContext、Approval、ToolRegistry 与内置工具。
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod builtin;
+mod registry;
+mod tool;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use registry::ToolRegistry;
+pub use tool::{
+    AllowAllApproval, Approval, ApprovalDecision, Tool, ToolContext, ToolError, ToolOutput,
+};

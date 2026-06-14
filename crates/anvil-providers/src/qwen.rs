@@ -138,6 +138,7 @@ mod tests {
             max_tokens: None,
             stream: false,
             thinking: None,
+            tools: Vec::new(),
         };
 
         let body = provider.chat_request_body(&req).unwrap();
