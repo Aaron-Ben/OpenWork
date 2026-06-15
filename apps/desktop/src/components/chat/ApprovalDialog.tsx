@@ -85,7 +85,7 @@ export function ApprovalDialog() {
   const meta = (() => {
     switch (current.toolName) {
       case 'bash':
-        return { icon: Terminal, label: 'Bash', color: 'text-orange-500' }
+        return { icon: Terminal, label: 'Bash', color: 'text-clay' }
       case 'write':
         return { icon: Pencil, label: 'Write', color: 'text-emerald-500' }
       case 'read':
@@ -93,7 +93,7 @@ export function ApprovalDialog() {
       case 'list':
         return { icon: FolderTree, label: 'List', color: 'text-sky-500' }
       default:
-        return { icon: ShieldAlert, label: current.toolName, color: 'text-slate-500' }
+        return { icon: ShieldAlert, label: current.toolName, color: 'text-ink-faint' }
     }
   })()
   const Icon = meta.icon
@@ -106,17 +106,17 @@ export function ApprovalDialog() {
     current.toolName === 'write' && typeof details.content === 'string' && details.content.length > 0
 
   return (
-    <div className="mb-4 overflow-hidden rounded-lg border border-orange-200 bg-white shadow-sm">
+    <div className="mb-4 overflow-hidden rounded-lg border border-clay-soft bg-paper shadow-sm">
       {/* Header */}
-      <div className="flex items-center gap-3 bg-orange-50/70 px-4 py-3">
-        <div className="grid size-8 place-items-center rounded-lg bg-white shadow-sm ring-1 ring-orange-100">
+      <div className="flex items-center gap-3 bg-clay-soft px-4 py-3">
+        <div className="grid size-8 place-items-center rounded-lg bg-paper shadow-sm ring-1 ring-clay-soft">
           <Icon className={meta.color} size={18} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 break-words text-sm font-semibold text-slate-900">{title}</span>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-orange-600">
-              <span className="size-1.5 animate-pulse rounded-full bg-orange-500" />
+            <span className="min-w-0 break-words text-sm font-semibold text-ink">{title}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clay-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-clay">
+              <span className="size-1.5 animate-pulse rounded-full bg-clay" />
               等待审批
             </span>
           </div>
@@ -124,17 +124,17 @@ export function ApprovalDialog() {
       </div>
 
       {/* Tool details */}
-      <div className="space-y-2 border-t border-orange-100 px-4 py-3">
+      <div className="space-y-2 border-t border-clay-soft px-4 py-3">
         {showPath && (
-          <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-600">
-            <FileText className="size-3.5 flex-shrink-0 text-slate-400" />
+          <div className="flex items-center gap-2 rounded-lg bg-paper-hover px-3 py-2 font-mono text-xs text-ink-soft">
+            <FileText className="size-3.5 flex-shrink-0 text-ink-faint" />
             <span className="truncate">{details.primary}</span>
           </div>
         )}
 
         {showTerminal && (
-          <div className="overflow-x-auto rounded-lg bg-zinc-900 px-3 py-2.5">
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-tight text-zinc-100">
+          <div className="overflow-x-auto rounded-lg bg-ink px-3 py-2.5">
+            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-tight text-paper">
               <span className="select-none text-emerald-400">$ </span>
               {details.primary}
             </pre>
@@ -142,25 +142,25 @@ export function ApprovalDialog() {
         )}
 
         {showContent && (
-          <pre className="max-h-52 overflow-auto rounded-lg bg-zinc-900 px-3 py-2.5 font-mono text-[11px] leading-tight text-zinc-100">
+          <pre className="max-h-52 overflow-auto rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] leading-tight text-paper">
             {details.content}
           </pre>
         )}
 
         {!showPath && !showTerminal && !showContent && (
-          <pre className="overflow-auto rounded-lg bg-slate-100 px-3 py-2 font-mono text-xs text-slate-600">
+          <pre className="overflow-auto rounded-lg bg-paper-hover px-3 py-2 font-mono text-xs text-ink-soft">
             {details.primary || '(no input)'}
           </pre>
         )}
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center gap-2 border-t border-orange-100 bg-slate-50 px-4 py-3">
+      <div className="flex items-center gap-2 border-t border-clay-soft bg-paper-hover px-4 py-3">
         <button
           type="button"
           disabled={resolving}
           onClick={() => void resolve(true)}
-          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-ink px-3.5 py-1.5 text-sm font-medium text-paper transition hover:bg-ink-soft disabled:opacity-50"
         >
           <Check size={14} />
           {resolving ? '处理中...' : '允许'}
@@ -170,7 +170,7 @@ export function ApprovalDialog() {
           type="button"
           disabled={resolving}
           onClick={() => void resolve(false)}
-          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-paper px-3.5 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
         >
           <X size={14} />
           拒绝

@@ -13,7 +13,7 @@ export function AppShell() {
 
   return (
     <main
-      className={`grid h-screen overflow-hidden bg-zinc-50 text-slate-800 ${
+      className={`grid h-screen overflow-hidden bg-paper text-ink ${
         sidebarOpen ? 'grid-cols-[320px_minmax(0,1fr)]' : 'grid-cols-[90px_minmax(0,1fr)]'
       } max-[760px]:grid-cols-1`}
     >
@@ -27,7 +27,7 @@ export function AppShell() {
         {view === 'chat' ? (
           <ChatView activeId={active?.id ?? null} />
         ) : (
-          <div className="h-screen overflow-auto bg-zinc-50 p-6 max-[760px]:h-[calc(100vh-90px)]">
+          <div className="h-screen overflow-auto bg-paper p-6 max-[760px]:h-[calc(100vh-90px)]">
             <ProviderSettings onBack={() => setView('chat')} />
           </div>
         )}

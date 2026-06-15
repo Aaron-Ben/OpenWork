@@ -30,11 +30,11 @@ export const AssistantMessage = memo(function AssistantMessage({
     <div className="mb-5 flex justify-start">
       <div className={`group flex min-w-0 flex-col items-start ${documentLayout ? 'w-full max-w-full' : 'max-w-[88%] sm:max-w-[80%] lg:max-w-[72%]'}`}>
         <div
-          className={`rounded-[20px] rounded-tl-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm ${
+          className={`rounded-[20px] rounded-tl-lg border border-line bg-paper px-4 py-3 text-sm text-ink shadow-sm ${
             documentLayout ? 'w-full' : 'max-w-full'
           }`}
         >
-          {model ? <div className="mb-2 text-xs text-slate-400">{model}</div> : null}
+          {model ? <div className="mb-2 text-xs text-ink-faint">{model}</div> : null}
           {hasReasoning || isStreaming ? <ThinkingBlock content={reasoningText ?? ''} isActive={isStreaming && !hasContent} /> : null}
           {hasToolCalls ? (
             <div className="mb-2 flex flex-col gap-1.5">
@@ -46,7 +46,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           {hasContent ? (
             <MarkdownRenderer content={content} variant={documentLayout ? 'document' : 'default'} streaming={isStreaming} />
           ) : isStreaming ? (
-            <span className="text-slate-400">Waiting for response</span>
+            <span className="text-ink-faint">Waiting for response</span>
           ) : null}
         </div>
       </div>

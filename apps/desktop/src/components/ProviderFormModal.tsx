@@ -15,7 +15,7 @@ const KIND_OPTIONS: { value: ProviderKind; label: string }[] = [
 ];
 
 const inputClass =
-  "h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-3 focus:ring-teal-700/15";
+  "h-10 w-full rounded-lg border border-line-strong bg-paper px-3 text-sm text-ink outline-none focus:ring-3 focus:ring-clay/20";
 
 interface ProviderFormModalProps {
   open: boolean;
@@ -163,14 +163,14 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-slate-200 bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h2 className="m-0 text-base font-semibold text-slate-900">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-line bg-paper shadow-xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <h2 className="m-0 text-base font-semibold text-ink">
             {mode === "edit" ? "Edit provider" : "Add provider"}
           </h2>
           <button
-            className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
+            className="grid size-8 place-items-center rounded-lg text-ink-faint hover:bg-paper-hover"
             type="button"
             onClick={onClose}
             aria-label="Close"
@@ -182,7 +182,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
         <div className="grid gap-4 px-5 py-4">
           {mode === "create" ? (
             <div className="grid gap-1.5">
-              <span className="text-sm font-medium text-slate-700">Preset</span>
+              <span className="text-sm font-medium text-ink-soft">Preset</span>
               <div className="flex flex-wrap gap-2">
                 {presets.map((preset) => (
                   <button
@@ -191,8 +191,8 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
                     onClick={() => applyPreset(preset)}
                     className={`rounded-full border px-3 py-1 text-xs ${
                       selectedPresetId === preset.id
-                        ? "border-teal-700 bg-teal-50 text-teal-700"
-                        : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                        ? "border-clay bg-clay-soft text-clay"
+                        : "border-line-strong text-ink-soft hover:bg-paper-hover"
                     }`}
                   >
                     {preset.name}
@@ -223,7 +223,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
               />
               <button
                 type="button"
-                className="grid size-10 place-items-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                className="grid size-10 place-items-center rounded-lg border border-line-strong bg-paper text-ink-soft hover:bg-paper-hover"
                 onClick={() => setShowApiKey((value) => !value)}
                 aria-label={showApiKey ? "Hide API key" : "Show API key"}
               >
@@ -264,25 +264,25 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
           {error ? <p className="m-0 text-xs text-rose-600">{error}</p> : null}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
+        <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-4">
           <button
             type="button"
             onClick={handleTest}
             disabled={isTesting}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className="flex items-center gap-2 rounded-lg border border-line-strong bg-paper px-3 py-2 text-sm text-ink-soft hover:bg-paper-hover disabled:opacity-60"
           >
             {isTesting ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
             Test
           </button>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+            <button type="button" onClick={onClose} className="rounded-lg border border-line-strong bg-paper px-4 py-2 text-sm text-ink-soft hover:bg-paper-hover">
               Cancel
             </button>
             <button
               type="button"
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 disabled:opacity-60"
+              className="flex items-center gap-2 rounded-lg bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay/90 disabled:opacity-60"
             >
               {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
               Save
@@ -297,9 +297,9 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="grid gap-1.5">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <span className="text-sm font-medium text-ink-soft">{label}</span>
       {children}
-      {hint ? <span className="text-xs text-slate-400">{hint}</span> : null}
+      {hint ? <span className="text-xs text-ink-faint">{hint}</span> : null}
     </label>
   );
 }

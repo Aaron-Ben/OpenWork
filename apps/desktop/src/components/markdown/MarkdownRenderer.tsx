@@ -39,7 +39,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   return (
     <div className={classes}>
       {blocks.map((block, index) => renderBlock(block, index, variant))}
-      {streaming ? <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-teal-700 align-text-bottom" /> : null}
+      {streaming ? <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-clay align-text-bottom" /> : null}
     </div>
   )
 })
@@ -176,9 +176,9 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
     case 'code':
       return (
         <div key={index} className={codeBlockClass(variant)}>
-          {block.language ? <div className="border-b border-white/10 px-2.5 py-1.5 text-xs text-slate-300">{block.language}</div> : null}
+          {block.language ? <div className="border-b border-line px-2.5 py-1.5 text-xs text-ink-faint">{block.language}</div> : null}
           <pre className={preClass(variant)}>
-            <code className="border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed whitespace-pre text-slate-200">{block.code}</code>
+            <code className="border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed whitespace-pre text-ink">{block.code}</code>
           </pre>
         </div>
       )
@@ -198,7 +198,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
             </thead>
             <tbody>
               {block.rows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="odd:bg-white even:bg-slate-50/45">
+                <tr key={rowIndex} className="odd:bg-paper even:bg-paper-hover/70">
                   {block.headers.map((_, cellIndex) => (
                     <td key={cellIndex} className={tableBodyCellClass(cellIndex, block.headers.length)}>
                       {renderInline(row[cellIndex] ?? '', { inTable: true })}
@@ -211,7 +211,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
         </div>
       )
     case 'hr':
-      return <hr key={index} className="my-4 border-0 border-t border-slate-200" />
+      return <hr key={index} className="my-4 border-0 border-t border-line" />
   }
 }
 
@@ -294,10 +294,10 @@ function renderInline(text: string, context: InlineContext = {}): ReactNode[] {
 
 function inlineCodeClass(context: InlineContext): string {
   return [
-    'font-mono',
+    'font-mono text-code-ink',
     context.inTable
-      ? 'rounded border border-slate-200 bg-slate-50 px-1 py-0.5 text-[0.82rem] leading-5 text-slate-800'
-      : 'rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[0.82rem] text-slate-900',
+      ? 'rounded border border-line bg-code-bg px-1 py-0.5 text-[0.82rem] leading-5'
+      : 'rounded-md border border-line bg-code-bg px-1.5 py-0.5 text-[0.82rem]',
   ].join(' ')
 }
 
@@ -347,10 +347,10 @@ function tableClass(columnCount: number): string {
 function getMarkdownClasses(variant: MarkdownVariant, className?: string): string {
   return [
     'min-w-0 max-w-none break-words [overflow-wrap:anywhere] [&>:first-child]:mt-0 [&>:last-child]:mb-0',
-    variant === 'compact' ? 'text-xs leading-5 text-slate-600' : 'text-sm leading-relaxed text-slate-700',
+    variant === 'compact' ? 'text-xs leading-5 text-ink-soft' : 'text-sm leading-relaxed text-ink',
     variant === 'document' ? 'text-[0.94rem] leading-7' : '',
-    '[&_a]:text-teal-700 [&_a]:no-underline hover:[&_a]:underline',
-    '[&_strong]:font-semibold [&_strong]:text-slate-900',
+    '[&_a]:text-clay [&_a]:no-underline hover:[&_a]:underline',
+    '[&_strong]:font-semibold [&_strong]:text-ink',
     className ?? '',
   ]
     .filter(Boolean)
@@ -360,14 +360,14 @@ function getMarkdownClasses(variant: MarkdownVariant, className?: string): strin
 function headingClass(level: number): string {
   const size = {
     1: 'text-2xl',
-    2: 'text-xl border-b border-slate-200 pb-1.5',
+    2: 'text-xl border-b border-line pb-1.5',
     3: 'text-base',
     4: 'text-sm',
     5: 'text-sm',
     6: 'text-xs',
   }[level] ?? 'text-xs'
 
-  return `mt-5 mb-2 font-semibold leading-tight text-slate-900 ${size}`
+  return `mt-5 mb-2 font-semibold leading-tight text-ink ${size}`
 }
 
 function paragraphClass(variant: MarkdownVariant): string {
@@ -376,7 +376,7 @@ function paragraphClass(variant: MarkdownVariant): string {
 
 function blockquoteClass(variant: MarkdownVariant): string {
   return [
-    'border-l-4 border-slate-300 bg-slate-50 text-slate-600',
+    'border-l-4 border-clay bg-paper-hover text-ink-soft',
     variant === 'compact' ? 'my-2 px-3 py-1.5 text-xs' : 'my-3 px-4 py-2',
   ].join(' ')
 }
@@ -395,7 +395,7 @@ function listItemClass(variant: MarkdownVariant): string {
 
 function codeBlockClass(variant: MarkdownVariant): string {
   return [
-    'overflow-hidden rounded-lg border border-slate-200 bg-slate-900',
+    'overflow-hidden rounded-lg border border-line bg-surface',
     variant === 'compact' ? 'my-2' : 'my-4',
   ].join(' ')
 }
@@ -409,16 +409,16 @@ function preClass(variant: MarkdownVariant): string {
 
 function tableWrapClass(variant: MarkdownVariant): string {
   return [
-    'overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm',
+    'overflow-x-auto rounded-lg border border-line bg-paper shadow-sm',
     variant === 'compact' ? 'my-2' : 'my-4',
   ].join(' ')
 }
 
 function tableHeaderCellClass(cellIndex: number, columnCount: number): string {
   return [
-    'border-b border-slate-200 bg-slate-50 px-3 py-2 text-left align-top font-semibold text-slate-900',
+    'border-b border-line bg-paper-hover px-3 py-2 text-left align-top font-semibold text-ink',
     'whitespace-normal break-words [overflow-wrap:anywhere]',
-    cellIndex < columnCount - 1 ? 'border-r border-slate-200' : '',
+    cellIndex < columnCount - 1 ? 'border-r border-line' : '',
   ]
     .filter(Boolean)
     .join(' ')
@@ -426,9 +426,9 @@ function tableHeaderCellClass(cellIndex: number, columnCount: number): string {
 
 function tableBodyCellClass(cellIndex: number, columnCount: number): string {
   return [
-    'border-t border-slate-200 px-3 py-2 align-top text-slate-700',
+    'border-t border-line px-3 py-2 align-top text-ink-soft',
     'whitespace-normal break-words [overflow-wrap:anywhere]',
-    cellIndex < columnCount - 1 ? 'border-r border-slate-200' : '',
+    cellIndex < columnCount - 1 ? 'border-r border-line' : '',
   ]
     .filter(Boolean)
     .join(' ')

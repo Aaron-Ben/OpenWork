@@ -200,7 +200,7 @@ export function ChatView({ activeId }: { activeId: string | null }) {
   }
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-zinc-50">
+    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="min-h-0 overflow-auto" aria-live="polite">
         {visibleMessages.length === 0 && !hasPendingApproval ? (
           <EmptySessionHero active={!!active} />
@@ -244,14 +244,14 @@ function EmptySessionHero({ active }: { active: boolean }) {
   return (
     <div className="grid min-h-full place-items-center px-6 py-14 text-center">
       <div className="mb-20 max-w-md">
-        <div className="mx-auto mb-8 grid size-20 place-items-center text-orange-500">
+        <div className="mx-auto mb-8 grid size-20 place-items-center text-clay">
           <div className="relative">
-            <SquareTerminal size={62} strokeWidth={2.2} className="text-slate-900" />
-            <Sparkles size={20} className="absolute -right-3 top-1 text-orange-400" />
+            <SquareTerminal size={62} strokeWidth={2.2} className="text-ink" />
+            <Sparkles size={20} className="absolute -right-3 top-1 text-clay" />
           </div>
         </div>
-        <h2 className="text-3xl font-semibold tracking-normal text-slate-950">新建会话</h2>
-        <p className="mt-4 text-base leading-7 text-stone-600">
+        <h2 className="text-3xl font-semibold tracking-normal text-ink">新建会话</h2>
+        <p className="mt-4 text-base leading-7 text-ink-soft">
           {active
             ? '开始一个新的编码会话。Anvil 已准备好帮你构建、调试和梳理项目。'
             : '先在 Settings 中配置并启用一个云端 Provider，然后开始新的编码会话。'}

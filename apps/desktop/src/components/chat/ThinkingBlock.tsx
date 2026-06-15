@@ -24,7 +24,7 @@ export function ThinkingBlock({ content, isActive = false }: ThinkingBlockProps)
     <div className="mb-2">
       <button
         type="button"
-        className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs text-slate-500 hover:text-slate-700"
+        className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs text-ink-faint hover:text-ink-soft"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >
@@ -37,10 +37,10 @@ export function ThinkingBlock({ content, isActive = false }: ThinkingBlockProps)
       {expanded && hasContent ? (
         <div
           ref={contentRef}
-          className="mt-1 max-h-[280px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600"
+          className="mt-1 max-h-[280px] overflow-y-auto rounded-lg border border-line bg-paper-hover p-3 text-xs leading-5 text-ink-soft"
         >
           <MarkdownRenderer content={displayContent} variant="compact" streaming={isActive} />
-          {isActive ? <span className="ml-px inline-block h-4 w-0.5 animate-pulse bg-slate-500 align-middle" /> : null}
+          {isActive ? <span className="ml-px inline-block h-4 w-0.5 animate-pulse bg-ink-faint align-middle" /> : null}
         </div>
       ) : null}
     </div>

@@ -62,21 +62,21 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolCall }: ToolCallB
   const hasDetails = Boolean(parsed || toolCall.result?.output)
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+    <div className="overflow-hidden rounded-lg border border-line bg-paper-hover">
       <button
         type="button"
         onClick={() => hasDetails && setExpanded((value) => !value)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-paper"
       >
-        <Icon size={14} className="shrink-0 text-slate-500" />
-        <span className="text-xs font-semibold text-slate-700">{toolCall.toolName}</span>
+        <Icon size={14} className="shrink-0 text-ink-faint" />
+        <span className="text-xs font-semibold text-ink-soft">{toolCall.toolName}</span>
         {summary ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-400">{summary}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-faint">{summary}</span>
         ) : (
           <span className="flex-1" />
         )}
         {isPending ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-slate-400">
+          <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-ink-faint">
             <Loader2 size={11} className="animate-spin" />
             running
           </span>
@@ -94,12 +94,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolCall }: ToolCallB
         {hasDetails ? (
           <ChevronRight
             size={14}
-            className={`text-slate-400 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            className={`text-ink-faint transition-transform ${expanded ? 'rotate-90' : ''}`}
           />
         ) : null}
       </button>
       {hasDetails && expanded ? (
-        <div className="space-y-2 border-t border-slate-200 px-3 py-2">
+        <div className="space-y-2 border-t border-line px-3 py-2">
           {parsed ? <InputView toolName={toolCall.toolName} input={parsed} /> : null}
           {toolCall.result?.output ? (
             <OutputView output={toolCall.result.output} isError={toolCall.result.isError} />
@@ -119,7 +119,7 @@ function InputView({
 }) {
   if (toolName === 'bash' && typeof input.command === 'string') {
     return (
-      <div className="overflow-hidden rounded-md border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-100">
+      <div className="overflow-hidden rounded-md border border-line bg-ink px-3 py-2 font-mono text-[11px] leading-relaxed text-paper">
         <span className="text-emerald-400">$</span> {input.command}
       </div>
     )
@@ -130,11 +130,11 @@ function InputView({
       : JSON.stringify(input, null, 2)
   const label = toolName === 'write' ? 'content' : 'input'
   return (
-    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
-      <div className="border-b border-slate-200 px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-400">
+    <div className="overflow-hidden rounded-md border border-line bg-paper">
+      <div className="border-b border-line px-3 py-1.5 text-[10px] uppercase tracking-wider text-ink-faint">
         {label}
       </div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-700">
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-ink-soft">
         {value}
       </pre>
     </div>
@@ -145,19 +145,19 @@ function OutputView({ output, isError }: { output: string; isError: boolean }) {
   return (
     <div
       className={`overflow-hidden rounded-md border ${
-        isError ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-white'
+        isError ? 'border-rose-200 bg-rose-50' : 'border-line bg-paper'
       }`}
     >
       <div
         className={`border-b px-3 py-1.5 text-[10px] uppercase tracking-wider ${
-          isError ? 'border-rose-200 text-rose-500' : 'border-slate-200 text-slate-400'
+          isError ? 'border-rose-200 text-rose-500' : 'border-line text-ink-faint'
         }`}
       >
         {isError ? 'error output' : 'output'}
       </div>
       <pre
         className={`max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed ${
-          isError ? 'text-rose-600' : 'text-slate-700'
+          isError ? 'text-rose-600' : 'text-ink-soft'
         }`}
       >
         {output}

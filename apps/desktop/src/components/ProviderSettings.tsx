@@ -61,21 +61,21 @@ export function ProviderSettings({ onBack }: { onBack: () => void }) {
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1.5 self-start text-sm font-medium text-slate-600 hover:text-slate-900"
+        className="flex items-center gap-1.5 self-start text-sm font-medium text-ink-soft hover:text-ink"
       >
         <ArrowLeft size={16} />
         Back
       </button>
-      <section className="rounded-lg border border-slate-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
+      <section className="rounded-lg border border-line bg-paper p-5">
+        <div className="flex items-start justify-between gap-4 border-b border-line pb-4">
           <div>
-            <h2 className="m-0 text-lg font-semibold text-slate-900">Providers</h2>
-            <p className="m-0 text-xs text-slate-500">Add cloud API-key providers, then activate one to use in chat.</p>
+            <h2 className="m-0 text-lg font-semibold text-ink">Providers</h2>
+            <p className="m-0 text-xs text-ink-faint">Add cloud API-key providers, then activate one to use in chat.</p>
           </div>
           <button
             onClick={openCreate}
             type="button"
-            className="flex items-center gap-2 rounded-lg bg-orange-700 px-3 py-2 text-sm font-medium text-white hover:bg-orange-800"
+            className="flex items-center gap-2 rounded-lg bg-clay px-3 py-2 text-sm font-medium text-white transition hover:bg-clay/90"
           >
             <Plus size={16} /> Add
           </button>
@@ -84,30 +84,30 @@ export function ProviderSettings({ onBack }: { onBack: () => void }) {
         {error ? <p className="mt-4 text-xs text-rose-600">{error}</p> : null}
 
         {providers.length === 0 ? (
-          <p className="mt-6 text-sm text-slate-500">No providers yet. Click "Add" to configure your first cloud provider.</p>
+          <p className="mt-6 text-sm text-ink-faint">No providers yet. Click "Add" to configure your first cloud provider.</p>
         ) : (
           <ul className="mt-4 grid gap-3">
             {providers.map((provider) => {
               const isActive = provider.id === activeId;
               const testState = tests[provider.id];
               return (
-                <li key={provider.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                <li key={provider.id} className="rounded-lg border border-line bg-paper p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <strong className="text-sm text-slate-900">{provider.name}</strong>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{provider.kind}</span>
+                        <strong className="text-sm text-ink">{provider.name}</strong>
+                        <span className="rounded-full bg-paper-hover px-2 py-0.5 text-xs text-ink-faint">{provider.kind}</span>
                         {isActive ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Active</span> : null}
                       </div>
-                      <p className="m-0 mt-1 break-words text-xs text-slate-500">{provider.baseUrl}</p>
-                      <p className="m-0 mt-0.5 text-xs text-slate-400">{provider.models.join(", ") || "no models"}</p>
+                      <p className="m-0 mt-1 break-words text-xs text-ink-faint">{provider.baseUrl}</p>
+                      <p className="m-0 mt-0.5 text-xs text-ink-faint">{provider.models.join(", ") || "no models"}</p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       {isActive ? null : (
                         <button
                           onClick={() => activate(provider.id)}
                           type="button"
-                          className="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                          className="rounded-lg border border-line-strong px-2 py-1 text-xs text-ink-soft hover:bg-paper-hover"
                         >
                           Set active
                         </button>
@@ -154,7 +154,7 @@ function IconButton({ title, onClick, disabled, children }: { title: string; onC
       aria-label={title}
       onClick={onClick}
       disabled={disabled}
-      className="grid size-8 place-items-center rounded-lg border border-transparent text-slate-500 hover:border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent"
+      className="grid size-8 place-items-center rounded-lg border border-transparent text-ink-faint hover:border-line hover:bg-paper-hover disabled:opacity-40 disabled:hover:border-transparent disabled:hover:bg-transparent"
     >
       {children}
     </button>

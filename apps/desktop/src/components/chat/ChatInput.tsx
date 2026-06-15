@@ -68,7 +68,7 @@ export function ChatInput({
   return (
     <div className="mx-auto w-full max-w-[980px] px-4 pb-7">
       <form
-        className="overflow-hidden rounded-[18px] border border-stone-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.10)]"
+        className="overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_18px_60px_rgba(31,30,29,0.10)]"
         onSubmit={(event) => {
           event.preventDefault()
           onSubmit()
@@ -76,7 +76,7 @@ export function ChatInput({
       >
         <textarea
           ref={textareaRef}
-          className="max-h-48 min-h-[118px] w-full resize-none border-0 bg-transparent px-5 py-5 text-base leading-7 text-slate-900 outline-none placeholder:text-stone-400 focus:ring-0"
+          className="max-h-48 min-h-[118px] w-full resize-none border-0 bg-transparent px-5 py-5 text-base leading-7 text-ink outline-none placeholder:text-ink-faint focus:ring-0"
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -91,45 +91,45 @@ export function ChatInput({
           disabled={disabled}
         />
 
-        <div className="mx-5 border-t border-stone-200" />
+        <div className="mx-5 border-t border-line" />
 
         <div className="flex flex-nowrap items-center gap-3 px-5 py-3 max-[720px]:flex-wrap">
           <div ref={permissionRef} className="relative">
             <button
               type="button"
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-stone-100 px-3 text-sm font-medium text-stone-700 transition hover:bg-stone-200"
+              className="inline-flex h-10 items-center gap-2 rounded-full bg-paper-hover px-3 text-sm font-medium text-ink-soft transition hover:bg-clay-soft hover:text-clay"
               aria-haspopup="menu"
               aria-expanded={permissionOpen}
               aria-label="执行权限: 审批权限"
               onClick={() => setPermissionOpen((open) => !open)}
             >
-              <ShieldCheck size={15} className="text-orange-600" />
+              <ShieldCheck size={15} className="text-clay" />
               <span>审批权限</span>
-              <ChevronDown size={14} className="text-stone-400" />
+              <ChevronDown size={14} className="text-ink-faint" />
             </button>
 
             {permissionOpen ? (
               <div
                 role="menu"
-                className="absolute bottom-full left-0 z-30 mb-2 w-[280px] overflow-hidden rounded-xl border border-stone-200 bg-white py-2 shadow-[0_16px_44px_rgba(15,23,42,0.16)]"
+                className="absolute bottom-full left-0 z-30 mb-2 w-[280px] overflow-hidden rounded-xl border border-line bg-paper py-2 shadow-[0_16px_44px_rgba(31,30,29,0.16)]"
               >
-                <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-stone-400">
+                <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-ink-faint">
                   执行权限
                 </div>
                 <button
                   type="button"
                   role="menuitem"
-                  className="flex w-full items-start gap-3 bg-orange-50 px-4 py-3 text-left"
+                  className="flex w-full items-start gap-3 bg-clay-soft px-4 py-3 text-left"
                   onClick={() => setPermissionOpen(false)}
                 >
-                  <ShieldCheck size={18} className="mt-0.5 shrink-0 text-orange-600" />
+                  <ShieldCheck size={18} className="mt-0.5 shrink-0 text-clay" />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold text-slate-900">审批权限</span>
-                    <span className="mt-0.5 block text-xs leading-5 text-stone-500">
+                    <span className="block text-sm font-semibold text-ink">审批权限</span>
+                    <span className="mt-0.5 block text-xs leading-5 text-ink-faint">
                       工具调用前暂停，等待你确认允许或拒绝。
                     </span>
                   </span>
-                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-orange-600" />
+                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-clay" />
                 </button>
               </div>
             ) : null}
@@ -143,13 +143,13 @@ export function ChatInput({
             </span>
           ) : null}
 
-          <span className="inline-flex h-10 max-w-[180px] items-center gap-2 rounded-full border border-stone-200 bg-white px-3 text-sm text-stone-600">
+          <span className="inline-flex h-10 max-w-[180px] items-center gap-2 rounded-full border border-line bg-paper px-3 text-sm text-ink-soft">
             <span className={`size-2 rounded-full ${disabled ? 'bg-amber-500' : 'bg-emerald-500'}`} />
             <span className="truncate">{activeProviderName}</span>
           </span>
 
           <select
-            className="h-10 max-w-[260px] rounded-full border border-stone-200 bg-stone-100 px-4 text-sm font-semibold text-slate-800 outline-none hover:bg-stone-200"
+            className="h-10 max-w-[260px] rounded-full border border-line bg-paper-hover px-4 text-sm font-semibold text-ink outline-none hover:bg-clay-soft"
             value={model}
             onChange={(event) => onModelChange(event.target.value)}
             disabled={isSending}
@@ -166,7 +166,7 @@ export function ChatInput({
           </select>
 
           <button
-            className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl bg-orange-700 px-5 text-sm font-semibold text-white hover:bg-orange-800 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-500"
+            className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl bg-clay px-5 text-sm font-semibold text-white transition hover:bg-clay/90 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-faint"
             type="submit"
             aria-label="Send"
             disabled={disabled || isSending || !model || !value.trim()}

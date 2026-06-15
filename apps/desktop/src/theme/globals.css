@@ -1,7 +1,195 @@
 @import "tailwindcss";
 
+/* ============================================================
+   字体 —— Anthropic 私有字体(英文) + 思源(中文)
+   ⚠️ Anthropic 字体为私有字体,仅限自用,勿随产品公网分发。
+   ============================================================ */
+
+@font-face {
+  font-family: "Anthropic Serif Web Text";
+  src: url("./fonts/anthropic-serif.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Sans Web Text";
+  src: url("./fonts/anthropic-sans.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Mono Variable";
+  src: url("./fonts/anthropic-mono.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Noto Serif SC";
+  src: url("./fonts/noto-serif-sc.ttf") format("truetype");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("./fonts/noto-sans-sc.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ============================================================
+   语义 token —— 亮/暗两套 CSS 变量驱动主题
+   移植自 typora_claude(claude.css / claude-dark.css)。
+   暗色不只是反色:字重从 400 降到 360(暗底粗字显重)。
+   ============================================================ */
+
+:root {
+  /* 面 */
+  --paper: #faf9f5;          /* 主背景:暖纸色(非纯白) */
+  --paper-hover: #f0eee6;    /* 悬停/次级面 */
+  --surface: #ffffff80;      /* 卡片/代码块半透明面 */
+
+  /* 文字 */
+  --ink: #141413;            /* 主文字:暖近黑 */
+  --ink-soft: #3d3d3a;       /* 次级文字 */
+  --ink-faint: #8a8780;      /* 更淡:占位/说明 */
+
+  /* 线 */
+  --line: #1f1e1d26;         /* 边框:暖灰低透明 */
+  --line-strong: #1f1e1d40;  /* 强调边框 */
+
+  /* 强调 */
+  --clay: #d97757;           /* Claude clay 橘,唯一 accent */
+  --clay-soft: #d977571a;    /* clay 低透明底 */
+
+  /* 代码 */
+  --code-bg: #3d3d3a0d;      /* 行内代码底 */
+  --code-ink: #8a2424;       /* 行内代码字色(暗红) */
+
+  /* 引用 */
+  --quote-ink: #3d3d3a;
+
+  /* 其它 */
+  --selection: color-mix(in srgb, #d97757 50%, transparent);
+  --content-weight: 400;
+  --strong-weight: 700;
+  --scrollbar: #1f1e1d59;
+  --scrollbar-hover: #5a5959;
+}
+
+:root.dark {
+  --paper: #262624;
+  --paper-hover: #141413;
+  --surface: #30302e80;
+
+  --ink: #faf9f5;
+  --ink-soft: #c2c0b6;
+  --ink-faint: #9a9c92;
+
+  --line: #dedcd126;
+  --line-strong: #dedcd140;
+
+  --clay: #d97757;
+  --clay-soft: #d9775726;
+
+  --code-bg: #c2c0b60d;
+  --code-ink: #f4a9a9;
+
+  --quote-ink: #c2c0b6;
+
+  --selection: color-mix(in srgb, #d97757 50%, transparent);
+  --content-weight: 360;
+  --strong-weight: 530;
+  --scrollbar: #dedcd159;
+  --scrollbar-hover: #a5a49d;
+}
+
+/* ============================================================
+   tailwind v4 工具类映射
+   - 字体:静态栈(普通 @theme)
+   - 颜色:inline 引用上面的主题变量,亮暗自动跟随
+   ============================================================ */
+
 @theme {
-  --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  --font-serif: "Anthropic Serif Web Text", Georgia, "Times New Roman", "Noto Serif SC", serif;
+  --font-sans: "Anthropic Sans Web Text", "Noto Sans SC", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Anthropic Mono Variable", "Noto Sans SC", ui-monospace, "SFMono-Regular", monospace;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-hover: var(--paper-hover);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-clay: var(--clay);
+  --color-clay-soft: var(--clay-soft);
+  --color-code-bg: var(--code-bg);
+  --color-code-ink: var(--code-ink);
+  --color-quote-ink: var(--quote-ink);
+}
+
+/* ============================================================
+   base —— 全局衬线;代码/输入框强制 mono/sans;选区/滚动条
+   ============================================================ */
+
+html {
+  background-color: var(--paper);
+  font-size: 16px;
+}
+
+body {
+  font-family: var(--font-serif);
+  color: var(--ink);
+  font-weight: var(--content-weight);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 全局衬线下:代码强制等宽,输入/按钮用 sans 更易读 */
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+}
+
+textarea,
+input,
+button,
+select {
+  font-family: var(--font-sans);
+}
+
+/* 文字选区:clay 半透明(对齐 claude.com) */
+::selection {
+  background: var(--selection);
+  color: var(--ink);
+}
+
+/* 滚动条:6px 暖灰(照搬 claude.css) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 8px;
+  background-clip: border-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-hover);
 }
