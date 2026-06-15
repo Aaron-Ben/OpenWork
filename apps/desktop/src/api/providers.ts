@@ -28,6 +28,8 @@ export const providersApi = {
     invoke('chat_generate', { request }),
   chatGenerateStream: (request: ChatGenerateStreamRequest): Promise<ChatGenerateResponse> =>
     invoke('chat_generate_stream', { request }),
+  resolveApproval: (approvalId: string, allow: boolean): Promise<void> =>
+    invoke('resolve_approval', { approvalId, allow }),
   listenToChatStream: (
     handler: (payload: ChatStreamEventPayload) => void,
   ): Promise<UnlistenFn> =>

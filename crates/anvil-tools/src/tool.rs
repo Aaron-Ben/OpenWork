@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anvil_core::ai::{ContentBlock, ToolDefinition};
 use async_trait::async_trait;
@@ -25,31 +24,10 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolOutput;
 }
 
-/// 工具执行上下文:工作目录 + 审批策略。每次执行由 agent loop 注入。
-/// `approval` 用 `Arc` 以便跨多轮工具调用共享同一份策略。
+/// 工具执行上下文:工作目录。每次执行由 agent loop 注入。
+/// 审批不再由工具内部处理,统一收归编排层(agent loop);能进入 `execute` 即已获批准。
 pub struct ToolContext {
     pub working_dir: PathBuf,
-    pub approval: Arc<dyn Approval>,
-}
-
-/// 工具执行前的审批钩子。默认实现放行;后续可接入交互式确认或权限规则。
-pub trait Approval: Send + Sync {
-    fn check(&self, tool: &str, input: &serde_json::Value) -> ApprovalDecision;
-}
-
-#[derive(Debug, Clone)]
-pub enum ApprovalDecision {
-    Allow,
-    Deny(String),
-}
-
-/// 默认放行所有工具调用(便于自动化测试与无交互场景)。
-pub struct AllowAllApproval;
-
-impl Approval for AllowAllApproval {
-    fn check(&self, _tool: &str, _input: &serde_json::Value) -> ApprovalDecision {
-        ApprovalDecision::Allow
-    }
 }
 
 /// 工具执行结果。`content` 复用 ContentBlock(通常用 Text block 承载文本输出)。

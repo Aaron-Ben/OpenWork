@@ -2,7 +2,7 @@ use anvil_core::ai::ContentBlock;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::tool::{ApprovalDecision, Tool, ToolContext, ToolOutput};
+use crate::tool::{Tool, ToolContext, ToolOutput};
 
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 
@@ -33,12 +33,7 @@ impl Tool for Bash {
         let Some(command) = input.get("command").and_then(Value::as_str) else {
             return ToolOutput::error("missing or invalid 'command' argument");
         };
-        match ctx.approval.check("bash", &input) {
-            ApprovalDecision::Deny(reason) => {
-                return ToolOutput::error(format!("command denied: {reason}"));
-            }
-            ApprovalDecision::Allow => {}
-        }
+        // 审批由编排层(agent loop)统一处理:能进入到这里即已获批准。
         let output = match tokio::process::Command::new("sh")
             .arg("-c")
             .arg(command)

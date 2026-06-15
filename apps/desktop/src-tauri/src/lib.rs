@@ -5,7 +5,9 @@ use anvil_providers::{
     build_provider, test_provider, ProviderConfig, ProviderIndex, ProviderInput, ProviderPreset,
     ProviderStore, TestResult, BUILTIN_PRESETS,
 };
-use anvil_runtime::{Agent, AgentConfig, AgentEvent};
+use anvil_runtime::{
+    Agent, AgentConfig, AgentEvent, ApprovalBridge, ApprovalDecision, ApprovalPolicy,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -24,6 +26,7 @@ struct ChatGenerateStreamRequest {
     provider_id: String,
     model: String,
     messages: Vec<ChatInputMessage>,
+    approval_policy: Option<ApprovalPolicy>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +73,8 @@ struct ChatStreamEventPayload {
     partial_input: Option<String>,
     tool_output: Option<String>,
     is_error: Option<bool>,
+    approval_id: Option<String>,
+    input: Option<serde_json::Value>,
 }
 
 impl ChatStreamEventPayload {
@@ -85,6 +90,8 @@ impl ChatStreamEventPayload {
             partial_input: None,
             tool_output: None,
             is_error: None,
+            approval_id: None,
+            input: None,
         }
     }
 }
@@ -172,6 +179,7 @@ async fn chat_generate(
 async fn chat_generate_stream(
     app: tauri::AppHandle,
     store: tauri::State<'_, ProviderStore>,
+    approval_bridge: tauri::State<'_, ApprovalBridge>,
     request: ChatGenerateStreamRequest,
 ) -> Result<ChatGenerateResponse, String> {
     let request_id = request.request_id.clone();
@@ -181,7 +189,12 @@ async fn chat_generate_stream(
 
     let provider = build_provider(&config);
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let agent = Agent::new(AgentConfig::new(provider, request.model, working_dir));
+    let mut agent_config = AgentConfig::new(provider, request.model, working_dir);
+    agent_config.approval_bridge = approval_bridge.inner().clone();
+    if let Some(approval_policy) = request.approval_policy {
+        agent_config.approval_policy = approval_policy;
+    }
+    let agent = Agent::new(agent_config);
 
     let history: Vec<Message> = request
         .messages
@@ -223,6 +236,21 @@ async fn chat_generate_stream(
             Err(message)
         }
     }
+}
+
+/// 前端审批弹窗回传决定:用 `approval_id` 匹配 agent loop 正在 await 的 pending 请求。
+#[tauri::command]
+async fn resolve_approval(
+    approval_bridge: tauri::State<'_, ApprovalBridge>,
+    approval_id: String,
+    allow: bool,
+) -> Result<(), String> {
+    let decision = if allow {
+        ApprovalDecision::Allow
+    } else {
+        ApprovalDecision::Deny("denied by user".to_string())
+    };
+    approval_bridge.resolve(&approval_id, decision).await
 }
 
 /// 把 agent loop 的事件映射成前端可消费的流式 payload。
@@ -267,6 +295,12 @@ fn map_agent_event(request_id: &str, event: &AgentEvent) -> ChatStreamEventPaylo
             payload.tool_output = Some(extract_text(output));
             payload.is_error = Some(*is_error);
         }
+        AgentEvent::ApprovalRequest { id, name, input } => {
+            payload.event = "approval_request";
+            payload.approval_id = Some(id.clone());
+            payload.tool_name = Some(name.clone());
+            payload.input = Some(input.clone());
+        }
         AgentEvent::Finished(text) => {
             payload.event = "finished";
             payload.delta = Some(text.clone());
@@ -294,6 +328,7 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let store = ProviderStore::open(app_data_dir.join("providers.json"));
             app.manage(store);
+            app.manage(ApprovalBridge::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -306,6 +341,7 @@ pub fn run() {
             provider_test,
             chat_generate,
             chat_generate_stream,
+            resolve_approval,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

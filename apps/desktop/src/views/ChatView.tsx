@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Sparkles, SquareTerminal } from 'lucide-react'
 
 import { providersApi } from '../api/providers'
+import { ApprovalDialog } from '../components/chat/ApprovalDialog'
 import { AssistantMessage } from '../components/chat/AssistantMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { UserMessage } from '../components/chat/UserMessage'
 import { useActiveProvider } from '../stores/providerStore'
+import { useApprovalStore } from '../stores/approvalStore'
 import type { ChatItem } from '../type/chat'
 
 const WELCOME: ChatItem = {
@@ -22,6 +24,7 @@ export function ChatView({ activeId }: { activeId: string | null }) {
   const [isSending, setIsSending] = useState(false)
   const currentRequestIdRef = useRef<string | null>(null)
   const visibleMessages = messages.filter((message) => message.id !== 'welcome')
+  const hasPendingApproval = useApprovalStore((state) => state.pending.length > 0)
 
   useEffect(() => {
     setModel(active?.models[0] ?? '')
@@ -34,6 +37,15 @@ export function ChatView({ activeId }: { activeId: string | null }) {
 
     void providersApi.listenToChatStream((payload) => {
       if (disposed || payload.requestId !== currentRequestIdRef.current) return
+
+      if (payload.event === 'approval_request' && payload.approvalId) {
+        useApprovalStore.getState().push({
+          id: payload.approvalId,
+          toolName: payload.toolName ?? '',
+          input: payload.input ?? null,
+        })
+        return
+      }
 
       if (payload.event === 'text_delta' && payload.delta) {
         setMessages((current) =>
@@ -158,6 +170,7 @@ export function ChatView({ activeId }: { activeId: string | null }) {
         requestId,
         providerId: active.id,
         model,
+        approvalPolicy: 'untrusted',
         messages: conversation.map((item) => ({ role: item.role, content: item.content })),
       })
       setMessages((current) =>
@@ -189,7 +202,7 @@ export function ChatView({ activeId }: { activeId: string | null }) {
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-zinc-50">
       <div className="min-h-0 overflow-auto" aria-live="polite">
-        {visibleMessages.length === 0 ? (
+        {visibleMessages.length === 0 && !hasPendingApproval ? (
           <EmptySessionHero active={!!active} />
         ) : (
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
@@ -207,6 +220,7 @@ export function ChatView({ activeId }: { activeId: string | null }) {
                 />
               ),
             )}
+            <ApprovalDialog />
           </div>
         )}
       </div>

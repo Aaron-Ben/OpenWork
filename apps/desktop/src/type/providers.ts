@@ -56,6 +56,7 @@ export interface ChatGenerateRequest {
 
 export interface ChatGenerateStreamRequest extends ChatGenerateRequest {
   requestId: string
+  approvalPolicy?: 'untrusted'
 }
 
 export interface ChatGenerateResponse {
@@ -71,6 +72,7 @@ export type ChatStreamEventName =
   | 'tool_call_delta'
   | 'tool_call_end'
   | 'tool_result'
+  | 'approval_request'
   | 'finished'
   | 'done'
   | 'error'
@@ -86,4 +88,6 @@ export interface ChatStreamEventPayload {
   partialInput?: string | null
   toolOutput?: string | null
   isError?: boolean | null
+  approvalId?: string | null
+  input?: unknown | null
 }

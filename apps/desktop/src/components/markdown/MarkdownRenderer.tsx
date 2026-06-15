@@ -185,7 +185,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
     case 'table':
       return (
         <div key={index} className={tableWrapClass(variant)}>
-          <table className="w-full min-w-[560px] table-fixed border-collapse text-sm">
+          <table className={tableClass(block.headers.length)}>
             <colgroup>{renderTableColumns(block.headers.length)}</colgroup>
             <thead>
               <tr>
@@ -308,11 +308,24 @@ function isSafeHref(href: string): boolean {
 function isTableStart(lines: string[], index: number): boolean {
   const header = lines[index] ?? ''
   const divider = lines[index + 1] ?? ''
-  return isTableRow(header) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(divider)
+  if (!isTableRow(header) || !isTableRow(divider)) return false
+
+  const headers = splitTableRow(header)
+  const dividerCells = splitTableRow(divider)
+
+  return (
+    headers.length > 0 &&
+    headers.length === dividerCells.length &&
+    dividerCells.every(isTableDividerCell)
+  )
 }
 
 function isTableRow(line: string): boolean {
   return line.includes('|') && line.trim().length > 0
+}
+
+function isTableDividerCell(cell: string): boolean {
+  return /^:?-{3,}:?$/.test(cell.trim())
 }
 
 function splitTableRow(line: string): string[] {
@@ -322,6 +335,13 @@ function splitTableRow(line: string): string[] {
     .replace(/\|$/, '')
     .split('|')
     .map((cell) => cell.trim())
+}
+
+function tableClass(columnCount: number): string {
+  return [
+    'w-full table-fixed border-collapse text-sm',
+    columnCount > 1 ? 'min-w-[560px]' : 'min-w-[220px]',
+  ].join(' ')
 }
 
 function getMarkdownClasses(variant: MarkdownVariant, className?: string): string {

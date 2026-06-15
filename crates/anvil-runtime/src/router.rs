@@ -2,14 +2,16 @@
 //! 直到模型返回不带工具调用的纯文本。
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anvil_core::ai::{
     ContentBlock, GenerateRequest, GenerateResponse, GenerateStreamCallback,
     GenerateStreamEvent, LlmProvider, Message, ProviderError, Role, ToolCallBlock, ToolCallState,
     ToolResultBlock, ToolResultState,
 };
-use anvil_tools::{AllowAllApproval, Approval, ApprovalDecision, ToolContext, ToolOutput, ToolRegistry};
+use anvil_tools::{
+    ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer, ToolContext, ToolOutput,
+    ToolRegistry,
+};
 use thiserror::Error;
 
 const DEFAULT_MAX_STEPS: usize = 20;
@@ -25,12 +27,18 @@ pub struct AgentConfig {
     pub model: String,
     pub tools: ToolRegistry,
     pub working_dir: PathBuf,
-    pub approval: Arc<dyn Approval>,
+    /// 何时需要对工具调用发起审批(对齐 codex `AskForApproval`)。
+    pub approval_policy: ApprovalPolicy,
+    /// 需要审批时由谁来审(对齐 codex `ApprovalsReviewer`)。
+    pub approvals_reviewer: ApprovalsReviewer,
+    /// 异步审批回传桥:`User` 审阅者经此等待宿主确认。
+    pub approval_bridge: ApprovalBridge,
     pub max_steps: usize,
 }
 
 impl AgentConfig {
-    /// 用内置工具(read/write/list/bash)与默认放行审批构造配置。
+    /// 用内置工具(read/write/list/bash)与默认审批配置构造。
+    /// 默认 `Untrusted` + `User`:每次工具调用都需宿主确认。
     pub fn new(
         provider: Box<dyn LlmProvider>,
         model: impl Into<String>,
@@ -41,7 +49,9 @@ impl AgentConfig {
             model: model.into(),
             tools: ToolRegistry::with_builtin(),
             working_dir,
-            approval: Arc::new(AllowAllApproval),
+            approval_policy: ApprovalPolicy::Untrusted,
+            approvals_reviewer: ApprovalsReviewer::User,
+            approval_bridge: ApprovalBridge::new(),
             max_steps: DEFAULT_MAX_STEPS,
         }
     }
@@ -61,6 +71,13 @@ pub enum AgentEvent {
         name: String,
         output: Vec<ContentBlock>,
         is_error: bool,
+    },
+    /// 工具调用需要人工审批时发出;宿主须用相同 `id` 通过
+    /// `ApprovalBridge::resolve` 回传决定,否则 agent 会一直 await。
+    ApprovalRequest {
+        id: String,
+        name: String,
+        input: serde_json::Value,
     },
     Finished(String),
 }
@@ -134,23 +151,11 @@ impl Agent {
                 return Ok(response.text);
             }
 
-            // 执行工具并回填结果。
+            // 执行工具并回填结果(含审批决策)。
             for tc in response.tool_calls {
                 let input = serde_json::from_str::<serde_json::Value>(&tc.input)
                     .unwrap_or(serde_json::Value::Null);
-                let output = match self.config.approval.check(&tc.name, &input) {
-                    ApprovalDecision::Deny(reason) => ToolOutput::error(reason),
-                    ApprovalDecision::Allow => {
-                        let ctx = ToolContext {
-                            working_dir: self.config.working_dir.clone(),
-                            approval: Arc::clone(&self.config.approval),
-                        };
-                        match self.config.tools.execute(&tc.name, input, &ctx).await {
-                            Ok(out) => out,
-                            Err(err) => ToolOutput::error(err.to_string()),
-                        }
-                    }
-                };
+                let output = self.execute_tool_call(&tc, input, &mut on_event).await;
                 on_event(AgentEvent::ToolResult {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
@@ -202,6 +207,59 @@ impl Agent {
         }
         Ok(response)
     }
+
+    /// 对单个工具调用做审批决策并执行,返回工具输出。
+    async fn execute_tool_call(
+        &self,
+        tc: &ToolCallBlock,
+        input: serde_json::Value,
+        on_event: &mut impl FnMut(AgentEvent),
+    ) -> ToolOutput {
+        let policy = self.config.approval_policy;
+        let reviewer = self.config.approvals_reviewer;
+
+        // 1. 该调用是否需要审批?
+        if !policy.requires_approval(&tc.name, &input) {
+            return self.run_tool(&tc.name, input).await;
+        }
+
+        // 2. 需要审批 —— 谁来审?
+        let decision = match reviewer {
+            ApprovalsReviewer::AutoReview => {
+                // 留接口:guardian 风格 LLM 自动审暂未实现,保守拒绝(不静默放行)。
+                ApprovalDecision::Deny("auto_review not yet implemented".to_string())
+            }
+            ApprovalsReviewer::User => {
+                // 经桥异步等待宿主(前端 UI / 测试)确认。
+                on_event(AgentEvent::ApprovalRequest {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    input: input.clone(),
+                });
+                let rx = self.config.approval_bridge.register(&tc.id).await;
+                match rx.await {
+                    Ok(decision) => decision,
+                    Err(_) => ApprovalDecision::Deny("approval cancelled".to_string()),
+                }
+            }
+        };
+
+        match decision {
+            ApprovalDecision::Allow => self.run_tool(&tc.name, input).await,
+            ApprovalDecision::Deny(reason) => ToolOutput::error(reason),
+        }
+    }
+
+    /// 真正执行工具(无审批),负责构造 ToolContext 与错误兜底。
+    async fn run_tool(&self, name: &str, input: serde_json::Value) -> ToolOutput {
+        let ctx = ToolContext {
+            working_dir: self.config.working_dir.clone(),
+        };
+        match self.config.tools.execute(name, input, &ctx).await {
+            Ok(out) => out,
+            Err(err) => ToolOutput::error(err.to_string()),
+        }
+    }
 }
 
 fn forward_event(event: GenerateStreamEvent, on_event: &mut impl FnMut(AgentEvent)) {
@@ -217,5 +275,260 @@ fn forward_event(event: GenerateStreamEvent, on_event: &mut impl FnMut(AgentEven
             on_event(AgentEvent::ToolCallDelta { id, partial_input })
         }
         GenerateStreamEvent::ToolCallEnd { id } => on_event(AgentEvent::ToolCallEnd { id }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
+
+    /// 按 `stream_generate` 调用顺序依次返回预设响应的假 provider。
+    struct FakeProvider {
+        responses: tokio::sync::Mutex<VecDeque<GenerateResponse>>,
+    }
+
+    impl FakeProvider {
+        fn new(responses: Vec<GenerateResponse>) -> Self {
+            Self {
+                responses: tokio::sync::Mutex::new(responses.into_iter().collect()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for FakeProvider {
+        async fn generate(&self, _req: GenerateRequest) -> Result<GenerateResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest {
+                message: "FakeProvider only supports stream_generate".to_string(),
+            })
+        }
+
+        async fn stream_generate(
+            &self,
+            _req: GenerateRequest,
+            _on_event: GenerateStreamCallback,
+        ) -> Result<GenerateResponse, ProviderError> {
+            self.responses.lock().await.pop_front().ok_or_else(|| {
+                ProviderError::InvalidRequest {
+                    message: "FakeProvider exhausted".to_string(),
+                }
+            })
+        }
+    }
+
+    fn tool_call_response(id: &str, name: &str, input: serde_json::Value) -> GenerateResponse {
+        GenerateResponse {
+            text: String::new(),
+            reasoning_text: None,
+            usage: None,
+            raw: serde_json::Value::Null,
+            tool_calls: vec![ToolCallBlock {
+                id: id.to_string(),
+                name: name.to_string(),
+                input: input.to_string(),
+                state: ToolCallState::Submitted,
+            }],
+        }
+    }
+
+    fn text_response(text: &str) -> GenerateResponse {
+        GenerateResponse {
+            text: text.to_string(),
+            reasoning_text: None,
+            usage: None,
+            raw: serde_json::Value::Null,
+            tool_calls: Vec::new(),
+        }
+    }
+
+    fn untrusted_user_config(provider: Box<dyn LlmProvider>) -> AgentConfig {
+        let mut config = AgentConfig::new(provider, "fake", PathBuf::from("."));
+        config.approval_policy = ApprovalPolicy::Untrusted;
+        config.approvals_reviewer = ApprovalsReviewer::User;
+        config
+    }
+
+    fn extract_text(blocks: Vec<ContentBlock>) -> String {
+        blocks
+            .into_iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 构造 on_event 闭包:遇到 ApprovalRequest 时用 bridge 自动 resolve(给定决定),
+    /// 并记录是否出现过 ApprovalRequest。返回 (闭包, seen 标志)。
+    fn auto_resolve_on_event(
+        bridge: ApprovalBridge,
+        decision: ApprovalDecision,
+    ) -> (impl FnMut(AgentEvent), Arc<StdMutex<bool>>) {
+        let seen = Arc::new(StdMutex::new(false));
+        let seen_cb = seen.clone();
+        let closure = move |event: AgentEvent| {
+            if let AgentEvent::ApprovalRequest { id, .. } = event {
+                *seen_cb.lock().unwrap() = true;
+                let bridge = bridge.clone();
+                let id = id.clone();
+                let decision = decision.clone();
+                tokio::spawn(async move {
+                    let _ = bridge.resolve(&id, decision).await;
+                });
+            }
+        };
+        (closure, seen)
+    }
+
+    #[tokio::test]
+    async fn untrusted_user_allow_executes_tool_then_finishes() {
+        let bridge = ApprovalBridge::new();
+        let provider = FakeProvider::new(vec![
+            tool_call_response("call-1", "bash", json!({"command": "true"})),
+            text_response("done"),
+        ]);
+        let mut config = untrusted_user_config(Box::new(provider));
+        config.approval_bridge = bridge.clone();
+        let agent = Agent::new(config);
+
+        let (mut on_event, seen) = auto_resolve_on_event(bridge, ApprovalDecision::Allow);
+        let result = agent
+            .run(vec![Message::text(Role::User, "run it")], &mut on_event)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "done");
+        assert!(
+            *seen.lock().unwrap(),
+            "Untrusted+User must request approval before executing"
+        );
+    }
+
+    #[tokio::test]
+    async fn untrusted_user_deny_blocks_tool_execution() {
+        let bridge = ApprovalBridge::new();
+        let provider = FakeProvider::new(vec![
+            tool_call_response("call-1", "bash", json!({"command": "echo SHOULD_NOT_RUN"})),
+            text_response("ok"),
+        ]);
+        let mut config = untrusted_user_config(Box::new(provider));
+        config.approval_bridge = bridge.clone();
+        let agent = Agent::new(config);
+
+        let tool_results: Arc<StdMutex<Vec<(bool, String)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let results_cb = tool_results.clone();
+        let bridge_cb = bridge.clone();
+        let result = agent
+            .run(
+                vec![Message::text(Role::User, "run it")],
+                move |event| match event {
+                    AgentEvent::ApprovalRequest { id, .. } => {
+                        let bridge = bridge_cb.clone();
+                        tokio::spawn(async move {
+                            let _ = bridge
+                                .resolve(&id, ApprovalDecision::Deny("user said no".into()))
+                                .await;
+                        });
+                    }
+                    AgentEvent::ToolResult {
+                        is_error, output, ..
+                    } => {
+                        results_cb
+                            .lock()
+                            .unwrap()
+                            .push((is_error, extract_text(output)));
+                    }
+                    _ => {}
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, "ok");
+        let results = tool_results.lock().unwrap().clone();
+        assert_eq!(results.len(), 1, "expected one tool result");
+        assert!(results[0].0, "denied tool result must be an error");
+        assert!(
+            !results[0].1.contains("SHOULD_NOT_RUN"),
+            "denied command must not have executed"
+        );
+    }
+
+    #[tokio::test]
+    async fn never_policy_runs_tool_directly_without_approval() {
+        let provider = FakeProvider::new(vec![
+            tool_call_response("call-1", "bash", json!({"command": "true"})),
+            text_response("done"),
+        ]);
+        let mut config = AgentConfig::new(Box::new(provider), "fake", PathBuf::from("."));
+        config.approval_policy = ApprovalPolicy::Never;
+        // 不注入有效 bridge:Never 不应触碰它;若误发 ApprovalRequest 会因无 resolve 而卡死,
+        // 测试会在超时/死锁暴露 —— 但这里用默认空 bridge,Never 路径根本不会 await 它。
+        let agent = Agent::new(config);
+
+        let result = agent
+            .run(
+                vec![Message::text(Role::User, "run it")],
+                |event| {
+                    assert!(
+                        !matches!(event, AgentEvent::ApprovalRequest { .. }),
+                        "Never policy must not request approval"
+                    );
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, "done");
+    }
+
+    #[tokio::test]
+    async fn autoreview_reviewer_denies_without_bridge_or_execution() {
+        let provider = FakeProvider::new(vec![
+            tool_call_response("call-1", "bash", json!({"command": "echo SHOULD_NOT_RUN"})),
+            text_response("done"),
+        ]);
+        let mut config = AgentConfig::new(Box::new(provider), "fake", PathBuf::from("."));
+        config.approval_policy = ApprovalPolicy::Untrusted;
+        config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+        let agent = Agent::new(config);
+
+        let tool_results: Arc<StdMutex<Vec<(bool, String)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let results_cb = tool_results.clone();
+        let result = agent
+            .run(
+                vec![Message::text(Role::User, "run it")],
+                move |event| match event {
+                    AgentEvent::ApprovalRequest { .. } => {
+                        panic!("AutoReview must not emit ApprovalRequest");
+                    }
+                    AgentEvent::ToolResult {
+                        is_error, output, ..
+                    } => {
+                        results_cb
+                            .lock()
+                            .unwrap()
+                            .push((is_error, extract_text(output)));
+                    }
+                    _ => {}
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, "done");
+        let results = tool_results.lock().unwrap().clone();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].0, "AutoReview should deny (error result)");
+        assert!(
+            !results[0].1.contains("SHOULD_NOT_RUN"),
+            "AutoReview-denied command must not execute"
+        );
     }
 }

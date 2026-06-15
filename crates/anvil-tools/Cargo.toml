@@ -9,7 +9,7 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "process"] }
+tokio = { workspace = true, features = ["fs", "process", "sync"] }
 
 [dev-dependencies]
 anvil-core = { workspace = true }

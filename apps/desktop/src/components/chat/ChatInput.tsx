@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import { Loader2, Send } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { CheckCircle2, ChevronDown, Loader2, Send, ShieldCheck } from 'lucide-react'
 
 interface ChatInputProps {
   activeProviderName: string
@@ -25,7 +25,9 @@ export function ChatInput({
   onSubmit,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const permissionRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
+  const [permissionOpen, setPermissionOpen] = useState(false)
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -33,6 +35,27 @@ export function ChatInput({
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
   }, [value])
+
+  useEffect(() => {
+    if (!permissionOpen) return
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!permissionRef.current?.contains(event.target as Node)) {
+        setPermissionOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setPermissionOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [permissionOpen])
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return
@@ -71,6 +94,47 @@ export function ChatInput({
         <div className="mx-5 border-t border-stone-200" />
 
         <div className="flex flex-nowrap items-center gap-3 px-5 py-3 max-[720px]:flex-wrap">
+          <div ref={permissionRef} className="relative">
+            <button
+              type="button"
+              className="inline-flex h-10 items-center gap-2 rounded-full bg-stone-100 px-3 text-sm font-medium text-stone-700 transition hover:bg-stone-200"
+              aria-haspopup="menu"
+              aria-expanded={permissionOpen}
+              aria-label="执行权限: 审批权限"
+              onClick={() => setPermissionOpen((open) => !open)}
+            >
+              <ShieldCheck size={15} className="text-orange-600" />
+              <span>审批权限</span>
+              <ChevronDown size={14} className="text-stone-400" />
+            </button>
+
+            {permissionOpen ? (
+              <div
+                role="menu"
+                className="absolute bottom-full left-0 z-30 mb-2 w-[280px] overflow-hidden rounded-xl border border-stone-200 bg-white py-2 shadow-[0_16px_44px_rgba(15,23,42,0.16)]"
+              >
+                <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-stone-400">
+                  执行权限
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-start gap-3 bg-orange-50 px-4 py-3 text-left"
+                  onClick={() => setPermissionOpen(false)}
+                >
+                  <ShieldCheck size={18} className="mt-0.5 shrink-0 text-orange-600" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-slate-900">审批权限</span>
+                    <span className="mt-0.5 block text-xs leading-5 text-stone-500">
+                      工具调用前暂停，等待你确认允许或拒绝。
+                    </span>
+                  </span>
+                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-orange-600" />
+                </button>
+              </div>
+            ) : null}
+          </div>
+
           <div className="min-w-0 flex-1" />
 
           {isSending ? (
