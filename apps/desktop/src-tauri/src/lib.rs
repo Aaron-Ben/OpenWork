@@ -10,7 +10,9 @@ use anvil_providers::{
 use anvil_runtime::{
     Agent, AgentConfig, AgentError, AgentEvent, ApprovalBridge, ApprovalDecision, ApprovalPolicy,
 };
-use anvil_session::{NewMessage, Session, SessionInput, SessionLoadResult, SessionStore, SessionSummary};
+use anvil_session::{
+    NewMessage, Session, SessionInput, SessionLoadResult, SessionStore, SessionSummary,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tokio_util::sync::CancellationToken;
@@ -173,7 +175,9 @@ fn session_create(
     store: tauri::State<'_, SessionStore>,
     input: SessionInput,
 ) -> Result<Session, String> {
-    store.create_session(input).map_err(|error| error.to_string())
+    store
+        .create_session(input)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -185,7 +189,9 @@ fn session_load(
         .load_session(&id)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("session not found: {id}"))?;
-    let messages = store.load_messages(&id).map_err(|error| error.to_string())?;
+    let messages = store
+        .load_messages(&id)
+        .map_err(|error| error.to_string())?;
     Ok(SessionLoadResult { session, messages })
 }
 
@@ -226,6 +232,11 @@ async fn chat_generate_stream(
         .ok_or_else(|| format!("provider not found: {}", request.provider_id))?;
     let provider = build_provider(&config);
 
+    let session = session_store
+        .load_session(&session_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("session not found: {session_id}"))?;
+
     // 从持久化层加载历史(role + parts 直接映射为 agent 的 Message)。
     let stored = session_store
         .load_messages(&session_id)
@@ -241,7 +252,10 @@ async fn chat_generate_stream(
     // 追加本轮用户输入。
     history.push(Message::text(Role::User, &request.user_text));
 
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let working_dir = session
+        .working_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let mut agent_config = AgentConfig::new(provider, request.model, working_dir);
     agent_config.approval_bridge = approval_bridge.inner().clone();
     agent_config.cancel = cancel_registry.register(&request_id);
@@ -253,12 +267,19 @@ async fn chat_generate_stream(
     let event_app = app.clone();
     let event_request_id = request_id.clone();
     let event_session_id = session_id.clone();
+    let event_session_store = session_store.inner().clone();
     let result = agent
         .run(history, move |event| {
-            let _ = event_app.emit(
-                "chat-stream-event",
-                map_agent_event(&event_request_id, &event_session_id, &event),
-            );
+            let payload = map_agent_event(&event_request_id, &event_session_id, &event);
+            if let Ok(value) = serde_json::to_value(&payload) {
+                let _ = event_session_store.append_llm_event(
+                    &event_session_id,
+                    &event_request_id,
+                    payload.event,
+                    value,
+                );
+            }
+            let _ = event_app.emit("chat-stream-event", payload);
         })
         .await;
 
@@ -369,20 +390,53 @@ async fn chat_abort(
 }
 
 /// 把 agent loop 的事件映射成前端可消费的流式 payload。
-fn map_agent_event(request_id: &str, session_id: &str, event: &AgentEvent) -> ChatStreamEventPayload {
+fn map_agent_event(
+    request_id: &str,
+    session_id: &str,
+    event: &AgentEvent,
+) -> ChatStreamEventPayload {
     let mut payload = ChatStreamEventPayload::simple(request_id, session_id, "");
     match event {
         AgentEvent::Step(n) => {
             payload.event = "step";
             payload.step = Some(*n);
         }
+        AgentEvent::LlmStepStart { index } => {
+            payload.event = "llm_step_start";
+            payload.step = Some(*index);
+        }
+        AgentEvent::LlmStepFinish { index, reason, .. } => {
+            payload.event = "llm_step_finish";
+            payload.step = Some(*index);
+            payload.message = Some(reason.clone());
+        }
+        AgentEvent::LlmFinish { reason, .. } => {
+            payload.event = "llm_finish";
+            payload.message = Some(reason.clone());
+        }
+        AgentEvent::TextStart { id } => {
+            payload.event = "text_start";
+            payload.message = Some(id.clone());
+        }
         AgentEvent::TextDelta(delta) => {
             payload.event = "text_delta";
             payload.delta = Some(delta.clone());
         }
+        AgentEvent::TextEnd { id } => {
+            payload.event = "text_end";
+            payload.message = Some(id.clone());
+        }
+        AgentEvent::ReasoningStart { id } => {
+            payload.event = "reasoning_start";
+            payload.message = Some(id.clone());
+        }
         AgentEvent::ReasoningDelta(delta) => {
             payload.event = "reasoning_delta";
             payload.delta = Some(delta.clone());
+        }
+        AgentEvent::ReasoningEnd { id } => {
+            payload.event = "reasoning_end";
+            payload.message = Some(id.clone());
         }
         AgentEvent::ToolCallStart { id, name } => {
             payload.event = "tool_call_start";

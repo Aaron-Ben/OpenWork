@@ -44,8 +44,15 @@ export interface TestResult {
 }
 
 export type ChatStreamEventName =
+  | 'llm_step_start'
+  | 'llm_step_finish'
+  | 'llm_finish'
+  | 'text_start'
   | 'text_delta'
+  | 'text_end'
+  | 'reasoning_start'
   | 'reasoning_delta'
+  | 'reasoning_end'
   | 'step'
   | 'tool_call_start'
   | 'tool_call_delta'

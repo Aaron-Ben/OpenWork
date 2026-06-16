@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anvil_core::ai::{ContentBlock, Role};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -64,6 +64,29 @@ pub struct SessionMessage {
     pub session_id: String,
     pub role: Role,
     pub parts: Vec<ContentBlock>,
+    pub seq: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMessagePart {
+    pub id: String,
+    pub session_id: String,
+    pub message_id: String,
+    pub part_index: i64,
+    pub part: ContentBlock,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEvent {
+    pub id: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub event: String,
+    pub payload: serde_json::Value,
     pub seq: i64,
     pub created_at: i64,
 }
@@ -130,7 +153,27 @@ impl SessionStore {
                seq INTEGER NOT NULL,
                created_at INTEGER NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, seq);",
+             CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, seq);
+             CREATE TABLE IF NOT EXISTS message_parts (
+               id TEXT PRIMARY KEY,
+               session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+               message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+               part_index INTEGER NOT NULL,
+               part_json TEXT NOT NULL,
+               created_at INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_message_parts_message_index
+               ON message_parts(message_id, part_index);
+             CREATE TABLE IF NOT EXISTS llm_events (
+               id TEXT PRIMARY KEY,
+               session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+               request_id TEXT NOT NULL,
+               event TEXT NOT NULL,
+               payload_json TEXT NOT NULL,
+               seq INTEGER NOT NULL,
+               created_at INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_llm_events_session_seq ON llm_events(session_id, seq);",
         )?;
         Ok(())
     }
@@ -225,8 +268,7 @@ impl SessionStore {
         let rows = stmt.query_map(params![session_id], |row| {
             let role_str: String = row.get(2)?;
             let parts_json: String = row.get(3)?;
-            let parts: Vec<ContentBlock> =
-                serde_json::from_str(&parts_json).unwrap_or_default();
+            let parts: Vec<ContentBlock> = serde_json::from_str(&parts_json).unwrap_or_default();
             Ok(SessionMessage {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -313,8 +355,25 @@ impl SessionStore {
             tx.execute(
                 "INSERT INTO messages (id, session_id, role, parts_json, seq, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, session_id, role_to_str(msg.role), parts_json, next_seq, now],
+                params![
+                    id,
+                    session_id,
+                    role_to_str(msg.role),
+                    parts_json,
+                    next_seq,
+                    now
+                ],
             )?;
+            for (part_index, part) in msg.parts.iter().enumerate() {
+                let part_id = generate_id();
+                let part_json = serde_json::to_string(part)?;
+                tx.execute(
+                    "INSERT INTO message_parts
+                       (id, session_id, message_id, part_index, part_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![part_id, session_id, id, part_index as i64, part_json, now],
+                )?;
+            }
             out.push(SessionMessage {
                 id,
                 session_id: session_id.to_string(),
@@ -332,6 +391,60 @@ impl SessionStore {
         )?;
         tx.commit()?;
         Ok(out)
+    }
+
+    pub fn append_llm_event(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        event: &str,
+        payload: serde_json::Value,
+    ) -> Result<SessionEvent, SessionError> {
+        let now = now_secs();
+        let mut conn = self.conn.lock().expect("session store mutex poisoned");
+        let tx = conn.transaction()?;
+
+        let session_exists: bool = tx
+            .query_row(
+                "SELECT 1 FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some();
+        if !session_exists {
+            return Err(SessionError::NotFound {
+                id: session_id.to_string(),
+            });
+        }
+
+        let max_seq: Option<i64> = tx
+            .query_row(
+                "SELECT MAX(seq) FROM llm_events WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let seq = max_seq.unwrap_or(0) + 1;
+        let id = generate_id();
+        let payload_json = serde_json::to_string(&payload)?;
+        tx.execute(
+            "INSERT INTO llm_events
+               (id, session_id, request_id, event, payload_json, seq, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, session_id, request_id, event, payload_json, seq, now],
+        )?;
+        tx.commit()?;
+        Ok(SessionEvent {
+            id,
+            session_id: session_id.to_string(),
+            request_id: request_id.to_string(),
+            event: event.to_string(),
+            payload,
+            seq,
+            created_at: now,
+        })
     }
 }
 
@@ -580,6 +693,65 @@ mod tests {
     }
 
     #[test]
+    fn append_messages_also_writes_message_parts() {
+        let path = temp_db();
+        let store = SessionStore::open(&path).unwrap();
+        let session = store.create_session(sample_input()).unwrap();
+        let appended = store
+            .append_messages(
+                &session.id,
+                vec![NewMessage {
+                    role: Role::Assistant,
+                    parts: vec![
+                        ContentBlock::thinking("think"),
+                        ContentBlock::text("answer"),
+                    ],
+                }],
+            )
+            .unwrap();
+
+        let conn = store.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM message_parts WHERE message_id = ?1",
+                params![appended[0].id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        drop(conn);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn append_llm_event_assigns_sequential_seq() {
+        let path = temp_db();
+        let store = SessionStore::open(&path).unwrap();
+        let session = store.create_session(sample_input()).unwrap();
+
+        let first = store
+            .append_llm_event(
+                &session.id,
+                "req-1",
+                "text_delta",
+                serde_json::json!({"delta": "a"}),
+            )
+            .unwrap();
+        let second = store
+            .append_llm_event(
+                &session.id,
+                "req-1",
+                "text_delta",
+                serde_json::json!({"delta": "b"}),
+            )
+            .unwrap();
+
+        assert_eq!(first.seq, 1);
+        assert_eq!(second.seq, 2);
+        cleanup(&path);
+    }
+
+    #[test]
     fn rename_updates_title() {
         let path = temp_db();
         let store = SessionStore::open(&path).unwrap();
@@ -587,7 +759,10 @@ mod tests {
 
         let renamed = store.rename_session(&session.id, "Renamed").unwrap();
         assert_eq!(renamed.title, "Renamed");
-        assert_eq!(store.load_session(&session.id).unwrap().unwrap().title, "Renamed");
+        assert_eq!(
+            store.load_session(&session.id).unwrap().unwrap().title,
+            "Renamed"
+        );
 
         assert!(matches!(
             store.rename_session("nonexistent", "x"),

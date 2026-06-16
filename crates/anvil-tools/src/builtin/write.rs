@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::builtin::resolve;
 use crate::tool::{Tool, ToolContext, ToolOutput};
+use crate::{AccessKind, builtin::resolve};
 
 #[derive(Default)]
 pub struct Write;
@@ -36,6 +36,9 @@ impl Tool for Write {
             return ToolOutput::error("missing or invalid 'content' argument");
         };
         let resolved = resolve(&ctx.working_dir, path);
+        if let Err(message) = ctx.check_path(&resolved, AccessKind::Write) {
+            return ToolOutput::error(message);
+        }
         if let Some(parent) = resolved.parent()
             && let Err(err) = tokio::fs::create_dir_all(parent).await
         {
@@ -47,10 +50,7 @@ impl Tool for Write {
                 content.len(),
                 resolved.display()
             )),
-            Err(err) => ToolOutput::error(format!(
-                "failed to write {}: {err}",
-                resolved.display()
-            )),
+            Err(err) => ToolOutput::error(format!("failed to write {}: {err}", resolved.display())),
         }
     }
 }

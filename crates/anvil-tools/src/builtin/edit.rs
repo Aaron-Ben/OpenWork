@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
-use crate::builtin::resolve;
 use crate::tool::{Tool, ToolContext, ToolOutput};
+use crate::{AccessKind, builtin::resolve};
 
 /// 精确文本编辑工具:用 `newString` 替换文件中唯一出现的 `oldString`。
 /// `oldString == ""` 表示新建文件(已存在则拒绝)。`replaceAll: true` 替换全部。
@@ -46,9 +46,15 @@ impl Tool for Edit {
         let Some(new) = input.get("newString").and_then(Value::as_str) else {
             return ToolOutput::error("missing or invalid 'newString' argument");
         };
-        let replace_all = input.get("replaceAll").and_then(Value::as_bool).unwrap_or(false);
+        let replace_all = input
+            .get("replaceAll")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let resolved = resolve(&ctx.working_dir, path);
+        if let Err(message) = ctx.check_path(&resolved, AccessKind::Write) {
+            return ToolOutput::error(message);
+        }
         match apply_edit(&resolved, old, new, replace_all).await {
             Ok(message) => ToolOutput::text(message),
             Err(message) => ToolOutput::error(message),
@@ -191,9 +197,7 @@ mod tests {
     async fn not_found_errors() {
         let path = temp_file();
         std::fs::write(&path, "hello").unwrap();
-        let err = apply_edit(&path, "missing", "x", false)
-            .await
-            .unwrap_err();
+        let err = apply_edit(&path, "missing", "x", false).await.unwrap_err();
         assert!(err.contains("not found"));
         let _ = std::fs::remove_file(&path);
     }

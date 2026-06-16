@@ -71,7 +71,17 @@ export function applyEvent(
         output: [{ type: 'text', text: payload.toolOutput ?? '' }],
         state: payload.isError ? 'error' : 'success',
       }
-      return mapAssistant(base, requestId, (item) => ({ ...item, parts: [...item.parts, result] }))
+      return mapAssistant(base, requestId, (item) => ({
+        ...item,
+        parts: [
+          ...item.parts.map((part) =>
+            part.type === 'tool_call' && part.id === id
+              ? ({ ...part, state: 'finished' } satisfies ContentBlock)
+              : part,
+          ),
+          result,
+        ],
+      }))
     }
     case 'error': {
       return mapAssistant(base, requestId, (item) => ({

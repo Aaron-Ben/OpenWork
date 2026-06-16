@@ -241,14 +241,50 @@ pub struct GenerateResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GenerateStreamEvent {
-    TextDelta { delta: String },
-    ReasoningDelta { delta: String },
+    StepStart {
+        index: usize,
+    },
+    StepFinish {
+        index: usize,
+        reason: String,
+        usage: Option<TokenUsage>,
+    },
+    Finish {
+        reason: String,
+        usage: Option<TokenUsage>,
+    },
+    TextStart {
+        id: String,
+    },
+    TextDelta {
+        delta: String,
+    },
+    TextEnd {
+        id: String,
+    },
+    ReasoningStart {
+        id: String,
+    },
+    ReasoningDelta {
+        delta: String,
+    },
+    ReasoningEnd {
+        id: String,
+    },
     /// 工具调用开始:模型给出了工具 `id` 与 `name`(参数可能随后以增量到达)。
-    ToolCallStart { id: String, name: String },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
     /// 工具调用参数增量:一段 JSON 片段,需按 `id` 拼接成完整参数字符串。
-    ToolCallDelta { id: String, partial_input: String },
+    ToolCallDelta {
+        id: String,
+        partial_input: String,
+    },
     /// 工具调用结束:`id` 的参数已全部到达。
-    ToolCallEnd { id: String },
+    ToolCallEnd {
+        id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

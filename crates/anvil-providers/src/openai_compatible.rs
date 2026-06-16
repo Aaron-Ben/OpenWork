@@ -1,6 +1,6 @@
 use anvil_core::ai::{
     GenerateRequest, GenerateResponse, GenerateStreamCallback, GenerateStreamEvent, LlmProvider,
-    ProviderError, ToolCallBlock, ToolCallState,
+    ProviderError,
 };
 use async_trait::async_trait;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
@@ -14,6 +14,7 @@ use crate::{
         response_text_from_chat_completion, tool_calls_from_chat_completion, usage_from_openai,
     },
     sse::consume_sse_response,
+    tool_stream::ToolStream,
 };
 
 #[derive(Debug, Clone)]
@@ -171,7 +172,7 @@ impl LlmProvider for OpenAiCompatibleChatProvider {
 
         let mut text = String::new();
         let mut reasoning_text = String::new();
-        let mut acc = ToolCallAccumulator::new();
+        let mut tools = ToolStream::new();
         let raw_events = consume_sse_response(response, |event| {
             if let Some(delta) = chat_delta(event) {
                 text.push_str(&delta);
@@ -190,7 +191,7 @@ impl LlmProvider for OpenAiCompatibleChatProvider {
                 .and_then(Value::as_array)
             {
                 for tool_call in tool_call_deltas {
-                    for ev in acc.on_delta(tool_call) {
+                    for ev in tools.append_openai_chat_delta(tool_call) {
                         on_event(ev);
                     }
                 }
@@ -199,10 +200,12 @@ impl LlmProvider for OpenAiCompatibleChatProvider {
         })
         .await?;
 
-        for ev in acc.drain_ends() {
+        for ev in tools.drain_ends() {
             on_event(ev);
         }
-        let tool_calls = acc.finish();
+        let tool_calls = tools
+            .finish()
+            .map_err(|message| ProviderError::InvalidRequest { message })?;
 
         Ok(GenerateResponse {
             text,
@@ -246,150 +249,10 @@ pub(crate) fn chat_reasoning_delta(event: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// 流式 tool call 累积状态:按 OpenAI 的 `index` 跨 chunk 拼接 id/name/arguments。
-struct AccumState {
-    id: Option<String>,
-    name: Option<String>,
-    input: String,
-    started: bool,
-    stable_id: String,
-}
-
-struct ToolCallAccumulator {
-    by_index: Vec<(u32, AccumState)>,
-}
-
-impl ToolCallAccumulator {
-    fn new() -> Self {
-        Self {
-            by_index: Vec::new(),
-        }
-    }
-
-    fn slot(&mut self, index: u32) -> &mut AccumState {
-        let pos = self.by_index.iter().position(|(i, _)| *i == index);
-        match pos {
-            Some(p) => &mut self.by_index[p].1,
-            None => {
-                self.by_index.push((
-                    index,
-                    AccumState {
-                        id: None,
-                        name: None,
-                        input: String::new(),
-                        started: false,
-                        stable_id: String::new(),
-                    },
-                ));
-                &mut self.by_index.last_mut().expect("just pushed").1
-            }
-        }
-    }
-
-    /// 处理一个 `delta.tool_calls` 项,返回需要 emit 的 Start/Delta 事件。
-    fn on_delta(&mut self, tc: &Value) -> Vec<GenerateStreamEvent> {
-        let mut events = Vec::new();
-        let index = tc
-            .get("index")
-            .and_then(Value::as_u64)
-            .map(|i| i as u32)
-            .unwrap_or(0);
-
-        let new_id = tc.get("id").and_then(Value::as_str).map(String::from);
-        let new_name = tc
-            .get("function")
-            .and_then(|f| f.get("name"))
-            .and_then(Value::as_str)
-            .map(String::from);
-        let args_delta = tc
-            .get("function")
-            .and_then(|f| f.get("arguments"))
-            .and_then(Value::as_str)
-            .map(String::from);
-
-        let slot = self.slot(index);
-        if let Some(id) = new_id {
-            slot.id = Some(id);
-        }
-        if let Some(name) = new_name {
-            slot.name = Some(name);
-        }
-
-        // 首次 name 已知时 emit Start,并固定 stable_id(优先模型给的 id,否则用 index 生成)。
-        if !slot.started && slot.name.is_some() {
-            let stable_id = slot
-                .id
-                .clone()
-                .unwrap_or_else(|| format!("call_{}", index));
-            let name = slot.name.clone().expect("name is some");
-            slot.stable_id = stable_id.clone();
-            slot.started = true;
-            events.push(GenerateStreamEvent::ToolCallStart {
-                id: stable_id,
-                name,
-            });
-        }
-
-        // 参数增量:已 started 才 emit Delta,否则仅累积(防止 args 早于 name 到达)。
-        if let Some(args) = args_delta {
-            slot.input.push_str(&args);
-            if slot.started {
-                events.push(GenerateStreamEvent::ToolCallDelta {
-                    id: slot.stable_id.clone(),
-                    partial_input: args,
-                });
-            }
-        }
-
-        events
-    }
-
-    /// 流结束时为每个已开始的 tool call emit End 事件。
-    fn drain_ends(&self) -> Vec<GenerateStreamEvent> {
-        self.by_index
-            .iter()
-            .filter_map(|(_, state)| {
-                if state.started {
-                    Some(GenerateStreamEvent::ToolCallEnd {
-                        id: state.stable_id.clone(),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// 汇总成 ToolCallBlock(按 index 顺序)。
-    fn finish(self) -> Vec<ToolCallBlock> {
-        self.by_index
-            .into_iter()
-            .map(|(index, state)| {
-                let id = if state.stable_id.is_empty() {
-                    state.id.unwrap_or_else(|| format!("call_{}", index))
-                } else {
-                    state.stable_id
-                };
-                let name = state.name.unwrap_or_default();
-                let input = if state.input.is_empty() {
-                    "{}".to_string()
-                } else {
-                    state.input
-                };
-                ToolCallBlock {
-                    id,
-                    name,
-                    input,
-                    state: ToolCallState::Submitted,
-                }
-            })
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool_stream::ToolStream;
     use anvil_core::ai::{GenerateRequest, Message, Role};
 
     #[test]
@@ -533,16 +396,16 @@ mod tests {
 
     #[test]
     fn accumulates_streaming_tool_calls() {
-        let mut acc = ToolCallAccumulator::new();
+        let mut acc = ToolStream::new();
 
         // chunk 1:index 0 + id + name + 部分 args
-        let mut events = acc.on_delta(&json!({
+        let mut events = acc.append_openai_chat_delta(&json!({
             "index": 0,
             "id": "call_1",
             "function": { "name": "read", "arguments": "{\"path\":" }
         }));
         // chunk 2:更多 args(同一 index)
-        events.extend(acc.on_delta(&json!({
+        events.extend(acc.append_openai_chat_delta(&json!({
             "index": 0,
             "function": { "arguments": "\"Cargo.toml\"}" }
         })));
@@ -561,7 +424,7 @@ mod tests {
         let ends = acc.drain_ends();
         assert_eq!(ends.len(), 1);
 
-        let tool_calls = acc.finish();
+        let tool_calls = acc.finish().unwrap();
         assert_eq!(tool_calls.len(), 1);
         assert_eq!(tool_calls[0].id, "call_1");
         assert_eq!(tool_calls[0].name, "read");

@@ -2,9 +2,13 @@
 
 mod approval;
 mod builtin;
+mod permissions;
 mod registry;
 mod tool;
 
 pub use approval::{ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer};
+pub use permissions::{
+    AccessKind, FileSystemMode, FileSystemPermissions, NetworkMode, PermissionProfile,
+};
 pub use registry::ToolRegistry;
 pub use tool::{Tool, ToolContext, ToolError, ToolOutput};

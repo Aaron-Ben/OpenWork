@@ -4,6 +4,8 @@ use anvil_core::ai::{ContentBlock, ToolDefinition};
 use async_trait::async_trait;
 use thiserror::Error;
 
+use crate::{AccessKind, PermissionProfile};
+
 /// 工具契约:可被 agent 调用的能力单元。
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -28,6 +30,14 @@ pub trait Tool: Send + Sync {
 /// 审批不再由工具内部处理,统一收归编排层(agent loop);能进入 `execute` 即已获批准。
 pub struct ToolContext {
     pub working_dir: PathBuf,
+    pub permissions: PermissionProfile,
+    pub cancel: tokio_util::sync::CancellationToken,
+}
+
+impl ToolContext {
+    pub fn check_path(&self, path: &std::path::Path, kind: AccessKind) -> Result<(), String> {
+        self.permissions.allows(path, kind)
+    }
 }
 
 /// 工具执行结果。`content` 复用 ContentBlock(通常用 Text block 承载文本输出)。

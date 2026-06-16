@@ -3,11 +3,14 @@ use async_trait::async_trait;
 use globset::Glob as GlobSpec;
 use ignore::WalkBuilder;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
-use crate::builtin::{resolve, truncate_output};
 use crate::tool::{Tool, ToolContext, ToolOutput};
+use crate::{
+    AccessKind,
+    builtin::{resolve, truncate_output},
+};
 
 const DEFAULT_MAX_RESULTS: usize = 200;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
@@ -71,6 +74,9 @@ impl Tool for Grep {
         };
 
         let root = resolve(&ctx.working_dir, path);
+        if let Err(message) = ctx.check_path(&root, AccessKind::Read) {
+            return ToolOutput::error(message);
+        }
         let mode = output_mode.to_string();
 
         let result = tokio::task::spawn_blocking(move || {

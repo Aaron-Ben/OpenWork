@@ -5,13 +5,13 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use anvil_core::ai::{
-    ContentBlock, GenerateRequest, GenerateResponse, GenerateStreamCallback,
-    GenerateStreamEvent, LlmProvider, Message, ProviderError, Role, ToolCallBlock, ToolCallState,
-    ToolResultBlock, ToolResultState,
+    ContentBlock, GenerateRequest, GenerateResponse, GenerateStreamCallback, GenerateStreamEvent,
+    LlmProvider, Message, ProviderError, Role, ToolCallBlock, ToolCallState, ToolResultBlock,
+    ToolResultState,
 };
 use anvil_tools::{
-    ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer, ToolContext, ToolOutput,
-    ToolRegistry,
+    ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer, PermissionProfile,
+    ToolContext, ToolOutput, ToolRegistry,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -40,6 +40,8 @@ pub struct AgentConfig {
     /// 取消令牌:外部触发 `cancel()` 后,agent loop 在下一个 await 点终止并返回
     /// [`AgentError::Cancelled`],携带截止当前的对话轨迹。
     pub cancel: CancellationToken,
+    /// 工具执行权限数据模型。当前用于应用层路径检查;未来可映射到真实沙箱。
+    pub permission_profile: PermissionProfile,
     pub max_steps: usize,
 }
 
@@ -55,11 +57,12 @@ impl AgentConfig {
             provider,
             model: model.into(),
             tools: ToolRegistry::with_builtin(),
-            working_dir,
+            working_dir: working_dir.clone(),
             approval_policy: ApprovalPolicy::Untrusted,
             approvals_reviewer: ApprovalsReviewer::User,
             approval_bridge: ApprovalBridge::new(),
             cancel: CancellationToken::new(),
+            permission_profile: PermissionProfile::workspace_write(working_dir),
             max_steps: DEFAULT_MAX_STEPS,
         }
     }
@@ -69,11 +72,43 @@ impl AgentConfig {
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Step(usize),
+    LlmStepStart {
+        index: usize,
+    },
+    LlmStepFinish {
+        index: usize,
+        reason: String,
+        usage: Option<anvil_core::ai::TokenUsage>,
+    },
+    LlmFinish {
+        reason: String,
+        usage: Option<anvil_core::ai::TokenUsage>,
+    },
+    TextStart {
+        id: String,
+    },
     TextDelta(String),
+    TextEnd {
+        id: String,
+    },
+    ReasoningStart {
+        id: String,
+    },
     ReasoningDelta(String),
-    ToolCallStart { id: String, name: String },
-    ToolCallDelta { id: String, partial_input: String },
-    ToolCallEnd { id: String },
+    ReasoningEnd {
+        id: String,
+    },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallDelta {
+        id: String,
+        partial_input: String,
+    },
+    ToolCallEnd {
+        id: String,
+    },
     ToolResult {
         id: String,
         name: String,
@@ -89,7 +124,9 @@ pub enum AgentEvent {
     },
     Finished(String),
     /// 检测到 doom loop(连续重复同名同参工具调用),agent 即将停止。
-    DoomLoopDetected { repeated: String },
+    DoomLoopDetected {
+        repeated: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -213,13 +250,17 @@ impl Agent {
                     on_event(AgentEvent::DoomLoopDetected {
                         repeated: tc.name.clone(),
                     });
-                    return Err(AgentError::DoomLoop(tc.name.clone(), messages[1..].to_vec()));
+                    return Err(AgentError::DoomLoop(
+                        tc.name.clone(),
+                        messages[1..].to_vec(),
+                    ));
                 }
 
                 let output = self.execute_tool_call(&tc, input, &mut on_event).await;
                 if self.config.cancel.is_cancelled() {
                     return Err(AgentError::Cancelled(messages[1..].to_vec()));
                 }
+                mark_tool_call_finished(&mut messages, &tc.id);
                 on_event(AgentEvent::ToolResult {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
@@ -258,18 +299,46 @@ impl Agent {
 
         let provider_fut = self.config.provider.stream_generate(req, callback);
         tokio::pin!(provider_fut);
+        let mut lifecycle = StreamLifecycle::new();
+        forward_event(
+            GenerateStreamEvent::StepStart { index: 0 },
+            on_event,
+            &mut lifecycle,
+        );
 
         let response = loop {
             tokio::select! {
                 biased;
                 _ = self.config.cancel.cancelled() => return Err(AgentError::Cancelled(Vec::new())),
-                Some(event) = rx.recv() => forward_event(event, on_event),
+                Some(event) = rx.recv() => forward_event(event, on_event, &mut lifecycle),
                 result = &mut provider_fut => break result?,
             }
         };
         while let Ok(event) = rx.try_recv() {
-            forward_event(event, on_event);
+            forward_event(event, on_event, &mut lifecycle);
         }
+        lifecycle.close_open(on_event);
+        let reason = if response.tool_calls.is_empty() {
+            "stop"
+        } else {
+            "tool_calls"
+        }
+        .to_string();
+        let usage = response.usage;
+        forward_event(
+            GenerateStreamEvent::StepFinish {
+                index: 0,
+                reason: reason.clone(),
+                usage,
+            },
+            on_event,
+            &mut lifecycle,
+        );
+        forward_event(
+            GenerateStreamEvent::Finish { reason, usage },
+            on_event,
+            &mut lifecycle,
+        );
         Ok(response)
     }
 
@@ -325,6 +394,8 @@ impl Agent {
     async fn run_tool(&self, name: &str, input: serde_json::Value) -> ToolOutput {
         let ctx = ToolContext {
             working_dir: self.config.working_dir.clone(),
+            permissions: self.config.permission_profile.clone(),
+            cancel: self.config.cancel.clone(),
         };
         tokio::select! {
             biased;
@@ -337,11 +408,103 @@ impl Agent {
     }
 }
 
-fn forward_event(event: GenerateStreamEvent, on_event: &mut impl FnMut(AgentEvent)) {
+fn mark_tool_call_finished(messages: &mut [Message], id: &str) {
+    for message in messages.iter_mut().rev() {
+        if message.role != Role::Assistant {
+            continue;
+        }
+        for block in &mut message.content {
+            if let ContentBlock::ToolCall(tool_call) = block
+                && tool_call.id == id
+            {
+                tool_call.state = ToolCallState::Finished;
+                return;
+            }
+        }
+    }
+}
+
+struct StreamLifecycle {
+    text_open: bool,
+    reasoning_open: bool,
+}
+
+impl StreamLifecycle {
+    fn new() -> Self {
+        Self {
+            text_open: false,
+            reasoning_open: false,
+        }
+    }
+
+    fn close_open(&mut self, on_event: &mut impl FnMut(AgentEvent)) {
+        if self.reasoning_open {
+            self.reasoning_open = false;
+            on_event(AgentEvent::ReasoningEnd {
+                id: "reasoning-0".to_string(),
+            });
+        }
+        if self.text_open {
+            self.text_open = false;
+            on_event(AgentEvent::TextEnd {
+                id: "text-0".to_string(),
+            });
+        }
+    }
+}
+
+fn forward_event(
+    event: GenerateStreamEvent,
+    on_event: &mut impl FnMut(AgentEvent),
+    lifecycle: &mut StreamLifecycle,
+) {
     match event {
-        GenerateStreamEvent::TextDelta { delta } => on_event(AgentEvent::TextDelta(delta)),
+        GenerateStreamEvent::StepStart { index } => on_event(AgentEvent::LlmStepStart { index }),
+        GenerateStreamEvent::StepFinish {
+            index,
+            reason,
+            usage,
+        } => on_event(AgentEvent::LlmStepFinish {
+            index,
+            reason,
+            usage,
+        }),
+        GenerateStreamEvent::Finish { reason, usage } => {
+            on_event(AgentEvent::LlmFinish { reason, usage })
+        }
+        GenerateStreamEvent::TextStart { id } => {
+            lifecycle.text_open = true;
+            on_event(AgentEvent::TextStart { id });
+        }
+        GenerateStreamEvent::TextDelta { delta } => {
+            if !lifecycle.text_open {
+                lifecycle.text_open = true;
+                on_event(AgentEvent::TextStart {
+                    id: "text-0".to_string(),
+                });
+            }
+            on_event(AgentEvent::TextDelta(delta));
+        }
+        GenerateStreamEvent::TextEnd { id } => {
+            lifecycle.text_open = false;
+            on_event(AgentEvent::TextEnd { id });
+        }
+        GenerateStreamEvent::ReasoningStart { id } => {
+            lifecycle.reasoning_open = true;
+            on_event(AgentEvent::ReasoningStart { id });
+        }
         GenerateStreamEvent::ReasoningDelta { delta } => {
+            if !lifecycle.reasoning_open {
+                lifecycle.reasoning_open = true;
+                on_event(AgentEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
             on_event(AgentEvent::ReasoningDelta(delta))
+        }
+        GenerateStreamEvent::ReasoningEnd { id } => {
+            lifecycle.reasoning_open = false;
+            on_event(AgentEvent::ReasoningEnd { id });
         }
         GenerateStreamEvent::ToolCallStart { id, name } => {
             on_event(AgentEvent::ToolCallStart { id, name })
@@ -400,11 +563,13 @@ mod tests {
             _req: GenerateRequest,
             _on_event: GenerateStreamCallback,
         ) -> Result<GenerateResponse, ProviderError> {
-            self.responses.lock().await.pop_front().ok_or_else(|| {
-                ProviderError::InvalidRequest {
+            self.responses
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| ProviderError::InvalidRequest {
                     message: "FakeProvider exhausted".to_string(),
-                }
-            })
+                })
         }
     }
 
@@ -560,15 +725,12 @@ mod tests {
         let agent = Agent::new(config);
 
         let result = agent
-            .run(
-                vec![Message::text(Role::User, "run it")],
-                |event| {
-                    assert!(
-                        !matches!(event, AgentEvent::ApprovalRequest { .. }),
-                        "Never policy must not request approval"
-                    );
-                },
-            )
+            .run(vec![Message::text(Role::User, "run it")], |event| {
+                assert!(
+                    !matches!(event, AgentEvent::ApprovalRequest { .. }),
+                    "Never policy must not request approval"
+                );
+            })
             .await
             .unwrap();
 
@@ -640,10 +802,12 @@ mod tests {
         assert_eq!(result.messages.len(), 4);
         assert_eq!(result.messages[0].role, Role::User);
         assert_eq!(result.messages[1].role, Role::Assistant);
-        assert!(result.messages[1]
-            .content
-            .iter()
-            .any(|block| matches!(block, ContentBlock::ToolCall(_))));
+        assert!(
+            result.messages[1]
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolCall(_)))
+        );
         assert_eq!(result.messages[2].role, Role::Tool);
         assert_eq!(result.messages[3].role, Role::Assistant);
         assert_eq!(extract_text(result.messages[3].content.clone()), "done");

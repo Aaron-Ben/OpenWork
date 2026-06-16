@@ -12,6 +12,7 @@ mod qwen;
 mod serde_helpers;
 mod sse;
 mod store;
+mod tool_stream;
 
 pub use anthropic::AnthropicProvider;
 pub use config::HttpProviderConfig;

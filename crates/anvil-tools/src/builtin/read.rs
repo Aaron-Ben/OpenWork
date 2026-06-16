@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::builtin::resolve;
 use crate::tool::{Tool, ToolContext, ToolOutput};
+use crate::{AccessKind, builtin::resolve};
 
 const MAX_BYTES: usize = 1024 * 1024;
 
@@ -37,6 +37,9 @@ impl Tool for Read {
             return ToolOutput::error("missing or invalid 'path' argument");
         };
         let resolved = resolve(&ctx.working_dir, path);
+        if let Err(message) = ctx.check_path(&resolved, AccessKind::Read) {
+            return ToolOutput::error(message);
+        }
         match tokio::fs::read_to_string(&resolved).await {
             Ok(content) => {
                 if content.len() > MAX_BYTES {
@@ -54,10 +57,7 @@ impl Tool for Read {
                     .join("\n");
                 ToolOutput::text(numbered)
             }
-            Err(err) => ToolOutput::error(format!(
-                "failed to read {}: {err}",
-                resolved.display()
-            )),
+            Err(err) => ToolOutput::error(format!("failed to read {}: {err}", resolved.display())),
         }
     }
 }

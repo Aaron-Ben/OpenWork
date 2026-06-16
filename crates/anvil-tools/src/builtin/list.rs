@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::builtin::resolve;
 use crate::tool::{Tool, ToolContext, ToolOutput};
+use crate::{AccessKind, builtin::resolve};
 
 #[derive(Default)]
 pub struct List;
@@ -29,13 +29,13 @@ impl Tool for List {
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolOutput {
         let path = input.get("path").and_then(Value::as_str).unwrap_or(".");
         let resolved = resolve(&ctx.working_dir, path);
+        if let Err(message) = ctx.check_path(&resolved, AccessKind::Read) {
+            return ToolOutput::error(message);
+        }
         let mut entries = match tokio::fs::read_dir(&resolved).await {
             Ok(rd) => rd,
             Err(err) => {
-                return ToolOutput::error(format!(
-                    "failed to list {}: {err}",
-                    resolved.display()
-                ))
+                return ToolOutput::error(format!("failed to list {}: {err}", resolved.display()));
             }
         };
         let mut names = Vec::new();
