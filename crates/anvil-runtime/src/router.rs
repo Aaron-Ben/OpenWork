@@ -90,6 +90,14 @@ pub enum AgentError {
     MaxStepsExceeded(usize),
 }
 
+/// `Agent::run` 的返回:最终文本回答 + 完整对话轨迹(不含 system prompt)。
+/// 轨迹包含传入的 history 与本轮新增的 assistant/tool 消息,调用方可据此持久化。
+#[derive(Debug, Clone)]
+pub struct RunResult {
+    pub text: String,
+    pub messages: Vec<Message>,
+}
+
 pub struct Agent {
     config: AgentConfig,
 }
@@ -105,7 +113,7 @@ impl Agent {
         &self,
         history: Vec<Message>,
         mut on_event: impl FnMut(AgentEvent),
-    ) -> Result<String, AgentError> {
+    ) -> Result<RunResult, AgentError> {
         let mut messages = vec![Message::text(Role::System, AGENT_SYSTEM_PROMPT)];
         messages.extend(history);
         let tool_defs = self.config.tools.definitions();
@@ -125,8 +133,14 @@ impl Agent {
 
             let response = self.stream_once(req, &mut on_event).await?;
 
-            // 记录 assistant 消息(text + tool calls)。
+            // 记录 assistant 消息(thinking? + text + tool calls)。
+            // thinking 放最前,与流式渲染顺序一致;落库后才不会在 reload 后丢失。
             let mut assistant_content: Vec<ContentBlock> = Vec::new();
+            if let Some(reasoning) = &response.reasoning_text {
+                if !reasoning.is_empty() {
+                    assistant_content.push(ContentBlock::thinking(reasoning.clone()));
+                }
+            }
             if !response.text.is_empty() {
                 assistant_content.push(ContentBlock::text(response.text.clone()));
             }
@@ -145,10 +159,13 @@ impl Agent {
                 });
             }
 
-            // 无工具调用 → 结束。
+            // 无工具调用 → 结束。返回完整轨迹(跳过 system prompt)。
             if response.tool_calls.is_empty() {
                 on_event(AgentEvent::Finished(response.text.clone()));
-                return Ok(response.text);
+                return Ok(RunResult {
+                    text: response.text,
+                    messages: messages[1..].to_vec(),
+                });
             }
 
             // 执行工具并回填结果(含审批决策)。
@@ -403,7 +420,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result, "done");
+        assert_eq!(result.text, "done");
         assert!(
             *seen.lock().unwrap(),
             "Untrusted+User must request approval before executing"
@@ -450,7 +467,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result, "ok");
+        assert_eq!(result.text, "ok");
         let results = tool_results.lock().unwrap().clone();
         assert_eq!(results.len(), 1, "expected one tool result");
         assert!(results[0].0, "denied tool result must be an error");
@@ -485,7 +502,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result, "done");
+        assert_eq!(result.text, "done");
     }
 
     #[tokio::test]
@@ -522,7 +539,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result, "done");
+        assert_eq!(result.text, "done");
         let results = tool_results.lock().unwrap().clone();
         assert_eq!(results.len(), 1);
         assert!(results[0].0, "AutoReview should deny (error result)");
@@ -530,5 +547,36 @@ mod tests {
             !results[0].1.contains("SHOULD_NOT_RUN"),
             "AutoReview-denied command must not execute"
         );
+    }
+
+    #[tokio::test]
+    async fn run_returns_full_message_trace() {
+        let bridge = ApprovalBridge::new();
+        let provider = FakeProvider::new(vec![
+            tool_call_response("call-1", "bash", json!({"command": "true"})),
+            text_response("done"),
+        ]);
+        let mut config = untrusted_user_config(Box::new(provider));
+        config.approval_bridge = bridge.clone();
+        let agent = Agent::new(config);
+
+        let (mut on_event, _seen) = auto_resolve_on_event(bridge, ApprovalDecision::Allow);
+        let result = agent
+            .run(vec![Message::text(Role::User, "run it")], &mut on_event)
+            .await
+            .unwrap();
+
+        // user + assistant(tool call) + tool(result) + assistant(text)。
+        assert_eq!(result.messages.len(), 4);
+        assert_eq!(result.messages[0].role, Role::User);
+        assert_eq!(result.messages[1].role, Role::Assistant);
+        assert!(result.messages[1]
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::ToolCall(_))));
+        assert_eq!(result.messages[2].role, Role::Tool);
+        assert_eq!(result.messages[3].role, Role::Assistant);
+        assert_eq!(extract_text(result.messages[3].content.clone()), "done");
+        assert_eq!(result.text, "done");
     }
 }

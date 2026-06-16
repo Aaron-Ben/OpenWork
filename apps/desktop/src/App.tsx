@@ -3,17 +3,20 @@ import { useEffect } from 'react'
 import { AppShell } from './components/layout/AppShell'
 import { useTheme } from './hooks/useTheme'
 import { useProviderStore } from './stores/providerStore'
+import { useSessionStore } from './stores/sessionStore'
 
 function App() {
-  const fetchAll = useProviderStore((state) => state.fetchAll)
+  const fetchProviders = useProviderStore((state) => state.fetchAll)
   const fetchPresets = useProviderStore((state) => state.fetchPresets)
+  const fetchSessions = useSessionStore((state) => state.fetchAll)
 
   useTheme()
 
   useEffect(() => {
-    void fetchAll()
+    void fetchProviders()
     void fetchPresets()
-  }, [fetchAll, fetchPresets])
+    void fetchSessions()
+  }, [fetchProviders, fetchPresets, fetchSessions])
 
   return <AppShell />
 }

@@ -43,27 +43,6 @@ export interface TestResult {
   message: string
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}
-
-export interface ChatGenerateRequest {
-  providerId: string
-  model: string
-  messages: ChatMessage[]
-}
-
-export interface ChatGenerateStreamRequest extends ChatGenerateRequest {
-  requestId: string
-  approvalPolicy?: 'untrusted'
-}
-
-export interface ChatGenerateResponse {
-  text: string
-  reasoningText?: string | null
-}
-
 export type ChatStreamEventName =
   | 'text_delta'
   | 'reasoning_delta'
@@ -77,8 +56,10 @@ export type ChatStreamEventName =
   | 'done'
   | 'error'
 
+/// 前端 `chat-stream-event` 监听的单帧 payload。`sessionId` 用于多会话隔离分派。
 export interface ChatStreamEventPayload {
   requestId: string
+  sessionId: string
   event: ChatStreamEventName
   delta?: string | null
   message?: string | null

@@ -11,6 +11,7 @@ import {
 
 import { providersApi } from '../../api/providers'
 import { useApprovalStore } from '../../stores/approvalStore'
+import { useSessionStore } from '../../stores/sessionStore'
 
 interface ToolDetails {
   primary: string
@@ -59,13 +60,15 @@ function titleFor(toolName: string, primary: string): string {
   }
 }
 
-/// 内联审批卡片:订阅 approvalStore 队首,渲染工具调用详情;
-/// 允许 / 拒绝后回传 resolve_approval,agent loop 在等待期间被阻塞。
+/// 内联审批卡片:只渲染当前活跃 session 的 pending;允许/拒绝后回传 resolve_approval。
 export function ApprovalDialog() {
   const pending = useApprovalStore((state) => state.pending)
   const remove = useApprovalStore((state) => state.remove)
+  const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const [resolving, setResolving] = useState(false)
-  const current = pending[0] ?? null
+  const current = activeSessionId
+    ? pending.find((item) => item.sessionId === activeSessionId) ?? null
+    : null
 
   async function resolve(allow: boolean) {
     if (!current || resolving) return
