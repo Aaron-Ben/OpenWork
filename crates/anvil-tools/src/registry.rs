@@ -46,6 +46,9 @@ impl ToolRegistry {
         let mut registry = Self::new();
         registry.register(Box::<crate::builtin::Read>::default());
         registry.register(Box::<crate::builtin::Write>::default());
+        registry.register(Box::<crate::builtin::Edit>::default());
+        registry.register(Box::<crate::builtin::Grep>::default());
+        registry.register(Box::<crate::builtin::Glob>::default());
         registry.register(Box::<crate::builtin::List>::default());
         registry.register(Box::<crate::builtin::Bash>::default());
         registry

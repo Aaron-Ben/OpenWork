@@ -103,6 +103,12 @@ impl ApprovalBridge {
             None => Err(format!("no pending approval for id {id}")),
         }
     }
+
+    /// 清空所有 pending 审批(发送者被 drop → 等待方收到通道关闭)。
+    /// 用于整体取消(agent abort)时清理残留的 pending。
+    pub async fn cancel_all(&self) {
+        self.pending.lock().await.clear();
+    }
 }
 
 impl Default for ApprovalBridge {

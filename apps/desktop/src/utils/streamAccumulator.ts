@@ -83,6 +83,24 @@ export function applyEvent(
         ],
       }))
     }
+    case 'cancelled': {
+      return mapAssistant(base, requestId, (item) => ({
+        ...item,
+        isStreaming: false,
+        parts: [...item.parts, { type: 'text', text: '[已停止]' }],
+      }))
+    }
+    case 'doom_loop': {
+      const tool = payload.message ?? 'tool'
+      return mapAssistant(base, requestId, (item) => ({
+        ...item,
+        isStreaming: false,
+        parts: [
+          ...item.parts,
+          { type: 'text', text: `[检测到死循环:工具 '${tool}' 重复 — 已停止]` },
+        ],
+      }))
+    }
     default:
       return messages
   }

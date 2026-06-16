@@ -24,6 +24,10 @@ interface SessionStoreState {
   ensureStreamingItem: (sessionId: string, requestId: string, model?: string) => void
   applyStreamEvent: (sessionId: string, payload: ChatStreamEventPayload) => void
   finishStreaming: (sessionId: string, requestId: string) => void
+
+  activeStream: { sessionId: string; requestId: string } | null
+  setActiveStream: (stream: { sessionId: string; requestId: string } | null) => void
+  cancelActiveStream: () => Promise<void>
 }
 
 function toChatItems(messages: SessionMessage[]): ChatItem[] {
@@ -41,6 +45,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   messagesBySession: {},
   isLoading: false,
   error: null,
+  activeStream: null,
 
   fetchAll: async () => {
     set({ isLoading: true, error: null })
@@ -172,6 +177,18 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         },
       }
     })
+  },
+
+  setActiveStream: (stream) => set({ activeStream: stream }),
+
+  cancelActiveStream: async () => {
+    const { activeStream } = get()
+    if (!activeStream) return
+    try {
+      await sessionsApi.chatAbort(activeStream.requestId)
+    } catch {
+      // 后端可能已结束;忽略,由 listener 的 cancelled 事件或 send 的 finally 收场。
+    }
   },
 }))
 

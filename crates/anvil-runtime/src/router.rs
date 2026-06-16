@@ -1,6 +1,7 @@
 //! Agent 主循环:取消息 → 喂模型(流式)→ 解析工具调用 → 执行 → 回填 → 重复,
 //! 直到模型返回不带工具调用的纯文本。
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use anvil_core::ai::{
@@ -13,8 +14,11 @@ use anvil_tools::{
     ToolRegistry,
 };
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 const DEFAULT_MAX_STEPS: usize = 20;
+/// 连续同名 + 规范化同参的工具调用达到此次数,判定为 doom loop。
+const DOOM_LOOP_THRESHOLD: usize = 3;
 
 const AGENT_SYSTEM_PROMPT: &str = "\
 You are Anvil, an autonomous coding agent operating in a working directory on the user's machine.\n\
@@ -33,6 +37,9 @@ pub struct AgentConfig {
     pub approvals_reviewer: ApprovalsReviewer,
     /// 异步审批回传桥:`User` 审阅者经此等待宿主确认。
     pub approval_bridge: ApprovalBridge,
+    /// 取消令牌:外部触发 `cancel()` 后,agent loop 在下一个 await 点终止并返回
+    /// [`AgentError::Cancelled`],携带截止当前的对话轨迹。
+    pub cancel: CancellationToken,
     pub max_steps: usize,
 }
 
@@ -52,6 +59,7 @@ impl AgentConfig {
             approval_policy: ApprovalPolicy::Untrusted,
             approvals_reviewer: ApprovalsReviewer::User,
             approval_bridge: ApprovalBridge::new(),
+            cancel: CancellationToken::new(),
             max_steps: DEFAULT_MAX_STEPS,
         }
     }
@@ -80,6 +88,8 @@ pub enum AgentEvent {
         input: serde_json::Value,
     },
     Finished(String),
+    /// 检测到 doom loop(连续重复同名同参工具调用),agent 即将停止。
+    DoomLoopDetected { repeated: String },
 }
 
 #[derive(Debug, Error)]
@@ -88,6 +98,12 @@ pub enum AgentError {
     Provider(#[from] ProviderError),
     #[error("exceeded max steps ({0})")]
     MaxStepsExceeded(usize),
+    /// 被外部取消;携带截止取消时的对话轨迹(不含 system prompt),供持久化部分结果。
+    #[error("cancelled")]
+    Cancelled(Vec<Message>),
+    /// 检测到 doom loop;携带截止时的轨迹 + 重复的工具名。
+    #[error("doom loop: tool '{0}' repeated")]
+    DoomLoop(String, Vec<Message>),
 }
 
 /// `Agent::run` 的返回:最终文本回答 + 完整对话轨迹(不含 system prompt)。
@@ -117,8 +133,13 @@ impl Agent {
         let mut messages = vec![Message::text(Role::System, AGENT_SYSTEM_PROMPT)];
         messages.extend(history);
         let tool_defs = self.config.tools.definitions();
+        // 最近若干次工具调用的 (name, 规范化 input),用于 doom-loop 检测。
+        let mut recent: VecDeque<(String, String)> = VecDeque::new();
 
         for step in 1..=self.config.max_steps {
+            if self.config.cancel.is_cancelled() {
+                return Err(AgentError::Cancelled(messages[1..].to_vec()));
+            }
             on_event(AgentEvent::Step(step));
 
             let req = GenerateRequest {
@@ -131,15 +152,21 @@ impl Agent {
                 tools: tool_defs.clone(),
             };
 
-            let response = self.stream_once(req, &mut on_event).await?;
+            let response = match self.stream_once(req, &mut on_event).await {
+                Ok(response) => response,
+                Err(AgentError::Cancelled(_)) => {
+                    return Err(AgentError::Cancelled(messages[1..].to_vec()));
+                }
+                Err(error) => return Err(error),
+            };
 
             // 记录 assistant 消息(thinking? + text + tool calls)。
             // thinking 放最前,与流式渲染顺序一致;落库后才不会在 reload 后丢失。
             let mut assistant_content: Vec<ContentBlock> = Vec::new();
-            if let Some(reasoning) = &response.reasoning_text {
-                if !reasoning.is_empty() {
-                    assistant_content.push(ContentBlock::thinking(reasoning.clone()));
-                }
+            if let Some(reasoning) = &response.reasoning_text
+                && !reasoning.is_empty()
+            {
+                assistant_content.push(ContentBlock::thinking(reasoning.clone()));
             }
             if !response.text.is_empty() {
                 assistant_content.push(ContentBlock::text(response.text.clone()));
@@ -170,9 +197,29 @@ impl Agent {
 
             // 执行工具并回填结果(含审批决策)。
             for tc in response.tool_calls {
+                if self.config.cancel.is_cancelled() {
+                    return Err(AgentError::Cancelled(messages[1..].to_vec()));
+                }
                 let input = serde_json::from_str::<serde_json::Value>(&tc.input)
                     .unwrap_or(serde_json::Value::Null);
+
+                // doom-loop 检测:连续 N 次同名 + 规范化同参 → 停止。
+                let key = (tc.name.clone(), normalize_json(&input));
+                recent.push_back(key.clone());
+                if recent.len() > DOOM_LOOP_THRESHOLD {
+                    recent.pop_front();
+                }
+                if recent.len() == DOOM_LOOP_THRESHOLD && recent.iter().all(|k| k == &key) {
+                    on_event(AgentEvent::DoomLoopDetected {
+                        repeated: tc.name.clone(),
+                    });
+                    return Err(AgentError::DoomLoop(tc.name.clone(), messages[1..].to_vec()));
+                }
+
                 let output = self.execute_tool_call(&tc, input, &mut on_event).await;
+                if self.config.cancel.is_cancelled() {
+                    return Err(AgentError::Cancelled(messages[1..].to_vec()));
+                }
                 on_event(AgentEvent::ToolResult {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
@@ -215,6 +262,7 @@ impl Agent {
         let response = loop {
             tokio::select! {
                 biased;
+                _ = self.config.cancel.cancelled() => return Err(AgentError::Cancelled(Vec::new())),
                 Some(event) = rx.recv() => forward_event(event, on_event),
                 result = &mut provider_fut => break result?,
             }
@@ -254,9 +302,15 @@ impl Agent {
                     input: input.clone(),
                 });
                 let rx = self.config.approval_bridge.register(&tc.id).await;
-                match rx.await {
-                    Ok(decision) => decision,
-                    Err(_) => ApprovalDecision::Deny("approval cancelled".to_string()),
+                tokio::select! {
+                    biased;
+                    _ = self.config.cancel.cancelled() => {
+                        return ToolOutput::error("cancelled");
+                    }
+                    decision = rx => match decision {
+                        Ok(decision) => decision,
+                        Err(_) => ApprovalDecision::Deny("approval cancelled".to_string()),
+                    },
                 }
             }
         };
@@ -272,9 +326,13 @@ impl Agent {
         let ctx = ToolContext {
             working_dir: self.config.working_dir.clone(),
         };
-        match self.config.tools.execute(name, input, &ctx).await {
-            Ok(out) => out,
-            Err(err) => ToolOutput::error(err.to_string()),
+        tokio::select! {
+            biased;
+            _ = self.config.cancel.cancelled() => ToolOutput::error("cancelled"),
+            result = self.config.tools.execute(name, input, &ctx) => match result {
+                Ok(out) => out,
+                Err(err) => ToolOutput::error(err.to_string()),
+            },
         }
     }
 }
@@ -292,6 +350,18 @@ fn forward_event(event: GenerateStreamEvent, on_event: &mut impl FnMut(AgentEven
             on_event(AgentEvent::ToolCallDelta { id, partial_input })
         }
         GenerateStreamEvent::ToolCallEnd { id } => on_event(AgentEvent::ToolCallEnd { id }),
+    }
+}
+
+/// 把 JSON 规范化为字符串(顶层 key 排序),用于 doom-loop 的同参比较。
+/// `serde_json` 保插入序,排序后 `{"a":1,"b":2}` 与 `{"b":2,"a":1}` 视为相同。
+fn normalize_json(value: &serde_json::Value) -> String {
+    if let serde_json::Value::Object(map) = value {
+        let sorted: std::collections::BTreeMap<String, serde_json::Value> =
+            map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        serde_json::to_string(&sorted).unwrap_or_default()
+    } else {
+        serde_json::to_string(value).unwrap_or_default()
     }
 }
 
@@ -578,5 +648,49 @@ mod tests {
         assert_eq!(result.messages[3].role, Role::Assistant);
         assert_eq!(extract_text(result.messages[3].content.clone()), "done");
         assert_eq!(result.text, "done");
+    }
+
+    #[tokio::test]
+    async fn cancel_before_run_returns_cancelled_with_trace() {
+        let provider = FakeProvider::new(vec![text_response("done")]);
+        let config = AgentConfig::new(Box::new(provider), "fake", PathBuf::from("."));
+        config.cancel.cancel();
+        let agent = Agent::new(config);
+
+        let history = vec![Message::text(Role::User, "hello")];
+        let result = agent.run(history, |_| {}).await;
+
+        match result {
+            Err(AgentError::Cancelled(msgs)) => {
+                // 截止取消时的轨迹 = history(仅 user)。
+                assert_eq!(msgs.len(), 1);
+                assert_eq!(msgs[0].role, Role::User);
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn doom_loop_detected_on_repeated_identical_calls() {
+        let bridge = ApprovalBridge::new();
+        // 三个完全相同的 bash 调用 → 第三个触发 doom-loop。
+        let provider = FakeProvider::new(vec![
+            tool_call_response("call-1", "bash", json!({"command": "echo hi"})),
+            tool_call_response("call-2", "bash", json!({"command": "echo hi"})),
+            tool_call_response("call-3", "bash", json!({"command": "echo hi"})),
+        ]);
+        let mut config = untrusted_user_config(Box::new(provider));
+        config.approval_bridge = bridge.clone();
+        let agent = Agent::new(config);
+
+        let (mut on_event, _seen) = auto_resolve_on_event(bridge, ApprovalDecision::Allow);
+        let result = agent
+            .run(vec![Message::text(Role::User, "loop it")], &mut on_event)
+            .await;
+
+        match result {
+            Err(AgentError::DoomLoop(name, _msgs)) => assert_eq!(name, "bash"),
+            other => panic!("expected DoomLoop, got {other:?}"),
+        }
     }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { CheckCircle2, ChevronDown, Loader2, Send, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Loader2, Send, ShieldCheck, Square } from 'lucide-react'
 
 interface ChatInputProps {
   activeProviderName: string
@@ -11,6 +11,7 @@ interface ChatInputProps {
   onValueChange: (value: string) => void
   onModelChange: (model: string) => void
   onSubmit: () => void
+  onCancel?: () => void
 }
 
 export function ChatInput({
@@ -23,6 +24,7 @@ export function ChatInput({
   onValueChange,
   onModelChange,
   onSubmit,
+  onCancel,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const permissionRef = useRef<HTMLDivElement>(null)
@@ -165,15 +167,27 @@ export function ChatInput({
             )}
           </select>
 
-          <button
-            className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl bg-clay px-5 text-sm font-semibold text-white transition hover:bg-clay/90 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-faint"
-            type="submit"
-            aria-label="Send"
-            disabled={disabled || isSending || !model || !value.trim()}
-          >
-            {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-            运行
-          </button>
+          {isSending ? (
+            <button
+              className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl border border-red-200 bg-paper px-5 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+              type="button"
+              aria-label="停止"
+              onClick={onCancel}
+            >
+              <Square size={16} className="fill-current" />
+              停止
+            </button>
+          ) : (
+            <button
+              className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl bg-clay px-5 text-sm font-semibold text-white transition hover:bg-clay/90 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-faint"
+              type="submit"
+              aria-label="Send"
+              disabled={disabled || !model || !value.trim()}
+            >
+              <Send size={18} />
+              运行
+            </button>
+          )}
         </div>
       </form>
     </div>

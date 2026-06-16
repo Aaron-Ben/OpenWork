@@ -1,14 +1,19 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anvil_core::ai::{ContentBlock, Message, Role};
 use anvil_providers::{
     build_provider, test_provider, ProviderConfig, ProviderIndex, ProviderInput, ProviderPreset,
     ProviderStore, TestResult, BUILTIN_PRESETS,
 };
-use anvil_runtime::{Agent, AgentConfig, AgentEvent, ApprovalBridge, ApprovalDecision, ApprovalPolicy};
+use anvil_runtime::{
+    Agent, AgentConfig, AgentError, AgentEvent, ApprovalBridge, ApprovalDecision, ApprovalPolicy,
+};
 use anvil_session::{NewMessage, Session, SessionInput, SessionLoadResult, SessionStore, SessionSummary};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +31,47 @@ struct ChatGenerateStreamRequest {
 struct ChatGenerateResponse {
     text: String,
     reasoning_text: Option<String>,
+}
+
+/// 按 request_id 注册的取消令牌表,供 `chat_abort` 触发对应请求的取消。
+#[derive(Default)]
+struct RequestCancelRegistry {
+    tokens: Mutex<HashMap<String, CancellationToken>>,
+}
+
+impl RequestCancelRegistry {
+    /// 注册一个 request_id,返回其取消令牌(克隆给 agent)。
+    fn register(&self, request_id: &str) -> CancellationToken {
+        let token = CancellationToken::new();
+        self.tokens
+            .lock()
+            .expect("cancel registry mutex poisoned")
+            .insert(request_id.to_string(), token.clone());
+        token
+    }
+
+    /// 触发并移除一个 request_id 的令牌。返回是否命中。
+    fn cancel(&self, request_id: &str) -> bool {
+        if let Some(token) = self
+            .tokens
+            .lock()
+            .expect("cancel registry mutex poisoned")
+            .remove(request_id)
+        {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 请求结束时移除令牌(正常完成 / 出错都要清,防泄漏)。
+    fn remove(&self, request_id: &str) {
+        self.tokens
+            .lock()
+            .expect("cancel registry mutex poisoned")
+            .remove(request_id);
+    }
 }
 
 /// 前端 `chat-stream-event` 监听的单帧 payload。`session_id` 用于多会话隔离分派。
@@ -169,6 +215,7 @@ async fn chat_generate_stream(
     provider_store: tauri::State<'_, ProviderStore>,
     session_store: tauri::State<'_, SessionStore>,
     approval_bridge: tauri::State<'_, ApprovalBridge>,
+    cancel_registry: tauri::State<'_, RequestCancelRegistry>,
     request: ChatGenerateStreamRequest,
 ) -> Result<ChatGenerateResponse, String> {
     let request_id = request.request_id.clone();
@@ -197,6 +244,7 @@ async fn chat_generate_stream(
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut agent_config = AgentConfig::new(provider, request.model, working_dir);
     agent_config.approval_bridge = approval_bridge.inner().clone();
+    agent_config.cancel = cancel_registry.register(&request_id);
     if let Some(approval_policy) = request.approval_policy {
         agent_config.approval_policy = approval_policy;
     }
@@ -216,6 +264,7 @@ async fn chat_generate_stream(
 
     match result {
         Ok(run_result) => {
+            cancel_registry.remove(&request_id);
             // 持久化本轮新增消息(跳过加载来的历史,保留 user + assistant + tool)。
             let new_messages: Vec<NewMessage> = run_result
                 .messages
@@ -239,7 +288,46 @@ async fn chat_generate_stream(
                 reasoning_text: None,
             })
         }
+        Err(AgentError::Cancelled(msgs)) => {
+            cancel_registry.remove(&request_id);
+            // 持久化截止取消时已生成的消息(若有),然后发 cancelled 事件(非 error)。
+            let new_messages: Vec<NewMessage> = msgs
+                .into_iter()
+                .skip(history_len)
+                .map(|message| NewMessage {
+                    role: message.role,
+                    parts: message.content,
+                })
+                .collect();
+            let _ = session_store.append_messages(&session_id, new_messages);
+            let _ = app.emit(
+                "chat-stream-event",
+                ChatStreamEventPayload::simple(&request_id, &session_id, "cancelled"),
+            );
+            Ok(ChatGenerateResponse {
+                text: String::new(),
+                reasoning_text: None,
+            })
+        }
+        Err(AgentError::DoomLoop(_name, msgs)) => {
+            cancel_registry.remove(&request_id);
+            // doom_loop 事件已由 run 内的 DoomLoopDetected emit;这里只持久化部分消息。
+            let new_messages: Vec<NewMessage> = msgs
+                .into_iter()
+                .skip(history_len)
+                .map(|message| NewMessage {
+                    role: message.role,
+                    parts: message.content,
+                })
+                .collect();
+            let _ = session_store.append_messages(&session_id, new_messages);
+            Ok(ChatGenerateResponse {
+                text: String::new(),
+                reasoning_text: None,
+            })
+        }
         Err(error) => {
+            cancel_registry.remove(&request_id);
             let message = error.to_string();
             let _ = app.emit(
                 "chat-stream-event",
@@ -266,6 +354,18 @@ async fn resolve_approval(
         ApprovalDecision::Deny("denied by user".to_string())
     };
     approval_bridge.resolve(&approval_id, decision).await
+}
+
+/// 取消正在进行的 chat 请求:触发对应 request_id 的 CancellationToken,
+/// 并清理所有 pending 审批(避免 agent 卡在审批 await)。
+#[tauri::command]
+async fn chat_abort(
+    cancel_registry: tauri::State<'_, RequestCancelRegistry>,
+    approval_bridge: tauri::State<'_, ApprovalBridge>,
+    request_id: String,
+) -> Result<bool, String> {
+    approval_bridge.cancel_all().await;
+    Ok(cancel_registry.cancel(&request_id))
 }
 
 /// 把 agent loop 的事件映射成前端可消费的流式 payload。
@@ -320,6 +420,10 @@ fn map_agent_event(request_id: &str, session_id: &str, event: &AgentEvent) -> Ch
             payload.event = "finished";
             payload.delta = Some(text.clone());
         }
+        AgentEvent::DoomLoopDetected { repeated } => {
+            payload.event = "doom_loop";
+            payload.message = Some(repeated.clone());
+        }
     }
     payload
 }
@@ -346,6 +450,7 @@ pub fn run() {
             let session_store = SessionStore::open(app_data_dir.join("anvil.db"))?;
             app.manage(session_store);
             app.manage(ApprovalBridge::new());
+            app.manage(RequestCancelRegistry::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -363,6 +468,7 @@ pub fn run() {
             session_rename,
             chat_generate_stream,
             resolve_approval,
+            chat_abort,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

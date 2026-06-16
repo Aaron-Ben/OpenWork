@@ -24,6 +24,7 @@ anvil-runtime = { workspace = true }
 anvil-tools = { workspace = true }
 anvil-session = { workspace = true }
 async-trait = { workspace = true }
+tokio-util = { workspace = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { workspace = true }

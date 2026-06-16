@@ -32,6 +32,19 @@ export function useChatStreamListener() {
         return
       }
 
+      if (payload.event === 'cancelled') {
+        // 取消:累积"[已停止]"标记,清 activeStream;不 reload(保留已显示的部分回复)。
+        useSessionStore.getState().applyStreamEvent(sessionId, payload)
+        useSessionStore.getState().setActiveStream(null)
+        return
+      }
+
+      if (payload.event === 'doom_loop') {
+        useSessionStore.getState().applyStreamEvent(sessionId, payload)
+        useSessionStore.getState().setActiveStream(null)
+        return
+      }
+
       useSessionStore.getState().applyStreamEvent(sessionId, payload)
     }).then((dispose) => {
       if (disposed) {

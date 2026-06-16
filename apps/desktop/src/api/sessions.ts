@@ -12,4 +12,5 @@ export const sessionsApi = {
   rename: (id: string, title: string): Promise<Session> => invoke('session_rename', { id, title }),
   chatGenerateStream: (request: ChatGenerateStreamRequest): Promise<ChatGenerateResponse> =>
     invoke('chat_generate_stream', { request }),
+  chatAbort: (requestId: string): Promise<boolean> => invoke('chat_abort', { requestId }),
 }

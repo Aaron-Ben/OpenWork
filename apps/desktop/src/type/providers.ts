@@ -54,6 +54,8 @@ export type ChatStreamEventName =
   | 'approval_request'
   | 'finished'
   | 'done'
+  | 'cancelled'
+  | 'doom_loop'
   | 'error'
 
 /// 前端 `chat-stream-event` 监听的单帧 payload。`sessionId` 用于多会话隔离分派。

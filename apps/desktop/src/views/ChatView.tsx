@@ -15,12 +15,16 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState('')
-  const [isSending, setIsSending] = useState(false)
   const messages = useActiveSessionMessages()
   const hasPendingApproval = useApprovalStore((state) => state.pending.length > 0)
   const pushUserMessage = useSessionStore((state) => state.pushUserMessage)
   const ensureStreamingItem = useSessionStore((state) => state.ensureStreamingItem)
   const finishStreaming = useSessionStore((state) => state.finishStreaming)
+  const setActiveStream = useSessionStore((state) => state.setActiveStream)
+  const cancelActiveStream = useSessionStore((state) => state.cancelActiveStream)
+  const activeStream = useSessionStore((state) => state.activeStream)
+  // 是否正在发送 = 当前 session 有 in-flight 流式请求。
+  const isSending = activeStream?.sessionId === sessionId
 
   useEffect(() => {
     setModel(active?.models[0] ?? '')
@@ -32,10 +36,10 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
     if (!text || isSending || !active || !model || !sessionId) return
     const requestId = crypto.randomUUID()
     setDraft('')
-    setIsSending(true)
-    // 乐观:立即显示用户消息 + 临时 assistant item(由 listener 累积 parts)。
+    // 乐观:立即显示用户消息 + 临时 assistant item + 标记 in-flight。
     pushUserMessage(sessionId, text)
     ensureStreamingItem(sessionId, requestId, model)
+    setActiveStream({ sessionId, requestId })
     try {
       await sessionsApi.chatGenerateStream({
         requestId,
@@ -48,7 +52,8 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
     } catch {
       // 错误文本由 listener 的 error event 累积到 store;这里仅兜底结束流式态。
     } finally {
-      setIsSending(false)
+      // cancelled/done 事件会清 activeStream;这里兜底(防事件丢失)。
+      setActiveStream(null)
       finishStreaming(sessionId, requestId)
     }
   }
@@ -95,6 +100,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
         onValueChange={setDraft}
         onModelChange={setModel}
         onSubmit={() => void send()}
+        onCancel={() => void cancelActiveStream()}
       />
     </div>
   )

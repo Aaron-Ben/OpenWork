@@ -38,6 +38,7 @@ impl Tool for Bash {
             .arg("-c")
             .arg(command)
             .current_dir(&ctx.working_dir)
+            .kill_on_drop(true)
             .output()
             .await
         {
@@ -58,10 +59,7 @@ impl Tool for Bash {
             combined.push_str("[stderr]\n");
             combined.push_str(&stderr);
         }
-        if combined.len() > MAX_OUTPUT_BYTES {
-            combined.truncate(MAX_OUTPUT_BYTES);
-            combined.push_str("\n...[output truncated]");
-        }
+        let mut combined = crate::builtin::truncate_output(combined, MAX_OUTPUT_BYTES);
         let status = output.status.code().unwrap_or(-1);
         combined.push_str(&format!("\n[exit {status}]"));
 
