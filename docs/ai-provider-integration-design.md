@@ -2,7 +2,7 @@
 
 Status: Partially Implemented, Needs Ongoing Refresh
 Original date: 2026-06-07
-Last reviewed: 2026-06-14
+Last reviewed: 2026-06-17
 
 ## 1. Purpose
 
@@ -129,6 +129,7 @@ pub struct GenerateRequest {
     pub max_tokens: Option<u32>,
     pub stream: bool,
     pub thinking: Option<ThinkingConfig>,
+    pub tools: Vec<ToolDefinition>,
 }
 
 pub struct GenerateResponse {
@@ -136,11 +137,22 @@ pub struct GenerateResponse {
     pub reasoning_text: Option<String>,
     pub usage: Option<TokenUsage>,
     pub raw: serde_json::Value,
+    pub tool_calls: Vec<ToolCallBlock>,
 }
 
 pub enum GenerateStreamEvent {
+    StepStart { index: usize },
+    StepFinish { index: usize, reason: String, usage: Option<TokenUsage> },
+    Finish { reason: String, usage: Option<TokenUsage> },
+    TextStart { id: String },
     TextDelta { delta: String },
+    TextEnd { id: String },
+    ReasoningStart { id: String },
     ReasoningDelta { delta: String },
+    ReasoningEnd { id: String },
+    ToolCallStart { id: String, name: String },
+    ToolCallDelta { id: String, partial_input: String },
+    ToolCallEnd { id: String },
 }
 ```
 
@@ -191,6 +203,8 @@ Responsibilities:
 - Parse `choices[0].message.reasoning_content`
 - Parse streaming `choices[0].delta.content`
 - Parse streaming `choices[0].delta.reasoning_content`
+- Accumulate streaming `choices[0].delta.tool_calls` through `ToolStream`
+- Emit `ToolCallStart`, `ToolCallDelta`, and `ToolCallEnd`
 
 It intentionally rejects provider-specific `thinking` request options. Use a dedicated provider adapter when a vendor exposes non-standard behavior.
 
@@ -256,38 +270,65 @@ The current desktop streaming path is:
 Provider SSE response
   -> provider.stream_generate(...)
   -> GenerateStreamEvent
+  -> anvil-runtime AgentEvent
   -> apps/desktop/src-tauri/src/lib.rs chat_generate_stream
   -> Tauri event: "chat-stream-event"
   -> apps/desktop/src/api/providers.ts listenToChatStream
-  -> App.tsx appends deltas to the active assistant message
+  -> useChatStreamListener
+  -> sessionStore.applyStreamEvent
+  -> streamAccumulator updates the active assistant item
 ```
 
 Tauri event payload:
 
 ```ts
 export type ChatStreamEventName =
+  | 'llm_step_start'
+  | 'llm_step_finish'
+  | 'llm_finish'
+  | 'text_start'
   | 'text_delta'
+  | 'text_end'
+  | 'reasoning_start'
   | 'reasoning_delta'
+  | 'reasoning_end'
+  | 'step'
+  | 'tool_call_start'
+  | 'tool_call_delta'
+  | 'tool_call_end'
+  | 'tool_result'
+  | 'approval_request'
+  | 'finished'
   | 'done'
+  | 'cancelled'
+  | 'doom_loop'
   | 'error'
 
 export interface ChatStreamEventPayload {
   requestId: string
+  sessionId: string
   event: ChatStreamEventName
   delta?: string | null
   message?: string | null
+  step?: number | null
+  toolCallId?: string | null
+  toolName?: string | null
+  partialInput?: string | null
+  toolOutput?: string | null
+  isError?: boolean | null
+  approvalId?: string | null
+  input?: unknown | null
 }
 ```
 
-`invoke('chat_generate_stream')` still returns a final `ChatGenerateResponse` so the frontend can reconcile with the complete response after streaming ends.
+`invoke('chat_generate_stream')` still returns a final `ChatGenerateResponse`, but the visible UI is primarily driven by stream events. On `done`, the frontend reloads the session from SQLite so persisted messages become the source of truth.
 
 Current limitations:
 
-- no cancellation / stop generation
 - no retry policy
-- no streaming usage aggregation
-- no tool call delta model
 - no backpressure model beyond the Tauri event channel
+- provider-specific tool streaming differences still need broader tests
+- no dedicated `tool_runs` table yet
 
 ## 7. Model Registry
 
@@ -450,25 +491,28 @@ Live tests must not run by default in CI.
 | ProviderStore | Implemented |
 | Desktop provider settings | Implemented |
 | Desktop streaming chat | Implemented |
-| Stop generation | Not implemented |
-| Tool calling | Not implemented |
+| Stop generation | Implemented for active chat request cancellation |
+| Tool calling | Implemented for the agent loop and OpenAI-compatible chat path |
+| ToolStream accumulator | Implemented for OpenAI-compatible streaming tool calls |
+| Human-in-the-loop approvals | Implemented |
+| Session event tracing | Implemented through `llm_events` |
 | Credential manager / keychain | Not implemented |
 | Telemetry / metrics | Not implemented |
 | Mocked HTTP integration tests | Not implemented |
 
 ## 14. Recommended Next Steps
 
-1. Add stop generation / cancellation for streaming requests.
-2. Move API key storage from raw provider config to OS keychain or a secret manager.
-3. Wire `ModelRegistry` into chat routing for capability checks and fallback policy.
-4. Add mocked HTTP integration tests for every provider adapter.
-5. Add a tool call event model after the non-tool streaming path is stable.
+1. Move API key storage from raw provider config to OS keychain or a secret manager.
+2. Wire `ModelRegistry` into chat routing for capability checks and fallback policy.
+3. Add mocked HTTP integration tests for every provider adapter.
+4. Add provider-specific tool streaming tests, especially for fragmented tool arguments and multiple parallel tool calls.
+5. Add a dedicated `tool_runs` persistence table for tool execution observability.
 6. Add structured request telemetry with redaction.
 7. Revisit provider docs before changing model defaults or adding vendor-specific advanced features.
 
 ## 15. Open Questions
 
-- Should `stream_generate` stay on `LlmProvider`, or should streaming be split into a separate trait before tool call deltas are introduced?
+- Should `stream_generate` stay on `LlmProvider`, or should streaming be split into a separate trait now that tool call deltas exist?
 - Should desktop chat use provider-qualified model IDs such as `openai:gpt-4.1`, or keep model selection scoped by active provider?
 - Should fallback be automatic in chat, explicit per request, or disabled until observability is stronger?
 - Should `ProviderKind::OpenaiCompatible` remain a first-class kind, or should custom providers become typed by protocol plus declared capabilities?
