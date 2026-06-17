@@ -3,6 +3,7 @@
 mod store;
 
 pub use store::{
-    NewMessage, Session, SessionError, SessionInput, SessionLoadResult, SessionMessage,
-    SessionStore, SessionSummary,
+    NewMessage, NewWorktreeSnapshot, NewWorktreeSnapshotFile, Session, SessionError, SessionInput,
+    SessionLoadResult, SessionMessage, SessionStore, SessionSummary, WorktreeSnapshotRecord,
+    WorktreeSnapshotSummary,
 };

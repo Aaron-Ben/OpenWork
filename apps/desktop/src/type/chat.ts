@@ -7,6 +7,7 @@ export interface ChatItem {
   parts: ContentBlock[]
   model?: string
   isStreaming?: boolean
+  requestId?: string
 }
 
 export interface ChatGenerateStreamRequest {

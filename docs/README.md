@@ -19,6 +19,7 @@ Last reviewed: 2026-06-17
 ## 持久化与观测
 
 - [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：SQLite 表结构、messages/message_parts/llm_events 分工、trace 方向。
+- [file-diff-snapshot-revert-design.md](file-diff-snapshot-revert-design.md)：文件 diff、snapshot、review、revert 的设计边界和实现策略。
 
 ## 维护原则
 

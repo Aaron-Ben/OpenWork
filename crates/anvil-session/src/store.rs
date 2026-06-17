@@ -91,6 +91,49 @@ pub struct SessionEvent {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct NewWorktreeSnapshot {
+    pub request_id: String,
+    pub working_dir: String,
+    pub before_status: serde_json::Value,
+    pub after_status: serde_json::Value,
+    pub changed_files: Vec<String>,
+    pub files: Vec<NewWorktreeSnapshotFile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewWorktreeSnapshotFile {
+    pub path: String,
+    pub before_content: Option<Vec<u8>>,
+    pub after_content: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeSnapshotSummary {
+    pub id: String,
+    pub session_id: String,
+    pub request_id: String,
+    pub working_dir: String,
+    pub changed_files: Vec<String>,
+    pub created_at: i64,
+    pub completed_at: i64,
+    pub reverted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorktreeSnapshotRecord {
+    pub summary: WorktreeSnapshotSummary,
+    pub files: Vec<WorktreeSnapshotFileRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorktreeSnapshotFileRecord {
+    pub path: String,
+    pub before_content: Option<Vec<u8>>,
+    pub after_content: Option<Vec<u8>>,
+}
+
 /// `session_load` 的返回。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +217,31 @@ impl SessionStore {
                created_at INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_llm_events_session_seq ON llm_events(session_id, seq);",
+        )?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS worktree_snapshots (
+               id TEXT PRIMARY KEY,
+               session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+               request_id TEXT NOT NULL,
+               working_dir TEXT NOT NULL,
+               before_status_json TEXT NOT NULL,
+               after_status_json TEXT NOT NULL,
+               changed_files_json TEXT NOT NULL,
+               created_at INTEGER NOT NULL,
+               completed_at INTEGER NOT NULL,
+               reverted_at INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_worktree_snapshots_session_completed
+               ON worktree_snapshots(session_id, completed_at);
+             CREATE TABLE IF NOT EXISTS worktree_snapshot_files (
+               id TEXT PRIMARY KEY,
+               snapshot_id TEXT NOT NULL REFERENCES worktree_snapshots(id) ON DELETE CASCADE,
+               path TEXT NOT NULL,
+               before_content BLOB,
+               after_content BLOB
+             );
+             CREATE INDEX IF NOT EXISTS idx_worktree_snapshot_files_snapshot
+               ON worktree_snapshot_files(snapshot_id);",
         )?;
         Ok(())
     }
@@ -445,6 +513,181 @@ impl SessionStore {
             seq,
             created_at: now,
         })
+    }
+
+    pub fn append_worktree_snapshot(
+        &self,
+        session_id: &str,
+        snapshot: NewWorktreeSnapshot,
+    ) -> Result<Option<WorktreeSnapshotSummary>, SessionError> {
+        if snapshot.changed_files.is_empty() {
+            return Ok(None);
+        }
+        let now = now_secs();
+        let mut conn = self.conn.lock().expect("session store mutex poisoned");
+        let tx = conn.transaction()?;
+
+        let session_exists: bool = tx
+            .query_row(
+                "SELECT 1 FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some();
+        if !session_exists {
+            return Err(SessionError::NotFound {
+                id: session_id.to_string(),
+            });
+        }
+
+        let id = generate_id();
+        let before_status_json = serde_json::to_string(&snapshot.before_status)?;
+        let after_status_json = serde_json::to_string(&snapshot.after_status)?;
+        let changed_files_json = serde_json::to_string(&snapshot.changed_files)?;
+        tx.execute(
+            "INSERT INTO worktree_snapshots
+               (id, session_id, request_id, working_dir, before_status_json, after_status_json,
+                changed_files_json, created_at, completed_at, reverted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+            params![
+                id,
+                session_id,
+                snapshot.request_id,
+                snapshot.working_dir,
+                before_status_json,
+                after_status_json,
+                changed_files_json,
+                now,
+                now,
+            ],
+        )?;
+        for file in snapshot.files {
+            tx.execute(
+                "INSERT INTO worktree_snapshot_files
+                   (id, snapshot_id, path, before_content, after_content)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    generate_id(),
+                    id,
+                    file.path,
+                    file.before_content,
+                    file.after_content
+                ],
+            )?;
+        }
+        tx.commit()?;
+
+        Ok(Some(WorktreeSnapshotSummary {
+            id,
+            session_id: session_id.to_string(),
+            request_id: snapshot.request_id,
+            working_dir: snapshot.working_dir,
+            changed_files: snapshot.changed_files,
+            created_at: now,
+            completed_at: now,
+            reverted_at: None,
+        }))
+    }
+
+    pub fn list_worktree_snapshots(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<WorktreeSnapshotSummary>, SessionError> {
+        let conn = self.conn.lock().expect("session store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, request_id, working_dir, changed_files_json,
+                    created_at, completed_at, reverted_at
+             FROM worktree_snapshots
+             WHERE session_id = ?1
+             ORDER BY completed_at DESC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            let changed_files_json: String = row.get(4)?;
+            let changed_files: Vec<String> =
+                serde_json::from_str(&changed_files_json).unwrap_or_default();
+            Ok(WorktreeSnapshotSummary {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                request_id: row.get(2)?,
+                working_dir: row.get(3)?,
+                changed_files,
+                created_at: row.get(5)?,
+                completed_at: row.get(6)?,
+                reverted_at: row.get(7)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn load_worktree_snapshot(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<WorktreeSnapshotRecord>, SessionError> {
+        let conn = self.conn.lock().expect("session store mutex poisoned");
+        let summary = conn
+            .query_row(
+                "SELECT id, session_id, request_id, working_dir, changed_files_json,
+                        created_at, completed_at, reverted_at
+                 FROM worktree_snapshots WHERE id = ?1",
+                params![snapshot_id],
+                |row| {
+                    let changed_files_json: String = row.get(4)?;
+                    let changed_files: Vec<String> =
+                        serde_json::from_str(&changed_files_json).unwrap_or_default();
+                    Ok(WorktreeSnapshotSummary {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        request_id: row.get(2)?,
+                        working_dir: row.get(3)?,
+                        changed_files,
+                        created_at: row.get(5)?,
+                        completed_at: row.get(6)?,
+                        reverted_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        let Some(summary) = summary else {
+            return Ok(None);
+        };
+
+        let mut stmt = conn.prepare(
+            "SELECT path, before_content, after_content
+             FROM worktree_snapshot_files
+             WHERE snapshot_id = ?1
+             ORDER BY path ASC",
+        )?;
+        let rows = stmt.query_map(params![snapshot_id], |row| {
+            Ok(WorktreeSnapshotFileRecord {
+                path: row.get(0)?,
+                before_content: row.get(1)?,
+                after_content: row.get(2)?,
+            })
+        })?;
+        let mut files = Vec::new();
+        for row in rows {
+            files.push(row?);
+        }
+        Ok(Some(WorktreeSnapshotRecord { summary, files }))
+    }
+
+    pub fn mark_worktree_snapshot_reverted(&self, snapshot_id: &str) -> Result<(), SessionError> {
+        let conn = self.conn.lock().expect("session store mutex poisoned");
+        let updated = conn.execute(
+            "UPDATE worktree_snapshots SET reverted_at = ?1 WHERE id = ?2",
+            params![now_secs(), snapshot_id],
+        )?;
+        if updated == 0 {
+            return Err(SessionError::NotFound {
+                id: snapshot_id.to_string(),
+            });
+        }
+        Ok(())
     }
 }
 

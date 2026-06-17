@@ -4,12 +4,18 @@ import { sessionsApi } from '../api/sessions'
 import { applyEvent } from '../utils/streamAccumulator'
 import type { ChatStreamEventPayload } from '../type/providers'
 import type { ChatItem } from '../type/chat'
-import type { SessionInput, SessionMessage, SessionSummary } from '../type/session'
+import type {
+  SessionInput,
+  SessionMessage,
+  SessionSummary,
+  WorktreeSnapshotSummary,
+} from '../type/session'
 
 interface SessionStoreState {
   sessions: SessionSummary[]
   activeSessionId: string | null
   messagesBySession: Record<string, ChatItem[]>
+  snapshotsBySession: Record<string, WorktreeSnapshotSummary[]>
   isLoading: boolean
   error: string | null
 
@@ -19,6 +25,7 @@ interface SessionStoreState {
   remove: (id: string) => Promise<void>
   rename: (id: string, title: string) => Promise<void>
   reload: (id: string) => Promise<void>
+  reloadSnapshots: (id: string) => Promise<void>
 
   pushUserMessage: (sessionId: string, text: string) => void
   ensureStreamingItem: (sessionId: string, requestId: string, model?: string) => void
@@ -30,19 +37,32 @@ interface SessionStoreState {
   cancelActiveStream: () => Promise<void>
 }
 
-function toChatItems(messages: SessionMessage[]): ChatItem[] {
+function toChatItems(
+  messages: SessionMessage[],
+  snapshots: WorktreeSnapshotSummary[] = [],
+): ChatItem[] {
+  const requestIds = [...snapshots].reverse().map((snapshot) => snapshot.requestId)
+  let requestIndex = 0
   return messages
     .filter(
       (message): message is SessionMessage & { role: 'user' | 'assistant' | 'tool' } =>
         message.role === 'user' || message.role === 'assistant' || message.role === 'tool',
     )
-    .map((message) => ({ id: message.id, role: message.role, parts: message.parts }))
+    .map((message) => {
+      const item: ChatItem = { id: message.id, role: message.role, parts: message.parts }
+      if (message.role === 'assistant') {
+        item.requestId = requestIds[requestIndex]
+        requestIndex += 1
+      }
+      return item
+    })
 }
 
 export const useSessionStore = create<SessionStoreState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   messagesBySession: {},
+  snapshotsBySession: {},
   isLoading: false,
   error: null,
   activeStream: null,
@@ -73,6 +93,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       sessions: [summary, ...state.sessions],
       activeSessionId: session.id,
       messagesBySession: { ...state.messagesBySession, [session.id]: [] },
+      snapshotsBySession: { ...state.snapshotsBySession, [session.id]: [] },
     }))
     return session.id
   },
@@ -81,9 +102,16 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     set({ activeSessionId: id })
     if (!(id in get().messagesBySession)) {
       try {
-        const result = await sessionsApi.load(id)
+        const [result, snapshots] = await Promise.all([
+          sessionsApi.load(id),
+          sessionsApi.worktreeSnapshots(id),
+        ])
         set((state) => ({
-          messagesBySession: { ...state.messagesBySession, [id]: toChatItems(result.messages) },
+          messagesBySession: {
+            ...state.messagesBySession,
+            [id]: toChatItems(result.messages, snapshots),
+          },
+          snapshotsBySession: { ...state.snapshotsBySession, [id]: snapshots },
         }))
       } catch (error) {
         set({ error: resolveErrorMessage(error) })
@@ -96,10 +124,12 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     set((state) => {
       const sessions = state.sessions.filter((session) => session.id !== id)
       const messagesBySession = { ...state.messagesBySession }
+      const snapshotsBySession = { ...state.snapshotsBySession }
       delete messagesBySession[id]
+      delete snapshotsBySession[id]
       const activeSessionId =
         state.activeSessionId === id ? sessions[0]?.id ?? null : state.activeSessionId
-      return { sessions, messagesBySession, activeSessionId }
+      return { sessions, messagesBySession, snapshotsBySession, activeSessionId }
     })
   },
 
@@ -114,9 +144,24 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
 
   reload: async (id) => {
     try {
-      const result = await sessionsApi.load(id)
+      const [result, snapshots] = await Promise.all([
+        sessionsApi.load(id),
+        sessionsApi.worktreeSnapshots(id),
+      ])
       set((state) => ({
-        messagesBySession: { ...state.messagesBySession, [id]: toChatItems(result.messages) },
+        messagesBySession: { ...state.messagesBySession, [id]: toChatItems(result.messages, snapshots) },
+        snapshotsBySession: { ...state.snapshotsBySession, [id]: snapshots },
+      }))
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
+    }
+  },
+
+  reloadSnapshots: async (id) => {
+    try {
+      const snapshots = await sessionsApi.worktreeSnapshots(id)
+      set((state) => ({
+        snapshotsBySession: { ...state.snapshotsBySession, [id]: snapshots },
       }))
     } catch (error) {
       set({ error: resolveErrorMessage(error) })
@@ -147,6 +192,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         parts: [],
         isStreaming: true,
         model,
+        requestId,
       }
       return {
         messagesBySession: { ...state.messagesBySession, [sessionId]: [...messages, item] },
@@ -195,11 +241,21 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
 /// 稳定的空数组引用 —— 避免 selector 每次返回新 `[]` 导致 useSyncExternalStore 判定
 /// snapshot 变化、触发无限 re-render(Maximum update depth exceeded / 白屏)。
 const EMPTY_MESSAGES: ChatItem[] = []
+const EMPTY_SNAPSHOTS: WorktreeSnapshotSummary[] = []
 
 export function useActiveSessionMessages(): ChatItem[] {
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   return useSessionStore((state) =>
     activeSessionId ? state.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES,
+  )
+}
+
+export function useActiveSessionSnapshots(): WorktreeSnapshotSummary[] {
+  const activeSessionId = useSessionStore((state) => state.activeSessionId)
+  return useSessionStore((state) =>
+    activeSessionId
+      ? state.snapshotsBySession[activeSessionId] ?? EMPTY_SNAPSHOTS
+      : EMPTY_SNAPSHOTS,
   )
 }
 
