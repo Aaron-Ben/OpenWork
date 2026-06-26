@@ -1,14 +1,16 @@
 # OpenWork
 
-OpenWork is an AI application foundation built around a Rust workspace and a Tauri desktop client. The project is currently in early development and focuses first on model provider integration, unified message types, and a desktop shell.
+<p align="center">
+  <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
+</p>
 
-中文说明见下方；English follows.
+OpenWork 是一个围绕 Rust workspace 和 Tauri 桌面客户端构建的 AI 应用基础项目。项目目前处于早期阶段，优先推进多厂商模型接入、统一消息类型和桌面端基础壳层。
 
-## 中文
+English version: [README.en.md](README.en.md)
 
-### 项目状态
+## 项目状态
 
-OpenWork 目前处于早期阶段。已经完成的基础能力包括：
+已经完成的基础能力包括：
 
 - Rust workspace 基础结构
 - Tauri + React + TypeScript 桌面客户端骨架
@@ -25,12 +27,12 @@ OpenWork 目前处于早期阶段。已经完成的基础能力包括：
 - 前端真实业务界面
 - live API smoke test
 
-### 目录结构
+## 目录结构
 
 ```text
 OpenWork/
   apps/
-    desktop/              # Tauri + React desktop app
+    desktop/                 # Tauri + React desktop app
   crates/
     openwork-protocol/       # Core AI types, message blocks, traits, errors
     openwork-providers/      # Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen
@@ -40,7 +42,7 @@ OpenWork/
     ai-provider-integration-design.md
 ```
 
-### Rust 模块
+## Rust 模块
 
 `openwork-protocol`
 
@@ -64,7 +66,19 @@ OpenWork/
 - 模型 capability 校验
 - 默认模型和 fallback chain
 
-### 环境要求
+## 桌面端
+
+OpenWork Desktop 是 OpenWork 的 Tauri + React + TypeScript 客户端。
+
+技术栈：
+
+- Tauri 2
+- React
+- TypeScript
+- Vite
+- pnpm
+
+## 环境要求
 
 - Rust stable
 - Node.js
@@ -78,7 +92,7 @@ corepack enable
 corepack prepare pnpm@latest --activate
 ```
 
-### 安装依赖
+## 安装依赖
 
 桌面端：
 
@@ -87,7 +101,7 @@ cd apps/desktop
 pnpm install
 ```
 
-### 启动桌面客户端
+## 启动桌面客户端
 
 > 桌面端命令必须在 `apps/desktop` 目录下执行。项目根目录只有 `Cargo.toml`（Rust workspace），没有 `package.json`，在根目录运行 `pnpm tauri dev` 会报 `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`。
 
@@ -96,27 +110,24 @@ cd apps/desktop
 pnpm tauri dev
 ```
 
-### Rust 测试
+## 构建桌面客户端
+
+```bash
+cd apps/desktop
+pnpm tauri build
+```
+
+## Rust 测试和检查
 
 在项目根目录运行：
 
 ```bash
 cargo test
-```
-
-静态检查：
-
-```bash
 cargo clippy --all-targets --all-features
-```
-
-格式化：
-
-```bash
 cargo fmt
 ```
 
-### API Key
+## API Key
 
 当前 provider 通过环境变量或调用方传入 API key。建议使用以下变量名：
 
@@ -130,7 +141,7 @@ DASHSCOPE_API_KEY=...
 
 不要提交真实密钥。
 
-### 设计文档
+## 设计文档
 
 模型接入设计见：
 
@@ -138,7 +149,7 @@ DASHSCOPE_API_KEY=...
 docs/ai-provider-integration-design.md
 ```
 
-### 下一步
+## 下一步
 
 建议优先推进：
 
@@ -146,134 +157,3 @@ docs/ai-provider-integration-design.md
 2. 增加 streaming 事件模型。
 3. 增加 credential 管理，但先避免过度抽象。
 4. 为桌面客户端接入最小可用的模型调用界面。
-
-## English
-
-### Project Status
-
-OpenWork is in early development. The current foundation includes:
-
-- Rust workspace structure
-- Tauri + React + TypeScript desktop shell
-- Initial multi-provider model integration
-- Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, and Qwen/DashScope
-- Basic text generation, text embedding, and multimodal message block modeling
-- Basic model registry support
-
-Not yet complete:
-
-- Production-ready streaming
-- Full tool calling loop
-- Credential management
-- Real desktop application workflows
-- Live API smoke tests
-
-### Structure
-
-```text
-OpenWork/
-  apps/
-    desktop/              # Tauri + React desktop app
-  crates/
-    openwork-protocol/       # Core AI types, message blocks, traits, errors
-    openwork-providers/      # Provider adapters
-    openwork-runtime/        # Model registry and runtime coordination
-    openwork-tools/          # Tool abstractions and built-in tools
-  docs/
-    ai-provider-integration-design.md
-```
-
-### Rust Crates
-
-`openwork-protocol`
-
-- `GenerateRequest`, `GenerateResponse`
-- `EmbeddingRequest`, `EmbeddingResponse`
-- `Message` and `ContentBlock`
-- Provider traits and normalized provider errors
-
-`openwork-providers`
-
-- `OpenAiProvider`
-- `AnthropicProvider`
-- `KimiProvider`
-- `DeepSeekProvider`
-- `QwenProvider`
-- `OpenAiCompatibleChatProvider`
-
-`openwork-runtime`
-
-- `ModelRegistry`
-- Capability checks
-- Default models and fallback chains
-
-### Requirements
-
-- Rust stable
-- Node.js
-- pnpm
-- Tauri system dependencies
-
-Install pnpm if needed:
-
-```bash
-corepack enable
-corepack prepare pnpm@latest --activate
-```
-
-### Install Desktop Dependencies
-
-```bash
-cd apps/desktop
-pnpm install
-```
-
-### Run Desktop App
-
-> Desktop commands must run inside `apps/desktop`. The repo root only has `Cargo.toml` (Rust workspace) with no `package.json`, so running `pnpm tauri dev` from the root fails with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`.
-
-```bash
-cd apps/desktop
-pnpm tauri dev
-```
-
-### Rust Checks
-
-From the repository root:
-
-```bash
-cargo test
-cargo clippy --all-targets --all-features
-cargo fmt
-```
-
-### API Keys
-
-Provider API keys are currently passed through environment variables or caller configuration. Suggested names:
-
-```bash
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...
-KIMI_API_KEY=...
-DEEPSEEK_API_KEY=...
-DASHSCOPE_API_KEY=...
-```
-
-Do not commit real secrets.
-
-### Design Doc
-
-See:
-
-```text
-docs/ai-provider-integration-design.md
-```
-
-### Next Steps
-
-Recommended near-term work:
-
-1. Complete block-based provider response parsing.
-2. Add a streaming event model.
-3. Add credential management without over-abstracting it too early.
-4. Build a minimal desktop UI for model calls.
