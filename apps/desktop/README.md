@@ -1,6 +1,6 @@
-# Anvil Desktop
+# OpenWork Desktop
 
-Anvil Desktop is the Tauri + React + TypeScript client for Anvil.
+OpenWork Desktop is the Tauri + React + TypeScript client for OpenWork.
 
 ## 中文
 

@@ -1,4 +1,4 @@
-// 镜像 anvil-core 的 ContentBlock serde(tag="type", rename_all="snake_case")。
+// 镜像 openwork-protocol 的 ContentBlock serde(tag="type", rename_all="snake_case")。
 // 字段保持 snake_case 以与后端 JSON 一致,避免来回转换。
 
 export type ToolCallState = 'pending' | 'submitted' | 'finished'

@@ -104,7 +104,7 @@ chat-stream-event
 sessionStore.reload(sessionId)
 ```
 
-这会从 SQLite 重新加载持久化 messages。为了避免 reload 后又显示 running，后端在工具执行完成后也会把对应 `ToolCallState` 标记为 `Finished`。
+这会从 PostgreSQL 重新加载持久化 messages。为了避免 reload 后又显示 running，后端在工具执行完成后也会把对应 `ToolCallState` 标记为 `Finished`。
 
 ## 7. 审批 UI
 

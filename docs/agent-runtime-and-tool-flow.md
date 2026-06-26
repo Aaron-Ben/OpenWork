@@ -5,14 +5,14 @@ Last reviewed: 2026-06-17
 ## 1. 相关代码
 
 ```text
-crates/anvil-runtime/src/router.rs
-crates/anvil-tools/src/tool.rs
-crates/anvil-tools/src/registry.rs
-crates/anvil-tools/src/builtin/
+crates/openwork-runtime/src/router.rs
+crates/openwork-tools/src/tool.rs
+crates/openwork-tools/src/registry.rs
+crates/openwork-tools/src/builtin/
 apps/desktop/src-tauri/src/lib.rs
 ```
 
-`anvil-runtime` 负责 agent loop。它接收历史消息，调用 provider，处理模型返回的 tool calls，执行工具，再把工具结果回填给模型，直到模型返回最终文本或达到停止条件。
+`openwork-runtime` 负责 agent loop。它接收历史消息，调用 provider，处理模型返回的 tool calls，执行工具，再把工具结果回填给模型，直到模型返回最终文本或达到停止条件。
 
 ## 2. AgentConfig
 

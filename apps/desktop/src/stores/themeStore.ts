@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export type Theme = 'light' | 'dark' | 'system'
 
-const THEME_STORAGE_KEY = 'anvil-theme'
+const THEME_STORAGE_KEY = 'openwork-theme'
 
 function readStoredTheme(): Theme {
   if (typeof localStorage === 'undefined') return 'system'

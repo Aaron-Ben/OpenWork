@@ -1,4 +1,4 @@
-// 镜像 anvil-session 的 serde(camelCase)输出。
+// 镜像 openwork-session 的 serde(camelCase)输出。
 
 import type { ContentBlock } from './parts'
 
@@ -34,31 +34,4 @@ export interface SessionInput {
 export interface SessionLoadResult {
   session: Session
   messages: SessionMessage[]
-}
-
-export interface WorktreeSnapshotSummary {
-  id: string
-  sessionId: string
-  requestId: string
-  workingDir: string
-  changedFiles: string[]
-  createdAt: number
-  completedAt: number
-  revertedAt: number | null
-}
-
-export interface WorktreeSnapshotFileDetail {
-  path: string
-  beforeText: string | null
-  afterText: string | null
-  binary: boolean
-}
-
-export interface WorktreeSnapshotDetail {
-  snapshot: WorktreeSnapshotSummary
-  files: WorktreeSnapshotFileDetail[]
-}
-
-export interface RevertSnapshotResponse {
-  snapshot: WorktreeSnapshotSummary
 }

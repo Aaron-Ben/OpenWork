@@ -1,4 +1,4 @@
-// 镜像 anvil-providers 的 serde 输出(camelCase)。仅云端 API-key provider —— 无本地模型、无登录。
+// 镜像 openwork-providers 的 serde 输出(camelCase)。仅云端 API-key provider —— 无本地模型、无登录。
 
 export type ProviderKind =
   | 'openai'

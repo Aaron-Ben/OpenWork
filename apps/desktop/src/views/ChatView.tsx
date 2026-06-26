@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Sparkles, SquareTerminal } from 'lucide-react'
 
 import { sessionsApi } from '../api/sessions'
@@ -7,21 +7,15 @@ import { AssistantMessage } from '../components/chat/AssistantMessage'
 import { ChatInput } from '../components/chat/ChatInput'
 import { ToolResultView } from '../components/chat/ToolResultView'
 import { UserMessage } from '../components/chat/UserMessage'
-import { WorktreeChangeCard } from '../components/chat/WorktreeChangeCard'
 import { useActiveProvider } from '../stores/providerStore'
 import { useApprovalStore } from '../stores/approvalStore'
-import {
-  useSessionStore,
-  useActiveSessionMessages,
-  useActiveSessionSnapshots,
-} from '../stores/sessionStore'
+import { useSessionStore, useActiveSessionMessages } from '../stores/sessionStore'
 
 export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState('')
   const messages = useActiveSessionMessages()
-  const snapshots = useActiveSessionSnapshots()
   const hasPendingApproval = useApprovalStore((state) => state.pending.length > 0)
   const pushUserMessage = useSessionStore((state) => state.pushUserMessage)
   const ensureStreamingItem = useSessionStore((state) => state.ensureStreamingItem)
@@ -31,7 +25,6 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const activeStream = useSessionStore((state) => state.activeStream)
   // 是否正在发送 = 当前 session 有 in-flight 流式请求。
   const isSending = activeStream?.sessionId === sessionId
-  const snapshotsByRequestId = new Map(snapshots.map((snapshot) => [snapshot.requestId, snapshot]))
 
   useEffect(() => {
     setModel(active?.models[0] ?? '')
@@ -72,36 +65,24 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
           <EmptySessionHero active={!!active} hasSession={!!sessionId} />
         ) : (
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
-            {messages.map((message) => {
-              const snapshot =
-                sessionId && message.role === 'assistant'
-                  ? snapshotsByRequestId.get(message.requestId ?? message.id)
-                  : undefined
-              return (
-                <Fragment key={message.id}>
-                  {message.role === 'user' ? (
-                    <UserMessage parts={message.parts} />
-                  ) : message.role === 'tool' ? (
-                    <>
-                      {message.parts.map((part) =>
-                        part.type === 'tool_result' ? (
-                          <ToolResultView key={part.id} part={part} />
-                        ) : null,
-                      )}
-                    </>
-                  ) : (
-                    <AssistantMessage
-                      parts={message.parts}
-                      model={message.model}
-                      isStreaming={message.isStreaming}
-                    />
-                  )}
-                  {sessionId && snapshot ? (
-                    <WorktreeChangeCard sessionId={sessionId} snapshot={snapshot} />
-                  ) : null}
-                </Fragment>
-              )
-            })}
+            {messages.map((message) =>
+              message.role === 'user' ? (
+                <UserMessage key={message.id} parts={message.parts} />
+              ) : message.role === 'tool' ? (
+                message.parts.map((part) =>
+                  part.type === 'tool_result' ? (
+                    <ToolResultView key={part.id} part={part} />
+                  ) : null,
+                )
+              ) : (
+                <AssistantMessage
+                  key={message.id}
+                  parts={message.parts}
+                  model={message.model}
+                  isStreaming={message.isStreaming}
+                />
+              ),
+            )}
             <ApprovalDialog />
           </div>
         )}
@@ -126,9 +107,9 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
 function EmptySessionHero({ active, hasSession }: { active: boolean; hasSession: boolean }) {
   const title = hasSession ? '开始对话' : '新建会话'
   const body = !hasSession
-    ? '点击侧栏的「新建会话」按钮,开始使用 Anvil。'
+    ? '点击侧栏的「新建会话」按钮,开始使用 OpenWork。'
     : active
-      ? '开始一个新的编码会话。Anvil 已准备好帮你构建、调试和梳理项目。'
+      ? '开始一个新的编码会话。OpenWork 已准备好帮你构建、调试和梳理项目。'
       : '先在 Settings 中配置并启用一个云端 Provider,然后开始新的编码会话。'
 
   return (

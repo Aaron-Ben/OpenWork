@@ -1,16 +1,17 @@
 # 会话持久化与 LLM Trace
 
-Last reviewed: 2026-06-17
+Last reviewed: 2026-06-24
 
 ## 1. 相关代码
 
 ```text
-crates/anvil-session/src/store.rs
+crates/openwork-session/src/store.rs
+crates/openwork-database/src/lib.rs
 apps/desktop/src-tauri/src/lib.rs
 apps/desktop/src/stores/sessionStore.ts
 ```
 
-`anvil-session` 使用 SQLite 保存会话、消息和 LLM 事件。桌面端启动时在 app data 目录打开 `anvil.db`。
+`openwork-session` 使用 PostgreSQL 保存会话、消息、LLM 事件和工作区快照。桌面端启动时通过 `SessionStore::connect_from_env_or_local()` 连接数据库：优先读取 `DATABASE_URL`，未设置时使用本地 Docker 默认连接串 `postgres://openwork:openwork@localhost:5432/openwork`。
 
 ## 2. 表结构
 
@@ -19,9 +20,12 @@ apps/desktop/src/stores/sessionStore.ts
 | 表 | 用途 |
 | --- | --- |
 | `sessions` | 会话元信息：标题、provider、model、working_dir、时间戳 |
-| `messages` | 聊天消息，按 session 和 seq 排序 |
-| `message_parts` | 每条 message 的 block 级拆分 |
+| `messages` | 聊天消息，按 session 和 seq 排序；`parts_json` 保存完整 message blocks |
 | `llm_events` | 流式事件与 trace 数据 |
+| `tool_runs` | 工具调用审计表，当前 schema 已创建，写入路径待接入 |
+
+工作区文件变更不进入数据库。OpenWork 依赖 Git 作为变更查看与回滚机制：
+`git diff` 查看结果，`git restore` / `git restore -p` 回滚。
 
 ## 3. `messages`
 
@@ -38,27 +42,7 @@ created_at
 
 `parts_json` 是 `Vec<ContentBlock>` 的 JSON。它是当前恢复聊天上下文的主路径。
 
-## 4. `message_parts`
-
-`message_parts` 是对 `messages.parts_json` 的拆分保存：
-
-```text
-id
-session_id
-message_id
-part_index
-part_json
-created_at
-```
-
-当前 `append_messages` 会同时写：
-
-- `messages.parts_json`
-- `message_parts`
-
-这样既保留简单加载路径，也给后续 block 级查询、渲染、调试留出空间。
-
-## 5. `llm_events`
+## 4. `llm_events`
 
 `llm_events` 保存流式事件：
 
@@ -76,7 +60,7 @@ Tauri 在 `chat_generate_stream` 中接收到 `AgentEvent` 后，会映射成前
 
 `seq` 在同一 session 内递增，用于恢复事件顺序。
 
-## 6. Message 与 Event 的区别
+## 5. Message 与 Event 的区别
 
 `messages` 是“会话状态”，用于恢复聊天记录和继续对话。
 
@@ -92,7 +76,7 @@ Tauri 在 `chat_generate_stream` 中接收到 `AgentEvent` 后，会映射成前
 
 两者都需要。只保存 messages 会丢失过程；只保存 events 会让 UI 恢复和上下文构造变复杂。
 
-## 7. 当前持久化流程
+## 6. 当前持久化流程
 
 成功完成一次请求：
 
@@ -114,11 +98,11 @@ chat_generate_stream
 - 发出 `cancelled` 或 `doom_loop` 事件。
 - 前端保留已显示的部分内容。
 
-## 8. 当前缺口
+## 7. 当前缺口
 
-### 8.1 缺少 `tool_runs`
+### 7.1 `tool_runs` 写入路径未接入
 
-目前工具执行结果会体现在 message 和 event 中，但没有专门的工具运行表。建议新增：
+当前 PostgreSQL schema 已创建 `tool_runs` 表，但 runtime 还没有把工具开始、审批、结束、耗时和输出写入该表。目标结构：
 
 ```text
 tool_runs

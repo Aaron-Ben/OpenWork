@@ -2,11 +2,11 @@
 
 Status: Partially Implemented, Needs Ongoing Refresh
 Original date: 2026-06-07
-Last reviewed: 2026-06-17
+Last reviewed: 2026-06-25
 
 ## 1. Purpose
 
-This document describes Anvil's provider integration direction and the current implementation shape.
+This document describes OpenWork's provider integration direction and the current implementation shape.
 
 The long-term design principle is still capability-oriented: application code should ask for model capabilities such as chat, embedding, vision, reasoning, streaming, or tool calling instead of binding directly to one vendor API shape.
 
@@ -15,14 +15,14 @@ The current desktop app is not fully at that target state yet. It has a working 
 ## 2. Current Code Structure
 
 ```text
-crates/anvil-core/
+crates/openwork-protocol/
   src/ai/types.rs      # Shared AI request/response/message/model types
   src/ai/traits.rs     # Provider traits
   src/ai/error.rs      # Normalized provider errors
 
-crates/anvil-providers/
+crates/openwork-providers/
   src/provider_config.rs     # ProviderKind, ProviderInput, build_provider
-  src/store.rs               # ProviderStore persisted as providers.json
+  src/store.rs               # ProviderStore persisted in PostgreSQL
   src/presets.rs             # Built-in provider templates for the UI
   src/openai.rs              # OpenAI Responses + embeddings
   src/openai_compatible.rs   # OpenAI-compatible chat adapter
@@ -33,22 +33,23 @@ crates/anvil-providers/
   src/qwen.rs                # Qwen chat + OpenAI-compatible embeddings
   src/sse.rs                 # Shared SSE parsing helper
 
-crates/anvil-runtime/
+crates/openwork-runtime/
   src/registry.rs            # ModelRegistry, capability checks, defaults, fallbacks
 
 apps/desktop/
-  src/api/providers.ts       # Thin Tauri invoke/event wrapper
+  src/api/providers.ts
   src/stores/providerStore.ts
   src/components/chat/
   src/components/markdown/
-  src-tauri/src/lib.rs       # Tauri command bridge
+  src-tauri/src/commands/    # Tauri provider/session/chat commands
+  src-tauri/src/lib.rs       # Tauri bootstrap and state registration
 ```
 
 ## 3. Current Implementation Snapshot
 
 ### 3.1 Provider Configuration
 
-The desktop app stores real user provider configuration through `ProviderStore`.
+The desktop app stores real user provider configuration through `ProviderStore`, backed by PostgreSQL.
 
 `ProviderInput` currently contains:
 
@@ -119,7 +120,7 @@ This is intentionally explicit. The app presents provider identity to the user, 
 
 ## 4. Core Types and Traits
 
-`anvil-core` owns the shared AI contract. The main request and response types are:
+`openwork-protocol` owns the shared AI contract. The main request and response types are:
 
 ```rust
 pub struct GenerateRequest {
@@ -270,7 +271,7 @@ The current desktop streaming path is:
 Provider SSE response
   -> provider.stream_generate(...)
   -> GenerateStreamEvent
-  -> anvil-runtime AgentEvent
+  -> openwork-runtime AgentEvent
   -> apps/desktop/src-tauri/src/lib.rs chat_generate_stream
   -> Tauri event: "chat-stream-event"
   -> apps/desktop/src/api/providers.ts listenToChatStream
@@ -321,7 +322,7 @@ export interface ChatStreamEventPayload {
 }
 ```
 
-`invoke('chat_generate_stream')` still returns a final `ChatGenerateResponse`, but the visible UI is primarily driven by stream events. On `done`, the frontend reloads the session from SQLite so persisted messages become the source of truth.
+`invoke('chat_generate_stream')` still returns a final `ChatGenerateResponse`, but the visible UI is primarily driven by stream events. On `done`, the frontend reloads the session from PostgreSQL so persisted messages become the source of truth.
 
 Current limitations:
 
@@ -332,7 +333,7 @@ Current limitations:
 
 ## 7. Model Registry
 
-`ModelRegistry` exists in `anvil-runtime` and supports:
+`ModelRegistry` exists in `openwork-runtime` and supports:
 
 - provider-qualified model keys, such as `openai:gpt-4.1`
 - model capability checks
@@ -422,7 +423,7 @@ Current state:
 Target state:
 
 - API keys should move to OS keychain or another secret storage layer.
-- `providers.json` should store references or metadata, not raw API keys.
+- PostgreSQL should store references or metadata, not raw API keys.
 - Authorization headers must be redacted in logs.
 - Prompts, files, base64 payloads, and raw provider responses should not be logged by default.
 - Raw provider responses should be sampled or redacted before persistent storage.

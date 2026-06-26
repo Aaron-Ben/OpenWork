@@ -1,11 +1,13 @@
-# Anvil 文档索引
+# OpenWork 文档索引
 
 Last reviewed: 2026-06-17
 
 ## 架构与运行时
 
 - [architecture-overview.md](architecture-overview.md)：当前整体架构、模块边界、核心数据流。
+- [crate-restructure-plan.md](crate-restructure-plan.md)：目标 crate 结构、PostgreSQL-first 存储层、依赖方向与破坏性迁移顺序。
 - [agent-runtime-and-tool-flow.md](agent-runtime-and-tool-flow.md)：Agent loop、工具调用、runtime 事件、doom-loop 检测。
+- [local-postgres.md](local-postgres.md)：本地 Docker PostgreSQL 启动方式与 `DATABASE_URL` 约定。
 
 ## 权限、审批与工具安全
 
@@ -18,7 +20,7 @@ Last reviewed: 2026-06-17
 
 ## 持久化与观测
 
-- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：SQLite 表结构、messages/message_parts/llm_events 分工、trace 方向。
+- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：PostgreSQL 表结构、messages/llm_events/tool_runs 分工、trace 方向。
 - [file-diff-snapshot-revert-design.md](file-diff-snapshot-revert-design.md)：文件 diff、snapshot、review、revert 的设计边界和实现策略。
 
 ## 维护原则

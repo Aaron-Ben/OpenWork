@@ -16,9 +16,9 @@ Last reviewed: 2026-06-17
 代码位置：
 
 ```text
-crates/anvil-tools/src/permissions.rs
-crates/anvil-tools/src/tool.rs
-crates/anvil-runtime/src/router.rs
+crates/openwork-tools/src/permissions.rs
+crates/openwork-tools/src/tool.rs
+crates/openwork-runtime/src/router.rs
 ```
 
 核心类型：
@@ -83,7 +83,7 @@ ctx.check_path(path, AccessKind::Write)
 `bash` 如果在 `NetworkMode::Restricted` 下执行，会注入：
 
 ```text
-ANVIL_NETWORK_RESTRICTED=1
+OPENWORK_NETWORK_RESTRICTED=1
 ```
 
 这只是环境信号，不是网络隔离。
@@ -93,8 +93,8 @@ ANVIL_NETWORK_RESTRICTED=1
 代码位置：
 
 ```text
-crates/anvil-tools/src/approval.rs
-crates/anvil-runtime/src/router.rs
+crates/openwork-tools/src/approval.rs
+crates/openwork-runtime/src/router.rs
 apps/desktop/src/components/chat/ApprovalDialog.tsx
 apps/desktop/src-tauri/src/lib.rs
 ```

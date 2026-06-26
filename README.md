@@ -1,6 +1,6 @@
-# Anvil
+# OpenWork
 
-Anvil is an AI application foundation built around a Rust workspace and a Tauri desktop client. The project is currently in early development and focuses first on model provider integration, unified message types, and a desktop shell.
+OpenWork is an AI application foundation built around a Rust workspace and a Tauri desktop client. The project is currently in early development and focuses first on model provider integration, unified message types, and a desktop shell.
 
 中文说明见下方；English follows.
 
@@ -8,7 +8,7 @@ Anvil is an AI application foundation built around a Rust workspace and a Tauri 
 
 ### 项目状态
 
-Anvil 目前处于早期阶段。已经完成的基础能力包括：
+OpenWork 目前处于早期阶段。已经完成的基础能力包括：
 
 - Rust workspace 基础结构
 - Tauri + React + TypeScript 桌面客户端骨架
@@ -28,28 +28,28 @@ Anvil 目前处于早期阶段。已经完成的基础能力包括：
 ### 目录结构
 
 ```text
-Anvil/
+OpenWork/
   apps/
     desktop/              # Tauri + React desktop app
   crates/
-    anvil-core/           # Core AI types, message blocks, traits, errors
-    anvil-providers/      # Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen
-    anvil-runtime/        # Model registry and runtime coordination
-    anvil-tools/          # Future tool abstractions
+    openwork-protocol/       # Core AI types, message blocks, traits, errors
+    openwork-providers/      # Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen
+    openwork-runtime/        # Model registry and runtime coordination
+    openwork-tools/          # Tool abstractions and built-in tools
   docs/
     ai-provider-integration-design.md
 ```
 
 ### Rust 模块
 
-`anvil-core`
+`openwork-protocol`
 
 - 定义 `GenerateRequest`、`GenerateResponse`
 - 定义 `EmbeddingRequest`、`EmbeddingResponse`
 - 定义 `Message` 和 `ContentBlock`
 - 定义 provider trait 和统一错误类型
 
-`anvil-providers`
+`openwork-providers`
 
 - `OpenAiProvider`
 - `AnthropicProvider`
@@ -58,7 +58,7 @@ Anvil/
 - `QwenProvider`
 - `OpenAiCompatibleChatProvider`
 
-`anvil-runtime`
+`openwork-runtime`
 
 - `ModelRegistry`
 - 模型 capability 校验
@@ -151,7 +151,7 @@ docs/ai-provider-integration-design.md
 
 ### Project Status
 
-Anvil is in early development. The current foundation includes:
+OpenWork is in early development. The current foundation includes:
 
 - Rust workspace structure
 - Tauri + React + TypeScript desktop shell
@@ -171,28 +171,28 @@ Not yet complete:
 ### Structure
 
 ```text
-Anvil/
+OpenWork/
   apps/
     desktop/              # Tauri + React desktop app
   crates/
-    anvil-core/           # Core AI types, message blocks, traits, errors
-    anvil-providers/      # Provider adapters
-    anvil-runtime/        # Model registry and runtime coordination
-    anvil-tools/          # Future tool abstractions
+    openwork-protocol/       # Core AI types, message blocks, traits, errors
+    openwork-providers/      # Provider adapters
+    openwork-runtime/        # Model registry and runtime coordination
+    openwork-tools/          # Tool abstractions and built-in tools
   docs/
     ai-provider-integration-design.md
 ```
 
 ### Rust Crates
 
-`anvil-core`
+`openwork-protocol`
 
 - `GenerateRequest`, `GenerateResponse`
 - `EmbeddingRequest`, `EmbeddingResponse`
 - `Message` and `ContentBlock`
 - Provider traits and normalized provider errors
 
-`anvil-providers`
+`openwork-providers`
 
 - `OpenAiProvider`
 - `AnthropicProvider`
@@ -201,7 +201,7 @@ Anvil/
 - `QwenProvider`
 - `OpenAiCompatibleChatProvider`
 
-`anvil-runtime`
+`openwork-runtime`
 
 - `ModelRegistry`
 - Capability checks
