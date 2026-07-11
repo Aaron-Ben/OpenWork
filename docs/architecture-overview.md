@@ -23,14 +23,15 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 ```text
 crates/openwork-protocol/
   稳定协议与 Port：ModelRequest、ModelResponse、ModelEvent、ModelError、
-  ModelPort、ProviderConfig、ProviderRepository。新代码应直接依赖它。
+  ModelPort、ProviderConfig、ProviderRepository、CapabilitySpec、ActionRequest、
+  Observation、CapabilityResolverPort、ExecutionPort。新代码应直接依赖它。
 
 crates/openwork-db-macros/
   PostgreSQL entity derive 宏：当前提供 `PgEntity`，生成表名、字段、主键和索引 metadata。
 
 crates/openwork-providers/
   纯模型协议适配层：OpenAI、Anthropic、Kimi、DeepSeek、Qwen、GLM、
-  OpenAI-compatible，以及统一 HTTP 错误映射和流式感知 Transport Retry。
+  以及统一 HTTP 错误映射和流式感知 Transport Retry。
 
 crates/openwork-persistence/
   PostgreSQL Repository Adapter：当前实现 Provider 配置与 Provider Models 的事务、
@@ -41,11 +42,17 @@ crates/openwork-agent/
   Agent loop：模型流式调用、工具调用调度、审批等待、doom-loop 检测、取消处理。
 
 crates/openwork-runtime/
-  宿主组合层：当前保留 model registry，并 re-export agent / permissions 的宿主 API。
+  临时宿主组合层：组合 Capability Catalog、Execution、Agent、Provider 和 Session，
+  并 re-export agent / permissions 的宿主 API。
 
-crates/openwork-tools/
-  工具抽象与内置工具：read、write、edit、list、grep、glob、bash；
-  不再定义权限模型与审批模型。
+crates/openwork-capabilities/
+  Capability Catalog：持有 read、write、edit、list、grep、glob、bash 的名称、
+  描述、JSON Schema 和声明侧风险提示，不执行真实 IO。
+
+crates/openwork-execution/
+  统一 Action 执行：`actions/filesystem` 持有文件和搜索 Handler，
+  `actions/process` 持有 bash，service/schema/invoker/context 分别负责执行编排、
+  参数校验、Handler 路由和运行环境；当前还没有 OS 级 sandbox。
 
 crates/openwork-permissions/
   权限与审批策略：ApprovalPolicy、ApprovalsReviewer、ApprovalBridge、
@@ -75,13 +82,14 @@ ChatView
   -> chat_generate_stream Tauri command
   -> SessionStore 读取会话历史
   -> PostgresProviderRepository 读取 Provider Profile，并解密 api_key_encrypted
-  -> openwork-providers::build_provider 构造带 RetryPolicy 的 ModelPort
+  -> ProviderFactory::build 构造带 RetryPolicy 的 ModelPort
   -> openwork-agent::Agent::run
-     -> provider.stream_generate
+     -> CapabilityResolverPort 获取本轮 Tool Schema
+     -> ModelPort::invoke
      -> AgentEvent 流式转发给 Tauri
      -> 需要工具时发 ApprovalRequest
      -> 前端 resolve_approval
-     -> 工具执行
+     -> ExecutionPort 校验参数并执行 Action
      -> ToolResult 回填模型上下文
      -> 下一轮模型调用，直到无工具调用
   -> SessionStore 持久化新增 messages
@@ -112,29 +120,54 @@ ChatView
 
 `openwork-runtime` 当前已经从 agent loop 中退出来，保留 model registry 和宿主 API re-export。真正的多步循环、工具调用、doom-loop 检测、取消处理在 `openwork-agent`。
 
-### 4.3 `openwork-tools` 是能力层
+### 4.3 `openwork-capabilities` 是声明与发现层
 
-工具定义 JSON Schema 和执行逻辑在这里。权限模型和审批策略在 `openwork-permissions`；工具执行时只通过 `ToolContext` 消费权限，不负责决定是否审批。
+内置 Tool 的名称、描述、JSON Schema 和风险提示在这里。它实现 `CapabilityResolverPort`，但不执行文件或进程 IO。`openwork-agent` 只依赖 Protocol Port，不依赖具体 `CapabilityCatalog`。
 
-### 4.4 `openwork-session` 保存消息和 trace
+`risk_hint` 当前只是 Catalog 元数据和合同测试对象，不参与权限、审批或执行决策；`ReadOnly`、`WorkspaceMutation`、`ProcessExecution` 不能被理解为已经完成的风险策略。
+
+### 4.4 `openwork-execution` 是统一执行边界
+
+`ExecutionService` 先通过注入的 `CapabilityResolverPort` 解析声明并校验参数，再调用注入的 `ActionInvoker`。内置 Handler、`ExecutionContext`、路径权限检查、取消、超时和 Observation 归一化都在这里。Execution 不反向依赖具体 Capabilities crate。
+
+当前源码结构：
+
+```text
+openwork-execution/src/
+├── actions/
+│   ├── filesystem/     # read/write/edit/list/grep/glob
+│   ├── process/        # bash
+│   └── output.rs       # 跨 Action 共享的 UTF-8 安全输出截断
+├── context.rs          # working_dir、PermissionProfile、CancellationToken
+├── handler.rs          # crate 内部 ActionHandler 合同
+├── invoker.rs          # 名称到 Handler 的路由
+├── schema.rs           # 当前内置 Schema 所需的受控校验子集
+└── service.rs          # resolve -> validate -> invoke -> Observation
+```
+
+“统一执行边界”不等于“已经安全隔离”：当前只有应用层路径检查，尚无 OS 级 sandbox，`bash` 的命令内部访问也无法由 `PermissionProfile` 精细约束。
+
+### 4.5 `openwork-session` 保存消息和 trace
 
 `messages.parts_json` 用于重新加载聊天上下文并保存 message blocks；`llm_events` 用于 trace / observability，而不是直接替代 messages。当前还没有可恢复 Turn 状态机，工具执行后崩溃不能仅靠这些表可靠恢复。
 
-### 4.5 `openwork-workspace` 是工作区变更层
+### 4.6 `openwork-workspace` 是工作区变更层
 
 目标上应由 `openwork-workspace` 统一负责 git status、文件 diff 和快照还原。但当前 runtime、Tauri 和 UI 都没有调用这些函数，`SessionStore` 也没有持久化 worktree snapshot。
 
-### 4.6 `openwork-database` 是 PostgreSQL 基础层
+### 4.7 `openwork-database` 是 PostgreSQL 基础层
 
 当前已经有显式 `Database` / `DatabaseConfig` / `PgPool` 连接对象与 `schema_migrations` runner。Provider 的 SQL、Migration 和事务已进入 `openwork-persistence`；Session 仍保留在 `openwork-session`，将在目标架构后续阶段迁移。
 
-### 4.7 API Key 加密是 Persistence 内部实现
+### 4.8 API Key 加密是 Persistence 内部实现
 
 API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapter。`openwork-persistence::ApiKeyCipher` 在写入前加密、`load_runtime` 时解密；PostgreSQL 只保存版本化密文。主密钥由 Composition Root 通过环境配置提供，不进入数据库、Protocol DTO、日志或模型工具列表。未来建立 `openwork-app` 时只迁移主密钥配置注入，不新增 SecretStore 子系统。
 
 ## 5. 关键约束
 
 - 当前没有真正的操作系统级 sandbox。
+- `CapabilityRiskHint` 当前没有运行时消费者，不会自动允许、拒绝或触发审批。
+- `schema.rs` 只支持当前内置 Action 使用的 JSON Schema 子集，不是通用 JSON Schema 引擎。
 - `ApprovalPolicy::OnFailure`、`OnRequest`、`Granular` 还没有沙箱支撑，目前保守降级为需要审批。
 - `bash` 使用 `sh -c` 执行命令；虽然有用户审批、超时、取消和受限环境变量，但不能保证命令内部文件访问被 `PermissionProfile` 精细约束。
 - Provider 的统一事件不包含 Runtime Step；不同厂商的 tool call delta 仍需持续补充 fixture 测试。

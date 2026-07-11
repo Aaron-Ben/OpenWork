@@ -42,7 +42,8 @@ OpenWork/
     openwork-agent/          # Current agent loop
     openwork-runtime/        # Desktop-facing runtime composition
     openwork-session/        # PostgreSQL sessions, messages and trace events
-    openwork-tools/          # Tool abstractions and built-in tools
+    openwork-capabilities/   # Tool declarations and capability discovery
+    openwork-execution/      # Schema validation and built-in action handlers
   docs/
     model-provider-v1-design.md
 ```
@@ -53,7 +54,8 @@ OpenWork/
 
 - 定义 `ModelRequest`、`ModelResponse`、`ModelEvent`
 - 定义 `Message` 和 `ContentBlock`
-- 定义 `ModelPort`、`ProviderRepository` 和统一错误类型
+- 定义 `CapabilitySpec`、`ActionRequest`、`Observation`
+- 定义 `ModelPort`、`ProviderRepository`、`CapabilityResolverPort`、`ExecutionPort`
 
 `openwork-providers`
 
@@ -72,11 +74,22 @@ OpenWork/
 - Provider 与 Models 的事务写入
 - 使用 AES-256-GCM 加密 Provider API Key 后写入 PostgreSQL
 
+`openwork-capabilities`
+
+- 持有内置 Action 的名称、描述、参数 Schema 和声明侧风险提示
+- 通过 `CapabilityCatalog` 实现能力发现，不执行文件或进程 IO
+
+`openwork-execution`
+
+- 按 `actions/filesystem` 与 `actions/process` 组织真实 Handler
+- 负责参数校验、路径权限、取消、超时、输出截断和 `Observation` 归一化
+- 当前不包含操作系统级 sandbox，`risk_hint` 也尚未参与运行时判断
+
 `openwork-runtime`
 
 - `ModelRegistry`
 - 模型 capability 校验
-- Provider runtime 组合
+- 组合 Provider、Capability Catalog、Execution、Agent 和 Session
 
 ## 桌面端
 

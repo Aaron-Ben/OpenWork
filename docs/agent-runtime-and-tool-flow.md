@@ -9,9 +9,11 @@ Last reviewed: 2026-07-11
 ```text
 crates/openwork-agent/src/lib.rs
 crates/openwork-runtime/src/chat.rs
-crates/openwork-tools/src/tool.rs
-crates/openwork-tools/src/registry.rs
-crates/openwork-tools/src/builtin/
+crates/openwork-protocol/src/capability/
+crates/openwork-capabilities/src/
+crates/openwork-execution/src/actions/filesystem/
+crates/openwork-execution/src/actions/process/
+crates/openwork-execution/src/{context,handler,invoker,schema,service}.rs
 apps/desktop/src-tauri/src/lib.rs
 ```
 
@@ -23,16 +25,15 @@ apps/desktop/src-tauri/src/lib.rs
 
 - `provider`
 - `model`
-- `tools`
+- `capabilities: Arc<dyn CapabilityResolverPort>`
+- `execution: Arc<dyn ExecutionPort>`
 - `approval_policy`
 - `approvals_reviewer`
 - `approval_bridge`
-- `working_dir`
-- `permission_profile`
 - `cancel`
 - `max_steps`
 
-默认配置使用内置工具集、`ApprovalPolicy::Untrusted`、`ApprovalsReviewer::User`，并根据 `working_dir` 构造 `PermissionProfile::workspace_write`。
+`AgentConfig` 不再构造或持有具体 Tool Registry。`ChatRuntime` 当前作为 Composition Root，创建内置 `CapabilityCatalog`、`BuiltinActionInvoker` 和 `ExecutionService`，并用相同的 cancellation token 组合 Agent 与 Execution。默认审批仍是 `ApprovalPolicy::Untrusted`、`ApprovalsReviewer::User`。
 
 ## 3. 一轮 Agent Loop
 
@@ -40,11 +41,12 @@ apps/desktop/src-tauri/src/lib.rs
 
 ```text
 初始化 system + history
+通过 CapabilityResolverPort 获取 Tool Schema
 
 for step in 1..=max_steps:
   发出 Step(step)
   构造 ModelRequest(stream=true, tools=tool_defs)
-  调用 ModelPort.stream_generate
+  调用 ModelPort::invoke
   转发 LLM stream events
 
   将 assistant text / reasoning / tool_calls 加入 messages
@@ -56,7 +58,7 @@ for step in 1..=max_steps:
   for tool_call in tool_calls:
     检测 doom loop
     根据 ApprovalPolicy 决定是否请求审批
-    执行工具
+    通过 ExecutionPort 执行 Action
     标记 tool_call finished
     发出 ToolResult
     将 tool result 加入 messages
@@ -83,28 +85,45 @@ Provider 发出的 `ModelEvent` 只包含文本、推理和工具调用语义输
 
 `openwork-providers::RetryingModelPort` 只允许在尚未发出任何 `ModelEvent` 时重试。已经出现文本、推理或工具调用增量后，网络中断会直接返回错误，避免重复文本或重复工具参数。
 
-## 5. 工具上下文
+## 5. Capability 与 Execution 边界
 
-工具实现统一接收 `ToolContext`：
+声明由 `CapabilitySpec` 表示：
 
 ```rust
-pub struct ToolContext {
+pub struct CapabilitySpec {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub risk_hint: CapabilityRiskHint,
+}
+```
+
+`risk_hint` 当前只表达声明侧的粗粒度分类并参与合同测试，没有运行时消费者，不会自动决定权限或审批。最终风险语义留到权限与审批专题讨论。
+
+真实 Handler 只在 `openwork-execution` 内部，通过 `ExecutionContext` 获取执行环境：
+
+```rust
+pub struct ExecutionContext {
     pub working_dir: PathBuf,
     pub permissions: PermissionProfile,
     pub cancel: CancellationToken,
 }
 ```
 
-工具内部应遵守：
+Execution 当前遵守：
 
+- 调用 Handler 前根据 Capability Schema 校验参数。
 - 使用 `working_dir` 解析相对路径。
 - 文件访问前调用 `ctx.check_path(path, AccessKind)`。
 - 长耗时任务应响应 `ctx.cancel`。
-- 不在工具内部做审批，审批由 runtime 统一处理。
+- 把成功、失败、拒绝、取消和未知结果归一化为 `Observation`。
+- 不在 Handler 内部做审批；当前审批仍由 Agent 编排。
 
-## 6. 内置工具
+## 6. 内置 Action
 
-当前内置工具包括：
+Capability 声明位于 `openwork-capabilities/src/builtin.rs`；真实 Handler 按执行领域放置：文件和搜索 Action 位于 `actions/filesystem/`，进程 Action 位于 `actions/process/`。
+
+当前内置 Action 包括：
 
 | 工具 | 作用 | 权限检查 |
 | --- | --- | --- |
@@ -118,6 +137,8 @@ pub struct ToolContext {
 
 `bash` 已有超时、取消、`stdin` 置空、环境变量清理和 `kill_on_drop`，但还不是 sandbox。
 
+参数 Schema 与 Handler 已分离，并有合同测试保证七个内置名称完全一致。
+
 ## 7. Doom-loop 检测
 
 runtime 会记录最近的工具调用 `(name, normalized_input)`。如果连续达到阈值且完全相同，会发出 `DoomLoopDetected` 并停止。这是防止模型反复执行同一工具调用的基础保护。
@@ -128,3 +149,5 @@ runtime 会记录最近的工具调用 `(name, normalized_input)`。如果连续
 - `bash` 无文件级隔离，不能把审批等同于 sandbox。
 - `ApprovalPolicy::OnFailure` / `OnRequest` / `Granular` 需要真正 sandbox 或 executor 支撑。
 - 工具状态机还可以进一步明确为 `requested -> approved -> running -> completed/failed/cancelled`。
+- `risk_hint` 尚未接入运行时风险判断。
+- `schema.rs` 只实现当前内置 Action 所需子集；接入任意 MCP Schema 前需要重新确定兼容策略。

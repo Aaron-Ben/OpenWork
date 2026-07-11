@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 openwork-permissions = { workspace = true }
 openwork-protocol = { workspace = true }
-openwork-tools = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

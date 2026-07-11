@@ -1,13 +1,12 @@
 use async_trait::async_trait;
-use openwork_protocol::model::ContentBlock;
-use serde_json::{Value, json};
+use openwork_permissions::{AccessKind, NetworkMode};
+use openwork_protocol::capability::{Observation, ObservationErrorCode};
+use serde_json::Value;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use crate::{
-    AccessKind, NetworkMode,
-    tool::{Tool, ToolContext, ToolOutput},
-};
+use crate::ExecutionContext;
+use crate::handler::ActionHandler;
 
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -17,32 +16,21 @@ const MAX_TIMEOUT_MS: u64 = 120_000;
 pub struct Bash;
 
 #[async_trait]
-impl Tool for Bash {
-    fn name(&self) -> &str {
+impl ActionHandler for Bash {
+    fn name(&self) -> &'static str {
         "bash"
     }
 
-    fn description(&self) -> &str {
-        "Run a shell command via `sh -c` in the working directory. Returns combined stdout/stderr and the exit code. Subject to approval."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "command": { "type": "string", "description": "Shell command to execute." },
-                "timeoutMs": { "type": "number", "description": "Optional timeout in milliseconds. Defaults to 30000 and is capped at 120000." }
-            },
-            "required": ["command"]
-        })
-    }
-
-    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolOutput {
+    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
         let Some(command) = input.get("command").and_then(Value::as_str) else {
-            return ToolOutput::error("missing or invalid 'command' argument");
+            return Observation::failed(
+                ObservationErrorCode::InvalidArguments,
+                "missing or invalid 'command' argument",
+                false,
+            );
         };
         if let Err(message) = ctx.check_path(&ctx.working_dir, AccessKind::Read) {
-            return ToolOutput::error(message);
+            return Observation::denied(message);
         }
         let timeout_ms = input
             .get("timeoutMs")
@@ -71,7 +59,13 @@ impl Tool for Bash {
         let started = Instant::now();
         let child = match cmd.spawn() {
             Ok(child) => child,
-            Err(err) => return ToolOutput::error(format!("failed to spawn command: {err}")),
+            Err(err) => {
+                return Observation::failed(
+                    ObservationErrorCode::ExecutionFailed,
+                    format!("failed to spawn command: {err}"),
+                    false,
+                );
+            }
         };
         let wait_task = tokio::spawn(async move { child.wait_with_output().await });
         let abort_wait = wait_task.abort_handle();
@@ -79,16 +73,28 @@ impl Tool for Bash {
             biased;
             _ = ctx.cancel.cancelled() => {
                 abort_wait.abort();
-                return ToolOutput::error("command cancelled");
+                return Observation::cancelled("command cancelled");
             }
             _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
                 abort_wait.abort();
-                return ToolOutput::error(format!("command timed out after {timeout_ms} ms"));
+                return Observation::failed(
+                    ObservationErrorCode::Timeout,
+                    format!("command timed out after {timeout_ms} ms"),
+                    false,
+                );
             }
             result = wait_task => match result {
                 Ok(Ok(output)) => output,
-                Ok(Err(err)) => return ToolOutput::error(format!("failed to wait for command: {err}")),
-                Err(err) => return ToolOutput::error(format!("command task failed: {err}")),
+                Ok(Err(err)) => return Observation::failed(
+                    ObservationErrorCode::ExecutionFailed,
+                    format!("failed to wait for command: {err}"),
+                    false,
+                ),
+                Err(err) => return Observation::failed(
+                    ObservationErrorCode::ExecutionFailed,
+                    format!("command task failed: {err}"),
+                    false,
+                ),
             }
         };
         let elapsed_ms = started.elapsed().as_millis();
@@ -106,13 +112,14 @@ impl Tool for Bash {
             combined.push_str("[stderr]\n");
             combined.push_str(&stderr);
         }
-        let mut combined = crate::builtin::truncate_output(combined, MAX_OUTPUT_BYTES);
+        let mut combined = crate::actions::truncate_output(combined, MAX_OUTPUT_BYTES);
         let status = output.status.code().unwrap_or(-1);
         combined.push_str(&format!("\n[exit {status}; duration {elapsed_ms} ms]"));
 
-        ToolOutput {
-            content: vec![ContentBlock::text(combined)],
-            is_error: !output.status.success(),
+        if output.status.success() {
+            Observation::succeeded(combined)
+        } else {
+            Observation::failed(ObservationErrorCode::ExecutionFailed, combined, false)
         }
     }
 }

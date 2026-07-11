@@ -1,16 +1,17 @@
 use async_trait::async_trait;
 use globset::Glob as GlobSpec;
 use ignore::WalkBuilder;
-use openwork_protocol::model::ContentBlock;
+use openwork_permissions::AccessKind;
+use openwork_protocol::capability::{Observation, ObservationErrorCode};
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::path::Path;
 
-use crate::tool::{Tool, ToolContext, ToolOutput};
-use crate::{
-    AccessKind,
-    builtin::{resolve, truncate_output},
-};
+use crate::ExecutionContext;
+use crate::actions::truncate_output;
+use crate::handler::ActionHandler;
+
+use super::resolve;
 
 const DEFAULT_MAX_RESULTS: usize = 200;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
@@ -20,34 +21,14 @@ const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 pub struct Grep;
 
 #[async_trait]
-impl Tool for Grep {
-    fn name(&self) -> &str {
+impl ActionHandler for Grep {
+    fn name(&self) -> &'static str {
         "grep"
     }
 
-    fn description(&self) -> &str {
-        "Search file contents with a regular expression (ripgrep-like; respects .gitignore). \
-         Returns `path:line:content` by default, just file paths in `files_with_matches` mode, \
-         or `path:count` in `count` mode. Use `glob` to filter file types (e.g. \"*.rs\")."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "pattern": { "type": "string", "description": "Regular expression to search for." },
-                "path": { "type": "string", "description": "Directory or file to search; defaults to the working directory." },
-                "glob": { "type": "string", "description": "Optional glob to filter files, e.g. \"*.rs\"." },
-                "outputMode": { "type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Defaults to \"content\"." },
-                "maxResults": { "type": "number", "description": "Max results to return. Defaults to 200." }
-            },
-            "required": ["pattern"]
-        })
-    }
-
-    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolOutput {
+    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
         let Some(pattern) = input.get("pattern").and_then(Value::as_str) else {
-            return ToolOutput::error("missing or invalid 'pattern' argument");
+            return invalid_arguments("missing or invalid 'pattern' argument");
         };
         let path = input.get("path").and_then(Value::as_str).unwrap_or(".");
         let glob_filter = input.get("glob").and_then(Value::as_str);
@@ -63,19 +44,19 @@ impl Tool for Grep {
 
         let regex = match Regex::new(pattern) {
             Ok(r) => r,
-            Err(err) => return ToolOutput::error(format!("invalid regex: {err}")),
+            Err(err) => return invalid_arguments(format!("invalid regex: {err}")),
         };
         let matcher = match glob_filter {
             Some(g) => match GlobSpec::new(g) {
                 Ok(gb) => Some(gb.compile_matcher()),
-                Err(err) => return ToolOutput::error(format!("invalid glob: {err}")),
+                Err(err) => return invalid_arguments(format!("invalid glob: {err}")),
             },
             None => None,
         };
 
         let root = resolve(&ctx.working_dir, path);
         if let Err(message) = ctx.check_path(&root, AccessKind::Read) {
-            return ToolOutput::error(message);
+            return Observation::denied(message);
         }
         let mode = output_mode.to_string();
 
@@ -87,14 +68,19 @@ impl Tool for Grep {
         match result {
             Ok(output) => {
                 let truncated = truncate_output(output, MAX_OUTPUT_BYTES);
-                ToolOutput {
-                    content: vec![ContentBlock::text(truncated)],
-                    is_error: false,
-                }
+                Observation::succeeded(truncated)
             }
-            Err(err) => ToolOutput::error(format!("grep task failed: {err}")),
+            Err(err) => Observation::failed(
+                ObservationErrorCode::ExecutionFailed,
+                format!("grep task failed: {err}"),
+                false,
+            ),
         }
     }
+}
+
+fn invalid_arguments(message: impl Into<String>) -> Observation {
+    Observation::failed(ObservationErrorCode::InvalidArguments, message, false)
 }
 
 fn run_grep(

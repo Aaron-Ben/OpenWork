@@ -7,6 +7,9 @@ fn protocol_source_tree_matches_architecture_blueprint() {
     for path in [
         "domain/mod.rs",
         "domain/ids.rs",
+        "capability/mod.rs",
+        "capability/port.rs",
+        "capability/types.rs",
         "model/mod.rs",
         "model/message.rs",
         "model/request.rs",
@@ -24,4 +27,39 @@ fn protocol_source_tree_matches_architecture_blueprint() {
             "missing protocol source file: {path}"
         );
     }
+}
+
+#[test]
+fn tool_responsibilities_are_split_without_legacy_crate() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let crates = workspace.join("crates");
+    assert!(
+        crates.join("openwork-capabilities").is_dir(),
+        "capability catalog crate is missing"
+    );
+    assert!(
+        crates.join("openwork-execution").is_dir(),
+        "execution crate is missing"
+    );
+    assert!(
+        !crates.join("openwork-tools").exists(),
+        "legacy openwork-tools crate must be removed after the split"
+    );
+
+    let agent_manifest = std::fs::read_to_string(crates.join("openwork-agent/Cargo.toml")).unwrap();
+    assert!(!agent_manifest.contains("openwork-tools"));
+    assert!(!agent_manifest.contains("openwork-capabilities"));
+    assert!(!agent_manifest.contains("openwork-execution"));
+
+    let capabilities_manifest =
+        std::fs::read_to_string(crates.join("openwork-capabilities/Cargo.toml")).unwrap();
+    assert!(!capabilities_manifest.contains("openwork-execution"));
+
+    let execution_manifest =
+        std::fs::read_to_string(crates.join("openwork-execution/Cargo.toml")).unwrap();
+    let dependencies = execution_manifest
+        .split("[dev-dependencies]")
+        .next()
+        .unwrap_or(&execution_manifest);
+    assert!(!dependencies.contains("openwork-capabilities"));
 }

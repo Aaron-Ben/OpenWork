@@ -1,41 +1,36 @@
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use openwork_permissions::AccessKind;
+use openwork_protocol::capability::{Observation, ObservationErrorCode};
+use serde_json::Value;
 
-use crate::tool::{Tool, ToolContext, ToolOutput};
-use crate::{AccessKind, builtin::resolve};
+use crate::ExecutionContext;
+use crate::handler::ActionHandler;
+
+use super::resolve;
 
 #[derive(Default)]
 pub struct List;
 
 #[async_trait]
-impl Tool for List {
-    fn name(&self) -> &str {
+impl ActionHandler for List {
+    fn name(&self) -> &'static str {
         "list"
     }
 
-    fn description(&self) -> &str {
-        "List entries in a directory. Directories are suffixed with '/'. Defaults to the working directory."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string", "description": "Directory path; defaults to the working directory." }
-            }
-        })
-    }
-
-    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolOutput {
+    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
         let path = input.get("path").and_then(Value::as_str).unwrap_or(".");
         let resolved = resolve(&ctx.working_dir, path);
         if let Err(message) = ctx.check_path(&resolved, AccessKind::Read) {
-            return ToolOutput::error(message);
+            return Observation::denied(message);
         }
         let mut entries = match tokio::fs::read_dir(&resolved).await {
             Ok(rd) => rd,
             Err(err) => {
-                return ToolOutput::error(format!("failed to list {}: {err}", resolved.display()));
+                return Observation::failed(
+                    ObservationErrorCode::ExecutionFailed,
+                    format!("failed to list {}: {err}", resolved.display()),
+                    false,
+                );
             }
         };
         let mut names = Vec::new();
@@ -51,9 +46,9 @@ impl Tool for List {
         }
         names.sort();
         if names.is_empty() {
-            ToolOutput::text(format!("{} is empty", resolved.display()))
+            Observation::succeeded(format!("{} is empty", resolved.display()))
         } else {
-            ToolOutput::text(names.join("\n"))
+            Observation::succeeded(names.join("\n"))
         }
     }
 }

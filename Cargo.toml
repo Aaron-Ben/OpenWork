@@ -6,7 +6,8 @@ members = [
   "crates/openwork-agent",
   "crates/openwork-permissions",
   "crates/openwork-runtime",
-  "crates/openwork-tools",
+  "crates/openwork-capabilities",
+  "crates/openwork-execution",
   "crates/openwork-providers",
   "crates/openwork-persistence",
   "crates/openwork-session",
@@ -26,7 +27,8 @@ openwork-db-macros = { path = "crates/openwork-db-macros" }
 openwork-agent = { path = "crates/openwork-agent" }
 openwork-permissions = { path = "crates/openwork-permissions" }
 openwork-runtime = { path = "crates/openwork-runtime" }
-openwork-tools = { path = "crates/openwork-tools" }
+openwork-capabilities = { path = "crates/openwork-capabilities" }
+openwork-execution = { path = "crates/openwork-execution" }
 openwork-providers = { path = "crates/openwork-providers" }
 openwork-persistence = { path = "crates/openwork-persistence" }
 openwork-session = { path = "crates/openwork-session" }

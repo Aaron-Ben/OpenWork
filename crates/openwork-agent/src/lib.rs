@@ -2,17 +2,18 @@
 //! 直到模型返回不带工具调用的纯文本。
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use futures_util::StreamExt;
-use openwork_permissions::{
-    ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer, PermissionProfile,
+use openwork_permissions::{ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer};
+use openwork_protocol::capability::{
+    ActionRequest, CapabilityResolveError, CapabilityResolverPort, ExecutionPort, Observation,
+    ObservationContent, ObservationStatus,
 };
 use openwork_protocol::model::{
     ContentBlock, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest,
     ModelResponse, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
 };
-use openwork_tools::{ToolContext, ToolOutput, ToolRegistry};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -29,8 +30,8 @@ When the task is done or you have a final answer, respond with plain text and no
 pub struct AgentConfig {
     pub provider: Box<dyn ModelPort>,
     pub model: String,
-    pub tools: ToolRegistry,
-    pub working_dir: PathBuf,
+    pub capabilities: Arc<dyn CapabilityResolverPort>,
+    pub execution: Arc<dyn ExecutionPort>,
     /// 何时需要对工具调用发起审批(对齐 codex `AskForApproval`)。
     pub approval_policy: ApprovalPolicy,
     /// 需要审批时由谁来审(对齐 codex `ApprovalsReviewer`)。
@@ -40,29 +41,27 @@ pub struct AgentConfig {
     /// 取消令牌:外部触发 `cancel()` 后,agent loop 在下一个 await 点终止并返回
     /// [`AgentError::Cancelled`],携带截止当前的对话轨迹。
     pub cancel: CancellationToken,
-    /// 工具执行权限数据模型。当前用于应用层路径检查;未来可映射到真实沙箱。
-    pub permission_profile: PermissionProfile,
     pub max_steps: usize,
 }
 
 impl AgentConfig {
-    /// 用内置工具(read/write/list/bash)与默认审批配置构造。
-    /// 默认 `Untrusted` + `User`:每次工具调用都需宿主确认。
+    /// 注入能力发现和执行 Port，并使用默认审批配置构造。
     pub fn new(
         provider: Box<dyn ModelPort>,
         model: impl Into<String>,
-        working_dir: PathBuf,
+        capabilities: Arc<dyn CapabilityResolverPort>,
+        execution: Arc<dyn ExecutionPort>,
+        cancel: CancellationToken,
     ) -> Self {
         Self {
             provider,
             model: model.into(),
-            tools: ToolRegistry::with_builtin(),
-            working_dir: working_dir.clone(),
+            capabilities,
+            execution,
             approval_policy: ApprovalPolicy::Untrusted,
             approvals_reviewer: ApprovalsReviewer::User,
             approval_bridge: ApprovalBridge::new(),
-            cancel: CancellationToken::new(),
-            permission_profile: PermissionProfile::workspace_write(working_dir),
+            cancel,
             max_steps: DEFAULT_MAX_STEPS,
         }
     }
@@ -133,6 +132,8 @@ pub enum AgentEvent {
 pub enum AgentError {
     #[error("provider error: {0}")]
     Provider(#[from] ModelError),
+    #[error("capability resolver error: {0}")]
+    Capability(#[from] CapabilityResolveError),
     #[error("exceeded max steps ({0})")]
     MaxStepsExceeded(usize),
     /// 被外部取消;携带截止取消时的对话轨迹(不含 system prompt),供持久化部分结果。
@@ -169,7 +170,14 @@ impl Agent {
     ) -> Result<RunResult, AgentError> {
         let mut messages = vec![Message::text(Role::System, AGENT_SYSTEM_PROMPT)];
         messages.extend(history);
-        let tool_defs = self.config.tools.definitions();
+        let tool_defs = self
+            .config
+            .capabilities
+            .list()
+            .await?
+            .iter()
+            .map(|spec| spec.model_definition())
+            .collect::<Vec<_>>();
         // 最近若干次工具调用的 (name, 规范化 input),用于 doom-loop 检测。
         let mut recent: VecDeque<(String, String)> = VecDeque::new();
 
@@ -270,22 +278,26 @@ impl Agent {
                     return Err(AgentError::Cancelled(messages[1..].to_vec()));
                 }
                 mark_tool_call_finished(&mut messages, &tc.id);
+                let model_output = observation_content(&output);
                 on_event(AgentEvent::ToolResult {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
-                    output: output.content.clone(),
-                    is_error: output.is_error,
+                    output: model_output.clone(),
+                    is_error: output.is_error(),
                 });
                 messages.push(Message {
                     role: Role::Tool,
                     content: vec![ContentBlock::ToolResult(ToolResultBlock {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
-                        output: output.content,
-                        state: if output.is_error {
-                            ToolResultState::Error
-                        } else {
-                            ToolResultState::Success
+                        output: model_output,
+                        state: match output.status {
+                            ObservationStatus::Succeeded => ToolResultState::Success,
+                            ObservationStatus::Denied => ToolResultState::Denied,
+                            ObservationStatus::Cancelled => ToolResultState::Interrupted,
+                            ObservationStatus::Failed | ObservationStatus::OutcomeUnknown => {
+                                ToolResultState::Error
+                            }
                         },
                     })],
                 });
@@ -339,7 +351,7 @@ impl Agent {
         tc: &ToolCallBlock,
         input: serde_json::Value,
         on_event: &mut impl FnMut(AgentEvent),
-    ) -> ToolOutput {
+    ) -> Observation {
         let policy = self.config.approval_policy;
         let reviewer = self.config.approvals_reviewer;
 
@@ -365,7 +377,7 @@ impl Agent {
                 tokio::select! {
                     biased;
                     _ = self.config.cancel.cancelled() => {
-                        return ToolOutput::error("cancelled");
+                        return Observation::cancelled("cancelled");
                     }
                     decision = rx => match decision {
                         Ok(decision) => decision,
@@ -377,26 +389,29 @@ impl Agent {
 
         match decision {
             ApprovalDecision::Allow => self.run_tool(&tc.name, input).await,
-            ApprovalDecision::Deny(reason) => ToolOutput::error(reason),
+            ApprovalDecision::Deny(reason) => Observation::approval_denied(reason),
         }
     }
 
-    /// 真正执行工具(无审批),负责构造 ToolContext 与错误兜底。
-    async fn run_tool(&self, name: &str, input: serde_json::Value) -> ToolOutput {
-        let ctx = ToolContext {
-            working_dir: self.config.working_dir.clone(),
-            permissions: self.config.permission_profile.clone(),
-            cancel: self.config.cancel.clone(),
-        };
+    /// 真正执行 Action(无审批),只依赖稳定的 ExecutionPort。
+    async fn run_tool(&self, name: &str, input: serde_json::Value) -> Observation {
+        let request = ActionRequest::new(name, input);
         tokio::select! {
             biased;
-            _ = self.config.cancel.cancelled() => ToolOutput::error("cancelled"),
-            result = self.config.tools.execute(name, input, &ctx) => match result {
-                Ok(out) => out,
-                Err(err) => ToolOutput::error(err.to_string()),
-            },
+            _ = self.config.cancel.cancelled() => Observation::cancelled("cancelled"),
+            observation = self.config.execution.execute(request) => observation,
         }
     }
+}
+
+fn observation_content(observation: &Observation) -> Vec<ContentBlock> {
+    observation
+        .content
+        .iter()
+        .map(|content| match content {
+            ObservationContent::Text { text } => ContentBlock::text(text),
+        })
+        .collect()
 }
 
 fn mark_tool_call_finished(messages: &mut [Message], id: &str) {
@@ -512,13 +527,14 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use futures_util::stream;
+    use openwork_protocol::capability::{CapabilityRiskHint, CapabilitySpec, ObservationErrorCode};
     use openwork_protocol::model::{FinishReason, ModelStream};
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
-    /// 按 `stream_generate` 调用顺序依次返回预设响应的假 provider。
+    /// 按 `invoke` 调用顺序依次返回预设响应的假 provider。
     struct FakeProvider {
         responses: tokio::sync::Mutex<VecDeque<ModelResponse>>,
     }
@@ -550,6 +566,62 @@ mod tests {
                 },
             )])))
         }
+    }
+
+    struct FakeCapabilities;
+
+    #[async_trait]
+    impl CapabilityResolverPort for FakeCapabilities {
+        async fn list(&self) -> Result<Vec<CapabilitySpec>, CapabilityResolveError> {
+            Ok(vec![bash_spec()])
+        }
+
+        async fn resolve(
+            &self,
+            name: &str,
+        ) -> Result<Option<CapabilitySpec>, CapabilityResolveError> {
+            Ok((name == "bash").then(bash_spec))
+        }
+    }
+
+    struct FakeExecution;
+
+    #[async_trait]
+    impl ExecutionPort for FakeExecution {
+        async fn execute(&self, request: ActionRequest) -> Observation {
+            if request.name == "bash" {
+                Observation::succeeded("executed")
+            } else {
+                Observation::failed(
+                    ObservationErrorCode::CapabilityNotFound,
+                    format!("capability not found: {}", request.name),
+                    false,
+                )
+            }
+        }
+    }
+
+    fn bash_spec() -> CapabilitySpec {
+        CapabilitySpec {
+            name: "bash".to_string(),
+            description: "Run a shell command".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"]
+            }),
+            risk_hint: CapabilityRiskHint::ProcessExecution,
+        }
+    }
+
+    fn test_config(provider: Box<dyn ModelPort>) -> AgentConfig {
+        AgentConfig::new(
+            provider,
+            "fake",
+            Arc::new(FakeCapabilities),
+            Arc::new(FakeExecution),
+            CancellationToken::new(),
+        )
     }
 
     fn tool_call_response(id: &str, name: &str, input: serde_json::Value) -> ModelResponse {
@@ -588,7 +660,7 @@ mod tests {
     }
 
     fn untrusted_user_config(provider: Box<dyn ModelPort>) -> AgentConfig {
-        let mut config = AgentConfig::new(provider, "fake", PathBuf::from("."));
+        let mut config = test_config(provider);
         config.approval_policy = ApprovalPolicy::Untrusted;
         config.approvals_reviewer = ApprovalsReviewer::User;
         config
@@ -707,7 +779,7 @@ mod tests {
             tool_call_response("call-1", "bash", json!({"command": "true"})),
             text_response("done"),
         ]);
-        let mut config = AgentConfig::new(Box::new(provider), "fake", PathBuf::from("."));
+        let mut config = test_config(Box::new(provider));
         config.approval_policy = ApprovalPolicy::Never;
         // 不注入有效 bridge:Never 不应触碰它;若误发 ApprovalRequest 会因无 resolve 而卡死,
         // 测试会在超时/死锁暴露 —— 但这里用默认空 bridge,Never 路径根本不会 await 它。
@@ -732,7 +804,7 @@ mod tests {
             tool_call_response("call-1", "bash", json!({"command": "echo SHOULD_NOT_RUN"})),
             text_response("done"),
         ]);
-        let mut config = AgentConfig::new(Box::new(provider), "fake", PathBuf::from("."));
+        let mut config = test_config(Box::new(provider));
         config.approval_policy = ApprovalPolicy::Untrusted;
         config.approvals_reviewer = ApprovalsReviewer::AutoReview;
         let agent = Agent::new(config);
@@ -806,7 +878,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_before_run_returns_cancelled_with_trace() {
         let provider = FakeProvider::new(vec![text_response("done")]);
-        let config = AgentConfig::new(Box::new(provider), "fake", PathBuf::from("."));
+        let config = test_config(Box::new(provider));
         config.cancel.cancel();
         let agent = Agent::new(config);
 

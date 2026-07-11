@@ -1,9 +1,13 @@
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use openwork_permissions::AccessKind;
+use openwork_protocol::capability::{Observation, ObservationErrorCode};
+use serde_json::Value;
 use std::path::Path;
 
-use crate::tool::{Tool, ToolContext, ToolOutput};
-use crate::{AccessKind, builtin::resolve};
+use crate::ExecutionContext;
+use crate::handler::ActionHandler;
+
+use super::resolve;
 
 /// 精确文本编辑工具:用 `newString` 替换文件中唯一出现的 `oldString`。
 /// `oldString == ""` 表示新建文件(已存在则拒绝)。`replaceAll: true` 替换全部。
@@ -11,40 +15,20 @@ use crate::{AccessKind, builtin::resolve};
 pub struct Edit;
 
 #[async_trait]
-impl Tool for Edit {
-    fn name(&self) -> &str {
+impl ActionHandler for Edit {
+    fn name(&self) -> &'static str {
         "edit"
     }
 
-    fn description(&self) -> &str {
-        "Edit a file by replacing a unique occurrence of `oldString` with `newString`. \
-         Use `oldString: \"\"` to create a new file (refuses if it already exists). \
-         Set `replaceAll: true` to replace every occurrence. \
-         Without `replaceAll`, `oldString` must match exactly and be unique in the file."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "filePath": { "type": "string", "description": "Absolute or working-dir-relative path." },
-                "oldString": { "type": "string", "description": "Exact text to find. Empty string means create a new file." },
-                "newString": { "type": "string", "description": "Replacement text (or full content for a new file)." },
-                "replaceAll": { "type": "boolean", "description": "Replace every occurrence. Defaults to false." }
-            },
-            "required": ["filePath", "oldString", "newString"]
-        })
-    }
-
-    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolOutput {
+    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
         let Some(path) = input.get("filePath").and_then(Value::as_str) else {
-            return ToolOutput::error("missing or invalid 'filePath' argument");
+            return invalid_arguments("missing or invalid 'filePath' argument");
         };
         let Some(old) = input.get("oldString").and_then(Value::as_str) else {
-            return ToolOutput::error("missing or invalid 'oldString' argument");
+            return invalid_arguments("missing or invalid 'oldString' argument");
         };
         let Some(new) = input.get("newString").and_then(Value::as_str) else {
-            return ToolOutput::error("missing or invalid 'newString' argument");
+            return invalid_arguments("missing or invalid 'newString' argument");
         };
         let replace_all = input
             .get("replaceAll")
@@ -53,13 +37,19 @@ impl Tool for Edit {
 
         let resolved = resolve(&ctx.working_dir, path);
         if let Err(message) = ctx.check_path(&resolved, AccessKind::Write) {
-            return ToolOutput::error(message);
+            return Observation::denied(message);
         }
         match apply_edit(&resolved, old, new, replace_all).await {
-            Ok(message) => ToolOutput::text(message),
-            Err(message) => ToolOutput::error(message),
+            Ok(message) => Observation::succeeded(message),
+            Err(message) => {
+                Observation::failed(ObservationErrorCode::ExecutionFailed, message, false)
+            }
         }
     }
+}
+
+fn invalid_arguments(message: impl Into<String>) -> Observation {
+    Observation::failed(ObservationErrorCode::InvalidArguments, message, false)
 }
 
 /// 纯编辑逻辑(抽出来便于单测):对 `path` 应用一次编辑,返回人类可读结果或错误文案。

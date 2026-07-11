@@ -19,7 +19,9 @@ Last reviewed: 2026-07-11
 
 ```text
 crates/openwork-permissions/src/permissions.rs
-crates/openwork-tools/src/tool.rs
+crates/openwork-execution/src/context.rs
+crates/openwork-execution/src/actions/filesystem/
+crates/openwork-execution/src/actions/process/
 crates/openwork-agent/src/lib.rs
 ```
 
@@ -59,7 +61,7 @@ PermissionProfile::workspace_write(working_dir)
 
 ## 3. 路径检查方式
 
-工具通过：
+文件系统 Action Handler 通过：
 
 ```rust
 ctx.check_path(path, AccessKind::Read)
@@ -70,9 +72,9 @@ ctx.check_path(path, AccessKind::Write)
 
 当前应把它视为“应用层权限检查”，不是 sandbox。
 
-## 4. 各工具权限
+## 4. 各 Action 的当前权限检查
 
-| 工具 | 当前检查 |
+| Action | 当前检查 |
 | --- | --- |
 | `read` | 目标文件必须允许 `Read` |
 | `write` | 目标文件必须允许 `Write` |

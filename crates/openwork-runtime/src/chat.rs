@@ -2,8 +2,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use openwork_agent::{Agent, AgentConfig, AgentError, AgentEvent};
-use openwork_permissions::{ApprovalBridge, ApprovalPolicy};
+use openwork_capabilities::{CapabilityCatalog, CatalogError};
+use openwork_execution::{BuiltinActionInvoker, ExecutionContext, ExecutionService};
+use openwork_permissions::{ApprovalBridge, ApprovalPolicy, PermissionProfile};
 use openwork_protocol::{
+    capability::{ActionInvoker, CapabilityResolverPort, ExecutionPort},
     model::{ContentBlock, Message, Role},
     provider::{ProviderRepository, ProviderRepositoryError},
 };
@@ -72,6 +75,8 @@ impl ChatStreamEventPayload {
 
 #[derive(Debug, Error)]
 pub enum ChatRuntimeError {
+    #[error("capability catalog error: {0}")]
+    CapabilityCatalog(#[from] CatalogError),
     #[error("provider not found: {0}")]
     ProviderNotFound(String),
     #[error("session not found: {0}")]
@@ -152,9 +157,18 @@ impl ChatRuntime {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        let mut agent_config = AgentConfig::new(provider, request.model, working_dir);
+        let capabilities: Arc<dyn CapabilityResolverPort> = Arc::new(CapabilityCatalog::builtin()?);
+        let invoker: Arc<dyn ActionInvoker> =
+            Arc::new(BuiltinActionInvoker::new(ExecutionContext::new(
+                working_dir.clone(),
+                PermissionProfile::workspace_write(working_dir),
+                cancel.clone(),
+            )));
+        let execution: Arc<dyn ExecutionPort> =
+            Arc::new(ExecutionService::new(Arc::clone(&capabilities), invoker));
+        let mut agent_config =
+            AgentConfig::new(provider, request.model, capabilities, execution, cancel);
         agent_config.approval_bridge = approval_bridge;
-        agent_config.cancel = cancel;
         if let Some(approval_policy) = request.approval_policy {
             agent_config.approval_policy = approval_policy;
         }

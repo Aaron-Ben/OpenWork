@@ -5,11 +5,12 @@ edition = "2024"
 
 [dependencies]
 openwork-agent = { workspace = true }
+openwork-capabilities = { workspace = true }
+openwork-execution = { workspace = true }
 openwork-permissions = { workspace = true }
 openwork-protocol = { workspace = true }
 openwork-providers = { workspace = true }
 openwork-session = { workspace = true }
-openwork-tools = { workspace = true }
 openwork-workspace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

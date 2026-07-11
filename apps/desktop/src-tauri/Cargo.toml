@@ -22,7 +22,6 @@ openwork-protocol = { workspace = true }
 openwork-providers = { workspace = true }
 openwork-persistence = { workspace = true }
 openwork-runtime = { workspace = true }
-openwork-tools = { workspace = true }
 openwork-session = { workspace = true }
 openwork-workspace = { workspace = true }
 async-trait = { workspace = true }

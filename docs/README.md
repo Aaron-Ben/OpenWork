@@ -15,6 +15,7 @@ Last reviewed: 2026-07-11
 ## 权限、审批与工具安全
 
 - [permissions-and-approvals.md](permissions-and-approvals.md)：权限数据模型、各工具权限、human-in-the-loop 审批流程、当前边界。
+- [../plans/capability-tool-observation-design.md](../plans/capability-tool-observation-design.md)：Capability 合同、Catalog、Action Handler、Execution 与 Observation 的当前专题设计。
 
 ## Provider 与流式协议
 
@@ -31,5 +32,5 @@ Last reviewed: 2026-07-11
 - 其余文档只描述当前代码或某个专题，不再各自维护第二套路线路径。
 - 文档应描述当前实现，不要把未实现能力写成已完成。
 - 如果修改 `ModelEvent`、`AgentEvent`、`ContentBlock` 或 PostgreSQL schema，需要同步更新相关文档。
-- 如果新增工具，需要同步更新权限表和工具调用流程文档。
+- 如果新增内置 Action，需要同步更新 Capability Catalog、Execution Handler、名称对齐测试、权限表和工具调用流程文档。
 - 如果修改根目录 README，需要同步检查 `README.md` 和 `README.en.md` 是否保持一致。

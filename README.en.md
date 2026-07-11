@@ -42,7 +42,8 @@ OpenWork/
     openwork-agent/          # Current agent loop
     openwork-runtime/        # Desktop-facing runtime composition
     openwork-session/        # PostgreSQL sessions, messages, and trace events
-    openwork-tools/          # Tool abstractions and built-in tools
+    openwork-capabilities/   # Tool declarations and capability discovery
+    openwork-execution/      # Schema validation and built-in action handlers
   docs/
     model-provider-v1-design.md
 ```
@@ -53,7 +54,8 @@ OpenWork/
 
 - Defines `ModelRequest`, `ModelResponse`, and `ModelEvent`
 - Defines `Message` and `ContentBlock`
-- Defines `ModelPort`, `ProviderRepository`, and normalized model errors
+- Defines `CapabilitySpec`, `ActionRequest`, and `Observation`
+- Defines `ModelPort`, `ProviderRepository`, `CapabilityResolverPort`, and `ExecutionPort`
 
 `openwork-providers`
 
@@ -72,11 +74,22 @@ OpenWork/
 - Transactional provider-and-model writes
 - AES-256-GCM encryption for provider API keys stored in PostgreSQL
 
+`openwork-capabilities`
+
+- Owns built-in action names, descriptions, input schemas, and declaration-side risk hints
+- Implements discovery through `CapabilityCatalog` without performing filesystem or process I/O
+
+`openwork-execution`
+
+- Organizes real handlers under `actions/filesystem` and `actions/process`
+- Owns argument validation, path permissions, cancellation, timeouts, output truncation, and `Observation` normalization
+- Does not yet provide an OS-level sandbox, and `risk_hint` does not affect runtime decisions yet
+
 `openwork-runtime`
 
 - `ModelRegistry`
 - Model capability checks
-- Provider runtime composition
+- Composes providers, the capability catalog, execution, the agent, and sessions
 
 ## Desktop App
 
