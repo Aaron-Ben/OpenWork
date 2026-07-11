@@ -13,6 +13,9 @@ export const zhTW = {
   },
   header: { sessionActions: '對話操作' },
   chat: {
+    turnNavigation: '對話輪次導覽',
+    jumpToTurn: '跳至第 {{index}} 輪：{{title}}',
+    turnPreview: '第 {{index}} 輪',
     placeholder: '想問些什麼……', selectModel: '選擇模型', noModel: '暫無模型', send: '傳送', stop: '停止生成',
     approvalMode: '審批模式：由我審批', approveForMe: '由我審批', executionPermission: '執行權限',
     approvalDescription: '工具呼叫前暫停，等待你確認允許或拒絕。', startConversation: '開始對話', createSession: '建立對話',

@@ -144,12 +144,21 @@
    base —— 全局衬线;代码/输入框强制 mono/sans;选区/滚动条
    ============================================================ */
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 html {
   background-color: var(--paper);
   font-size: 16px;
 }
 
 body {
+  margin: 0;
   font-family: var(--font-serif);
   color: var(--ink);
   font-weight: var(--content-weight);

@@ -23,14 +23,14 @@ export function AppShell() {
   useChatStreamListener()
 
   return (
-    <main className="flex h-screen overflow-hidden bg-paper text-ink">
+    <main className="flex h-full overflow-hidden bg-paper text-ink">
       <Sidebar
         view={view}
         expanded={sidebarOpen}
         onToggleExpanded={() => setSidebarOpen((open) => !open)}
         onNavigate={setView}
       />
-      <section className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
+      <section className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
         <MainHeader
           title={
             view === 'chat'

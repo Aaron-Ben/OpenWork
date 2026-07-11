@@ -52,7 +52,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
       <motion.aside
         data-motion-sidebar="true"
         aria-hidden="true"
-        className="h-screen shrink-0 overflow-hidden"
+        className="h-full shrink-0 overflow-hidden"
         initial={false}
         animate={{ width: 0 }}
         transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
@@ -65,9 +65,9 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
       <motion.aside
         data-motion-sidebar="true"
         data-settings-sidebar="true"
-        className="flex h-screen shrink-0 flex-col overflow-hidden border-r border-line bg-paper-hover"
+        className="flex h-full shrink-0 flex-col overflow-hidden border-r border-line bg-paper-hover"
         initial={false}
-        animate={{ width: 280 }}
+        animate={{ width: 240 }}
         transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
       >
         <div className="flex h-16 shrink-0 items-center gap-3 px-3">
@@ -99,9 +99,9 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
   return (
     <motion.aside
       data-motion-sidebar="true"
-      className="flex h-screen shrink-0 flex-col overflow-hidden border-r border-line bg-paper-hover"
+      className="flex h-full shrink-0 flex-col overflow-hidden border-r border-line bg-paper-hover"
       initial={false}
-      animate={{ width: 280 }}
+      animate={{ width: 240 }}
       transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
     >
       <div className="flex h-16 shrink-0 items-center gap-3 px-3">
@@ -149,7 +149,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
         <AnimatePresence initial={false}>
           {expanded ? (
             <motion.div
-              className="flex h-full w-[280px] flex-col px-3"
+              className="flex h-full w-[240px] flex-col px-3"
               initial={reduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}

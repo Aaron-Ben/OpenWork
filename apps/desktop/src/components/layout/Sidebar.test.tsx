@@ -21,6 +21,10 @@ describe('Sidebar', () => {
     expect(markup).toContain('data-sidebar-footer="true"')
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('data-motion-sidebar="true"')
+    expect(markup).toContain('h-full')
+    expect(markup).toContain('w-[240px]')
+    expect(markup).not.toContain('w-[280px]')
+    expect(markup).not.toContain('h-screen')
   })
 
   it('fully hides its navigation when collapsed', () => {

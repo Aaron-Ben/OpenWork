@@ -32,6 +32,9 @@ export const zhCN = {
     sessionActions: '会话操作',
   },
   chat: {
+    turnNavigation: '会话轮次导航',
+    jumpToTurn: '跳转到第 {{index}} 轮：{{title}}',
+    turnPreview: '第 {{index}} 轮',
     placeholder: '随便问点什么……',
     selectModel: '选择模型',
     noModel: '暂无模型',

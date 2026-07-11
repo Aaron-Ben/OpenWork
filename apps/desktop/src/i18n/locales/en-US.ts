@@ -13,6 +13,9 @@ export const enUS = {
   },
   header: { sessionActions: 'Conversation actions' },
   chat: {
+    turnNavigation: 'Conversation turn navigation',
+    jumpToTurn: 'Jump to turn {{index}}: {{title}}',
+    turnPreview: 'Turn {{index}}',
     placeholder: 'Ask anything…', selectModel: 'Select model', noModel: 'No models', send: 'Send', stop: 'Stop generating',
     approvalMode: 'Approval mode: Approve for me', approveForMe: 'Approve for me', executionPermission: 'Execution permissions',
     approvalDescription: 'Pause before tool calls and wait for you to allow or deny them.', startConversation: 'Start a conversation',

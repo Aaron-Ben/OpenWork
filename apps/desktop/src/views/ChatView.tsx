@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -6,6 +6,10 @@ import { sessionsApi } from '../api/sessions'
 import { ApprovalDialog } from '../components/chat/ApprovalDialog'
 import { AssistantMessage } from '../components/chat/AssistantMessage'
 import { ChatInput } from '../components/chat/ChatInput'
+import {
+  ConversationNavigator,
+  getConversationTurns,
+} from '../components/chat/ConversationNavigator'
 import { ToolResultView } from '../components/chat/ToolResultView'
 import { UserMessage } from '../components/chat/UserMessage'
 import { useActiveProvider } from '../stores/providerStore'
@@ -16,7 +20,9 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState('')
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messages = useActiveSessionMessages()
+  const turns = useMemo(() => getConversationTurns(messages), [messages])
   const hasPendingApproval = useApprovalStore((state) => state.pending.length > 0)
   const pushUserMessage = useSessionStore((state) => state.pushUserMessage)
   const ensureStreamingItem = useSessionStore((state) => state.ensureStreamingItem)
@@ -62,32 +68,44 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
-      <div className="min-h-0 overflow-auto" aria-live="polite">
-        {messages.length === 0 && !hasPendingApproval ? (
-          <EmptySessionHero active={!!active} hasSession={!!sessionId} />
-        ) : (
-          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
-            {messages.map((message) =>
-              message.role === 'user' ? (
-                <UserMessage key={message.id} parts={message.parts} />
-              ) : message.role === 'tool' ? (
-                message.parts.map((part) =>
-                  part.type === 'tool_result' ? (
-                    <ToolResultView key={part.id} part={part} />
-                  ) : null,
+      <div className="relative min-h-0">
+        <div ref={scrollContainerRef} className="h-full overflow-auto" aria-live="polite">
+          {messages.length === 0 && !hasPendingApproval ? (
+            <EmptySessionHero active={!!active} hasSession={!!sessionId} />
+          ) : (
+            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
+              {messages.map((message) => {
+                const content =
+                  message.role === 'user' ? (
+                    <UserMessage parts={message.parts} />
+                  ) : message.role === 'tool' ? (
+                    message.parts.map((part) =>
+                      part.type === 'tool_result' ? (
+                        <ToolResultView key={part.id} part={part} />
+                      ) : null,
+                    )
+                  ) : (
+                    <AssistantMessage
+                      parts={message.parts}
+                      model={message.model}
+                      isStreaming={message.isStreaming}
+                    />
+                  )
+
+                return (
+                  <div
+                    key={message.id}
+                    data-turn-id={message.role === 'user' ? message.id : undefined}
+                  >
+                    {content}
+                  </div>
                 )
-              ) : (
-                <AssistantMessage
-                  key={message.id}
-                  parts={message.parts}
-                  model={message.model}
-                  isStreaming={message.isStreaming}
-                />
-              ),
-            )}
-            <ApprovalDialog />
-          </div>
-        )}
+              })}
+              <ApprovalDialog />
+            </div>
+          )}
+        </div>
+        <ConversationNavigator turns={turns} scrollContainerRef={scrollContainerRef} />
       </div>
 
       <ChatInput
