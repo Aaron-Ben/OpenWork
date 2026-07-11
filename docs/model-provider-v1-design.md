@@ -12,7 +12,7 @@ Last reviewed: 2026-07-11
 - Provider Stream 使用有界桥接并在 Drop 时取消生产任务；Retry 受总 deadline、attempt budget 和 semantic-output gate 约束。
 - SSE transport 只负责 framing；`[DONE]` 和厂商终态由对应 Adapter 解释，不再累积 raw event 数组。
 - `ProviderProfile` 与不可序列化的 `ProviderRuntimeConfig/ApiCredential` 已分离；PostgreSQL 只保存 `api_key_encrypted`，只有 `load_runtime` 解密为运行时 Credential。
-- Provider Registry 已由 `PostgresPersistence` 持有 Pool/Migration 和 `ApiKeyCipher`，Repository 不再自行读取环境变量或决定何时迁移；列表使用固定两次批量查询。但 Session Store 仍有独立数据库生命周期，全库唯一 composition root 尚未完成。
+- `PostgresPersistence` 统一持有 Pool/Migration、Provider Repository、Event Journal、Session Repository 和 `ApiKeyCipher`；Repository 不再自行读取环境变量或决定何时迁移，Provider 列表使用固定两次批量查询。
 - `openwork-persistence::ApiKeyCipher` 使用 AES-256-GCM、随机 Nonce 和版本化 envelope，并用 Provider ID 作为 AAD；这是 Persistence 内部实现，不新增 Port、SecretStore 或 Agent Tool。
 - 三个 crate 已建立 `domain/model/provider`、`gateway/transport/adapters`、`postgres/migrations/provider_registry` 物理边界；三类 Adapter 的 request/response/stream codec 已从 `mod.rs` 拆出。
 - Desktop Composition Root 只创建一个 `ProviderFactory`；Factory 持有 `HttpTransport`，其 Clone 通过 `Arc<HttpTransportInner>` 共享同一个 `reqwest::Client` 和连接池。Chat Runtime 与 Provider Test 使用同一 Factory 生命周期，Adapter 构造函数不再自行创建 Client。
@@ -68,7 +68,7 @@ Last reviewed: 2026-07-11
 | Repository 同时返回 Secret 与 UI 数据 | `ProviderConfig` 可序列化且包含 `api_key` | Provider 列表可能把密钥带到不必要的边界 |
 | Provider 列表存在 N+1 查询 | 每条 Provider 分别调用 `models_for` | Provider 增长后产生不必要的数据库往返 |
 | Repository 自己连接并迁移 | `PostgresProviderRepository::connect` 持有完整 `Database` | 后续 Journal、Projection、Artifact Repository 会重复基础设施生命周期 |
-| Attempt 记录不是可靠事实 | Runtime 通过 detached task best-effort 写 `llm_events` | 崩溃时无法审计某次 HTTP attempt、重试和计费风险 |
+| Attempt 记录尚未成为可靠事实 | UI stream 不落库，当前 Journal 只记录 Thread/Turn/Message | 崩溃时仍无法审计某次 HTTP attempt、重试和计费风险 |
 
 ## 3. 范围与非目标
 
@@ -683,7 +683,7 @@ timestamp
 - API Key、Authorization、Cookie、完整 Prompt、Tool Output 不进入 metadata。
 - 若未来支持原始协议诊断，必须显式启用、设置 retention，并存入受控 Artifact，不进入普通 Provider Response。
 
-## 8. `openwork-persistence` 目标结构
+## 8. `openwork-persistence` 当前结构
 
 ```text
 crates/openwork-persistence/src/
@@ -691,30 +691,40 @@ crates/openwork-persistence/src/
 ├── crypto/
 │   ├── mod.rs
 │   └── api_key.rs                # AES-256-GCM 版本化 envelope
-└── postgres/
+├── postgres/
+│   ├── mod.rs
+│   ├── database.rs                # DatabaseConfig、连接与 PgPool 生命周期
+│   ├── persistence.rs             # 统一 Persistence facade 与 migrate_all
+│   ├── migrations/
+│   │   ├── mod.rs                 # 全库有序 migration registry
+│   │   ├── runner.rs              # schema_migrations 与 migration runner
+│   │   ├── schema_infrastructure.rs
+│   │   ├── provider_registry.rs
+│   │   ├── recorded_events.rs
+│   │   └── drop_legacy_sessions.rs
+│   ├── event_journal/
+│   │   ├── mod.rs
+│   │   ├── record.rs              # Recorded Event SQLx Row
+│   │   └── repository.rs          # EventJournal 的 PostgreSQL 实现
+│   └── provider_registry/
+│       ├── mod.rs
+│       ├── record.rs              # Provider SQLx Row only
+│       └── repository.rs          # ProviderRepository 实现
+└── session/
     ├── mod.rs
-    ├── persistence.rs             # pool 生命周期、统一 migrate_all
-    ├── migrations/
-    │   ├── mod.rs                 # 全库有序 migration registry
-    │   └── provider_registry.rs
-    ├── provider_registry/
-    │   ├── mod.rs
-    │   ├── record.rs              # SQLx Row only
-    │   └── repository.rs          # ProviderRepository 实现
-    └── model_attempts/            # Recorded Event 稳定后加入
-        ├── mod.rs
-        ├── record.rs
-        ├── projector.rs
-        └── query.rs
+    ├── types.rs                   # Desktop 兼容 Session/Message DTO
+    └── store.rs                   # Journal 写入与当前内存 Projection
 ```
+
+`model_attempts` 尚未实现，不属于当前目录。等 Model Attempt 事件目录和 Observer/Reporter 边界冻结后，再作为 Recorded Event 的可重建查询 Projection 加入 Persistence；Providers 不直接写该目录或查询表。
 
 ### 8.1 PostgreSQL 生命周期
 
-- `PostgresPersistence` 统一拥有 `PgPool` 和全库 migration registry。
+- `PostgresPersistence` 统一拥有 `PgPool` 和全库 migration registry；migration 由 `cargo run -p openwork-persistence --bin openwork-migrate` 显式执行，Desktop 连接只检查 schema。
 - `PostgresProviderRepository::new(PgPool, ApiKeyCipher)` 只接收共享依赖，不自行读取环境变量或决定何时迁移。
 - `connect_from_env_or_local` 属于 App Composition Root/兼容入口，最终不留在单个 Repository。
 - 不再为每个 Repository 创建数据库 facade。
-- `openwork-database` 的通用能力逐步收进 Persistence；迁移期间允许薄兼容，不能形成两个长期持久化中心。
+- `openwork-database` 已删除；连接配置、Pool 和 migration runner 已收进 Persistence，不再存在两个持久化中心。
 
 ### 8.2 Provider Registry 表
 
@@ -1051,7 +1061,7 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 
 ### M7：Attempt Recorded Event 与 Projection
 
-- 等 Core Recorded Event 合同冻结。
+- 等 Model Attempt 事件分类以及 Observer/Reporter 接入方式冻结；通用 Event Journal 合同已经存在。
 - Provider signal 映射为 Recorded Event/Telemetry。
 - 建立幂等 `model_attempts/model_transport_attempts` Projector。
 

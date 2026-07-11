@@ -13,7 +13,7 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 - Agent loop：模型调用、工具审批、工具执行、多步循环
 - 内置工具：文件读写、搜索、bash
 - 基础权限模型与 human-in-the-loop 审批
-- 会话、message parts、LLM events 持久化
+- 基于 Event Journal 的 Thread、Turn 和 Message 持久化
 - PostgreSQL 中的 Provider API Key 加密存储
 - `openwork-workspace` 中的 worktree 变更快照与还原基础函数（尚未接入 runtime/Tauri/UI）
 - 桌面端流式 UI 与审批弹窗
@@ -26,17 +26,14 @@ crates/openwork-protocol/
   ModelPort、ProviderConfig、ProviderRepository、CapabilitySpec、ActionRequest、
   Observation、CapabilityResolverPort、ExecutionPort。新代码应直接依赖它。
 
-crates/openwork-db-macros/
-  PostgreSQL entity derive 宏：当前提供 `PgEntity`，生成表名、字段、主键和索引 metadata。
-
 crates/openwork-providers/
   纯模型协议适配层：OpenAI、Anthropic、Kimi、DeepSeek、Qwen、GLM、
   以及统一 HTTP 错误映射和流式感知 Transport Retry。
 
 crates/openwork-persistence/
-  PostgreSQL Repository Adapter：当前实现 Provider 配置与 Provider Models 的事务、
-  Migration 和 `ProviderRepository`；API Key 使用 AES-256-GCM 加密后落库，
-  不包含模型 HTTP 调用或 UI Preset。
+  PostgreSQL Adapter 与统一迁移入口：实现 Provider Repository 和 append-only
+  Event Journal、Journal-backed Session/Message 和内存投影；API Key 使用
+  AES-256-GCM 加密后落库。
 
 crates/openwork-core/
   Turn 控制循环与状态机：模型流式调用、工具调用调度、审批暂停/恢复、
@@ -55,13 +52,6 @@ crates/openwork-execution/
   `actions/process` 持有 bash，service/schema/invoker/context 分别负责执行编排、
   参数校验、Handler 路由和运行环境，`policy` 持有 PermissionProfile、文件系统、
   网络权限模式以及 Allow/Deny/RequireApproval 判定；当前还没有 OS 级 sandbox。
-
-crates/openwork-session/
-  PostgreSQL 会话存储：sessions、messages、llm_events、tool_runs。
-
-crates/openwork-database/
-  PostgreSQL 连接与 entity metadata 基础设施：DatabaseConfig、PgPool 创建与共享、
-  PgSchema、PgCrud SQL 片段生成。
 
 crates/openwork-workspace/
   workspace / git 辅助能力：工作区状态读取、文件内容 diff、文本预览转换。
@@ -82,6 +72,7 @@ ChatView
   -> PostgresProviderRepository 读取 Provider Profile，并解密 api_key_encrypted
   -> ProviderFactory::build 构造带 RetryPolicy 的 ModelPort
   -> openwork-app::ChatRuntime 组装一次 Turn
+  -> SessionStore 在模型调用前记录 turn_started + user_message_recorded
   -> openwork-core::Agent::run
      -> CapabilityResolverPort 获取本轮 Tool Schema
      -> ModelPort::invoke
@@ -93,7 +84,7 @@ ChatView
      -> Allow 后 ExecutionPort 执行 Action
      -> ToolResult 回填模型上下文
      -> 下一轮模型调用，直到无工具调用
-  -> SessionStore 持久化新增 messages
+  -> SessionStore 批量记录新增 Assistant/Tool Message 和 Turn 终态
   -> emit done
   -> 前端 reload session
 ```
@@ -153,17 +144,17 @@ openwork-execution/src/
 
 “统一执行边界”不等于“已经安全隔离”：当前只有应用层路径检查，尚无 OS 级 sandbox，`bash` 的命令内部访问也无法由 `PermissionProfile` 精细约束。
 
-### 4.6 `openwork-session` 保存消息和 trace
+### 4.6 Session 与 Message 已切换到 Journal
 
-`messages.parts_json` 用于重新加载聊天上下文并保存 message blocks；`llm_events` 用于 trace / observability，而不是直接替代 messages。当前还没有可恢复 Turn 状态机，工具执行后崩溃不能仅靠这些表可靠恢复。
+`openwork-protocol::journal` 定义 Recorded Event Envelope、Expected Version 和 `EventJournal`；`openwork-persistence::PostgresEventJournal` 实现聚合锁、批量 append 和读取。Session 的创建、改名、删除以及 Turn/Message 读写已经使用 `recorded_events`，查询时通过当前内存投影重放。旧 `sessions/messages/llm_events/tool_runs` 表和 `openwork-session/openwork-db-macros` crate 已删除。Action/Approval 的 intent/outcome 仍待在 Core 语义点直接持久化。
 
 ### 4.7 `openwork-workspace` 是工作区变更层
 
 目标上应由 `openwork-workspace` 统一负责 git status、文件 diff 和快照还原。但当前 runtime、Tauri 和 UI 都没有调用这些函数，`SessionStore` 也没有持久化 worktree snapshot。
 
-### 4.8 `openwork-database` 是 PostgreSQL 基础层
+### 4.8 Persistence 统一拥有 PostgreSQL 生命周期
 
-当前已经有显式 `Database` / `DatabaseConfig` / `PgPool` 连接对象与 `schema_migrations` runner。Provider 的 SQL、Migration 和事务已进入 `openwork-persistence`；Session 仍保留在 `openwork-session`，将在目标架构后续阶段迁移。
+数据库 migration 由 `cargo run -p openwork-persistence --bin openwork-migrate` 显式执行；Desktop 启动只检查四张必需表。Provider、Journal 和 Session Repository 共享一个连接池。`DatabaseConfig`、私有连接对象和 migration runner 都位于 `openwork-persistence::postgres`，不存在第二个数据库基础设施 crate。
 
 ### 4.9 API Key 加密是 Persistence 内部实现
 
@@ -174,7 +165,7 @@ API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapt
 - 当前没有真正的操作系统级 sandbox。
 - `CapabilityRiskHint` 已参与审批原因生成，但当前策略仍只有 `Untrusted` 和 `Never` 两种真实语义。
 - `schema.rs` 只支持当前内置 Action 使用的 JSON Schema 子集，不是通用 JSON Schema 引擎。
-- 审批状态当前是进程内可观察状态；Event Journal 和应用重启恢复尚未完成。
+- Thread/Turn/Message 已进入 Event Journal；Action/Approval 状态仍是进程内状态，重启恢复尚未完成。
 - `bash` 使用 `sh -c` 执行命令；虽然有用户审批、超时、取消和受限环境变量，但不能保证命令内部文件访问被 `PermissionProfile` 精细约束。
 - Provider 的统一事件不包含 Runtime Step；不同厂商的 tool call delta 仍需持续补充 fixture 测试。
 

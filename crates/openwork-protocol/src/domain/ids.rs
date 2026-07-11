@@ -24,6 +24,7 @@ macro_rules! string_id {
 }
 
 string_id!(ProviderId);
+string_id!(EventId);
 string_id!(ModelAttemptId);
 string_id!(TurnId);
 string_id!(ActionRunId);

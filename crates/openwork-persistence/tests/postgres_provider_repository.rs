@@ -1,7 +1,7 @@
-use std::time::Duration;
+mod common;
 
-use openwork_database::{Database, DatabaseConfig};
-use openwork_persistence::{ApiKeyCipher, PROVIDER_MIGRATIONS, PostgresProviderRepository};
+use common::{connect_test_pool, test_config};
+use openwork_persistence::{ApiKeyCipher, PostgresPersistence, PostgresProviderRepository};
 use openwork_protocol::provider::{
     ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderRepository,
 };
@@ -28,27 +28,22 @@ fn input(name: &str, models: &[(&str, ModelTier)]) -> ProviderInput {
 
 #[tokio::test]
 async fn provider_and_models_share_a_postgres_repository_transaction() {
-    let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+    let Some(config) = test_config(2) else {
         return;
     };
-    let database = Database::connect(DatabaseConfig {
-        url,
-        max_connections: 2,
-        acquire_timeout: Duration::from_secs(5),
-    })
-    .await
-    .unwrap();
-    database.migrate(&[]).await.unwrap();
+    PostgresPersistence::migrate_database(config.clone())
+        .await
+        .unwrap();
+    let pool = connect_test_pool(&config).await.unwrap();
     sqlx::query("DROP TABLE IF EXISTS provider_models, providers CASCADE")
-        .execute(database.pool())
+        .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM schema_migrations WHERE version = $1")
-        .bind(PROVIDER_MIGRATIONS[0].version)
-        .execute(database.pool())
+    sqlx::query("DELETE FROM schema_migrations WHERE name = 'create_provider_registry'")
+        .execute(&pool)
         .await
         .unwrap();
-    database.migrate(PROVIDER_MIGRATIONS).await.unwrap();
+    PostgresPersistence::migrate_database(config).await.unwrap();
     let timestamp_columns: Vec<(String, String)> = sqlx::query_as(
         "SELECT table_name, data_type
          FROM information_schema.columns
@@ -57,7 +52,7 @@ async fn provider_and_models_share_a_postgres_repository_transaction() {
            AND column_name IN ('created_at', 'updated_at', 'deleted_at')
          ORDER BY table_name, column_name",
     )
-    .fetch_all(database.pool())
+    .fetch_all(&pool)
     .await
     .unwrap();
     assert_eq!(timestamp_columns.len(), 6);
@@ -66,8 +61,7 @@ async fn provider_and_models_share_a_postgres_repository_transaction() {
             .iter()
             .all(|(_, data_type)| data_type == "timestamp without time zone")
     );
-    let repository =
-        PostgresProviderRepository::new(database.pool().clone(), ApiKeyCipher::from_key([7; 32]));
+    let repository = PostgresProviderRepository::new(pool, ApiKeyCipher::from_key([7; 32]));
     sqlx::query("TRUNCATE TABLE providers CASCADE")
         .execute(repository.pool())
         .await

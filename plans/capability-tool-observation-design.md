@@ -37,7 +37,7 @@
 - 不实现 MCP、Skill 或 Plugin。
 - 不实现 Tool Search、按需加载或模型侧自动路由。
 - 不实现 macOS Seatbelt/Sandbox Runtime。
-- 不写 `tool_runs` 或 Recorded Event；等待 Durable Core/Event Journal。
+- Capability/Execution 不直接写 `tool_runs` 或 Recorded Event。当前 App 只持久化 Turn/Message 事实；Action/Approval 的独立 intent/outcome 事件等待 Durable Core 接入。
 - 不实现 ArtifactStore；V1 继续在 Execution 内截断文本输出。
 - 不声称支持完整 JSON Schema；只实现并测试当前内置 Tool 使用的受控子集。
 
@@ -91,7 +91,7 @@ pub enum CapabilityRiskHint {
 
 `risk_hint` 只是声明侧提示，不是最终权限结论。Execution 必须结合实际参数和运行位置判断；后续 MCP/Plugin 来源也不能靠声明自行获得权限。
 
-当前代码尚未消费 `risk_hint`：它只存在于 Capability Catalog 和合同测试中，不会自动允许、拒绝、请求审批或改变 Handler 行为。最终是否保留以及如何参与风险计算，等待权限与审批专题冻结。
+当前 `ExecutionService::authorize` 会把 `risk_hint` 交给 Execution Policy，用于生成粗粒度审批原因。它不会自行降低权限或绕过 `ApprovalPolicy`，也不能替代后续针对实际参数、路径和运行位置的最终风险计算。
 
 `CapabilitySpec` 可以转换为模型 `ToolDefinition`，但 Model 层不拥有 Catalog。
 
@@ -156,13 +156,19 @@ pub trait ActionInvoker: Send + Sync {
 
 #[async_trait]
 pub trait ExecutionPort: Send + Sync {
+    async fn authorize(
+        &self,
+        request: &ActionRequest,
+        policy: ApprovalPolicy,
+    ) -> ExecutionPolicyDecision;
+
     async fn execute(&self, request: ActionRequest) -> Observation;
 }
 ```
 
-当前分开保留三个边界：Resolver 允许未来异步发现 MCP 能力；Invoker 是前置检查后的 Handler 入口；ExecutionPort 负责校验和把所有可预期失败归一化为 Observation。
+当前分开保留三个边界：Resolver 允许未来异步发现 MCP 能力；Invoker 是前置检查后的 Handler 入口；ExecutionPort 的 `authorize` 负责输出 `Allow / Deny / RequireApproval`，`execute` 负责校验、调用 Handler，并把所有可预期失败归一化为 Observation。
 
-这里的“已获执行资格”只描述当前调用位置，不表示最终权限模型已经完成。当前 human-in-the-loop 审批仍发生在 Agent，Execution 只完成声明解析、参数校验、Handler 调用和 Observation 归一化。
+Execution 不等待 UI。Core 根据 `authorize` 的结果决定直接执行、拒绝，或者进入 Waiting 状态并等待 `ResolveApproval` 命令；审批完成后才调用 `execute`。当前参数级最终风险与真实 Sandbox 仍未完成。
 
 ## 5. 当前源码结构
 
@@ -181,8 +187,9 @@ openwork-execution/src/
 ├── context.rs            # 执行环境
 ├── handler.rs            # 内部 ActionHandler
 ├── invoker.rs            # Handler 路由
+├── policy/               # ApprovalPolicy 评估与文件访问边界
 ├── schema.rs             # 受控 Schema 子集校验
-├── service.rs            # resolve -> validate -> invoke
+├── service.rs            # authorize，以及 resolve -> validate -> invoke
 └── lib.rs
 ```
 
@@ -205,8 +212,10 @@ Catalog 和 Handler 名称由合同测试对齐。发现声明但没有 Handler 
 ```text
 Agent 从 CapabilityResolverPort.list 获取模型 schema
   -> Provider 返回 tool call
-  -> Agent 完成当前过渡审批流程
-  -> Agent 构造 ActionRequest
+  -> Core 构造 ActionRequest
+  -> ExecutionPort.authorize(request, approval_policy)
+  -> RequireApproval 时 Core 进入 Waiting，等待 ResolveApproval
+  -> Allow 或审批通过后调用 ExecutionPort.execute
   -> ExecutionService.resolve(name)
   -> 校验 input_schema
   -> ActionInvoker.invoke
@@ -287,9 +296,9 @@ CI=true pnpm --dir apps/desktop build
 
 接受受控子集。当前七个内置能力只需要对象、required 和基础类型；完整实现必须在 MCP 专题中根据 Draft 兼容和依赖成本重新决定。
 
-### D4：本次不搬审批状态机
+### D4：Capability 目录重构不附带迁移审批状态机
 
-接受过渡状态。审批迁移会同时改变 Core Command/Event、暂停恢复和 UI 路由，不能作为 Tool 目录移动的附带修改。
+当时接受该过渡状态，因为审批迁移会同时改变 Core Command/Event、暂停恢复和 UI 路由，不能作为 Tool 目录移动的附带修改。后续权限专题已经完成迁移：Core 现在持有 Waiting 状态，Execution 只返回策略决定且不等待 UI。
 
 ### D5：不保留 `openwork-tools` compatibility crate
 

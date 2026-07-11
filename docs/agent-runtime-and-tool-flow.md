@@ -46,8 +46,8 @@ apps/desktop/src-tauri/src/lib.rs
 
 for step in 1..=max_steps:
   发出 Step(step)
-  构造 ModelRequest(stream=true, tools=tool_defs)
-  调用 ModelPort::invoke
+  构造 ModelRequest(tools=tool_defs)
+  调用 ModelPort::invoke，消费返回的异步 ModelStream
   转发 LLM stream events
 
   将 assistant text / reasoning / tool_calls 加入 messages
@@ -65,6 +65,10 @@ for step in 1..=max_steps:
     发出 ToolResult
     将 tool result 加入 messages
 ```
+
+`ModelRequest` 不再包含 `stream` 开关。流式生命周期由 `ModelPort::invoke` 返回的 `ModelStream` 表达，Core 直接异步消费该 Stream，不再经过同步 callback 或第二层 channel 桥接。
+
+App 在进入 Agent Loop 前通过 `SessionStore::start_turn` 原子写入 `turn_started` 和 `user_message_recorded`。Turn 结束后，App 再通过 `SessionStore::finish_turn` 写入新增的 Assistant/Tool Message 和 Turn 终态。文本、推理和工具参数 delta 只是 Live Event，不逐帧写入数据库。
 
 ## 4. Runtime 事件
 
@@ -148,9 +152,9 @@ runtime 会记录最近的工具调用 `(name, normalized_input)`。如果连续
 
 ## 8. 当前缺口
 
-- `ApprovalRequested` 与 `ApprovalResolved` 已进入现有 `llm_events` trace，但尚未进入可重放 Event Journal。
+- `ApprovalRequested` 与 `ApprovalResolved` 当前只进入 UI stream，尚未在各自语义点写入可重放 Event Journal。
 - `bash` 无文件级隔离，不能把审批等同于 sandbox。
 - Durable Turn 和应用重启后的审批恢复尚未完成。
 - 工具状态机还可以进一步明确为 `requested -> approved -> running -> completed/failed/cancelled`。
-- `risk_hint` 尚未接入运行时风险判断。
+- `risk_hint` 已参与审批原因生成，但仍不能替代针对实际参数和路径的最终风险判断。
 - `schema.rs` 只实现当前内置 Action 所需子集；接入任意 MCP Schema 前需要重新确定兼容策略。

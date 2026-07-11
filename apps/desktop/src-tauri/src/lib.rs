@@ -7,7 +7,6 @@ use openwork_app::{ChatRuntime, RequestCancelRegistry};
 use openwork_persistence::PostgresPersistence;
 use openwork_protocol::provider::ProviderRepository;
 use openwork_providers::ProviderFactory;
-use openwork_session::SessionStore;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,8 +20,7 @@ pub fn run() {
                 tauri::async_runtime::block_on(PostgresPersistence::connect_from_env_or_local())?;
             let provider_repository: Arc<dyn ProviderRepository> =
                 Arc::new(persistence.provider_repository());
-            let session_store =
-                tauri::async_runtime::block_on(SessionStore::connect_from_env_or_local())?;
+            let session_store = persistence.session_store();
             let provider_factory = ProviderFactory::default();
             app.manage(ChatRuntime::new(
                 Arc::clone(&provider_repository),

@@ -1,4 +1,4 @@
-use openwork_database::Migration;
+use super::Migration;
 
 pub const PROVIDER_MIGRATIONS: &[Migration] = &[Migration {
     version: 202606250001,

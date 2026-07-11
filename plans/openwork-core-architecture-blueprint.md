@@ -653,9 +653,9 @@ openwork-evals
 | `openwork-execution` | 已承接内置 Handler、参数校验和 Observation；后续增加最终风险策略与 macOS Sandbox |
 | `openwork-agent` / `openwork-runtime` / `openwork-permissions` | 已删除；职责分别迁入 Core、App、Execution/Protocol |
 | `openwork-providers` | 保留；移除数据库和 UI 职责 |
-| `openwork-session` | 迁入 Persistence 的 Repository/Projection |
-| `openwork-database` | 由 Persistence 内部基础设施取代 |
-| `openwork-db-macros` | 暂停扩展，评估删除；不作为 Agent 架构主线 |
+| `openwork-session` | 已删除；Session/Message Repository 与当前内存 Projection 已迁入 Persistence |
+| `openwork-database` | 已删除；连接池、配置和 migration runner 已内聚到 Persistence |
+| `openwork-db-macros` | 已删除；Journal 与后续 Projection 使用显式 SQL |
 | `openwork-workspace` | 保留并明确真实环境事实边界 |
 | Tauri commands | 收口到 `openwork-app` Command/Query/Subscription |
 
@@ -774,6 +774,8 @@ cargo test --workspace
 
 上下文：恢复能力需要有序、原子、可回放的事实日志。
 
+当前专题设计与分阶段迁移门槛见 [Event Journal 与会话持久化重构设计](./event-journal-persistence-refactor.md)。
+
 任务：
 
 - PostgreSQL Event Journal、事务和迁移。
@@ -783,7 +785,7 @@ cargo test --workspace
 
 退出条件：Synthetic Event 可从零 Replay 并重建相同投影。
 
-回滚：保留旧 Session Store，未达到 Replay Parity 前不删除旧表。
+回滚：不恢复已删除的旧 Session Store 或旧表。通过 Journal/Projection 合同测试锁定 Replay Parity；迁移保持只前进，异常时回退应用代码变更并使用同一 `recorded_events` 事实源修复投影。
 
 ### S3：Capabilities、Execution 与 App Shell
 

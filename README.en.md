@@ -18,13 +18,14 @@ The current foundation includes:
 - Vendor-neutral `ModelRequest`, `ModelResponse`, `ModelEvent`, `ModelError`, and `ModelPort`
 - Error mapping that separates rate limits from exhausted quota, plus stream-aware transport retry
 - Multi-step agent tool calls, approvals, cancellation, and doom-loop detection
-- PostgreSQL provider repository, sessions, messages, and basic LLM event persistence
+- PostgreSQL provider repository and provider-model configuration persistence
+- Append-only Event Journal, Journal-backed threads/turns/messages, and explicit migrations
 - Encrypted PostgreSQL storage for provider API keys
 - Tauri + React + TypeScript desktop client
 
 Not yet complete:
 
-- Durable Turn journal, crash recovery, and idempotent projections
+- Complete Durable Turn journal writes, crash recovery, and idempotent projections
 - OS-level sandboxing and reliable side-effect reconciliation
 - Target implementations for context compaction, planning, memory, MCP, and skills
 - Automated live-provider smoke tests
@@ -36,14 +37,14 @@ OpenWork/
   apps/
     desktop/                 # Tauri + React desktop app
   crates/
-    openwork-protocol/       # Core AI types, message blocks, traits, errors
+    openwork-protocol/       # Stable model/capability/approval/journal contracts
+    openwork-core/           # Turn control loop and approval state ownership
+    openwork-app/            # Application API, supervisor, composition
     openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
-    openwork-persistence/    # PostgreSQL provider repository and migrations
-    openwork-agent/          # Current agent loop
-    openwork-runtime/        # Desktop-facing runtime composition
-    openwork-session/        # PostgreSQL sessions, messages, and trace events
+    openwork-persistence/    # PostgreSQL repositories, Journal, and migrations
     openwork-capabilities/   # Tool declarations and capability discovery
     openwork-execution/      # Schema validation and built-in action handlers
+    openwork-workspace/      # Project workspace, Git, and file-boundary primitives
   docs/
     model-provider-v1-design.md
 ```
@@ -55,6 +56,7 @@ OpenWork/
 - Defines `ModelRequest`, `ModelResponse`, and `ModelEvent`
 - Defines `Message` and `ContentBlock`
 - Defines `CapabilitySpec`, `ActionRequest`, and `Observation`
+- Defines recorded events, Expected Version, and `EventJournal`
 - Defines `ModelPort`, `ProviderRepository`, `CapabilityResolverPort`, and `ExecutionPort`
 
 `openwork-providers`
@@ -70,7 +72,10 @@ OpenWork/
 `openwork-persistence`
 
 - `PostgresProviderRepository`
+- `PostgresEventJournal`
 - `providers` / `provider_models` migrations
+- Append-only `recorded_events` migration and explicit migrator
+- Thread/Turn-event-backed session/message creation, replay, rename, and deletion
 - Transactional provider-and-model writes
 - AES-256-GCM encryption for provider API keys stored in PostgreSQL
 
@@ -83,13 +88,13 @@ OpenWork/
 
 - Organizes real handlers under `actions/filesystem` and `actions/process`
 - Owns argument validation, path permissions, cancellation, timeouts, output truncation, and `Observation` normalization
-- Does not yet provide an OS-level sandbox, and `risk_hint` does not affect runtime decisions yet
+- Does not yet provide an OS-level sandbox; `risk_hint` contributes to approval reasons but cannot replace final argument-level risk evaluation
 
-`openwork-runtime`
+`openwork-core` / `openwork-app`
 
 - `ModelRegistry`
-- Model capability checks
-- Composes providers, the capability catalog, execution, the agent, and sessions
+- Core owns the Turn loop and approval pause/resume state
+- App composes providers, the capability catalog, execution, Core, and Journal-backed sessions
 
 ## Desktop App
 
@@ -131,9 +136,12 @@ pnpm install
 > Desktop commands must run inside `apps/desktop`. The repository root only has `Cargo.toml` for the Rust workspace and does not have `package.json`, so running `pnpm tauri dev` from the root fails with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`.
 
 ```bash
+cargo run -p openwork-persistence --bin openwork-migrate
 cd apps/desktop
 pnpm tauri dev
 ```
+
+Run the migration command explicitly from the repository root. Desktop startup only checks the schema and never creates tables automatically.
 
 ## Build Desktop App
 

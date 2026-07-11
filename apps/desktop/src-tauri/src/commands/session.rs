@@ -1,4 +1,6 @@
-use openwork_session::{Session, SessionInput, SessionLoadResult, SessionStore, SessionSummary};
+use openwork_persistence::{
+    Session, SessionInput, SessionLoadResult, SessionStore, SessionSummary,
+};
 
 #[tauri::command]
 pub async fn session_list(

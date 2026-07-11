@@ -9,7 +9,7 @@ openwork-capabilities = { workspace = true }
 openwork-execution = { workspace = true }
 openwork-protocol = { workspace = true }
 openwork-providers = { workspace = true }
-openwork-session = { workspace = true }
+openwork-persistence = { workspace = true }
 openwork-workspace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

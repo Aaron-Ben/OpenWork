@@ -1,6 +1,6 @@
 # 桌面端流式事件与 UI 状态
 
-Last reviewed: 2026-06-17
+Last reviewed: 2026-07-11
 
 ## 1. 相关代码
 
@@ -61,6 +61,7 @@ apps/desktop/src/type/providers.ts
 - `tool_call_end`
 - `tool_result`
 - `approval_request`
+- `approval_resolved`
 - `finished`
 - `done`
 - `cancelled`
@@ -75,6 +76,7 @@ apps/desktop/src/type/providers.ts
 chat-stream-event
   -> 按 sessionId 分派
   -> approval_request 进入 approvalStore
+  -> approval_resolved 从 approvalStore 移除对应审批
   -> done 触发 session reload
   -> cancelled / doom_loop 更新当前流状态
   -> 其他事件进入 sessionStore.applyStreamEvent
@@ -104,7 +106,9 @@ chat-stream-event
 sessionStore.reload(sessionId)
 ```
 
-这会从 PostgreSQL 重新加载持久化 messages。为了避免 reload 后又显示 running，后端在工具执行完成后也会把对应 `ToolCallState` 标记为 `Finished`。
+这会调用后端 Journal-backed `SessionStore`：从 PostgreSQL 的 `recorded_events` 重放 Thread/Turn/Message 事实，再返回兼容的 Message DTO。当前数据库不存在 `messages` 表。
+
+`text_delta`、`reasoning_delta` 和 `tool_call_delta` 只服务当前实时渲染，不逐帧持久化。请求结束时，后端会把新增的 Assistant/Tool Message 和 Turn 终态写入 Journal；为了避免 reload 后又显示 running，工具执行完成后持久化的 `ToolCallState` 会标记为 `Finished`。
 
 ## 7. 审批 UI
 

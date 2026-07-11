@@ -5,6 +5,7 @@ Last reviewed: 2026-07-11
 ## 目标架构与路线
 
 - [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)：唯一的目标架构与建设顺序，定义 `openwork-core`、Protocol、Capabilities、Execution、Workspace、Persistence 等模块边界。
+- [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)：S2 Persistence 专题设计，冻结 `recorded_events`、Expected Version、事件边界、显式迁移和三旧 crate 的退出顺序。
 
 ## 当前实现参考
 
@@ -24,7 +25,7 @@ Last reviewed: 2026-07-11
 
 ## 持久化与观测
 
-- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：PostgreSQL 表结构、messages/llm_events/tool_runs 分工、trace 方向。
+- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Thread/Turn/Message、遗留表删除状态和未完成边界。
 
 ## 维护原则
 

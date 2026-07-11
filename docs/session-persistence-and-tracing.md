@@ -1,144 +1,140 @@
-# 会话持久化与 LLM Trace
+# Session、Message 与 Event Journal
 
 Last reviewed: 2026-07-11
 
-> Status: current implementation detail. 目标 Journal、Projection、Artifact 和恢复边界见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
+> Status: current implementation snapshot. 字段、事件目录和设计决策见 [Event Journal 与会话持久化重构设计](../plans/event-journal-persistence-refactor.md)。
 
-## 1. 相关代码
+## 1. 当前数据库只有四张表
 
-```text
-crates/openwork-session/src/store.rs
-crates/openwork-persistence/src/postgres/provider_repository.rs
-crates/openwork-database/src/lib.rs
-apps/desktop/src-tauri/src/lib.rs
-apps/desktop/src/stores/sessionStore.ts
-```
+显式 migration 完成后，业务库结构为：
 
-`openwork-session` 使用 PostgreSQL 保存会话、消息和 LLM 事件，并已经创建尚未接入写入链路的 `tool_runs` 表。`openwork-workspace` 的捕获和回滚函数当前没有接入 runtime，也没有持久化 Turn Snapshot。桌面端启动时通过 `SessionStore::connect_from_env_or_local()` 连接数据库：优先读取 `DATABASE_URL`，未设置时使用本地 Docker 默认连接串 `postgres://openwork:openwork@localhost:5432/openwork`。
-
-## 2. 表结构
-
-当前 PostgreSQL 表按所有权分为两组：
-
-| 表 | 用途 |
+| 表 | 作用 |
 | --- | --- |
-| `sessions` | 会话元信息：标题、provider、model、working_dir、时间戳 |
-| `messages` | 聊天消息，按 session 和 seq 排序；`parts_json` 保存完整 message blocks |
-| `llm_events` | 流式事件与 trace 数据 |
-| `tool_runs` | 工具调用审计表，当前 schema 已创建，写入路径待接入 |
-| `providers` | `openwork-persistence` 管理的 Provider 配置 |
-| `provider_models` | Provider 模型子表，保存模型 ID、`lite/plus/pro` 分类、启用状态和 UI 顺序 |
+| `schema_migrations` | migration 版本记录 |
+| `providers` | Provider 配置与加密 API Key |
+| `provider_models` | Provider 模型和 `lite/plus/pro` 用户分类 |
+| `recorded_events` | Thread、Turn 和 Message 的 append-only 事实日志 |
 
-`providers` 与 `provider_models` 不属于会话事件日志；它们是普通 Repository 数据。`PostgresProviderRepository` 通过 `openwork-protocol::provider::ProviderRepository` 注入 Runtime，Provider Adapter 本身不访问数据库。
-
-工作区文件变更不进入数据库。OpenWork 依赖 Git 作为变更查看与回滚机制：
-`git diff` 查看结果，`git restore` / `git restore -p` 回滚。
-
-## 3. `messages`
-
-`messages` 保存完整 message：
+以下四张遗留表已由 forward migration 删除：
 
 ```text
-id
-session_id
-role
-parts_json
-seq
-created_at
-```
-
-`parts_json` 是 `Vec<ContentBlock>` 的 JSON。它是当前恢复聊天上下文的主路径。
-
-## 4. `llm_events`
-
-`llm_events` 保存流式事件：
-
-```text
-id
-session_id
-request_id
-event
-payload_json
-seq
-created_at
-```
-
-`ChatRuntime` 接收到 `AgentEvent` 后，会先映射成前端 payload，再以 detached best-effort 任务调用 `append_llm_event`。
-
-`seq` 通过查询同一 session 的 `MAX(seq) + 1` 分配。由于 runtime 为每个事件启动独立异步写任务，当前不能保证写入顺序与产生顺序一致，也不能把它视为可靠恢复日志。
-
-## 5. Message 与 Event 的区别
-
-`messages` 是“会话状态”，用于恢复聊天记录和继续对话。
-
-`llm_events` 是“运行轨迹”，用于观测、调试和回放：
-
-- 模型何时开始输出文本
-- reasoning 是否出现
-- tool call 参数如何流式到达
-- 是否请求审批
-- 用户是否批准
-- 工具结果何时返回
-- 请求如何结束
-
-两者都需要。只保存 messages 会丢失过程；只保存 events 会让 UI 恢复和上下文构造变复杂。
-
-## 6. 当前持久化流程
-
-成功完成一次请求：
-
-```text
-chat_generate_stream
-  -> 读取 session 和 history
-  -> Agent::run
-  -> 每个 AgentEvent 尝试异步写入 llm_events
-  -> Agent 返回 RunResult.messages
-  -> 按 history_len 截取新增 messages
-  -> append_messages
-  -> emit done
-  -> 前端 reload session
-```
-
-取消或 doom-loop：
-
-- 尽量持久化截止时已有的 messages。
-- 发出 `cancelled` 或 `doom_loop` 事件。
-- 前端保留已显示的部分内容。
-
-## 7. 当前缺口
-
-### 7.1 `tool_runs` 写入路径未接入
-
-当前 PostgreSQL schema 已创建 `tool_runs` 表，但 runtime 还没有把工具开始、审批、结束、耗时和输出写入该表。后续应由 Recorded Event 幂等投影生成 ActionRun 查询记录；详细合同不在本文冻结。当前 schema 如下：
-
-```text
+sessions
+messages
+llm_events
 tool_runs
-  id
-  session_id
-  request_id
-  tool_call_id
-  name
-  input_json
-  approval_status
-  started_at
-  finished_at
-  duration_ms
-  output_json
-  is_error
 ```
 
-这会让工具观测比从 `llm_events` 反推更可靠。
+现有开发数据不做 backfill。`openwork-session` 和只为它生成通用 CRUD 的 `openwork-db-macros` crate 也已经删除。
 
-### 7.2 事件 payload 仍是 UI payload
+## 2. Session API 为什么仍然存在
 
-现在 `llm_events.payload_json` 存的是 Tauri 发给前端的 payload。短期可用，但长期可以考虑保存更接近 `AgentEvent` 的结构化事件，再在前端层做映射。
+前端仍使用 `session_create`、`session_list`、`session_load` 等兼容命令，但数据库领域语义已经切换为 Thread/Turn：
 
-### 7.3 缺少 trace 查询接口
+| 前端概念 | Journal aggregate/event |
+| --- | --- |
+| 创建 Session | Thread aggregate 的 `thread_created` |
+| 重命名 Session | `thread_title_changed` |
+| 删除 Session | `thread_deleted`，不删除历史事实 |
+| 开始聊天 | Turn aggregate 的 `turn_started` |
+| 用户消息 | `user_message_recorded` |
+| Assistant 消息 | `assistant_message_recorded` |
+| Tool 消息 | `tool_message_recorded` |
+| 正常结束 | `turn_completed` |
+| 取消 | `turn_cancelled` |
+| Doom loop | `turn_doom_loop_detected` |
+| 失败 | `turn_failed` |
 
-目前已有写入能力，但还没有专门的 UI 或 API 查询 trace。后续可以增加：
+代码位置：
 
-- 按 request_id 查看事件流
-- 查看 token usage
-- 查看工具调用耗时
-- 查看审批决策
-- 导出 JSON trace
+```text
+crates/openwork-persistence/src/session/
+  types.rs       Desktop 兼容 DTO
+  store.rs       Journal 写入与当前内存投影
+```
+
+## 3. 当前读写流程
+
+创建和维护 Session：
+
+```text
+Desktop session command
+  -> openwork-persistence::SessionStore
+  -> EventJournal.append(Thread event, ExpectedVersion)
+  -> 读取时按 global_position 重放 Thread events
+```
+
+一次聊天：
+
+```text
+ChatRuntime
+  -> 从 recorded_events 回放历史 Message
+  -> 在调用模型前持久化 turn_started + user_message_recorded
+  -> Agent::run
+  -> UI delta 只实时发送给 Desktop
+  -> 持久化本轮 Assistant/Tool Message + Turn 终态
+  -> Desktop reload，重新从 Journal 回放
+```
+
+用户输入在任何模型或工具动作之前落库。成功、取消和 doom-loop 返回的完整 Message trace 会与 Turn 终态在同一批 append 中提交。
+
+## 4. 当前投影方式
+
+目前没有新增 `threads` 或 `messages` 投影表。`SessionStore` 分页读取 `recorded_events`，在内存中重放：
+
+- Thread 列表和标题状态；
+- 某个 Thread 的 Message 顺序；
+- 删除状态和最近更新时间。
+
+这保证当前数据库保持四张表，适合开发期数据量。数据量增大后，如果全量重放成为性能瓶颈，再增加可删除、可重建的 `threads/messages/action_runs/approvals` 查询投影；投影不是新的事实来源。
+
+## 5. UI Stream 不再写数据库
+
+`text_delta`、`reasoning_delta`、`tool_call_delta` 只用于当前实时渲染，不再通过 detached `tokio::spawn` 写入 `llm_events`。
+
+这样消除了“看起来已经持久化，但实际可能乱序或丢失”的路径。数据库只接收需要恢复的 Recorded Fact。
+
+## 6. 仍未完成的 Durable Action/Approval
+
+当前已持久化 Thread、Turn、Message 和 Turn 终态，但以下语义还未直接写入 Journal：
+
+- `action_requested`
+- `approval_requested`
+- `approval_resolved`
+- `action_started`
+- `action_completed` / `action_failed` / `action_outcome_unknown`
+
+工具调用和结果会随 Assistant/Tool Message 在 Turn 结束时保存，因此聊天回放不会丢失；但这不等于已经具备崩溃中途恢复和副作用对账。
+
+下一阶段必须在 Core 的真实语义点执行：
+
+```text
+Persist Intent -> Execute -> Persist Outcome
+```
+
+不能重新引入同步 callback + 后台 best-effort 写入。
+
+## 7. Migration 与启动
+
+从仓库根目录运行：
+
+```bash
+cargo run -p openwork-persistence --bin openwork-migrate
+```
+
+该命令创建/更新 Provider 和 Journal schema，并执行 `drop_legacy_session_tables`。然后启动：
+
+```bash
+cd apps/desktop
+pnpm tauri dev
+```
+
+Desktop 启动只检查 `schema_migrations/providers/provider_models/recorded_events`，不会自动建表。
+
+## 8. Crate 状态
+
+| crate | 当前状态 |
+| --- | --- |
+| `openwork-persistence` | 拥有 Provider Repository、Event Journal、Session Repository 和 migration |
+| `openwork-session` | 已删除，职责迁入 Persistence |
+| `openwork-db-macros` | 已删除，不再需要通用 `PgEntity` |
+| `openwork-database` | 已删除；连接池和 migration runner 已内聚到 Persistence |

@@ -1,4 +1,4 @@
-// 镜像 openwork-session 的 serde(camelCase)输出。
+// 镜像 openwork-persistence::session 的 serde(camelCase) 输出。
 
 import type { ContentBlock } from './parts'
 

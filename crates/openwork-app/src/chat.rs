@@ -6,6 +6,7 @@ use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent};
 use openwork_execution::{
     BuiltinActionInvoker, ExecutionContext, ExecutionService, PermissionProfile,
 };
+use openwork_persistence::{NewMessage, SessionError, SessionStore, TurnOutcome};
 use openwork_protocol::{
     approval::{ApprovalPolicy, ResolveApproval},
     capability::{ActionInvoker, CapabilityResolverPort, ExecutionPort},
@@ -14,7 +15,6 @@ use openwork_protocol::{
     provider::{ProviderRepository, ProviderRepositoryError},
 };
 use openwork_providers::ProviderFactory;
-use openwork_session::{NewMessage, SessionError, SessionStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -157,7 +157,7 @@ impl ChatRuntime {
             .ok_or_else(|| ChatRuntimeError::SessionNotFound(session_id.clone()))?;
 
         let stored = self.session_store.load_messages(&session_id).await?;
-        let history_len = stored.len();
+        let persisted_history_len = stored.len() + 1;
         let mut history: Vec<Message> = stored
             .into_iter()
             .map(|message| Message {
@@ -197,25 +197,28 @@ impl ChatRuntime {
         }
 
         let mut agent = Agent::new(agent_config);
+        if let Err(error) = self
+            .session_store
+            .start_turn(
+                &request_id,
+                &session_id,
+                NewMessage {
+                    role: Role::User,
+                    parts: vec![ContentBlock::text(request.user_text)],
+                },
+            )
+            .await
+        {
+            let _ = self.turn_supervisor.remove(&turn_id);
+            return Err(error.into());
+        }
         let on_event = Arc::new(Mutex::new(on_event));
-        let event_session_store = self.session_store.clone();
         let event_request_id = request_id.clone();
         let event_session_id = session_id.clone();
         let stream_on_event = Arc::clone(&on_event);
         let result = agent
             .run(history, move |event| {
                 let payload = map_agent_event(&event_request_id, &event_session_id, &event);
-                if let Ok(value) = serde_json::to_value(&payload) {
-                    let store = event_session_store.clone();
-                    let session_id = event_session_id.clone();
-                    let request_id = event_request_id.clone();
-                    let event = payload.event.to_string();
-                    tokio::spawn(async move {
-                        let _ = store
-                            .append_llm_event(&session_id, &request_id, &event, value)
-                            .await;
-                    });
-                }
                 emit_runtime_event(&stream_on_event, payload);
             })
             .await;
@@ -223,8 +226,14 @@ impl ChatRuntime {
 
         match result {
             Ok(run_result) => {
-                self.persist_messages(&session_id, run_result.messages, history_len)
-                    .await?;
+                self.finish_turn(
+                    &request_id,
+                    &session_id,
+                    run_result.messages,
+                    persisted_history_len,
+                    TurnOutcome::Completed,
+                )
+                .await?;
                 emit_runtime_event(
                     &on_event,
                     ChatStreamEventPayload::simple(&request_id, &session_id, "done"),
@@ -235,9 +244,14 @@ impl ChatRuntime {
                 })
             }
             Err(AgentError::Cancelled(messages)) => {
-                let _ = self
-                    .persist_messages(&session_id, messages, history_len)
-                    .await;
+                self.finish_turn(
+                    &request_id,
+                    &session_id,
+                    messages,
+                    persisted_history_len,
+                    TurnOutcome::Cancelled,
+                )
+                .await?;
                 emit_runtime_event(
                     &on_event,
                     ChatStreamEventPayload::simple(&request_id, &session_id, "cancelled"),
@@ -247,10 +261,15 @@ impl ChatRuntime {
                     reasoning_text: None,
                 })
             }
-            Err(AgentError::DoomLoop(_name, messages)) => {
-                let _ = self
-                    .persist_messages(&session_id, messages, history_len)
-                    .await;
+            Err(AgentError::DoomLoop(name, messages)) => {
+                self.finish_turn(
+                    &request_id,
+                    &session_id,
+                    messages,
+                    persisted_history_len,
+                    TurnOutcome::DoomLoop { repeated: name },
+                )
+                .await?;
                 Ok(ChatGenerateResponse {
                     text: String::new(),
                     reasoning_text: None,
@@ -258,6 +277,16 @@ impl ChatRuntime {
             }
             Err(error) => {
                 let message = error.to_string();
+                self.session_store
+                    .finish_turn(
+                        &request_id,
+                        &session_id,
+                        Vec::new(),
+                        TurnOutcome::Failed {
+                            message: message.clone(),
+                        },
+                    )
+                    .await?;
                 emit_runtime_event(
                     &on_event,
                     ChatStreamEventPayload {
@@ -270,24 +299,25 @@ impl ChatRuntime {
         }
     }
 
-    async fn persist_messages(
+    async fn finish_turn(
         &self,
+        turn_id: &str,
         session_id: &str,
         messages: Vec<Message>,
-        history_len: usize,
+        persisted_history_len: usize,
+        outcome: TurnOutcome,
     ) -> Result<(), SessionError> {
         let new_messages = messages
             .into_iter()
-            .skip(history_len)
+            .skip(persisted_history_len)
             .map(|message| NewMessage {
                 role: message.role,
                 parts: message.content,
             })
             .collect();
         self.session_store
-            .append_messages(session_id, new_messages)
+            .finish_turn(turn_id, session_id, new_messages, outcome)
             .await
-            .map(|_| ())
     }
 }
 

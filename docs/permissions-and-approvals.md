@@ -334,17 +334,9 @@ approval_request
 approval_resolved
 ```
 
-这些 payload 一方面实时发送给 Desktop，另一方面通过 detached `tokio::spawn` 尝试追加到现有 `llm_events`。
+这些 payload 只实时发送给 Desktop，不再通过 detached task 写数据库。Turn 结束时 Tool Call/Tool Result 会作为 Assistant/Tool Message 写入 `recorded_events`，但 `approval_requested` 和 `approval_resolved` 尚未在各自语义点持久化。
 
-当前记录是 best-effort trace：
-
-- 写入不阻塞 Core Turn；
-- 写入错误当前被忽略；
-- 事件与审批状态变化不在同一个数据库事务中；
-- Turn 结束前不保证所有异步写入已经完成；
-- 不能据此在应用重启后恢复 Waiting 状态。
-
-因此，`llm_events` 不是蓝图中的可靠 Event Journal。当前真正的审批状态只存在于进程内的 Core Turn 中。
+因此当前真正的审批状态仍只存在于进程内的 Core Turn 中，不能在应用重启后恢复 Waiting 状态。下一阶段必须在暂停和恢复状态转换前直接 await `EventJournal`，不能重新引入 best-effort trace。
 
 ## 10. 拒绝与失败语义
 

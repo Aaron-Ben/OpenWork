@@ -18,13 +18,14 @@ English version: [README.en.md](README.en.md)
 - 厂商无关的 `ModelRequest`、`ModelResponse`、`ModelEvent`、`ModelError` 与 `ModelPort`
 - 可区分限流与额度耗尽的错误映射，以及流式输出感知的 Transport Retry
 - Agent 多步工具调用、审批、取消和 doom-loop 检测
-- PostgreSQL Provider Repository、Session、Message 与基础 LLM event 持久化
+- PostgreSQL Provider Repository 与 Provider Model 配置持久化
+- append-only Event Journal、Journal-backed Thread/Turn/Message 与显式 migration
 - PostgreSQL Provider API Key 加密存储
 - Tauri + React + TypeScript 桌面端
 
 还没有完成：
 
-- Durable Turn Journal、崩溃恢复和幂等 Projection
+- Durable Turn 的完整 Journal 写入、崩溃恢复和幂等 Projection
 - 操作系统级 Sandbox 与可靠副作用对账
 - Context 压缩、Plan、Memory、MCP 与 Skill 的目标实现
 - 自动化 live provider smoke test
@@ -36,14 +37,14 @@ OpenWork/
   apps/
     desktop/                 # Tauri + React desktop app
   crates/
-    openwork-protocol/       # Core AI types, message blocks, traits, errors
+    openwork-protocol/       # Stable model/capability/approval/journal contracts
+    openwork-core/           # Turn control loop and approval state ownership
+    openwork-app/            # Application API, supervisor, composition
     openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
-    openwork-persistence/    # PostgreSQL provider repository and migrations
-    openwork-agent/          # Current agent loop
-    openwork-runtime/        # Desktop-facing runtime composition
-    openwork-session/        # PostgreSQL sessions, messages and trace events
+    openwork-persistence/    # PostgreSQL repositories, Journal and migrations
     openwork-capabilities/   # Tool declarations and capability discovery
     openwork-execution/      # Schema validation and built-in action handlers
+    openwork-workspace/      # Project workspace, Git and file boundary primitives
   docs/
     model-provider-v1-design.md
 ```
@@ -55,6 +56,7 @@ OpenWork/
 - 定义 `ModelRequest`、`ModelResponse`、`ModelEvent`
 - 定义 `Message` 和 `ContentBlock`
 - 定义 `CapabilitySpec`、`ActionRequest`、`Observation`
+- 定义 Recorded Event、Expected Version 与 `EventJournal`
 - 定义 `ModelPort`、`ProviderRepository`、`CapabilityResolverPort`、`ExecutionPort`
 
 `openwork-providers`
@@ -70,7 +72,10 @@ OpenWork/
 `openwork-persistence`
 
 - `PostgresProviderRepository`
+- `PostgresEventJournal`
 - `providers` / `provider_models` migration
+- `recorded_events` append-only migration 与显式 migrator
+- 基于 Thread/Turn 事件的 Session/Message 创建、回放、改名和删除
 - Provider 与 Models 的事务写入
 - 使用 AES-256-GCM 加密 Provider API Key 后写入 PostgreSQL
 
@@ -83,13 +88,13 @@ OpenWork/
 
 - 按 `actions/filesystem` 与 `actions/process` 组织真实 Handler
 - 负责参数校验、路径权限、取消、超时、输出截断和 `Observation` 归一化
-- 当前不包含操作系统级 sandbox，`risk_hint` 也尚未参与运行时判断
+- 当前不包含操作系统级 sandbox；`risk_hint` 已参与审批原因，但不能替代参数级最终风险判断
 
-`openwork-runtime`
+`openwork-core` / `openwork-app`
 
 - `ModelRegistry`
-- 模型 capability 校验
-- 组合 Provider、Capability Catalog、Execution、Agent 和 Session
+- Core 持有 Turn 循环和审批暂停/恢复状态
+- App 组合 Provider、Capability Catalog、Execution、Core 和 Journal-backed Session
 
 ## 桌面端
 
@@ -131,9 +136,12 @@ pnpm install
 > 桌面端命令必须在 `apps/desktop` 目录下执行。项目根目录只有 `Cargo.toml`（Rust workspace），没有 `package.json`，在根目录运行 `pnpm tauri dev` 会报 `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`。
 
 ```bash
+cargo run -p openwork-persistence --bin openwork-migrate
 cd apps/desktop
 pnpm tauri dev
 ```
+
+Migration 必须在仓库根目录显式执行；Desktop 启动只检查 schema，不会自动建表。
 
 ## 构建桌面客户端
 

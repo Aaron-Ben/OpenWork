@@ -7,6 +7,9 @@ fn protocol_source_tree_matches_architecture_blueprint() {
     for path in [
         "domain/mod.rs",
         "domain/ids.rs",
+        "journal/mod.rs",
+        "journal/port.rs",
+        "journal/types.rs",
         "approval/mod.rs",
         "capability/mod.rs",
         "capability/port.rs",

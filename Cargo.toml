@@ -1,15 +1,12 @@
 [workspace]
 members = [
   "crates/openwork-protocol",
-  "crates/openwork-database",
-  "crates/openwork-db-macros",
   "crates/openwork-core",
   "crates/openwork-app",
   "crates/openwork-capabilities",
   "crates/openwork-execution",
   "crates/openwork-providers",
   "crates/openwork-persistence",
-  "crates/openwork-session",
   "crates/openwork-workspace",
   "apps/desktop/src-tauri",
 ]
@@ -21,15 +18,12 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 openwork-protocol = { path = "crates/openwork-protocol" }
-openwork-database = { path = "crates/openwork-database" }
-openwork-db-macros = { path = "crates/openwork-db-macros" }
 openwork-core = { path = "crates/openwork-core" }
 openwork-app = { path = "crates/openwork-app" }
 openwork-capabilities = { path = "crates/openwork-capabilities" }
 openwork-execution = { path = "crates/openwork-execution" }
 openwork-providers = { path = "crates/openwork-providers" }
 openwork-persistence = { path = "crates/openwork-persistence" }
-openwork-session = { path = "crates/openwork-session" }
 openwork-workspace = { path = "crates/openwork-workspace" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }
@@ -50,6 +44,3 @@ globset = "0.4"
 ignore = "0.4"
 regex = "1"
 tokio-util = { version = "0.7", features = ["rt"] }
-proc-macro2 = "1"
-quote = "1"
-syn = { version = "2", features = ["full"] }
