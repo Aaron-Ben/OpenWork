@@ -1,5 +1,5 @@
+use crate::policy::AccessKind;
 use async_trait::async_trait;
-use openwork_permissions::AccessKind;
 use openwork_protocol::capability::{Observation, ObservationErrorCode};
 use serde_json::Value;
 

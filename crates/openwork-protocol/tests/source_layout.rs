@@ -7,6 +7,7 @@ fn protocol_source_tree_matches_architecture_blueprint() {
     for path in [
         "domain/mod.rs",
         "domain/ids.rs",
+        "approval/mod.rs",
         "capability/mod.rs",
         "capability/port.rs",
         "capability/types.rs",
@@ -46,10 +47,17 @@ fn tool_responsibilities_are_split_without_legacy_crate() {
         "legacy openwork-tools crate must be removed after the split"
     );
 
-    let agent_manifest = std::fs::read_to_string(crates.join("openwork-agent/Cargo.toml")).unwrap();
-    assert!(!agent_manifest.contains("openwork-tools"));
-    assert!(!agent_manifest.contains("openwork-capabilities"));
-    assert!(!agent_manifest.contains("openwork-execution"));
+    let core_manifest = std::fs::read_to_string(crates.join("openwork-core/Cargo.toml")).unwrap();
+    assert!(!core_manifest.contains("openwork-tools"));
+    assert!(!core_manifest.contains("openwork-capabilities"));
+    assert!(!core_manifest.contains("openwork-execution"));
+
+    for legacy in ["openwork-agent", "openwork-runtime", "openwork-permissions"] {
+        assert!(
+            !crates.join(legacy).exists(),
+            "legacy crate must be removed: {legacy}"
+        );
+    }
 
     let capabilities_manifest =
         std::fs::read_to_string(crates.join("openwork-capabilities/Cargo.toml")).unwrap();

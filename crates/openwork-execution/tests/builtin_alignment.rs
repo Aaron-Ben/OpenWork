@@ -1,6 +1,6 @@
 use openwork_capabilities::CapabilityCatalog;
+use openwork_execution::PermissionProfile;
 use openwork_execution::{BuiltinActionInvoker, ExecutionContext};
-use openwork_permissions::PermissionProfile;
 use openwork_protocol::capability::CapabilityResolverPort;
 use tokio_util::sync::CancellationToken;
 

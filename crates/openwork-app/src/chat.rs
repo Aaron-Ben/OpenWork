@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use openwork_agent::{Agent, AgentConfig, AgentError, AgentEvent};
 use openwork_capabilities::{CapabilityCatalog, CatalogError};
-use openwork_execution::{BuiltinActionInvoker, ExecutionContext, ExecutionService};
-use openwork_permissions::{ApprovalBridge, ApprovalPolicy, PermissionProfile};
+use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent};
+use openwork_execution::{
+    BuiltinActionInvoker, ExecutionContext, ExecutionService, PermissionProfile,
+};
 use openwork_protocol::{
+    approval::{ApprovalPolicy, ResolveApproval},
     capability::{ActionInvoker, CapabilityResolverPort, ExecutionPort},
+    domain::TurnId,
     model::{ContentBlock, Message, Role},
     provider::{ProviderRepository, ProviderRepositoryError},
 };
@@ -15,6 +18,8 @@ use openwork_session::{NewMessage, SessionError, SessionStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+
+use crate::{TurnSupervisor, TurnSupervisorError};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +92,8 @@ pub enum ChatRuntimeError {
     Session(#[from] SessionError),
     #[error("agent error: {0}")]
     Agent(#[from] AgentError),
+    #[error("turn supervisor error: {0}")]
+    TurnSupervisor(#[from] TurnSupervisorError),
 }
 
 /// Composes provider configuration, session persistence, tools, permissions, and the agent loop.
@@ -95,6 +102,7 @@ pub struct ChatRuntime {
     provider_repository: Arc<dyn ProviderRepository>,
     provider_factory: ProviderFactory,
     session_store: SessionStore,
+    turn_supervisor: Arc<TurnSupervisor>,
 }
 
 impl ChatRuntime {
@@ -107,6 +115,7 @@ impl ChatRuntime {
             provider_repository,
             provider_factory,
             session_store,
+            turn_supervisor: Arc::new(TurnSupervisor::default()),
         }
     }
 
@@ -118,10 +127,16 @@ impl ChatRuntime {
         &self.session_store
     }
 
+    pub async fn resolve_approval(
+        &self,
+        command: ResolveApproval,
+    ) -> Result<(), TurnSupervisorError> {
+        self.turn_supervisor.resolve(command).await
+    }
+
     pub async fn generate_stream(
         &self,
         request: ChatGenerateRequest,
-        approval_bridge: ApprovalBridge,
         cancel: CancellationToken,
         on_event: impl FnMut(ChatStreamEventPayload) + Send + 'static,
     ) -> Result<ChatGenerateResponse, ChatRuntimeError> {
@@ -166,14 +181,22 @@ impl ChatRuntime {
             )));
         let execution: Arc<dyn ExecutionPort> =
             Arc::new(ExecutionService::new(Arc::clone(&capabilities), invoker));
-        let mut agent_config =
-            AgentConfig::new(provider, request.model, capabilities, execution, cancel);
-        agent_config.approval_bridge = approval_bridge;
+        let turn_id = TurnId::new(request_id.clone());
+        let approval_commands = self.turn_supervisor.register(turn_id.clone())?;
+        let mut agent_config = AgentConfig::new(
+            provider,
+            request.model,
+            capabilities,
+            execution,
+            turn_id.clone(),
+            approval_commands,
+            cancel,
+        );
         if let Some(approval_policy) = request.approval_policy {
             agent_config.approval_policy = approval_policy;
         }
 
-        let agent = Agent::new(agent_config);
+        let mut agent = Agent::new(agent_config);
         let on_event = Arc::new(Mutex::new(on_event));
         let event_session_store = self.session_store.clone();
         let event_request_id = request_id.clone();
@@ -196,6 +219,7 @@ impl ChatRuntime {
                 emit_runtime_event(&stream_on_event, payload);
             })
             .await;
+        self.turn_supervisor.remove(&turn_id)?;
 
         match result {
             Ok(run_result) => {
@@ -350,11 +374,19 @@ pub fn map_agent_event(
             payload.tool_output = Some(extract_text(output));
             payload.is_error = Some(*is_error);
         }
-        AgentEvent::ApprovalRequest { id, name, input } => {
+        AgentEvent::ApprovalRequested(request) => {
             payload.event = "approval_request";
-            payload.approval_id = Some(id.clone());
-            payload.tool_name = Some(name.clone());
-            payload.input = Some(input.clone());
+            payload.approval_id = Some(request.approval_id.to_string());
+            payload.tool_name = Some(request.tool_name.clone());
+            payload.input = Some(request.input.clone());
+        }
+        AgentEvent::ApprovalResolved(resolved) => {
+            payload.event = "approval_resolved";
+            payload.approval_id = Some(resolved.approval_id.to_string());
+            payload.message = Some(match &resolved.resolution {
+                openwork_protocol::approval::ApprovalResolution::Allow => "allow".to_string(),
+                openwork_protocol::approval::ApprovalResolution::Deny { reason } => reason.clone(),
+            });
         }
         AgentEvent::Finished(text) => {
             payload.event = "finished";

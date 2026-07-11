@@ -647,11 +647,11 @@ openwork-evals
 | 当前 crate | 目标去向 |
 | --- | --- |
 | `openwork-protocol` | 保留并扩展为稳定协议与 Port 合同 |
-| `openwork-agent` | 核心循环迁入 `openwork-core` |
-| `openwork-runtime` | Turn 控制逻辑迁入 Core；应用组合迁入 App |
+| `openwork-core` | 已承接核心循环与审批暂停/恢复；后续继续增加 Durable Turn、Planning、Recovery 和 Verification |
+| `openwork-app` | 已承接 Chat Composition Root、Turn Supervisor 和用户审批命令路由 |
 | `openwork-capabilities` | 已承接 Tool 声明与 Catalog；后续增加 Skill、MCP 和按需发现 |
 | `openwork-execution` | 已承接内置 Handler、参数校验和 Observation；后续增加最终风险策略与 macOS Sandbox |
-| `openwork-permissions` | 权限策略迁入 Execution；审批状态机迁入 Core，用户决定路由迁入 App |
+| `openwork-agent` / `openwork-runtime` / `openwork-permissions` | 已删除；职责分别迁入 Core、App、Execution/Protocol |
 | `openwork-providers` | 保留；移除数据库和 UI 职责 |
 | `openwork-session` | 迁入 Persistence 的 Repository/Projection |
 | `openwork-database` | 由 Persistence 内部基础设施取代 |
@@ -787,7 +787,7 @@ cargo test --workspace
 
 ### S3：Capabilities、Execution 与 App Shell
 
-上下文：Tool 声明与真实 Handler 已完成第一阶段拆分，但权限策略、最终风险计算、审批暂停恢复和真实 Sandbox 仍处于过渡状态。
+上下文：Tool 声明与真实 Handler 已拆分，权限策略出口和进程内审批暂停/恢复已落地；参数级最终风险、真实 Sandbox 与重启恢复仍处于过渡状态。
 
 任务：
 

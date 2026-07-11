@@ -72,6 +72,7 @@ export type ChatStreamEventName =
   | 'tool_call_end'
   | 'tool_result'
   | 'approval_request'
+  | 'approval_resolved'
   | 'finished'
   | 'done'
   | 'cancelled'

@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-openwork-permissions = { workspace = true }
 openwork-protocol = { workspace = true }
 async-trait = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "sync", "time"] }
 tokio-util = { workspace = true }

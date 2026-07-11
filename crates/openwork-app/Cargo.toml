@@ -1,13 +1,12 @@
 [package]
-name = "openwork-runtime"
+name = "openwork-app"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-openwork-agent = { workspace = true }
+openwork-core = { workspace = true }
 openwork-capabilities = { workspace = true }
 openwork-execution = { workspace = true }
-openwork-permissions = { workspace = true }
 openwork-protocol = { workspace = true }
 openwork-providers = { workspace = true }
 openwork-session = { workspace = true }
@@ -15,6 +14,8 @@ openwork-workspace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true }
-toml.workspace = true
+toml = { workspace = true }
+
+[dev-dependencies]

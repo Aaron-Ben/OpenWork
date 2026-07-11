@@ -1,5 +1,5 @@
+use crate::policy::{AccessKind, NetworkMode};
 use async_trait::async_trait;
-use openwork_permissions::{AccessKind, NetworkMode};
 use openwork_protocol::capability::{Observation, ObservationErrorCode};
 use serde_json::Value;
 use std::process::Stdio;

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use tokio_util::sync::CancellationToken;
 
-/// Tracks cancellation tokens by request id.
+/// Application registry for active Turn cancellation tokens.
 #[derive(Default)]
 pub struct RequestCancelRegistry {
     tokens: Mutex<HashMap<String, CancellationToken>>,

@@ -3,9 +3,8 @@ members = [
   "crates/openwork-protocol",
   "crates/openwork-database",
   "crates/openwork-db-macros",
-  "crates/openwork-agent",
-  "crates/openwork-permissions",
-  "crates/openwork-runtime",
+  "crates/openwork-core",
+  "crates/openwork-app",
   "crates/openwork-capabilities",
   "crates/openwork-execution",
   "crates/openwork-providers",
@@ -24,9 +23,8 @@ license = "Apache-2.0"
 openwork-protocol = { path = "crates/openwork-protocol" }
 openwork-database = { path = "crates/openwork-database" }
 openwork-db-macros = { path = "crates/openwork-db-macros" }
-openwork-agent = { path = "crates/openwork-agent" }
-openwork-permissions = { path = "crates/openwork-permissions" }
-openwork-runtime = { path = "crates/openwork-runtime" }
+openwork-core = { path = "crates/openwork-core" }
+openwork-app = { path = "crates/openwork-app" }
 openwork-capabilities = { path = "crates/openwork-capabilities" }
 openwork-execution = { path = "crates/openwork-execution" }
 openwork-providers = { path = "crates/openwork-providers" }

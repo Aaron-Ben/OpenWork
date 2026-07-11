@@ -116,10 +116,12 @@ sessionStore.reload(sessionId)
 Allow / Deny
   -> providersApi.resolveApproval
   -> Tauri resolve_approval
-  -> ApprovalBridge::resolve
+  -> openwork-app::TurnSupervisor
+  -> ResolveApproval(turn_id, approval_id)
+  -> openwork-core Turn command inbox
 ```
 
-拒绝后，runtime 会把拒绝原因作为工具错误结果回传给模型。
+拒绝后，Core 会把拒绝原因作为工具错误结果回传给模型。审批卡片使用内部 `ApprovalId`，同时携带 `TurnId`，不会按厂商 tool-call ID 做全局路由。
 
 ## 8. 当前建议补强
 

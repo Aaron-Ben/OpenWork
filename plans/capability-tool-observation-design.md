@@ -1,6 +1,6 @@
 # Capability、Tool 与 Observation V1 设计
 
-> Status: implemented V1 structure and current contract snapshot. 风险决策、审批迁移、Sandbox、Artifact 与 MCP Schema 兼容仍未完成。
+> Status: implemented V1 structure and current contract snapshot. Execution 风险出口与 Core/App 审批迁移已完成；Sandbox、Artifact 与 MCP Schema 兼容仍未完成。
 > Last reviewed: 2026-07-11.
 > Parent blueprint: [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md).
 
@@ -28,8 +28,8 @@
 - 在 `openwork-protocol/capability` 落地当前最小 V1 类型和 Port；权限与审批专题允许在保持版本边界的前提下继续修订 Execution 合同。
 - 新建 `openwork-capabilities`，只持有内置 Capability 声明与 Catalog。
 - 新建 `openwork-execution`，持有 schema 校验、内置 Action Handler、权限上下文和 Invocation。
-- `openwork-agent` 只依赖 `CapabilityResolverPort` 与 `ExecutionPort`，不认识具体 Catalog/Handler。
-- `openwork-runtime` 暂时作为 Composition Root，组装 Catalog、Invoker 和 ExecutionService。
+- `openwork-core` 只依赖 `CapabilityResolverPort` 与 `ExecutionPort`，不认识具体 Catalog/Handler。
+- `openwork-app` 作为 Composition Root，组装 Catalog、Invoker、ExecutionService 和 Core Turn。
 - 删除 `openwork-tools` crate，避免旧入口和新入口长期并存。
 
 本次不做：
@@ -37,7 +37,6 @@
 - 不实现 MCP、Skill 或 Plugin。
 - 不实现 Tool Search、按需加载或模型侧自动路由。
 - 不实现 macOS Seatbelt/Sandbox Runtime。
-- 不迁移审批状态机；`ApprovalBridge` 暂时仍在 Agent，等待 `permission-and-approval-design.md`。
 - 不写 `tool_runs` 或 Recorded Event；等待 Durable Core/Event Journal。
 - 不实现 ArtifactStore；V1 继续在 Execution 内截断文本输出。
 - 不声称支持完整 JSON Schema；只实现并测试当前内置 Tool 使用的受控子集。
@@ -45,10 +44,11 @@
 ## 3. 所有权与依赖方向
 
 ```text
-openwork-agent
+openwork-core
   -> openwork-protocol::{CapabilityResolverPort, ExecutionPort}
 
-openwork-runtime (临时 Composition Root)
+openwork-app (Composition Root)
+  -> openwork-core
   -> openwork-capabilities
   -> openwork-execution
   -> openwork-protocol
@@ -58,12 +58,12 @@ openwork-capabilities
 
 openwork-execution
   -> openwork-protocol
-  -> openwork-permissions (过渡依赖)
+  -> openwork-execution/policy (执行权限配置与路径判定)
 ```
 
 硬约束：
 
-- `openwork-agent` 不依赖 `openwork-capabilities` 或 `openwork-execution` 的具体类型。
+- `openwork-core` 不依赖 `openwork-capabilities` 或 `openwork-execution` 的具体类型。
 - `openwork-execution` 不依赖 `openwork-capabilities`；它只接收注入的 `CapabilityResolverPort`。
 - `openwork-capabilities` 不依赖 `openwork-execution`。
 - Handler 不向模型生成 Tool Schema。

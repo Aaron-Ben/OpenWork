@@ -20,6 +20,7 @@ export function useChatStreamListener() {
       if (payload.event === 'approval_request' && payload.approvalId) {
         useApprovalStore.getState().push({
           id: payload.approvalId,
+          turnId: payload.requestId,
           sessionId,
           toolName: payload.toolName ?? '',
           input: payload.input ?? null,
@@ -27,12 +28,19 @@ export function useChatStreamListener() {
         return
       }
 
+      if (payload.event === 'approval_resolved' && payload.approvalId) {
+        useApprovalStore.getState().remove(payload.approvalId)
+        return
+      }
+
       if (payload.event === 'done') {
+        useApprovalStore.getState().removeByTurn(payload.requestId)
         void useSessionStore.getState().reload(sessionId)
         return
       }
 
       if (payload.event === 'cancelled') {
+        useApprovalStore.getState().removeByTurn(payload.requestId)
         // 取消:累积"[已停止]"标记,清 activeStream;不 reload(保留已显示的部分回复)。
         useSessionStore.getState().applyStreamEvent(sessionId, payload)
         useSessionStore.getState().setActiveStream(null)
@@ -40,9 +48,14 @@ export function useChatStreamListener() {
       }
 
       if (payload.event === 'doom_loop') {
+        useApprovalStore.getState().removeByTurn(payload.requestId)
         useSessionStore.getState().applyStreamEvent(sessionId, payload)
         useSessionStore.getState().setActiveStream(null)
         return
+      }
+
+      if (payload.event === 'error') {
+        useApprovalStore.getState().removeByTurn(payload.requestId)
       }
 
       useSessionStore.getState().applyStreamEvent(sessionId, payload)

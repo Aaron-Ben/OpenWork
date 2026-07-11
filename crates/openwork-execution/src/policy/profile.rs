@@ -1,6 +1,8 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use super::filesystem::{AccessKind, path_is_within};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,12 +31,6 @@ pub struct FileSystemPermissions {
 pub struct PermissionProfile {
     pub filesystem: FileSystemPermissions,
     pub network: NetworkMode,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccessKind {
-    Read,
-    Write,
 }
 
 impl PermissionProfile {
@@ -99,7 +95,7 @@ impl PermissionProfile {
 
     fn is_protected(&self, path: &Path) -> bool {
         path.components().any(|component| {
-            let Component::Normal(name) = component else {
+            let std::path::Component::Normal(name) = component else {
                 return false;
             };
             self.filesystem
@@ -108,24 +104,6 @@ impl PermissionProfile {
                 .any(|protected| name == protected.as_str())
         })
     }
-}
-
-fn path_is_within(path: &Path, root: &Path) -> bool {
-    lexical_normalize(path).starts_with(lexical_normalize(root))
-}
-
-fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            _ => out.push(component.as_os_str()),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

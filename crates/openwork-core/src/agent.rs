@@ -1,21 +1,28 @@
-//! Agent 主循环:取消息 → 喂模型(流式)→ 解析工具调用 → 执行 → 回填 → 重复,
+//! Turn 内的 Agent 主循环:取消息 → 喂模型(流式)→ 解析工具调用 → 执行 → 回填 → 重复,
 //! 直到模型返回不带工具调用的纯文本。
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use openwork_permissions::{ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer};
+use openwork_protocol::approval::{
+    ApprovalPolicy, ApprovalRequested, ApprovalResolution, ApprovalResolved,
+    ExecutionPolicyDecision,
+};
 use openwork_protocol::capability::{
     ActionRequest, CapabilityResolveError, CapabilityResolverPort, ExecutionPort, Observation,
     ObservationContent, ObservationStatus,
 };
+use openwork_protocol::domain::{ActionRunId, ApprovalId, TurnId};
 use openwork_protocol::model::{
     ContentBlock, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest,
     ModelResponse, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use crate::{ApprovalWaitOutcome, TurnCommandInbox};
 
 const DEFAULT_MAX_STEPS: usize = 20;
 /// 连续同名 + 规范化同参的工具调用达到此次数,判定为 doom loop。
@@ -32,12 +39,11 @@ pub struct AgentConfig {
     pub model: String,
     pub capabilities: Arc<dyn CapabilityResolverPort>,
     pub execution: Arc<dyn ExecutionPort>,
-    /// 何时需要对工具调用发起审批(对齐 codex `AskForApproval`)。
+    pub turn_id: TurnId,
+    /// 何时需要对工具调用发起审批。
     pub approval_policy: ApprovalPolicy,
-    /// 需要审批时由谁来审(对齐 codex `ApprovalsReviewer`)。
-    pub approvals_reviewer: ApprovalsReviewer,
-    /// 异步审批回传桥:`User` 审阅者经此等待宿主确认。
-    pub approval_bridge: ApprovalBridge,
+    /// Core-owned command inbox. User decisions return here as typed Turn commands.
+    pub approval_commands: TurnCommandInbox,
     /// 取消令牌:外部触发 `cancel()` 后,agent loop 在下一个 await 点终止并返回
     /// [`AgentError::Cancelled`],携带截止当前的对话轨迹。
     pub cancel: CancellationToken,
@@ -51,6 +57,8 @@ impl AgentConfig {
         model: impl Into<String>,
         capabilities: Arc<dyn CapabilityResolverPort>,
         execution: Arc<dyn ExecutionPort>,
+        turn_id: TurnId,
+        approval_commands: TurnCommandInbox,
         cancel: CancellationToken,
     ) -> Self {
         Self {
@@ -58,9 +66,9 @@ impl AgentConfig {
             model: model.into(),
             capabilities,
             execution,
+            turn_id,
             approval_policy: ApprovalPolicy::Untrusted,
-            approvals_reviewer: ApprovalsReviewer::User,
-            approval_bridge: ApprovalBridge::new(),
+            approval_commands,
             cancel,
             max_steps: DEFAULT_MAX_STEPS,
         }
@@ -114,13 +122,10 @@ pub enum AgentEvent {
         output: Vec<ContentBlock>,
         is_error: bool,
     },
-    /// 工具调用需要人工审批时发出;宿主须用相同 `id` 通过
-    /// `ApprovalBridge::resolve` 回传决定,否则 agent 会一直 await。
-    ApprovalRequest {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
+    /// Core has moved this Turn to the explicit waiting-approval state.
+    ApprovalRequested(ApprovalRequested),
+    /// Core applied a typed ResolveApproval command to the waiting Turn.
+    ApprovalResolved(ApprovalResolved),
     Finished(String),
     /// 检测到 doom loop(连续重复同名同参工具调用),agent 即将停止。
     DoomLoopDetected {
@@ -164,7 +169,7 @@ impl Agent {
     /// 跑 turn loop,流式向外 emit 事件,返回最终文本回答。
     /// `history` 为对话历史(user/assistant 消息);Agent 会在前面补上 system prompt。
     pub async fn run(
-        &self,
+        &mut self,
         history: Vec<Message>,
         mut on_event: impl FnMut(AgentEvent),
     ) -> Result<RunResult, AgentError> {
@@ -347,49 +352,68 @@ impl Agent {
 
     /// 对单个工具调用做审批决策并执行,返回工具输出。
     async fn execute_tool_call(
-        &self,
+        &mut self,
         tc: &ToolCallBlock,
         input: serde_json::Value,
         on_event: &mut impl FnMut(AgentEvent),
     ) -> Observation {
-        let policy = self.config.approval_policy;
-        let reviewer = self.config.approvals_reviewer;
-
-        // 1. 该调用是否需要审批?
-        if !policy.requires_approval(&tc.name, &input) {
-            return self.run_tool(&tc.name, input).await;
-        }
-
-        // 2. 需要审批 —— 谁来审?
-        let decision = match reviewer {
-            ApprovalsReviewer::AutoReview => {
-                // 留接口:guardian 风格 LLM 自动审暂未实现,保守拒绝(不静默放行)。
-                ApprovalDecision::Deny("auto_review not yet implemented".to_string())
-            }
-            ApprovalsReviewer::User => {
-                // 经桥异步等待宿主(前端 UI / 测试)确认。
-                on_event(AgentEvent::ApprovalRequest {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
+        let action = ActionRequest::new(&tc.name, input.clone());
+        match self
+            .config
+            .execution
+            .authorize(&action, self.config.approval_policy)
+            .await
+        {
+            ExecutionPolicyDecision::Allow => self.run_tool(&tc.name, input).await,
+            ExecutionPolicyDecision::Deny { reason } => Observation::denied(reason),
+            ExecutionPolicyDecision::RequireApproval { reason } => {
+                let request = ApprovalRequested {
+                    approval_id: ApprovalId::new(Uuid::new_v4().to_string()),
+                    turn_id: self.config.turn_id.clone(),
+                    action_run_id: ActionRunId::new(Uuid::new_v4().to_string()),
+                    tool_name: tc.name.clone(),
                     input: input.clone(),
-                });
-                let rx = self.config.approval_bridge.register(&tc.id).await;
-                tokio::select! {
-                    biased;
-                    _ = self.config.cancel.cancelled() => {
-                        return Observation::cancelled("cancelled");
+                    reason,
+                };
+                if let Err(error) = self
+                    .config
+                    .approval_commands
+                    .begin_approval(request.clone())
+                {
+                    return Observation::approval_denied(error.to_string());
+                }
+                on_event(AgentEvent::ApprovalRequested(request.clone()));
+
+                let outcome = self
+                    .config
+                    .approval_commands
+                    .wait_for_resolution(&self.config.cancel)
+                    .await;
+                if let ApprovalWaitOutcome::Resolved(resolution) = &outcome {
+                    on_event(AgentEvent::ApprovalResolved(ApprovalResolved {
+                        approval_id: request.approval_id,
+                        turn_id: request.turn_id,
+                        action_run_id: request.action_run_id,
+                        resolution: resolution.clone(),
+                    }));
+                }
+
+                match outcome {
+                    ApprovalWaitOutcome::Resolved(ApprovalResolution::Allow) => {
+                        self.run_tool(&tc.name, input).await
                     }
-                    decision = rx => match decision {
-                        Ok(decision) => decision,
-                        Err(_) => ApprovalDecision::Deny("approval cancelled".to_string()),
-                    },
+                    ApprovalWaitOutcome::Resolved(ApprovalResolution::Deny { reason }) => {
+                        Observation::approval_denied(reason)
+                    }
+                    ApprovalWaitOutcome::Cancelled => Observation::cancelled("cancelled"),
+                    ApprovalWaitOutcome::CommandChannelClosed => {
+                        Observation::approval_denied("approval command channel closed")
+                    }
+                    ApprovalWaitOutcome::StateUnavailable => {
+                        Observation::approval_denied("approval state unavailable")
+                    }
                 }
             }
-        };
-
-        match decision {
-            ApprovalDecision::Allow => self.run_tool(&tc.name, input).await,
-            ApprovalDecision::Deny(reason) => Observation::approval_denied(reason),
         }
     }
 
@@ -527,6 +551,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use futures_util::stream;
+    use openwork_protocol::approval::ResolveApproval;
     use openwork_protocol::capability::{CapabilityRiskHint, CapabilitySpec, ObservationErrorCode};
     use openwork_protocol::model::{FinishReason, ModelStream};
     use serde_json::json;
@@ -588,6 +613,19 @@ mod tests {
 
     #[async_trait]
     impl ExecutionPort for FakeExecution {
+        async fn authorize(
+            &self,
+            _request: &ActionRequest,
+            policy: ApprovalPolicy,
+        ) -> ExecutionPolicyDecision {
+            match policy {
+                ApprovalPolicy::Untrusted => ExecutionPolicyDecision::RequireApproval {
+                    reason: "process execution requires user approval".to_string(),
+                },
+                ApprovalPolicy::Never => ExecutionPolicyDecision::Allow,
+            }
+        }
+
         async fn execute(&self, request: ActionRequest) -> Observation {
             if request.name == "bash" {
                 Observation::succeeded("executed")
@@ -614,14 +652,27 @@ mod tests {
         }
     }
 
-    fn test_config(provider: Box<dyn ModelPort>) -> AgentConfig {
-        AgentConfig::new(
-            provider,
-            "fake",
-            Arc::new(FakeCapabilities),
-            Arc::new(FakeExecution),
-            CancellationToken::new(),
+    fn test_config_with_handle(
+        provider: Box<dyn ModelPort>,
+    ) -> (AgentConfig, crate::TurnCommandHandle) {
+        let turn_id = TurnId::new("turn-test");
+        let (handle, inbox) = crate::turn_command_channel(turn_id.clone());
+        (
+            AgentConfig::new(
+                provider,
+                "fake",
+                Arc::new(FakeCapabilities),
+                Arc::new(FakeExecution),
+                turn_id,
+                inbox,
+                CancellationToken::new(),
+            ),
+            handle,
         )
+    }
+
+    fn test_config(provider: Box<dyn ModelPort>) -> AgentConfig {
+        test_config_with_handle(provider).0
     }
 
     fn tool_call_response(id: &str, name: &str, input: serde_json::Value) -> ModelResponse {
@@ -659,11 +710,10 @@ mod tests {
         }
     }
 
-    fn untrusted_user_config(provider: Box<dyn ModelPort>) -> AgentConfig {
-        let mut config = test_config(provider);
+    fn untrusted_config(provider: Box<dyn ModelPort>) -> (AgentConfig, crate::TurnCommandHandle) {
+        let (mut config, handle) = test_config_with_handle(provider);
         config.approval_policy = ApprovalPolicy::Untrusted;
-        config.approvals_reviewer = ApprovalsReviewer::User;
-        config
+        (config, handle)
     }
 
     fn extract_text(blocks: Vec<ContentBlock>) -> String {
@@ -677,22 +727,26 @@ mod tests {
             .join("\n")
     }
 
-    /// 构造 on_event 闭包:遇到 ApprovalRequest 时用 bridge 自动 resolve(给定决定),
-    /// 并记录是否出现过 ApprovalRequest。返回 (闭包, seen 标志)。
+    /// 构造 on_event 闭包:遇到 ApprovalRequested 时将命令路由回当前 Turn。
     fn auto_resolve_on_event(
-        bridge: ApprovalBridge,
-        decision: ApprovalDecision,
+        handle: crate::TurnCommandHandle,
+        resolution: ApprovalResolution,
     ) -> (impl FnMut(AgentEvent), Arc<StdMutex<bool>>) {
         let seen = Arc::new(StdMutex::new(false));
         let seen_cb = seen.clone();
         let closure = move |event: AgentEvent| {
-            if let AgentEvent::ApprovalRequest { id, .. } = event {
+            if let AgentEvent::ApprovalRequested(request) = event {
                 *seen_cb.lock().unwrap() = true;
-                let bridge = bridge.clone();
-                let id = id.clone();
-                let decision = decision.clone();
+                let handle = handle.clone();
+                let resolution = resolution.clone();
                 tokio::spawn(async move {
-                    let _ = bridge.resolve(&id, decision).await;
+                    let _ = handle
+                        .resolve(ResolveApproval {
+                            turn_id: request.turn_id,
+                            approval_id: request.approval_id,
+                            resolution,
+                        })
+                        .await;
                 });
             }
         };
@@ -701,16 +755,14 @@ mod tests {
 
     #[tokio::test]
     async fn untrusted_user_allow_executes_tool_then_finishes() {
-        let bridge = ApprovalBridge::new();
         let provider = FakeProvider::new(vec![
             tool_call_response("call-1", "bash", json!({"command": "true"})),
             text_response("done"),
         ]);
-        let mut config = untrusted_user_config(Box::new(provider));
-        config.approval_bridge = bridge.clone();
-        let agent = Agent::new(config);
+        let (config, handle) = untrusted_config(Box::new(provider));
+        let mut agent = Agent::new(config);
 
-        let (mut on_event, seen) = auto_resolve_on_event(bridge, ApprovalDecision::Allow);
+        let (mut on_event, seen) = auto_resolve_on_event(handle, ApprovalResolution::Allow);
         let result = agent
             .run(vec![Message::text(Role::User, "run it")], &mut on_event)
             .await
@@ -725,27 +777,31 @@ mod tests {
 
     #[tokio::test]
     async fn untrusted_user_deny_blocks_tool_execution() {
-        let bridge = ApprovalBridge::new();
         let provider = FakeProvider::new(vec![
             tool_call_response("call-1", "bash", json!({"command": "echo SHOULD_NOT_RUN"})),
             text_response("ok"),
         ]);
-        let mut config = untrusted_user_config(Box::new(provider));
-        config.approval_bridge = bridge.clone();
-        let agent = Agent::new(config);
+        let (config, handle) = untrusted_config(Box::new(provider));
+        let mut agent = Agent::new(config);
 
         let tool_results: Arc<StdMutex<Vec<(bool, String)>>> = Arc::new(StdMutex::new(Vec::new()));
         let results_cb = tool_results.clone();
-        let bridge_cb = bridge.clone();
+        let handle_cb = handle.clone();
         let result = agent
             .run(
                 vec![Message::text(Role::User, "run it")],
                 move |event| match event {
-                    AgentEvent::ApprovalRequest { id, .. } => {
-                        let bridge = bridge_cb.clone();
+                    AgentEvent::ApprovalRequested(request) => {
+                        let handle = handle_cb.clone();
                         tokio::spawn(async move {
-                            let _ = bridge
-                                .resolve(&id, ApprovalDecision::Deny("user said no".into()))
+                            let _ = handle
+                                .resolve(ResolveApproval {
+                                    turn_id: request.turn_id,
+                                    approval_id: request.approval_id,
+                                    resolution: ApprovalResolution::Deny {
+                                        reason: "user said no".into(),
+                                    },
+                                })
                                 .await;
                         });
                     }
@@ -781,14 +837,13 @@ mod tests {
         ]);
         let mut config = test_config(Box::new(provider));
         config.approval_policy = ApprovalPolicy::Never;
-        // 不注入有效 bridge:Never 不应触碰它;若误发 ApprovalRequest 会因无 resolve 而卡死,
-        // 测试会在超时/死锁暴露 —— 但这里用默认空 bridge,Never 路径根本不会 await 它。
-        let agent = Agent::new(config);
+        // Never 路径不应进入 Core 的等待审批状态。
+        let mut agent = Agent::new(config);
 
         let result = agent
             .run(vec![Message::text(Role::User, "run it")], |event| {
                 assert!(
-                    !matches!(event, AgentEvent::ApprovalRequest { .. }),
+                    !matches!(event, AgentEvent::ApprovalRequested(_)),
                     "Never policy must not request approval"
                 );
             })
@@ -799,61 +854,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn autoreview_reviewer_denies_without_bridge_or_execution() {
-        let provider = FakeProvider::new(vec![
-            tool_call_response("call-1", "bash", json!({"command": "echo SHOULD_NOT_RUN"})),
-            text_response("done"),
-        ]);
-        let mut config = test_config(Box::new(provider));
-        config.approval_policy = ApprovalPolicy::Untrusted;
-        config.approvals_reviewer = ApprovalsReviewer::AutoReview;
-        let agent = Agent::new(config);
-
-        let tool_results: Arc<StdMutex<Vec<(bool, String)>>> = Arc::new(StdMutex::new(Vec::new()));
-        let results_cb = tool_results.clone();
-        let result = agent
-            .run(
-                vec![Message::text(Role::User, "run it")],
-                move |event| match event {
-                    AgentEvent::ApprovalRequest { .. } => {
-                        panic!("AutoReview must not emit ApprovalRequest");
-                    }
-                    AgentEvent::ToolResult {
-                        is_error, output, ..
-                    } => {
-                        results_cb
-                            .lock()
-                            .unwrap()
-                            .push((is_error, extract_text(output)));
-                    }
-                    _ => {}
-                },
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.text, "done");
-        let results = tool_results.lock().unwrap().clone();
-        assert_eq!(results.len(), 1);
-        assert!(results[0].0, "AutoReview should deny (error result)");
-        assert!(
-            !results[0].1.contains("SHOULD_NOT_RUN"),
-            "AutoReview-denied command must not execute"
-        );
-    }
-
-    #[tokio::test]
     async fn run_returns_full_message_trace() {
-        let bridge = ApprovalBridge::new();
         let provider = FakeProvider::new(vec![
             tool_call_response("call-1", "bash", json!({"command": "true"})),
             text_response("done"),
         ]);
-        let mut config = untrusted_user_config(Box::new(provider));
-        config.approval_bridge = bridge.clone();
-        let agent = Agent::new(config);
+        let (config, handle) = untrusted_config(Box::new(provider));
+        let mut agent = Agent::new(config);
 
-        let (mut on_event, _seen) = auto_resolve_on_event(bridge, ApprovalDecision::Allow);
+        let (mut on_event, _seen) = auto_resolve_on_event(handle, ApprovalResolution::Allow);
         let result = agent
             .run(vec![Message::text(Role::User, "run it")], &mut on_event)
             .await
@@ -880,7 +889,7 @@ mod tests {
         let provider = FakeProvider::new(vec![text_response("done")]);
         let config = test_config(Box::new(provider));
         config.cancel.cancel();
-        let agent = Agent::new(config);
+        let mut agent = Agent::new(config);
 
         let history = vec![Message::text(Role::User, "hello")];
         let result = agent.run(history, |_| {}).await;
@@ -897,18 +906,16 @@ mod tests {
 
     #[tokio::test]
     async fn doom_loop_detected_on_repeated_identical_calls() {
-        let bridge = ApprovalBridge::new();
         // 三个完全相同的 bash 调用 → 第三个触发 doom-loop。
         let provider = FakeProvider::new(vec![
             tool_call_response("call-1", "bash", json!({"command": "echo hi"})),
             tool_call_response("call-2", "bash", json!({"command": "echo hi"})),
             tool_call_response("call-3", "bash", json!({"command": "echo hi"})),
         ]);
-        let mut config = untrusted_user_config(Box::new(provider));
-        config.approval_bridge = bridge.clone();
-        let agent = Agent::new(config);
+        let (config, handle) = untrusted_config(Box::new(provider));
+        let mut agent = Agent::new(config);
 
-        let (mut on_event, _seen) = auto_resolve_on_event(bridge, ApprovalDecision::Allow);
+        let (mut on_event, _seen) = auto_resolve_on_event(handle, ApprovalResolution::Allow);
         let result = agent
             .run(vec![Message::text(Role::User, "loop it")], &mut on_event)
             .await;

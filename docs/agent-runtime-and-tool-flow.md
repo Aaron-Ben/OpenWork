@@ -7,8 +7,9 @@ Last reviewed: 2026-07-11
 ## 1. 相关代码
 
 ```text
-crates/openwork-agent/src/lib.rs
-crates/openwork-runtime/src/chat.rs
+crates/openwork-core/src/{agent,approval}.rs
+crates/openwork-app/src/{chat,turn_supervisor}.rs
+crates/openwork-protocol/src/approval/mod.rs
 crates/openwork-protocol/src/capability/
 crates/openwork-capabilities/src/
 crates/openwork-execution/src/actions/filesystem/
@@ -17,7 +18,7 @@ crates/openwork-execution/src/{context,handler,invoker,schema,service}.rs
 apps/desktop/src-tauri/src/lib.rs
 ```
 
-`openwork-agent` 负责 agent loop。`openwork-runtime::ChatRuntime` 组合 provider/session/Agent，并把 Agent 事件转换为宿主/UI payload。
+`openwork-core` 负责 Turn/Agent loop 和审批状态。`openwork-app::ChatRuntime` 组合 provider/session/Core，并把 Core 事件转换为宿主/UI payload。
 
 ## 2. AgentConfig
 
@@ -27,13 +28,13 @@ apps/desktop/src-tauri/src/lib.rs
 - `model`
 - `capabilities: Arc<dyn CapabilityResolverPort>`
 - `execution: Arc<dyn ExecutionPort>`
+- `turn_id`
 - `approval_policy`
-- `approvals_reviewer`
-- `approval_bridge`
+- `approval_commands: TurnCommandInbox`
 - `cancel`
 - `max_steps`
 
-`AgentConfig` 不再构造或持有具体 Tool Registry。`ChatRuntime` 当前作为 Composition Root，创建内置 `CapabilityCatalog`、`BuiltinActionInvoker` 和 `ExecutionService`，并用相同的 cancellation token 组合 Agent 与 Execution。默认审批仍是 `ApprovalPolicy::Untrusted`、`ApprovalsReviewer::User`。
+`AgentConfig` 不构造或持有具体 Tool Registry。App 的 `ChatRuntime` 作为 Composition Root，创建内置 `CapabilityCatalog`、`BuiltinActionInvoker` 和 `ExecutionService`，并用相同的 cancellation token 组合 Core 与 Execution。默认审批是 `ApprovalPolicy::Untrusted`。
 
 ## 3. 一轮 Agent Loop
 
@@ -57,7 +58,8 @@ for step in 1..=max_steps:
 
   for tool_call in tool_calls:
     检测 doom loop
-    根据 ApprovalPolicy 决定是否请求审批
+    调用 ExecutionPort::authorize
+    RequireApproval 时 Core 进入 Waiting 并等待 ResolveApproval 命令
     通过 ExecutionPort 执行 Action
     标记 tool_call finished
     发出 ToolResult
@@ -76,12 +78,13 @@ for step in 1..=max_steps:
 | `TextStart` / `TextDelta` / `TextEnd` | 文本输出 |
 | `ReasoningStart` / `ReasoningDelta` / `ReasoningEnd` | reasoning 输出 |
 | `ToolCallStart` / `ToolCallDelta` / `ToolCallEnd` | 模型请求工具 |
-| `ApprovalRequest` | 需要 human-in-the-loop 审批 |
+| `ApprovalRequested` | Core 已进入等待审批状态 |
+| `ApprovalResolved` | Core 已应用用户决定 |
 | `ToolResult` | 工具执行完成 |
 | `Finished` | agent 最终文本 |
 | `DoomLoopDetected` | 连续重复同名同参工具调用，被停止 |
 
-Provider 发出的 `ModelEvent` 只包含文本、推理和工具调用语义输出，并在 `openwork-agent/src/lib.rs` 中转换成 `AgentEvent`。如果 provider 只发 delta，没有显式 start/end，Agent 会通过 `StreamLifecycle` 补齐 text/reasoning 的 start/end；Runtime Step、Retry 和 UI done/error 不属于 `ModelEvent`。
+Provider 发出的 `ModelEvent` 只包含文本、推理和工具调用语义输出，并在 `openwork-core/src/agent.rs` 中转换成 `AgentEvent`。如果 provider 只发 delta，没有显式 start/end，Core 会通过 `StreamLifecycle` 补齐 text/reasoning 的 start/end；Turn Step、Retry 和 UI done/error 不属于 `ModelEvent`。
 
 `openwork-providers::RetryingModelPort` 只允许在尚未发出任何 `ModelEvent` 时重试。已经出现文本、推理或工具调用增量后，网络中断会直接返回错误，避免重复文本或重复工具参数。
 
@@ -98,7 +101,7 @@ pub struct CapabilitySpec {
 }
 ```
 
-`risk_hint` 当前只表达声明侧的粗粒度分类并参与合同测试，没有运行时消费者，不会自动决定权限或审批。最终风险语义留到权限与审批专题讨论。
+`risk_hint` 表达声明侧的粗粒度分类，并由 Execution 用于生成审批原因。它不是最终信任结论；后续仍需结合实际参数、路径和运行位置增强风险计算。
 
 真实 Handler 只在 `openwork-execution` 内部，通过 `ExecutionContext` 获取执行环境：
 
@@ -117,7 +120,7 @@ Execution 当前遵守：
 - 文件访问前调用 `ctx.check_path(path, AccessKind)`。
 - 长耗时任务应响应 `ctx.cancel`。
 - 把成功、失败、拒绝、取消和未知结果归一化为 `Observation`。
-- 不在 Handler 内部做审批；当前审批仍由 Agent 编排。
+- 不在 Handler 或 Execution 内等待 UI；Execution 只返回 `Allow / Deny / RequireApproval`，Core 持有等待状态。
 
 ## 6. 内置 Action
 
@@ -145,9 +148,9 @@ runtime 会记录最近的工具调用 `(name, normalized_input)`。如果连续
 
 ## 8. 当前缺口
 
-- `tool_runs` 表已经存在，但当前没有写入路径，工具开始、结束、耗时和审批结果仍未形成闭环。
+- `ApprovalRequested` 与 `ApprovalResolved` 已进入现有 `llm_events` trace，但尚未进入可重放 Event Journal。
 - `bash` 无文件级隔离，不能把审批等同于 sandbox。
-- `ApprovalPolicy::OnFailure` / `OnRequest` / `Granular` 需要真正 sandbox 或 executor 支撑。
+- Durable Turn 和应用重启后的审批恢复尚未完成。
 - 工具状态机还可以进一步明确为 `requested -> approved -> running -> completed/failed/cancelled`。
 - `risk_hint` 尚未接入运行时风险判断。
 - `schema.rs` 只实现当前内置 Action 所需子集；接入任意 MCP Schema 前需要重新确定兼容策略。

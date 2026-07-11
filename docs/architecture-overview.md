@@ -38,12 +38,13 @@ crates/openwork-persistence/
   Migration 和 `ProviderRepository`；API Key 使用 AES-256-GCM 加密后落库，
   不包含模型 HTTP 调用或 UI Preset。
 
-crates/openwork-agent/
-  Agent loop：模型流式调用、工具调用调度、审批等待、doom-loop 检测、取消处理。
+crates/openwork-core/
+  Turn 控制循环与状态机：模型流式调用、工具调用调度、审批暂停/恢复、
+  doom-loop 检测和取消处理；不依赖具体 Capabilities 或 Execution Adapter。
 
-crates/openwork-runtime/
-  临时宿主组合层：组合 Capability Catalog、Execution、Agent、Provider 和 Session，
-  并 re-export agent / permissions 的宿主 API。
+crates/openwork-app/
+  Application API 与 Composition Root：组合 Capability Catalog、Execution、Core、
+  Provider 和 Session，并通过 TurnSupervisor 路由 ResolveApproval 命令。
 
 crates/openwork-capabilities/
   Capability Catalog：持有 read、write、edit、list、grep、glob、bash 的名称、
@@ -52,11 +53,8 @@ crates/openwork-capabilities/
 crates/openwork-execution/
   统一 Action 执行：`actions/filesystem` 持有文件和搜索 Handler，
   `actions/process` 持有 bash，service/schema/invoker/context 分别负责执行编排、
-  参数校验、Handler 路由和运行环境；当前还没有 OS 级 sandbox。
-
-crates/openwork-permissions/
-  权限与审批策略：ApprovalPolicy、ApprovalsReviewer、ApprovalBridge、
-  PermissionProfile、文件系统和网络权限模式。
+  参数校验、Handler 路由和运行环境，`policy` 持有 PermissionProfile、文件系统、
+  网络权限模式以及 Allow/Deny/RequireApproval 判定；当前还没有 OS 级 sandbox。
 
 crates/openwork-session/
   PostgreSQL 会话存储：sessions、messages、llm_events、tool_runs。
@@ -83,13 +81,16 @@ ChatView
   -> SessionStore 读取会话历史
   -> PostgresProviderRepository 读取 Provider Profile，并解密 api_key_encrypted
   -> ProviderFactory::build 构造带 RetryPolicy 的 ModelPort
-  -> openwork-agent::Agent::run
+  -> openwork-app::ChatRuntime 组装一次 Turn
+  -> openwork-core::Agent::run
      -> CapabilityResolverPort 获取本轮 Tool Schema
      -> ModelPort::invoke
      -> AgentEvent 流式转发给 Tauri
-     -> 需要工具时发 ApprovalRequest
-     -> 前端 resolve_approval
-     -> ExecutionPort 校验参数并执行 Action
+     -> ExecutionPort::authorize 返回 Allow / Deny / RequireApproval
+     -> RequireApproval 时 Core 进入 Waiting 并发出 ApprovalRequested
+     -> 前端提交 ResolveApproval(turn_id, approval_id)
+     -> App 将命令路由回拥有该 Turn 的 Core inbox
+     -> Allow 后 ExecutionPort 执行 Action
      -> ToolResult 回填模型上下文
      -> 下一轮模型调用，直到无工具调用
   -> SessionStore 持久化新增 messages
@@ -103,7 +104,7 @@ ChatView
 
 ### 4.1 `openwork-protocol` 是协议核心
 
-所有 provider、runtime、session、desktop 都应该围绕 `openwork-protocol` 的类型工作。新增 provider 或工具时，优先复用：
+所有 provider、Core、App、session、desktop 都应该围绕 `openwork-protocol` 的类型工作。新增 provider 或工具时，优先复用：
 
 - `Message`
 - `ContentBlock`
@@ -116,17 +117,21 @@ ChatView
 
 不要在 provider 或前端独立发明另一套 message shape，除非只是 UI 层临时 view model。
 
-### 4.2 `openwork-agent` 是编排层
+### 4.2 `openwork-core` 是控制循环与审批状态所有者
 
-`openwork-runtime` 当前已经从 agent loop 中退出来，保留 model registry 和宿主 API re-export。真正的多步循环、工具调用、doom-loop 检测、取消处理在 `openwork-agent`。
+真正的多步循环、工具调用、doom-loop 检测、取消处理和审批暂停/恢复在 `openwork-core`。每个 Turn 独占一个有界命令 inbox；App 只能通过 `TurnSupervisor` 将稳定的 `ResolveApproval` 命令路由回来。
 
-### 4.3 `openwork-capabilities` 是声明与发现层
+### 4.3 `openwork-app` 是应用组合层
 
-内置 Tool 的名称、描述、JSON Schema 和风险提示在这里。它实现 `CapabilityResolverPort`，但不执行文件或进程 IO。`openwork-agent` 只依赖 Protocol Port，不依赖具体 `CapabilityCatalog`。
+`openwork-app` 组合 Provider、Session、Capabilities、Execution 与 Core，并提供 Desktop 使用的 `ChatRuntime`。旧 `openwork-runtime`、`openwork-agent` 和 `openwork-permissions` crate 已删除。
 
-`risk_hint` 当前只是 Catalog 元数据和合同测试对象，不参与权限、审批或执行决策；`ReadOnly`、`WorkspaceMutation`、`ProcessExecution` 不能被理解为已经完成的风险策略。
+### 4.4 `openwork-capabilities` 是声明与发现层
 
-### 4.4 `openwork-execution` 是统一执行边界
+内置 Tool 的名称、描述、JSON Schema 和风险提示在这里。它实现 `CapabilityResolverPort`，但不执行文件或进程 IO。`openwork-core` 只依赖 Protocol Port，不依赖具体 `CapabilityCatalog`。
+
+`risk_hint` 现在是 Execution 审批原因的输入之一；它仍是粗粒度声明，不能自行降低权限，也不能替代针对实际参数、路径和运行位置的最终风险计算。
+
+### 4.5 `openwork-execution` 是统一执行边界
 
 `ExecutionService` 先通过注入的 `CapabilityResolverPort` 解析声明并校验参数，再调用注入的 `ActionInvoker`。内置 Handler、`ExecutionContext`、路径权限检查、取消、超时和 Observation 归一化都在这里。Execution 不反向依赖具体 Capabilities crate。
 
@@ -141,34 +146,35 @@ openwork-execution/src/
 ├── context.rs          # working_dir、PermissionProfile、CancellationToken
 ├── handler.rs          # crate 内部 ActionHandler 合同
 ├── invoker.rs          # 名称到 Handler 的路由
+├── policy/             # PermissionProfile 与 Allow/Deny/RequireApproval 判定
 ├── schema.rs           # 当前内置 Schema 所需的受控校验子集
-└── service.rs          # resolve -> validate -> invoke -> Observation
+└── service.rs          # authorize；以及 resolve -> validate -> invoke -> Observation
 ```
 
 “统一执行边界”不等于“已经安全隔离”：当前只有应用层路径检查，尚无 OS 级 sandbox，`bash` 的命令内部访问也无法由 `PermissionProfile` 精细约束。
 
-### 4.5 `openwork-session` 保存消息和 trace
+### 4.6 `openwork-session` 保存消息和 trace
 
 `messages.parts_json` 用于重新加载聊天上下文并保存 message blocks；`llm_events` 用于 trace / observability，而不是直接替代 messages。当前还没有可恢复 Turn 状态机，工具执行后崩溃不能仅靠这些表可靠恢复。
 
-### 4.6 `openwork-workspace` 是工作区变更层
+### 4.7 `openwork-workspace` 是工作区变更层
 
 目标上应由 `openwork-workspace` 统一负责 git status、文件 diff 和快照还原。但当前 runtime、Tauri 和 UI 都没有调用这些函数，`SessionStore` 也没有持久化 worktree snapshot。
 
-### 4.7 `openwork-database` 是 PostgreSQL 基础层
+### 4.8 `openwork-database` 是 PostgreSQL 基础层
 
 当前已经有显式 `Database` / `DatabaseConfig` / `PgPool` 连接对象与 `schema_migrations` runner。Provider 的 SQL、Migration 和事务已进入 `openwork-persistence`；Session 仍保留在 `openwork-session`，将在目标架构后续阶段迁移。
 
-### 4.8 API Key 加密是 Persistence 内部实现
+### 4.9 API Key 加密是 Persistence 内部实现
 
-API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapter。`openwork-persistence::ApiKeyCipher` 在写入前加密、`load_runtime` 时解密；PostgreSQL 只保存版本化密文。主密钥由 Composition Root 通过环境配置提供，不进入数据库、Protocol DTO、日志或模型工具列表。未来建立 `openwork-app` 时只迁移主密钥配置注入，不新增 SecretStore 子系统。
+API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapter。`openwork-persistence::ApiKeyCipher` 在写入前加密、`load_runtime` 时解密；PostgreSQL 只保存版本化密文。主密钥由 Composition Root 通过环境配置提供，不进入数据库、Protocol DTO、日志或模型工具列表。
 
 ## 5. 关键约束
 
 - 当前没有真正的操作系统级 sandbox。
-- `CapabilityRiskHint` 当前没有运行时消费者，不会自动允许、拒绝或触发审批。
+- `CapabilityRiskHint` 已参与审批原因生成，但当前策略仍只有 `Untrusted` 和 `Never` 两种真实语义。
 - `schema.rs` 只支持当前内置 Action 使用的 JSON Schema 子集，不是通用 JSON Schema 引擎。
-- `ApprovalPolicy::OnFailure`、`OnRequest`、`Granular` 还没有沙箱支撑，目前保守降级为需要审批。
+- 审批状态当前是进程内可观察状态；Event Journal 和应用重启恢复尚未完成。
 - `bash` 使用 `sh -c` 执行命令；虽然有用户审批、超时、取消和受限环境变量，但不能保证命令内部文件访问被 `PermissionProfile` 精细约束。
 - Provider 的统一事件不包含 Runtime Step；不同厂商的 tool call delta 仍需持续补充 fixture 测试。
 

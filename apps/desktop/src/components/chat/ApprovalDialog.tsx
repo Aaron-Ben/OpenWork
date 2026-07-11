@@ -74,7 +74,7 @@ export function ApprovalDialog() {
     if (!current || resolving) return
     setResolving(true)
     try {
-      await providersApi.resolveApproval(current.id, allow)
+      await providersApi.resolveApproval(current.turnId, current.id, allow)
     } catch {
       // 回传失败(id 已过期 / 通道关闭)也移除本地条目,避免 UI 卡住。
     } finally {

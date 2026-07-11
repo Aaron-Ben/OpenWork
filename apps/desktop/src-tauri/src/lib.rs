@@ -3,10 +3,10 @@ mod commands;
 use std::sync::Arc;
 
 use commands::provider::ProviderRepositoryState;
+use openwork_app::{ChatRuntime, RequestCancelRegistry};
 use openwork_persistence::PostgresPersistence;
 use openwork_protocol::provider::ProviderRepository;
 use openwork_providers::ProviderFactory;
-use openwork_runtime::{ApprovalBridge, ChatRuntime, RequestCancelRegistry};
 use openwork_session::SessionStore;
 use tauri::Manager;
 
@@ -32,7 +32,6 @@ pub fn run() {
             app.manage(ProviderRepositoryState(provider_repository));
             app.manage(provider_factory);
             app.manage(session_store);
-            app.manage(ApprovalBridge::new());
             app.manage(RequestCancelRegistry::default());
             Ok(())
         })

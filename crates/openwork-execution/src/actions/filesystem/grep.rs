@@ -1,7 +1,7 @@
+use crate::policy::AccessKind;
 use async_trait::async_trait;
 use globset::Glob as GlobSpec;
 use ignore::WalkBuilder;
-use openwork_permissions::AccessKind;
 use openwork_protocol::capability::{Observation, ObservationErrorCode};
 use regex::Regex;
 use serde_json::Value;

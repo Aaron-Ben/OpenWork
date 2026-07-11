@@ -3,6 +3,7 @@ import { create } from 'zustand'
 /// 一个待审批的工具调用提示。`sessionId` 用于多会话隔离。
 export interface ApprovalPrompt {
   id: string
+  turnId: string
   sessionId: string
   toolName: string
   input: unknown
@@ -12,6 +13,7 @@ interface ApprovalStoreState {
   pending: ApprovalPrompt[]
   push: (prompt: ApprovalPrompt) => void
   remove: (id: string) => void
+  removeByTurn: (turnId: string) => void
 }
 
 /// 全局审批队列:agent loop 发出 `approval_request` 时 push(带 sessionId),
@@ -26,4 +28,6 @@ export const useApprovalStore = create<ApprovalStoreState>((set) => ({
     ),
   remove: (id) =>
     set((state) => ({ pending: state.pending.filter((item) => item.id !== id) })),
+  removeByTurn: (turnId) =>
+    set((state) => ({ pending: state.pending.filter((item) => item.turnId !== turnId) })),
 }))

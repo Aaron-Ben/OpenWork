@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use crate::approval::{ApprovalPolicy, ExecutionPolicyDecision};
+
 use super::{
     ActionInvokeError, ActionRequest, CapabilityResolveError, CapabilitySpec, Observation,
 };
@@ -21,5 +23,12 @@ pub trait ActionInvoker: Send + Sync {
 /// Core/Agent 唯一可见的安全执行边界。
 #[async_trait]
 pub trait ExecutionPort: Send + Sync {
+    /// Evaluates the final execution policy without invoking the action.
+    async fn authorize(
+        &self,
+        request: &ActionRequest,
+        policy: ApprovalPolicy,
+    ) -> ExecutionPolicyDecision;
+
     async fn execute(&self, request: ActionRequest) -> Observation;
 }

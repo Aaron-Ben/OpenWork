@@ -23,8 +23,8 @@ export const providersApi = {
     invoke('provider_test', { id, model }),
   testDraft: (input: ProviderInput, model: string): Promise<TestResult> =>
     invoke('provider_test', { input, model }),
-  resolveApproval: (approvalId: string, allow: boolean): Promise<void> =>
-    invoke('resolve_approval', { approvalId, allow }),
+  resolveApproval: (turnId: string, approvalId: string, allow: boolean): Promise<void> =>
+    invoke('resolve_approval', { turnId, approvalId, allow }),
   listenToChatStream: (
     handler: (payload: ChatStreamEventPayload) => void,
   ): Promise<UnlistenFn> =>

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use openwork_protocol::approval::{ApprovalPolicy, ExecutionPolicyDecision};
 use openwork_protocol::capability::{
     ActionInvokeError, ActionInvoker, ActionRequest, CapabilityResolveError,
     CapabilityResolverPort, CapabilityRiskHint, CapabilitySpec, ExecutionPort, Observation,
@@ -22,6 +23,37 @@ impl CapabilityResolverPort for FakeResolver {
     async fn resolve(&self, name: &str) -> Result<Option<CapabilitySpec>, CapabilityResolveError> {
         Ok((name == "write").then(|| self.spec()))
     }
+}
+
+#[tokio::test]
+async fn untrusted_policy_requires_approval_before_invocation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let decision = service(Arc::clone(&calls))
+        .authorize(
+            &ActionRequest::new("write", json!({"path": "a.txt", "content": "hello"})),
+            ApprovalPolicy::Untrusted,
+        )
+        .await;
+
+    assert!(matches!(
+        decision,
+        ExecutionPolicyDecision::RequireApproval { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn never_policy_allows_valid_action_without_invocation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let decision = service(Arc::clone(&calls))
+        .authorize(
+            &ActionRequest::new("write", json!({"path": "a.txt", "content": "hello"})),
+            ApprovalPolicy::Never,
+        )
+        .await;
+
+    assert_eq!(decision, ExecutionPolicyDecision::Allow);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 impl FakeResolver {

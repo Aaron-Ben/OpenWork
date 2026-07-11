@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use openwork_permissions::{AccessKind, PermissionProfile};
 use tokio_util::sync::CancellationToken;
+
+use crate::policy::{AccessKind, PermissionProfile};
 
 #[derive(Clone)]
 pub struct ExecutionContext {
