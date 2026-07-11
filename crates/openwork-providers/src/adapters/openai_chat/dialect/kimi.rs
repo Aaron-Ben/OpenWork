@@ -55,8 +55,7 @@ pub struct KimiProvider {
 impl KimiProvider {
     pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::new(config, transport)
-                .with_dialect(OpenAiChatDialect::Kimi),
+            inner: OpenAiCompatibleChatProvider::new(config, transport, OpenAiChatDialect::Kimi),
         }
     }
 

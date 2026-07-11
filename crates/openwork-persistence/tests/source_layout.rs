@@ -2,7 +2,14 @@ use std::path::Path;
 
 #[test]
 fn persistence_source_tree_matches_model_provider_design() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/postgres");
+    let crate_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for path in ["crypto/mod.rs", "crypto/api_key.rs"] {
+        assert!(
+            crate_src.join(path).is_file(),
+            "missing persistence source file: {path}"
+        );
+    }
+    let src = crate_src.join("postgres");
     for path in [
         "persistence.rs",
         "migrations/mod.rs",

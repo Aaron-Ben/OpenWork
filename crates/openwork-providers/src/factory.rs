@@ -6,8 +6,7 @@ use openwork_protocol::{
 
 use crate::{
     AnthropicProvider, DeepSeekProvider, GlmProvider, HttpProviderConfig, HttpTransport,
-    KimiProvider, OpenAiCompatibleChatProvider, OpenAiProvider, QwenProvider, RetryPolicy,
-    RetryingModelPort,
+    KimiProvider, OpenAiProvider, QwenProvider, RetryPolicy, RetryingModelPort,
 };
 
 /// 在应用生命周期内持有共享 HTTP Transport，并为每份运行时配置组装 Adapter。
@@ -72,13 +71,6 @@ impl ProviderFactory {
                 Box::new(provider)
             }
             ProviderKind::Anthropic => Box::new(AnthropicProvider::new(http, transport)),
-            ProviderKind::OpenaiCompatible => {
-                let mut provider = OpenAiCompatibleChatProvider::new(http, transport);
-                if let Some(extra_body) = config.adapter_options.as_ref() {
-                    provider = provider.with_extra_body(extra_body.clone());
-                }
-                Box::new(provider)
-            }
         }
     }
 
@@ -156,7 +148,6 @@ mod tests {
             ProviderKind::Deepseek,
             ProviderKind::Qwen,
             ProviderKind::Anthropic,
-            ProviderKind::OpenaiCompatible,
         ] {
             let _provider = factory.build(&sample_config(kind));
         }

@@ -14,7 +14,7 @@ pub(super) struct ProviderRuntimeRecord {
     pub id: String,
     pub name: String,
     pub base_url: String,
-    pub api_key: String,
+    pub api_key_encrypted: String,
     pub driver_code: String,
     pub enabled: bool,
     pub adapter_options_json: Option<serde_json::Value>,

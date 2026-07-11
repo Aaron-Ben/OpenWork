@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-11
 
-> Status: core contract and primary provider paths implemented; infrastructure consolidation and full model-specific coverage remain. 本文是模型厂商集成的专题设计，受 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 约束。当前代码已完成 streaming-first Port、结构化错误、SSE framing/背压/取消、Secret/Profile 查询隔离、共享 HTTP Transport 生命周期、OpenAI Responses/Anthropic Tool 流式主链、Anthropic opaque thinking 往返、主要 Dialect 精确错误码和 Retry-After 解析。全库唯一 PostgreSQL composition root、有序 output block、模型级 Thinking 参数和 M7 Attempt Projection 仍未完成。
+> Status: core contract and primary provider paths implemented; infrastructure consolidation and full model-specific coverage remain. 本文是模型厂商集成的专题设计，受 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 约束。当前代码已完成 streaming-first Port、结构化错误、SSE framing/背压/取消、API Key 落库加密、Secret/Profile 查询隔离、共享 HTTP Transport 生命周期、OpenAI Responses/Anthropic Tool 流式主链、Anthropic opaque thinking 往返、主要 Dialect 精确错误码和 Retry-After 解析。全库唯一 PostgreSQL composition root、有序 output block、模型级 Thinking 参数和 M7 Attempt Projection 仍未完成。
 
 ### 2026-07-11 implementation checkpoint
 
@@ -11,8 +11,9 @@ Last reviewed: 2026-07-11
 - `ModelError` 已合并为单一结构化表达，包含 phase、delivery、retry 和厂商诊断字段。
 - Provider Stream 使用有界桥接并在 Drop 时取消生产任务；Retry 受总 deadline、attempt budget 和 semantic-output gate 约束。
 - SSE transport 只负责 framing；`[DONE]` 和厂商终态由对应 Adapter 解释，不再累积 raw event 数组。
-- `ProviderProfile` 与不可序列化的 `ProviderRuntimeConfig/ApiCredential` 已分离；普通列表/详情 SQL 不读取 `api_key`。
-- Provider Registry 已由 `PostgresPersistence` 持有 Pool/Migration，`PostgresProviderRepository::new(PgPool)` 不再自行连接或迁移；列表使用固定两次批量查询。但 Session Store 仍有独立数据库生命周期，全库唯一 composition root 尚未完成。
+- `ProviderProfile` 与不可序列化的 `ProviderRuntimeConfig/ApiCredential` 已分离；PostgreSQL 只保存 `api_key_encrypted`，只有 `load_runtime` 解密为运行时 Credential。
+- Provider Registry 已由 `PostgresPersistence` 持有 Pool/Migration 和 `ApiKeyCipher`，Repository 不再自行读取环境变量或决定何时迁移；列表使用固定两次批量查询。但 Session Store 仍有独立数据库生命周期，全库唯一 composition root 尚未完成。
+- `openwork-persistence::ApiKeyCipher` 使用 AES-256-GCM、随机 Nonce 和版本化 envelope，并用 Provider ID 作为 AAD；这是 Persistence 内部实现，不新增 Port、SecretStore 或 Agent Tool。
 - 三个 crate 已建立 `domain/model/provider`、`gateway/transport/adapters`、`postgres/migrations/provider_registry` 物理边界；三类 Adapter 的 request/response/stream codec 已从 `mod.rs` 拆出。
 - Desktop Composition Root 只创建一个 `ProviderFactory`；Factory 持有 `HttpTransport`，其 Clone 通过 `Arc<HttpTransportInner>` 共享同一个 `reqwest::Client` 和连接池。Chat Runtime 与 Provider Test 使用同一 Factory 生命周期，Adapter 构造函数不再自行创建 Client。
 - Kimi 默认 endpoint 已对齐 `/v1/chat/completions`，并使用 `max_completion_tokens`；Kimi、Qwen、DeepSeek、GLM 流式请求显式获取 usage。
@@ -32,7 +33,7 @@ Last reviewed: 2026-07-11
 5. `ModelPort` 采用单一 streaming-first 调用合同；`stream` 不再同时存在于请求字段和两个方法中。
 6. `ModelEvent` 只表达规范化模型输出；Transport Attempt、Retry 和 Telemetry 使用独立事件类型，不伪装成模型输出。
 7. Provider 层只有在尚未向上层提交任何语义输出时才允许透明重试。
-8. Provider 配置列表、Tauri 返回值和普通日志不得携带 API Key。V1 仍可暂存 PostgreSQL 明文凭据，但必须用非序列化运行时类型隔离。
+8. Provider 配置列表、Tauri 返回值和普通日志不得携带 API Key；PostgreSQL 只保存认证加密后的版本化密文，主密钥独立配置。
 9. 不默认持久化完整原始响应、SSE event 数组或错误 body；只保存经过白名单、截断和脱敏的诊断字段。
 10. 本次只重构现有模型调用能力，不增加 Embedding、自动路由、静默 Fallback、价格同步或动态模型发现。
 
@@ -80,6 +81,7 @@ Last reviewed: 2026-07-11
 - 文本、推理展示、Tool Calling、流式响应和 Usage。
 - HTTP/SSE 错误归一化、Transport Retry 和 Attempt Trace 边界。
 - Provider 配置及模型列表的 PostgreSQL Repository。
+- Provider API Key 的落库加密、解密和主密钥配置边界。
 - 三个 crate 的内部目标结构和迁移路线。
 
 ### 3.2 本专题不做
@@ -89,7 +91,6 @@ Last reviewed: 2026-07-11
 - Provider SDK Plugin 系统。
 - 在线价格表、账单结算和完整成本平台。
 - 模型列表自动同步或 Capability 远程探测。
-- SecretStore/Keychain 实现；只先修正 Secret 在进程内和 DTO 中的边界。
 - SQLite 或多数据库兼容层。
 - Recorded Event 总协议；本文只定义 Model Attempt 需要提供的事实，最终事件名由 Core 专题冻结。
 
@@ -429,7 +430,7 @@ pub struct ProviderRuntimeConfig {
 
 - `ProviderProfile` 可用于 Query/UI，不含 API Key。
 - `ProviderRuntimeConfig` 不实现 `Serialize`，`Debug` 必须脱敏。
-- `ApiCredential` 是内存边界，不等同于本次实现 Keychain。
+- `ApiCredential` 是解密后的内存边界，不等同于数据库加密 envelope。
 - Tauri 的 Create/Update DTO 位于 Desktop/App，并映射为 Repository command；不能直接复用 RuntimeConfig。
 - `adapter_options` 只能由选定 Adapter 校验，禁止覆盖 `model/messages/tools/stream` 等保留字段。
 
@@ -486,10 +487,8 @@ crates/openwork-providers/src/
         ├── request.rs
         ├── response.rs
         ├── stream.rs
-        ├── error.rs               # family fallback
         └── dialect/
             ├── mod.rs
-            ├── standard.rs
             ├── deepseek.rs
             ├── kimi.rs
             ├── qwen.rs
@@ -689,6 +688,9 @@ timestamp
 ```text
 crates/openwork-persistence/src/
 ├── lib.rs
+├── crypto/
+│   ├── mod.rs
+│   └── api_key.rs                # AES-256-GCM 版本化 envelope
 └── postgres/
     ├── mod.rs
     ├── persistence.rs             # pool 生命周期、统一 migrate_all
@@ -709,14 +711,14 @@ crates/openwork-persistence/src/
 ### 8.1 PostgreSQL 生命周期
 
 - `PostgresPersistence` 统一拥有 `PgPool` 和全库 migration registry。
-- `PostgresProviderRepository::new(PgPool)` 只接收共享 Pool，不自行读取环境变量或决定何时迁移。
+- `PostgresProviderRepository::new(PgPool, ApiKeyCipher)` 只接收共享依赖，不自行读取环境变量或决定何时迁移。
 - `connect_from_env_or_local` 属于 App Composition Root/兼容入口，最终不留在单个 Repository。
 - 不再为每个 Repository 创建数据库 facade。
 - `openwork-database` 的通用能力逐步收进 Persistence；迁移期间允许薄兼容，不能形成两个长期持久化中心。
 
 ### 8.2 Provider Registry 表
 
-当前仍是允许清空开发数据库的阶段，Provider Registry 使用单一干净基线，不保留旧表值兼容：
+当前仍是允许清空开发数据库的阶段，Provider Registry 使用单一干净基线，不迁移旧明文凭据：
 
 ```text
 providers
@@ -732,12 +734,14 @@ id
 name
 driver_code            # wire protocol + dialect 的稳定数据库编码
 base_url
-api_key                # V1 技术债；普通 Query 永不选择/返回
+api_key_encrypted       # v1:<base64url(nonce || ciphertext || tag)>
 enabled
 active                 # 暂保留全局选择语义
 adapter_options_json   # 替代可覆盖任意请求字段的 extra_body_json
 created_at
 updated_at
+is_deleted            # 软删除标记；普通查询必须排除
+deleted_at            # 未删除时为空，删除时记录时间
 ```
 
 Driver 数据库值：
@@ -745,7 +749,6 @@ Driver 数据库值：
 ```text
 openai_responses
 anthropic_messages
-openai_chat_standard
 openai_chat_deepseek
 openai_chat_kimi
 openai_chat_qwen
@@ -767,8 +770,10 @@ position
 enabled
 created_at
 updated_at
+is_deleted
+deleted_at
 PRIMARY KEY(provider_id, model_id)
-UNIQUE(provider_id, position)
+UNIQUE(provider_id, position) WHERE NOT is_deleted
 ```
 
 `model_tier` 只用于 UI 标签、筛选和分组。用户仍明确选择 `provider_id + model_id`；Provider/Runtime 不根据 tier 自动选模、重试或 Fallback。
@@ -777,9 +782,14 @@ UNIQUE(provider_id, position)
 
 ### 8.3 Repository 查询规则
 
-- `list_profiles/get_profile` 的 SELECT 列表禁止包含 `api_key`。
-- `load_runtime` 是唯一读取 credential 的特权方法。
+- `providers` 表不包含明文 `api_key`，只包含认证加密的 `api_key_encrypted`。
+- Provider Registry 的时间列使用 `TIMESTAMP WITHOUT TIME ZONE`；默认值与 Repository 更新统一采用 `CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'`，即数据库不保存时区偏移，但字段值固定表达东八区本地时间。
+- `is_deleted` 与 `deleted_at` 受 CHECK constraint 约束：存活记录的 `deleted_at` 必须为空，软删除记录必须有删除时间。
+- Provider 删除会在同一事务内软删除其 Models；普通列表、详情、Runtime、激活查询都必须排除软删除记录。
+- 模型更新先软删除旧集合，再以 `(provider_id, model_id)` UPSERT 当前集合；重新加入同名模型会恢复原记录，不会被历史位置唯一约束阻塞。
+- `load_runtime` 是唯一把密文解密为 `ApiCredential` 的特权方法。
 - Provider 和 Models 写入使用同一事务。
+- 密文与 Provider 元数据位于同一 PostgreSQL 事务，不存在跨存储补偿。
 - `list_profiles` 使用单次 Join/Aggregate 或固定两次批量查询，消除按 Provider 查询 Models 的 N+1。
 - 任何 Repository Error 不包含 API Key 或完整 adapter options。
 - active Provider 并发切换需要锁或可验证的事务策略，不能依赖偶发 unique violation。
@@ -838,7 +848,6 @@ UNIQUE(model_attempt_id, attempt_no)
 | --- | --- | --- | --- | --- |
 | OpenAI Responses | `/v1/responses` | text/stream/function tools/usage/request ID | ordered output + reasoning opaque | output item 顺序、encrypted reasoning |
 | Anthropic Messages | `/v1/messages` | text/stream/tools/usage/opaque thinking | model-aware thinking request | adaptive/manual thinking 参数差异 |
-| OpenAI Chat Standard | `/chat/completions` | text/stream/tools/usage/request ID | 保持现有能力 | 任意兼容服务对 `stream_options` 的差异 |
 | DeepSeek Dialect | OpenAI Chat | reasoning/tools/usage/exact HTTP errors | partial resource finish | `insufficient_system_resource` 的恢复策略 |
 | Kimi Dialect | `/v1/chat/completions` + thinking | thinking/tools/usage/exact errors | preserved partial state | Partial Mode 与更多多模态 fixture |
 | Qwen Dialect | OpenAI Chat compatible mode | thinking/tools/usage/exact errors | partial HTTP 200 | `x-dashscope-partialresponse` |
@@ -891,15 +900,17 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 ## 11. 安全约束
 
 1. API Key 不实现 `Serialize`，普通 `Debug` 固定输出 `[REDACTED]`。
-2. Provider list/get Profile 不访问 API Key 列。
-3. HeaderValue 构造失败不得把原始密钥写入错误文本。
-4. Adapter options 使用保留字段 denylist/typed decoder，不能覆盖统一请求。
-5. Error body 和 metadata 先脱敏，再按字符/字节上限截断。
-6. Provider 返回内容、Tool Call 参数和 Opaque block 都是不可信输入。
-7. Tool Call 只有在 block completed 且 JSON 校验成功后才能交给 Core 执行。
-8. Partial stream 只进入实时展示/Trace，不与重试后的新响应拼接。
-9. 完整 Prompt/Response 的持久化由 Context/Recorded Event 专题决定，不由 Adapter 偷偷完成。
-10. 不因 Retry 发生静默 Provider/Model 切换。
+2. Provider list/get Profile 不选择密文字段；PostgreSQL 不保存明文 API Key。
+3. 主密钥只从 `OPENWORK_API_KEY_ENCRYPTION_KEY` 注入，不进入数据库、DTO、日志或错误文本。
+4. 每次加密使用新的 96-bit Nonce，Provider ID 作为 AAD，密文 envelope 带版本。
+5. HeaderValue 构造失败不得把原始密钥写入错误文本。
+6. Adapter options 使用保留字段 denylist/typed decoder，不能覆盖统一请求。
+7. Error body 和 metadata 先脱敏，再按字符/字节上限截断。
+8. Provider 返回内容、Tool Call 参数和 Opaque block 都是不可信输入。
+9. Tool Call 只有在 block completed 且 JSON 校验成功后才能交给 Core 执行。
+10. Partial stream 只进入实时展示/Trace，不与重试后的新响应拼接。
+11. 完整 Prompt/Response 的持久化由 Context/Recorded Event 专题决定，不由 Adapter 偷偷完成。
+12. 不因 Retry 发生静默 Provider/Model 切换。
 
 ## 12. 测试和 Eval 门禁
 
@@ -1030,10 +1041,11 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 
 ### M6：Persistence 内部重组
 
-- `PostgresPersistence` 统一 Pool/Migration 生命周期。
-- Provider Registry 子模块化并消除 N+1。
-- 普通 Profile 与 Runtime Secret 查询分离。
-- 使用开发期单一干净 Provider Registry 基线，不保留旧表值兼容。
+- [已完成] `PostgresPersistence` 统一 Pool/Migration 生命周期。
+- [已完成] Provider Registry 子模块化并消除 N+1。
+- [已完成] 普通 Profile 与 Runtime Secret 查询分离。
+- [已完成] PostgreSQL 只保存 AES-256-GCM 加密后的 `api_key_encrypted`。
+- [已完成] 使用开发期干净 Provider Registry 基线，不保留旧表值兼容。
 
 退出条件：PostgreSQL 测试通过，Provider UI 不再接收保存后的 API Key。
 

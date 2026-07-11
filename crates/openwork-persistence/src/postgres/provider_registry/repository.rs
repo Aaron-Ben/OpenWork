@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
-use openwork_database::now_beijing;
 use openwork_protocol::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
@@ -10,20 +9,26 @@ use serde_json::Map;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+use crate::{ApiKeyCipher, ApiKeyCipherError};
+
 use super::record::{ProviderModelRecord, ProviderProfileRecord, ProviderRuntimeRecord};
 
 const PROFILE_COLUMNS: &str = "id, name, base_url, driver_code, enabled";
 const RUNTIME_COLUMNS: &str =
-    "id, name, base_url, api_key, driver_code, enabled, adapter_options_json";
+    "id, name, base_url, api_key_encrypted, driver_code, enabled, adapter_options_json";
 
 #[derive(Clone)]
 pub struct PostgresProviderRepository {
     pool: PgPool,
+    api_key_cipher: ApiKeyCipher,
 }
 
 impl PostgresProviderRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, api_key_cipher: ApiKeyCipher) -> Self {
+        Self {
+            pool,
+            api_key_cipher,
+        }
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -36,7 +41,9 @@ impl PostgresProviderRepository {
     ) -> Result<Vec<ProviderModel>, ProviderRepositoryError> {
         let rows = sqlx::query_as::<_, ProviderModelRecord>(
             "SELECT provider_id, model_id, display_name, model_tier, enabled
-             FROM provider_models WHERE provider_id = $1 ORDER BY position ASC",
+             FROM provider_models
+             WHERE provider_id = $1 AND NOT is_deleted
+             ORDER BY position ASC",
         )
         .bind(provider_id)
         .fetch_all(self.pool())
@@ -50,7 +57,9 @@ impl PostgresProviderRepository {
     ) -> Result<HashMap<String, Vec<ProviderModel>>, ProviderRepositoryError> {
         let rows = sqlx::query_as::<_, ProviderModelRecord>(
             "SELECT provider_id, model_id, display_name, model_tier, enabled
-             FROM provider_models ORDER BY provider_id ASC, position ASC",
+             FROM provider_models
+             WHERE NOT is_deleted
+             ORDER BY provider_id ASC, position ASC",
         )
         .fetch_all(self.pool())
         .await
@@ -70,8 +79,11 @@ impl PostgresProviderRepository {
 #[async_trait]
 impl ProviderRepository for PostgresProviderRepository {
     async fn list_profiles(&self) -> Result<Vec<ProviderProfile>, ProviderRepositoryError> {
-        let sql =
-            format!("SELECT {PROFILE_COLUMNS} FROM providers ORDER BY created_at ASC, id ASC");
+        let sql = format!(
+            "SELECT {PROFILE_COLUMNS} FROM providers
+             WHERE NOT is_deleted
+             ORDER BY created_at ASC, id ASC"
+        );
         let records = sqlx::query_as::<_, ProviderProfileRecord>(&sql)
             .fetch_all(self.pool())
             .await
@@ -89,7 +101,8 @@ impl ProviderRepository for PostgresProviderRepository {
         &self,
         id: &str,
     ) -> Result<Option<ProviderProfile>, ProviderRepositoryError> {
-        let sql = format!("SELECT {PROFILE_COLUMNS} FROM providers WHERE id = $1");
+        let sql =
+            format!("SELECT {PROFILE_COLUMNS} FROM providers WHERE id = $1 AND NOT is_deleted");
         let record = sqlx::query_as::<_, ProviderProfileRecord>(&sql)
             .bind(id)
             .fetch_optional(self.pool())
@@ -105,20 +118,32 @@ impl ProviderRepository for PostgresProviderRepository {
         &self,
         id: &str,
     ) -> Result<Option<ProviderRuntimeConfig>, ProviderRepositoryError> {
-        let sql = format!("SELECT {RUNTIME_COLUMNS} FROM providers WHERE id = $1");
+        let sql =
+            format!("SELECT {RUNTIME_COLUMNS} FROM providers WHERE id = $1 AND NOT is_deleted");
         let record = sqlx::query_as::<_, ProviderRuntimeRecord>(&sql)
             .bind(id)
             .fetch_optional(self.pool())
             .await
             .map_err(persistence_error)?;
         match record {
-            Some(record) => Ok(Some(record_to_runtime(record, self.models_for(id).await?)?)),
+            Some(record) => {
+                let credential = ApiCredential::new(
+                    self.api_key_cipher
+                        .decrypt(id, &record.api_key_encrypted)
+                        .map_err(|error| credential_error("decrypt", error))?,
+                );
+                Ok(Some(record_to_runtime(
+                    record,
+                    self.models_for(id).await?,
+                    credential,
+                )?))
+            }
             None => Ok(None),
         }
     }
 
     async fn active_id(&self) -> Result<Option<String>, ProviderRepositoryError> {
-        sqlx::query_scalar("SELECT id FROM providers WHERE active = true")
+        sqlx::query_scalar("SELECT id FROM providers WHERE active = true AND NOT is_deleted")
             .fetch_optional(self.pool())
             .await
             .map_err(persistence_error)
@@ -132,42 +157,44 @@ impl ProviderRepository for PostgresProviderRepository {
         let mut normalized = input;
         normalized.models = normalize_models(&normalized.models);
         let id = generate_id();
-        let now = now_beijing();
-        let mut tx = self.pool().begin().await.map_err(persistence_error)?;
-        sqlx::query("LOCK TABLE providers IN SHARE ROW EXCLUSIVE MODE")
-            .execute(&mut *tx)
-            .await
-            .map_err(persistence_error)?;
-        let has_active: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM providers WHERE active = true)")
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(persistence_error)?;
         let adapter_options_json = normalized
             .extra_body
             .as_ref()
             .map(serde_json::to_value)
             .transpose()
             .map_err(persistence_error)?;
-
+        let api_key_encrypted = self
+            .api_key_cipher
+            .encrypt(&id, &normalized.api_key)
+            .map_err(|error| credential_error("encrypt", error))?;
+        let mut tx = self.pool().begin().await.map_err(persistence_error)?;
+        sqlx::query("LOCK TABLE providers IN SHARE ROW EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await
+            .map_err(persistence_error)?;
+        let has_active: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM providers WHERE active = true AND NOT is_deleted)",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
         sqlx::query(
-            "INSERT INTO providers (id, name, base_url, api_key, driver_code, enabled, adapter_options_json, active, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO providers
+             (id, name, base_url, api_key_encrypted, driver_code, enabled, adapter_options_json, active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&id)
         .bind(&normalized.name)
         .bind(&normalized.base_url)
-        .bind(&normalized.api_key)
+        .bind(api_key_encrypted)
         .bind(normalized.kind.driver_code())
         .bind(normalized.enabled)
         .bind(adapter_options_json)
         .bind(!has_active)
-        .bind(now)
-        .bind(now)
         .execute(&mut *tx)
         .await
         .map_err(persistence_error)?;
-        replace_models(&mut tx, &id, &normalized.models, now).await?;
+        replace_models(&mut tx, &id, &normalized.models).await?;
         tx.commit().await.map_err(persistence_error)?;
         Ok(input_to_profile(id, &normalized))
     }
@@ -180,7 +207,6 @@ impl ProviderRepository for PostgresProviderRepository {
         validate_input(&input)?;
         let mut normalized = input;
         normalized.models = normalize_models(&normalized.models);
-        let now = now_beijing();
         let adapter_options_json = normalized
             .extra_body
             .as_ref()
@@ -188,19 +214,34 @@ impl ProviderRepository for PostgresProviderRepository {
             .transpose()
             .map_err(persistence_error)?;
         let mut tx = self.pool().begin().await.map_err(persistence_error)?;
+        let exists = sqlx::query_scalar::<_, i32>(
+            "SELECT 1 FROM providers WHERE id = $1 AND NOT is_deleted FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(persistence_error)?
+        .is_some();
+        if !exists {
+            return Err(ProviderRepositoryError::NotFound { id: id.to_string() });
+        }
+        let api_key_encrypted = self
+            .api_key_cipher
+            .encrypt(id, &normalized.api_key)
+            .map_err(|error| credential_error("encrypt", error))?;
         let result = sqlx::query(
             "UPDATE providers
-             SET name = $1, base_url = $2, api_key = $3, driver_code = $4, enabled = $5,
-                 adapter_options_json = $6, updated_at = $7
-             WHERE id = $8",
+             SET name = $1, base_url = $2, api_key_encrypted = $3, driver_code = $4, enabled = $5,
+                 adapter_options_json = $6,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $7 AND NOT is_deleted",
         )
         .bind(&normalized.name)
         .bind(&normalized.base_url)
-        .bind(&normalized.api_key)
+        .bind(api_key_encrypted)
         .bind(normalized.kind.driver_code())
         .bind(normalized.enabled)
         .bind(adapter_options_json)
-        .bind(now)
         .bind(id)
         .execute(&mut *tx)
         .await
@@ -208,26 +249,47 @@ impl ProviderRepository for PostgresProviderRepository {
         if result.rows_affected() == 0 {
             return Err(ProviderRepositoryError::NotFound { id: id.to_string() });
         }
-        replace_models(&mut tx, id, &normalized.models, now).await?;
+        replace_models(&mut tx, id, &normalized.models).await?;
         tx.commit().await.map_err(persistence_error)?;
         Ok(input_to_profile(id.to_string(), &normalized))
     }
 
     async fn delete(&self, id: &str) -> Result<(), ProviderRepositoryError> {
-        let active = sqlx::query_scalar::<_, bool>("SELECT active FROM providers WHERE id = $1")
-            .bind(id)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(persistence_error)?
-            .ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
+        let mut tx = self.pool().begin().await.map_err(persistence_error)?;
+        let active = sqlx::query_scalar::<_, bool>(
+            "SELECT active FROM providers WHERE id = $1 AND NOT is_deleted FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(persistence_error)?
+        .ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
         if active {
             return Err(ProviderRepositoryError::CannotDeleteActive { id: id.to_string() });
         }
-        sqlx::query("DELETE FROM providers WHERE id = $1")
-            .bind(id)
-            .execute(self.pool())
-            .await
-            .map_err(persistence_error)?;
+        sqlx::query(
+            "UPDATE provider_models
+             SET is_deleted = true,
+                 deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE provider_id = $1 AND NOT is_deleted",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
+        sqlx::query(
+            "UPDATE providers
+             SET is_deleted = true,
+                 deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1 AND NOT is_deleted",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
+        tx.commit().await.map_err(persistence_error)?;
         Ok(())
     }
 
@@ -237,34 +299,49 @@ impl ProviderRepository for PostgresProviderRepository {
             .execute(&mut *tx)
             .await
             .map_err(persistence_error)?;
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM providers WHERE id = $1)")
-                .bind(id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(persistence_error)?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM providers WHERE id = $1 AND NOT is_deleted)",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
         if !exists {
             return Err(ProviderRepositoryError::NotFound { id: id.to_string() });
         }
-        sqlx::query("UPDATE providers SET active = false WHERE active = true")
-            .execute(&mut *tx)
-            .await
-            .map_err(persistence_error)?;
-        sqlx::query("UPDATE providers SET active = true, updated_at = $1 WHERE id = $2")
-            .bind(now_beijing())
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(persistence_error)?;
+        sqlx::query(
+            "UPDATE providers
+             SET active = false,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE active = true AND NOT is_deleted",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
+        sqlx::query(
+            "UPDATE providers
+             SET active = true,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
         tx.commit().await.map_err(persistence_error)?;
         Ok(())
     }
 
     async fn clear_active(&self) -> Result<(), ProviderRepositoryError> {
-        sqlx::query("UPDATE providers SET active = false WHERE active = true")
-            .execute(self.pool())
-            .await
-            .map_err(persistence_error)?;
+        sqlx::query(
+            "UPDATE providers
+             SET active = false,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE active = true AND NOT is_deleted",
+        )
+        .execute(self.pool())
+        .await
+        .map_err(persistence_error)?;
         Ok(())
     }
 }
@@ -273,18 +350,31 @@ async fn replace_models(
     tx: &mut Transaction<'_, Postgres>,
     provider_id: &str,
     models: &[ProviderModel],
-    now: openwork_database::DbDateTime,
 ) -> Result<(), ProviderRepositoryError> {
-    sqlx::query("DELETE FROM provider_models WHERE provider_id = $1")
-        .bind(provider_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(persistence_error)?;
+    sqlx::query(
+        "UPDATE provider_models
+         SET is_deleted = true,
+             deleted_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+             updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+         WHERE provider_id = $1 AND NOT is_deleted",
+    )
+    .bind(provider_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(persistence_error)?;
     for (position, model) in models.iter().enumerate() {
         sqlx::query(
             "INSERT INTO provider_models
-             (provider_id, model_id, display_name, model_tier, position, enabled, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             (provider_id, model_id, display_name, model_tier, position, enabled)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (provider_id, model_id) DO UPDATE SET
+               display_name = EXCLUDED.display_name,
+               model_tier = EXCLUDED.model_tier,
+               position = EXCLUDED.position,
+               enabled = EXCLUDED.enabled,
+               updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+               is_deleted = false,
+               deleted_at = NULL",
         )
         .bind(provider_id)
         .bind(&model.model_id)
@@ -292,8 +382,6 @@ async fn replace_models(
         .bind(model.model_tier.as_str())
         .bind(position as i32)
         .bind(model.enabled)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx)
         .await
         .map_err(persistence_error)?;
@@ -328,6 +416,7 @@ fn record_to_profile(
 fn record_to_runtime(
     record: ProviderRuntimeRecord,
     models: Vec<ProviderModel>,
+    credential: ApiCredential,
 ) -> Result<ProviderRuntimeConfig, ProviderRepositoryError> {
     let extra_body: Option<Map<String, serde_json::Value>> = record
         .adapter_options_json
@@ -344,7 +433,7 @@ fn record_to_runtime(
             models,
             enabled: record.enabled,
         },
-        credential: ApiCredential::new(record.api_key),
+        credential,
         adapter_options: extra_body,
     })
 }
@@ -426,14 +515,34 @@ fn persistence_error(error: impl std::fmt::Display) -> ProviderRepositoryError {
     }
 }
 
+fn credential_error(operation: &'static str, error: ApiKeyCipherError) -> ProviderRepositoryError {
+    ProviderRepositoryError::CredentialEncryption {
+        operation,
+        message: error.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn profile_queries_cannot_select_credentials() {
-        assert!(!PROFILE_COLUMNS.contains("api_key"));
-        assert!(RUNTIME_COLUMNS.contains("api_key"));
+        assert!(
+            !PROFILE_COLUMNS
+                .split(',')
+                .any(|column| column.trim() == "api_key")
+        );
+        assert!(
+            RUNTIME_COLUMNS
+                .split(',')
+                .any(|column| column.trim() == "api_key_encrypted")
+        );
+        assert!(
+            !RUNTIME_COLUMNS
+                .split(',')
+                .any(|column| column.trim() == "api_key")
+        );
     }
 
     #[test]

@@ -11,6 +11,11 @@ pub enum ProviderRepositoryError {
     CannotDeleteActive { id: String },
     #[error("provider field is invalid: {field}")]
     InvalidInput { field: &'static str },
+    #[error("provider credential encryption failed during {operation}: {message}")]
+    CredentialEncryption {
+        operation: &'static str,
+        message: String,
+    },
     #[error("provider persistence failed: {message}")]
     Persistence { message: String },
 }

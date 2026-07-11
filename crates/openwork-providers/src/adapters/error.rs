@@ -13,7 +13,6 @@ const MAX_ERROR_CODE_CHARS: usize = 256;
 pub(crate) enum ErrorDialect {
     OpenAi,
     Anthropic,
-    StandardOpenAiChat,
     DeepSeek,
     Kimi,
     Qwen,
@@ -111,7 +110,7 @@ fn retry_after_millis(
 
 #[cfg(test)]
 pub(crate) fn map_stream_error_event(event: &Value) -> Option<ModelError> {
-    map_stream_error_event_for(event, ErrorDialect::StandardOpenAiChat)
+    map_stream_error_event_for(event, ErrorDialect::OpenAi)
 }
 
 pub(crate) fn map_stream_error_event_for(
@@ -164,7 +163,7 @@ fn classify_http_error(
     header_request_id: Option<String>,
 ) -> ModelError {
     classify_http_error_for_dialect(
-        ErrorDialect::StandardOpenAiChat,
+        ErrorDialect::OpenAi,
         status,
         body,
         retry_after_ms,
@@ -230,9 +229,6 @@ fn classify_dialect(
         }
         ErrorDialect::Anthropic => {
             crate::adapters::anthropic_messages::error::classify(status, code, retry_after_ms)
-        }
-        ErrorDialect::StandardOpenAiChat => {
-            crate::adapters::openai_chat::error::classify(status, code, retry_after_ms)
         }
         ErrorDialect::DeepSeek => crate::adapters::openai_chat::dialect::deepseek::classify_error(
             status,

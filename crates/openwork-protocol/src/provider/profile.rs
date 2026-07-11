@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::ProviderKind;
 
@@ -77,7 +78,7 @@ fn default_enabled() -> bool {
     true
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct ApiCredential(String);
 
 impl ApiCredential {

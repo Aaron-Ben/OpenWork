@@ -117,15 +117,6 @@ pub const BUILTIN_PRESETS: &[ProviderPreset] = &[
         website_url: "https://www.zhipuai.cn",
         api_key_url: "https://open.bigmodel.cn/usercenter/apikeys",
     },
-    ProviderPreset {
-        id: "custom",
-        name: "Custom",
-        base_url: "",
-        kind: ProviderKind::OpenaiCompatible,
-        models: &[],
-        website_url: "",
-        api_key_url: "",
-    },
 ];
 
 #[tauri::command]

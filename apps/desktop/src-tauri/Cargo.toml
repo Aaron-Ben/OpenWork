@@ -26,6 +26,7 @@ openwork-tools = { workspace = true }
 openwork-session = { workspace = true }
 openwork-workspace = { workspace = true }
 async-trait = { workspace = true }
+dotenvy = { workspace = true }
 tokio-util = { workspace = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

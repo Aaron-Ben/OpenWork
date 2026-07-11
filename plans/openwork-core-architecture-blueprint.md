@@ -398,6 +398,7 @@ Execution 只通过注入的 `WorkspaceAccessPort` 和 `WorkspaceSnapshotPort` �
 - Thread、Turn、Message、ActionRun、Approval、Artifact 查询投影。
 - Content-addressed Artifact 存储。
 - Provider 配置、Project、Settings 等普通 Repository。
+- Provider 等普通 Repository 中敏感字段的认证加密；主密钥不进入数据库。
 - 后期的 Summary 和 Memory Record。
 
 Persistence 不决定：

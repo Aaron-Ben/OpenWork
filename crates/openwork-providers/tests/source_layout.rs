@@ -24,9 +24,7 @@ fn providers_source_tree_matches_model_provider_design() {
         "adapters/openai_chat/request.rs",
         "adapters/openai_chat/response.rs",
         "adapters/openai_chat/stream.rs",
-        "adapters/openai_chat/error.rs",
         "adapters/openai_chat/dialect/mod.rs",
-        "adapters/openai_chat/dialect/standard.rs",
         "adapters/openai_chat/dialect/deepseek.rs",
         "adapters/openai_chat/dialect/kimi.rs",
         "adapters/openai_chat/dialect/qwen.rs",
@@ -49,6 +47,11 @@ fn providers_source_tree_matches_model_provider_design() {
             "legacy root module remains: {legacy}"
         );
     }
+    assert!(
+        !src.join("adapters/openai_chat/dialect/standard.rs")
+            .exists()
+    );
+    assert!(!src.join("adapters/openai_chat/error.rs").exists());
 }
 
 #[test]

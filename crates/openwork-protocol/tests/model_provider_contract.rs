@@ -79,6 +79,12 @@ fn capabilities_do_not_include_embedding_in_v1() {
 }
 
 #[test]
+fn custom_openai_compatible_kind_is_not_a_public_provider_contract() {
+    let decoded = serde_json::from_str::<ProviderKind>("\"openai_compatible\"");
+    assert!(decoded.is_err());
+}
+
+#[test]
 fn provider_profile_remains_vendor_explicit_and_round_trips() {
     let profile = ProviderProfile {
         id: "prov-1".to_string(),

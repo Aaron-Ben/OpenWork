@@ -14,11 +14,12 @@ The current foundation includes:
 
 - Rust workspace structure
 - Tauri + React + TypeScript desktop shell
-- Adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen/DashScope, GLM, and custom OpenAI-compatible endpoints
+- Adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen/DashScope, and GLM
 - Vendor-neutral `ModelRequest`, `ModelResponse`, `ModelEvent`, `ModelError`, and `ModelPort`
 - Error mapping that separates rate limits from exhausted quota, plus stream-aware transport retry
 - Multi-step agent tool calls, approvals, cancellation, and doom-loop detection
 - PostgreSQL provider repository, sessions, messages, and basic LLM event persistence
+- Encrypted PostgreSQL storage for provider API keys
 - Tauri + React + TypeScript desktop client
 
 Not yet complete:
@@ -26,7 +27,6 @@ Not yet complete:
 - Durable Turn journal, crash recovery, and idempotent projections
 - OS-level sandboxing and reliable side-effect reconciliation
 - Target implementations for context compaction, planning, memory, MCP, and skills
-- System keychain/secret store (API keys are currently stored in PostgreSQL as plaintext)
 - Automated live-provider smoke tests
 
 ## Structure
@@ -62,7 +62,7 @@ OpenWork/
 - `KimiProvider`
 - `DeepSeekProvider`
 - `QwenProvider`
-- `OpenAiCompatibleChatProvider`
+- `GlmProvider`
 - Normalized vendor error mapping and `RetryingModelPort`
 
 `openwork-persistence`
@@ -70,12 +70,13 @@ OpenWork/
 - `PostgresProviderRepository`
 - `providers` / `provider_models` migrations
 - Transactional provider-and-model writes
+- AES-256-GCM encryption for provider API keys stored in PostgreSQL
 
 `openwork-runtime`
 
 - `ModelRegistry`
 - Model capability checks
-- Default models and fallback chains
+- Provider runtime composition
 
 ## Desktop App
 
@@ -140,9 +141,28 @@ cargo fmt
 
 ## API Keys
 
-The desktop currently persists user-entered API keys with provider configuration in PostgreSQL. This is known technical debt; a system keychain has not been integrated. Low-level adapters also accept caller-provided or environment-backed configuration. Common variable names:
+The desktop still stores user-entered API keys in PostgreSQL, but the `providers` table only stores the `api_key_encrypted` ciphertext. `openwork-persistence` uses AES-256-GCM with a random nonce in a versioned envelope and binds the ciphertext to the provider ID as authenticated associated data.
+
+The master key must be supplied through `OPENWORK_API_KEY_ENCRYPTION_KEY` as standard Base64 encoding of 32 random bytes. It must not be stored in PostgreSQL or committed to Git:
 
 ```bash
+openssl rand -base64 32
+```
+
+For local development, generate the value once and put it in the repository-root `.env`, which is ignored by Git:
+
+```dotenv
+OPENWORK_API_KEY_ENCRYPTION_KEY=<value generated above>
+```
+
+The Debug build used by `pnpm tauri dev` loads the root `.env` automatically. Release builds do not load the development `.env` and still require deployment-time injection. Do not regenerate the master key while retaining the same database, or existing provider API keys will no longer decrypt.
+
+This protects database files, backups, and SQL dumps. It does not protect secrets from an attacker who controls the application process and can read its environment and decrypted memory.
+
+The project currently uses a clean development schema and does not migrate old plaintext values. Existing development databases must rebuild the provider tables and re-enter their API keys. Low-level adapters still accept caller-provided or environment-backed configuration. Common variable names:
+
+```bash
+OPENWORK_API_KEY_ENCRYPTION_KEY=...
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 KIMI_API_KEY=...

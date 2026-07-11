@@ -14,11 +14,12 @@ English version: [README.en.md](README.en.md)
 
 - Rust workspace 基础结构
 - Tauri + React + TypeScript 桌面客户端骨架
-- OpenAI、Anthropic、Kimi、DeepSeek、Qwen/DashScope、GLM 与自定义 OpenAI-compatible Adapter
+- OpenAI、Anthropic、Kimi、DeepSeek、Qwen/DashScope 与 GLM Adapter
 - 厂商无关的 `ModelRequest`、`ModelResponse`、`ModelEvent`、`ModelError` 与 `ModelPort`
 - 可区分限流与额度耗尽的错误映射，以及流式输出感知的 Transport Retry
 - Agent 多步工具调用、审批、取消和 doom-loop 检测
 - PostgreSQL Provider Repository、Session、Message 与基础 LLM event 持久化
+- PostgreSQL Provider API Key 加密存储
 - Tauri + React + TypeScript 桌面端
 
 还没有完成：
@@ -26,7 +27,6 @@ English version: [README.en.md](README.en.md)
 - Durable Turn Journal、崩溃恢复和幂等 Projection
 - 操作系统级 Sandbox 与可靠副作用对账
 - Context 压缩、Plan、Memory、MCP 与 Skill 的目标实现
-- 系统 Keychain/SecretStore（当前 API Key 仍明文存于 PostgreSQL）
 - 自动化 live provider smoke test
 
 ## 目录结构
@@ -62,7 +62,7 @@ OpenWork/
 - `KimiProvider`
 - `DeepSeekProvider`
 - `QwenProvider`
-- `OpenAiCompatibleChatProvider`
+- `GlmProvider`
 - 统一厂商错误分类与 `RetryingModelPort`
 
 `openwork-persistence`
@@ -70,12 +70,13 @@ OpenWork/
 - `PostgresProviderRepository`
 - `providers` / `provider_models` migration
 - Provider 与 Models 的事务写入
+- 使用 AES-256-GCM 加密 Provider API Key 后写入 PostgreSQL
 
 `openwork-runtime`
 
 - `ModelRegistry`
 - 模型 capability 校验
-- 默认模型和 fallback chain
+- Provider runtime 组合
 
 ## 桌面端
 
@@ -140,9 +141,28 @@ cargo fmt
 
 ## API Key
 
-桌面端当前把用户填写的 API Key 随 Provider 配置保存到 PostgreSQL；这是已知技术债，尚未接入系统 Keychain。底层 Adapter 也保留从调用方或环境变量构造配置的入口。常用变量名：
+桌面端仍把用户填写的 API Key 保存到 PostgreSQL，但 `providers` 表只保存 `api_key_encrypted` 密文。`openwork-persistence` 使用 AES-256-GCM 加密，随机 Nonce 随版本化 envelope 一起保存，并使用 Provider ID 作为认证附加数据。
+
+主密钥必须通过 `OPENWORK_API_KEY_ENCRYPTION_KEY` 提供，值为标准 Base64 编码的 32 字节随机数据，不能写入数据库或提交到 Git：
 
 ```bash
+openssl rand -base64 32
+```
+
+本地开发时只生成一次，把结果填写到仓库根目录且已被 Git 忽略的 `.env`：
+
+```dotenv
+OPENWORK_API_KEY_ENCRYPTION_KEY=<上一步生成的值>
+```
+
+`pnpm tauri dev` 的 Debug 构建会自动加载根目录 `.env`；Release 构建不会读取开发 `.env`，仍须由部署环境注入。只要继续使用同一个数据库，就不能重新生成这个主密钥，否则已有 Provider API Key 将无法解密。
+
+该设计保护数据库文件、备份或 SQL 导出泄露场景；如果攻击者同时控制应用进程并能读取环境变量，则仍可取得主密钥和解密后的 API Key。
+
+当前使用开发期干净 schema，不迁移旧明文；已有开发库需要按 `docs/local-postgres.md` 重建 Provider 表并重新填写 API Key。底层 Adapter 仍保留从调用方或环境变量构造配置的入口。常用变量名：
+
+```bash
+OPENWORK_API_KEY_ENCRYPTION_KEY=...
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 KIMI_API_KEY=...

@@ -53,8 +53,7 @@ pub struct GlmProvider {
 impl GlmProvider {
     pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::new(config, transport)
-                .with_dialect(OpenAiChatDialect::Glm),
+            inner: OpenAiCompatibleChatProvider::new(config, transport, OpenAiChatDialect::Glm),
         }
     }
 

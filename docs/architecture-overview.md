@@ -14,6 +14,7 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 - 内置工具：文件读写、搜索、bash
 - 基础权限模型与 human-in-the-loop 审批
 - 会话、message parts、LLM events 持久化
+- PostgreSQL 中的 Provider API Key 加密存储
 - `openwork-workspace` 中的 worktree 变更快照与还原基础函数（尚未接入 runtime/Tauri/UI）
 - 桌面端流式 UI 与审批弹窗
 
@@ -33,7 +34,8 @@ crates/openwork-providers/
 
 crates/openwork-persistence/
   PostgreSQL Repository Adapter：当前实现 Provider 配置与 Provider Models 的事务、
-  Migration 和 `ProviderRepository`；不包含模型 HTTP 调用或 UI Preset。
+  Migration 和 `ProviderRepository`；API Key 使用 AES-256-GCM 加密后落库，
+  不包含模型 HTTP 调用或 UI Preset。
 
 crates/openwork-agent/
   Agent loop：模型流式调用、工具调用调度、审批等待、doom-loop 检测、取消处理。
@@ -72,7 +74,7 @@ apps/desktop/
 ChatView
   -> chat_generate_stream Tauri command
   -> SessionStore 读取会话历史
-  -> PostgresProviderRepository 通过 ProviderRepository Port 读取配置
+  -> PostgresProviderRepository 读取 Provider Profile，并解密 api_key_encrypted
   -> openwork-providers::build_provider 构造带 RetryPolicy 的 ModelPort
   -> openwork-agent::Agent::run
      -> provider.stream_generate
@@ -125,6 +127,10 @@ ChatView
 ### 4.6 `openwork-database` 是 PostgreSQL 基础层
 
 当前已经有显式 `Database` / `DatabaseConfig` / `PgPool` 连接对象与 `schema_migrations` runner。Provider 的 SQL、Migration 和事务已进入 `openwork-persistence`；Session 仍保留在 `openwork-session`，将在目标架构后续阶段迁移。
+
+### 4.7 API Key 加密是 Persistence 内部实现
+
+API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapter。`openwork-persistence::ApiKeyCipher` 在写入前加密、`load_runtime` 时解密；PostgreSQL 只保存版本化密文。主密钥由 Composition Root 通过环境配置提供，不进入数据库、Protocol DTO、日志或模型工具列表。未来建立 `openwork-app` 时只迁移主密钥配置注入，不新增 SecretStore 子系统。
 
 ## 5. 关键约束
 

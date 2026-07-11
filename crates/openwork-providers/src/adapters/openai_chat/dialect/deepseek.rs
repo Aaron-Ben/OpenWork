@@ -9,6 +9,8 @@ use serde_json::{Map, Value};
 use crate::{HttpProviderConfig, HttpTransport, OpenAiCompatibleChatProvider};
 use openwork_protocol::provider::OpenAiChatDialect;
 
+const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+
 pub(crate) fn classify_error(
     status: StatusCode,
     _code: Option<&str>,
@@ -36,15 +38,19 @@ pub struct DeepSeekProvider {
 impl DeepSeekProvider {
     pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::new(config, transport)
-                .with_dialect(OpenAiChatDialect::Deepseek),
+            inner: OpenAiCompatibleChatProvider::new(
+                config,
+                transport,
+                OpenAiChatDialect::Deepseek,
+            ),
         }
     }
 
     pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
-        Self {
-            inner: OpenAiCompatibleChatProvider::deepseek(api_key, transport),
-        }
+        Self::new(
+            HttpProviderConfig::new(DEEPSEEK_BASE_URL, api_key),
+            transport,
+        )
     }
 
     pub fn with_extra_body(mut self, extra_body: Map<String, Value>) -> Self {

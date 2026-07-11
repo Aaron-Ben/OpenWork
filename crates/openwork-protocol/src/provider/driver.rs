@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenAiChatDialect {
-    Standard,
     Deepseek,
     Kimi,
     Qwen,
@@ -23,7 +22,6 @@ impl ProviderDriver {
         match self {
             Self::OpenaiResponses => "openai_responses",
             Self::AnthropicMessages => "anthropic_messages",
-            Self::OpenaiChat(OpenAiChatDialect::Standard) => "openai_chat_standard",
             Self::OpenaiChat(OpenAiChatDialect::Deepseek) => "openai_chat_deepseek",
             Self::OpenaiChat(OpenAiChatDialect::Kimi) => "openai_chat_kimi",
             Self::OpenaiChat(OpenAiChatDialect::Qwen) => "openai_chat_qwen",
@@ -42,8 +40,6 @@ pub enum ProviderKind {
     Deepseek,
     Qwen,
     Anthropic,
-    #[serde(alias = "openai_chat")]
-    OpenaiCompatible,
 }
 
 impl ProviderKind {
@@ -55,7 +51,6 @@ impl ProviderKind {
             Self::Deepseek => "deepseek",
             Self::Qwen => "qwen",
             Self::Anthropic => "anthropic",
-            Self::OpenaiCompatible => "openai_compatible",
         }
     }
 
@@ -63,7 +58,6 @@ impl ProviderKind {
         match self {
             Self::Openai => ProviderDriver::OpenaiResponses,
             Self::Anthropic => ProviderDriver::AnthropicMessages,
-            Self::OpenaiCompatible => ProviderDriver::OpenaiChat(OpenAiChatDialect::Standard),
             Self::Deepseek => ProviderDriver::OpenaiChat(OpenAiChatDialect::Deepseek),
             Self::Kimi => ProviderDriver::OpenaiChat(OpenAiChatDialect::Kimi),
             Self::Qwen => ProviderDriver::OpenaiChat(OpenAiChatDialect::Qwen),
@@ -79,7 +73,6 @@ impl ProviderKind {
         match value {
             "openai_responses" => Some(Self::Openai),
             "anthropic_messages" => Some(Self::Anthropic),
-            "openai_chat_standard" => Some(Self::OpenaiCompatible),
             "openai_chat_deepseek" => Some(Self::Deepseek),
             "openai_chat_kimi" => Some(Self::Kimi),
             "openai_chat_qwen" => Some(Self::Qwen),

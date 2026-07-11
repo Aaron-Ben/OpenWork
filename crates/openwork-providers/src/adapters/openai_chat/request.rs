@@ -56,11 +56,6 @@ pub(crate) fn encode_request(
                 };
                 body.insert("thinking".to_string(), json!({ "type": mode }));
             }
-            OpenAiChatDialect::Standard => {
-                return Err(ModelError::invalid_request(
-                    "thinking mode is not mapped for standard OpenAI Chat",
-                ));
-            }
         }
     }
     if stream && !req.tools.is_empty() && dialect == OpenAiChatDialect::Glm {

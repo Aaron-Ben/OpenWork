@@ -1,5 +1,4 @@
 pub mod dialect;
-pub(crate) mod error;
 pub(crate) mod request;
 pub(crate) mod response;
 pub(crate) mod stream;
@@ -20,7 +19,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct OpenAiCompatibleChatProvider {
+pub(crate) struct OpenAiCompatibleChatProvider {
     transport: HttpTransport,
     config: HttpProviderConfig,
     extra_body: Map<String, Value>,
@@ -28,52 +27,26 @@ pub struct OpenAiCompatibleChatProvider {
 }
 
 impl OpenAiCompatibleChatProvider {
-    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
+    pub(crate) fn new(
+        config: HttpProviderConfig,
+        transport: HttpTransport,
+        dialect: OpenAiChatDialect,
+    ) -> Self {
         Self {
             transport,
             config,
             extra_body: Map::new(),
-            dialect: OpenAiChatDialect::Standard,
+            dialect,
         }
     }
 
-    pub fn with_extra_body(mut self, extra_body: Map<String, Value>) -> Self {
+    pub(crate) fn with_extra_body(mut self, extra_body: Map<String, Value>) -> Self {
         self.extra_body = extra_body;
         self
     }
 
-    pub(crate) fn with_dialect(mut self, dialect: OpenAiChatDialect) -> Self {
-        self.dialect = dialect;
-        self
-    }
-
-    pub fn kimi(api_key: impl Into<String>, transport: HttpTransport) -> Self {
-        Self::new(
-            HttpProviderConfig::new("https://api.moonshot.cn/v1", api_key),
-            transport,
-        )
-        .with_dialect(OpenAiChatDialect::Kimi)
-    }
-
-    pub fn deepseek(api_key: impl Into<String>, transport: HttpTransport) -> Self {
-        Self::new(
-            HttpProviderConfig::new("https://api.deepseek.com", api_key),
-            transport,
-        )
-        .with_dialect(OpenAiChatDialect::Deepseek)
-    }
-
-    pub fn qwen_dashscope(api_key: impl Into<String>, transport: HttpTransport) -> Self {
-        Self::new(
-            HttpProviderConfig::new("https://dashscope.aliyuncs.com/compatible-mode/v1", api_key),
-            transport,
-        )
-        .with_dialect(OpenAiChatDialect::Qwen)
-    }
-
     fn error_dialect(&self) -> ErrorDialect {
         match self.dialect {
-            OpenAiChatDialect::Standard => ErrorDialect::StandardOpenAiChat,
             OpenAiChatDialect::Deepseek => ErrorDialect::DeepSeek,
             OpenAiChatDialect::Kimi => ErrorDialect::Kimi,
             OpenAiChatDialect::Qwen => ErrorDialect::Qwen,

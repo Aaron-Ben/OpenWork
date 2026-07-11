@@ -12,6 +12,8 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    load_development_env();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -55,6 +57,17 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+#[cfg(debug_assertions)]
+fn load_development_env() {
+    // `pnpm tauri dev` starts Cargo below `apps/desktop`; dotenvy searches parent
+    // directories, so it finds the repository-root `.env`. Existing process
+    // variables keep precedence over values from the file.
+    let _ = dotenvy::dotenv();
+}
+
+#[cfg(not(debug_assertions))]
+fn load_development_env() {}
+
 #[cfg(test)]
 mod tests {
     use crate::commands::provider::BUILTIN_PRESETS;
@@ -65,5 +78,17 @@ mod tests {
         assert!(!ids.contains(&"ollama"));
         assert!(!ids.contains(&"lmstudio"));
         assert!(!ids.contains(&"official"));
+        assert!(!ids.contains(&"custom"));
+    }
+
+    #[test]
+    fn provider_ui_excludes_custom_creation_path() {
+        let ui_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
+        for path in ["components/ProviderFormModal.tsx", "type/providers.ts"] {
+            let source = std::fs::read_to_string(ui_src.join(path)).unwrap();
+            assert!(!source.contains("openai_compatible"), "{path}");
+            assert!(!source.contains("custom"), "{path}");
+            assert!(!source.contains("Custom"), "{path}");
+        }
     }
 }

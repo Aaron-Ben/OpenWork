@@ -7,7 +7,6 @@ export type ProviderKind =
   | 'deepseek'
   | 'qwen'
   | 'anthropic'
-  | 'openai_compatible'
 
 export type ModelTier = 'lite' | 'plus' | 'pro'
 

@@ -12,7 +12,6 @@ const KIND_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "deepseek", label: "DeepSeek · OpenAI-compatible" },
   { value: "qwen", label: "Qwen · OpenAI-compatible" },
   { value: "anthropic", label: "Anthropic · /v1/messages" },
-  { value: "openai_compatible", label: "Custom · OpenAI-compatible" },
 ];
 
 const inputClass =
@@ -30,11 +29,11 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
   const create = useProviderStore((state) => state.create);
   const update = useProviderStore((state) => state.update);
 
-  const [selectedPresetId, setSelectedPresetId] = useState("custom");
+  const [selectedPresetId, setSelectedPresetId] = useState("");
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [kind, setKind] = useState<ProviderKind>("openai_compatible");
+  const [kind, setKind] = useState<ProviderKind>("openai");
   const [liteModelsText, setLiteModelsText] = useState("");
   const [plusModelsText, setPlusModelsText] = useState("");
   const [proModelsText, setProModelsText] = useState("");
@@ -50,7 +49,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     setError(null);
     setTestResult(null);
     if (mode === "edit" && initial) {
-      setSelectedPresetId("custom");
+      setSelectedPresetId("");
       setName(initial.name);
       setBaseUrl(initial.baseUrl);
       // Provider profiles never contain credentials; editing requires an explicit replacement key.
@@ -61,17 +60,18 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       setProModelsText(modelsTextForTier(initial.models, "pro"));
       setExtraBodyText("");
     } else {
-      setSelectedPresetId("custom");
-      setName("");
-      setBaseUrl("");
+      const defaultPreset = presets[0];
+      setSelectedPresetId(defaultPreset?.id ?? "");
+      setName(defaultPreset?.name ?? "");
+      setBaseUrl(defaultPreset?.baseUrl ?? "");
       setApiKey("");
-      setKind("openai_compatible");
-      setLiteModelsText("");
-      setPlusModelsText("");
-      setProModelsText("");
+      setKind(defaultPreset?.kind ?? "openai");
+      setLiteModelsText(modelsTextForTier(defaultPreset?.models ?? [], "lite"));
+      setPlusModelsText(modelsTextForTier(defaultPreset?.models ?? [], "plus"));
+      setProModelsText(modelsTextForTier(defaultPreset?.models ?? [], "pro"));
       setExtraBodyText("");
     }
-  }, [open, mode, initial]);
+  }, [open, mode, initial, presets]);
 
   if (!open) return null;
 

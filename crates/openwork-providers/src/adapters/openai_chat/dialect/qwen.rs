@@ -49,8 +49,7 @@ pub struct QwenProvider {
 impl QwenProvider {
     pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            chat: OpenAiCompatibleChatProvider::new(config, transport)
-                .with_dialect(OpenAiChatDialect::Qwen),
+            chat: OpenAiCompatibleChatProvider::new(config, transport, OpenAiChatDialect::Qwen),
         }
     }
 

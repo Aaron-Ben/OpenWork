@@ -8,9 +8,9 @@ pub(crate) use adapters::error;
 pub(crate) use transport::http as config;
 pub(crate) use transport::sse;
 
+pub(crate) use adapters::OpenAiCompatibleChatProvider;
 pub use adapters::{
-    AnthropicProvider, DeepSeekProvider, GlmProvider, KimiProvider, OpenAiCompatibleChatProvider,
-    OpenAiProvider, QwenProvider, StandardOpenAiChatProvider,
+    AnthropicProvider, DeepSeekProvider, GlmProvider, KimiProvider, OpenAiProvider, QwenProvider,
 };
 pub use factory::ProviderFactory;
 pub use gateway::{RetryDecision, RetryPolicy, RetryingModelPort};

@@ -10,10 +10,29 @@ OpenWork currently uses PostgreSQL for persistence. For local development, run P
 
 | 表 | 用途 |
 | --- | --- |
-| `providers` | Provider 名称、端点、Driver、API Key、启用/激活状态和受限 Adapter Options |
-| `provider_models` | Provider 下可选模型、`lite/plus/pro` 分类、启用状态和 UI 顺序 |
+| `providers` | Provider 名称、端点、Driver、加密后的 API Key、启用/激活状态、软删除状态和受限 Adapter Options |
+| `provider_models` | Provider 下可选模型、`lite/plus/pro` 分类、启用状态、UI 顺序和软删除状态 |
 
-当前仍处于可清库的开发阶段，因此 Provider Registry 使用单一干净基线 migration，不保留 `models_json` 或旧 `kind/extra_body_json` 兼容列。Provider 与模型列表的新增、更新使用同一 PostgreSQL 事务。
+当前仍处于可清库的开发阶段，因此 Provider Registry 使用单一干净基线，不保留旧明文 `api_key`、`models_json` 或旧 `kind/extra_body_json` 兼容列。`api_key_encrypted` 保存 AES-256-GCM 版本化密文；Provider 与模型列表的新增、更新使用同一 PostgreSQL 事务。
+
+两张表统一使用 `created_at`、`updated_at`、`is_deleted`、`deleted_at`。时间列为不携带时区的 `TIMESTAMP WITHOUT TIME ZONE`，但创建、更新和删除时间都通过 `CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'` 写入东八区本地时间；删除 Provider 时不会立即物理删除行，而是在同一事务内软删除 Provider 和子模型；普通 Repository 查询统一排除 `is_deleted = true` 的记录。
+
+运行前必须提供独立于数据库的主密钥。本地开发先复制示例配置：
+
+```bash
+cp .env.example .env
+openssl rand -base64 32
+```
+
+把第二条命令的输出写入根目录 `.env`，不要提交真实值：
+
+```dotenv
+OPENWORK_API_KEY_ENCRYPTION_KEY=<生成的值>
+```
+
+`pnpm tauri dev` 的 Debug 构建会自动查找并加载根目录 `.env`；Release 构建不会加载开发 `.env`，仍须由运行环境显式注入。同一数据库必须持续使用同一个主密钥，不能在每次启动时重新生成，否则已有 API Key 无法解密。当前不迁移旧明文开发数据；旧表存在时按下方命令删除本地 volume 后重建，并重新填写 Provider API Key。
+
+该边界只解决数据库静态数据泄露；拥有应用进程和环境变量读取权限的攻击者仍可取得主密钥。
 
 ## Start
 
@@ -27,12 +46,6 @@ The local connection string is:
 
 ```text
 postgres://openwork:openwork@localhost:5432/openwork
-```
-
-Copy `.env.example` to `.env` when local commands need `DATABASE_URL`:
-
-```bash
-cp .env.example .env
 ```
 
 `.env` is ignored by git.
