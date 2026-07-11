@@ -319,7 +319,7 @@ pub enum ModelEvent {
 - Recorded Event sequence
 - UI `done/error`
 
-这些内容使用单独的 `ModelTransportSignal`，并由 Core/App 映射到 Recorded Event 或 Telemetry。Provider 不直接写数据库。
+这些内容将在 M7 由 Core/App 的 Recorded Event 或 Telemetry 合同单独定义，Provider 不直接写数据库。当前不公开尚无消费者的 `ModelTransportSignal` 占位类型，避免把未接入的 Attempt 可观测性误描述为已实现能力。
 
 ### 6.5 Model Response
 
@@ -462,9 +462,7 @@ crates/openwork-providers/src/
 ├── factory.rs                     # RuntimeConfig -> Arc<dyn ModelPort>
 ├── gateway/
 │   ├── mod.rs
-│   ├── client.rs                  # ModelPort 入口/decorator 组合
-│   ├── retry.rs                   # Retry executor，不解析厂商 body
-│   └── transport_signal.rs        # Attempt/Retry 信号
+│   └── retry.rs                   # pull-based Retry decorator，不解析厂商 body
 ├── transport/
 │   ├── mod.rs
 │   ├── http.rs                    # reqwest client、header/body limit
@@ -506,6 +504,7 @@ crates/openwork-providers/src/
 - 每个 Adapter 的 `request.rs` 只负责编码请求，`response.rs` 只负责累计/解码响应，`stream.rs` 只维护需要跨 event 的 Tool/Thinking 分片状态；`mod.rs` 只编排 HTTP、SSE 和这些 codec。
 - OpenAI Chat 共用 envelope；Dialect 只覆盖真实差异，不为每个厂商复制完整 HTTP 调用。
 - OpenAI Responses 与 OpenAI Chat 是不同 wire protocol，不能因为同一厂商合并进一个大文件。
+- Adapter 直接返回 pull-based `ModelStream`；SSE、Adapter 和 Retry Gateway 通过 Stream polling 自然传递背压，不使用同步 Callback、`sync_channel` 或转发任务。
 
 ### 7.2 Factory 和 Client 生命周期
 
@@ -1014,10 +1013,10 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 
 ### M4：Streaming-first Port
 
-- 加入 block identity 和统一 Stream。
-- 删除 Callback + unbounded bridge。
-- 将 `stream` 从 ModelRequest 删除。
-- Runtime/Agent 迁移到 Stream polling 和结构化取消。
+- [已完成] 加入 block identity 和统一 Stream。
+- [已完成] 删除同步 Callback、`sync_channel` 和双层 Channel bridge；Adapter/SSE/Retry 使用 pull-based Stream polling。
+- [已完成] 将 `stream` 从 ModelRequest 删除。
+- [已完成] Runtime/Agent 迁移到 Stream polling；Drop Stream 会释放当前 Retry/Adapter/SSE Future。
 
 退出条件：长流具有背压，取消不会遗留 HTTP/Retry 任务，流式 Tool JSON 可验证完成。
 
@@ -1049,7 +1048,7 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 ## 15. 回滚策略
 
 - M1-M3 保留旧 re-export 和 Factory facade，可按 commit 回滚，不迁移用户数据。
-- Streaming-first 通过 Feature Flag/兼容 Adapter 接入旧 Agent，达到 parity 前不删除旧 callback 方法。
+- Streaming-first 已直接接入 Runtime/Agent；如需回滚，应按独立 Commit 回滚完整 Stream 链，不重新引入同步 Callback bridge。
 - 当前开发库允许重建；进入正式环境后 migration 只追加，不再修改已登记版本。
 - Attempt Projection 删除后可从 Journal 重建；不能反向删除事实事件。
 - 任一厂商新 Adapter 未通过 Fixture 时，只标记为 unsupported，不静默回退到 Generic Dialect。
@@ -1117,7 +1116,6 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 以下问题不会改变三 crate 的职责，但会影响具体代码：
 
 1. `eventsource-stream 0.2` 原型是否通过全部 SSE Fixture，还是保留自研 Framer。
-2. `ModelTransportSignal` 通过 Stream side channel、async Observer 还是 Core Reporter 传递；需与 Recorded Event 专题共同冻结。
-3. 旧 Callback Port 保留一个版本还是一个 Feature Flag 周期。
+2. M7 的 Transport Attempt 事实通过 Stream side channel、async Observer 还是 Core Reporter 传递；需与 Recorded Event 专题共同冻结，冻结前不预设公开 Signal 类型。
 
 这些选择必须写入实现阶段 Decision Log；不得再次把临时兼容实现描述为稳定协议。

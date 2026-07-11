@@ -1,5 +1,7 @@
+use std::collections::VecDeque;
+
 use crate::error::map_reqwest_error;
-use futures_util::StreamExt;
+use futures_util::{Stream, stream};
 use openwork_protocol::model::ModelError;
 use reqwest::Response;
 
@@ -39,35 +41,42 @@ impl SseFramer {
     }
 }
 
-pub(crate) async fn consume_sse_response<F>(
+struct SseFrameStreamState {
     response: Response,
-    mut on_data: F,
-) -> Result<(), ModelError>
-where
-    F: FnMut(&str) -> Result<bool, ModelError>,
-{
-    let mut stream = response.bytes_stream();
-    let mut framer = SseFramer::default();
-    let mut terminal_seen = false;
+    framer: SseFramer,
+    pending: VecDeque<SseFrame>,
+    finished: bool,
+}
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(map_reqwest_error)?;
-        for frame in framer.push(&chunk)? {
-            terminal_seen |= on_data(&frame.data)?;
-        }
-    }
+pub(crate) fn sse_frames(
+    response: Response,
+) -> impl Stream<Item = Result<SseFrame, ModelError>> + Send + 'static {
+    stream::try_unfold(
+        SseFrameStreamState {
+            response,
+            framer: SseFramer::default(),
+            pending: VecDeque::new(),
+            finished: false,
+        },
+        |mut state| async move {
+            loop {
+                if let Some(frame) = state.pending.pop_front() {
+                    return Ok(Some((frame, state)));
+                }
+                if state.finished {
+                    return Ok(None);
+                }
 
-    for frame in framer.finish()? {
-        terminal_seen |= on_data(&frame.data)?;
-    }
-
-    if terminal_seen {
-        Ok(())
-    } else {
-        Err(ModelError::network(
-            "provider stream ended before a terminal event",
-        ))
-    }
+                match state.response.chunk().await.map_err(map_reqwest_error)? {
+                    Some(chunk) => state.pending.extend(state.framer.push(&chunk)?),
+                    None => {
+                        state.pending.extend(state.framer.finish()?);
+                        state.finished = true;
+                    }
+                }
+            }
+        },
+    )
 }
 
 fn parse_frame(bytes: &[u8]) -> Result<Option<SseFrame>, ModelError> {

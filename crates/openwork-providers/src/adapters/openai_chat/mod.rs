@@ -5,22 +5,18 @@ pub(crate) mod response;
 pub(crate) mod stream;
 
 use async_trait::async_trait;
+#[cfg(test)]
+use openwork_protocol::model::ModelResponse;
 use openwork_protocol::model::{
-    ModelCallOptions, ModelError, ModelPort, ModelRequest, ModelResponse, ModelStream,
+    ModelCallOptions, ModelError, ModelPort, ModelRequest, ModelStream,
 };
 use openwork_protocol::provider::OpenAiChatDialect;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Map, Value};
 
-use self::{response::ResponseAccumulator, stream::ToolStream};
 use crate::{
     config::{HttpProviderConfig, HttpTransport},
-    error::{
-        ErrorDialect, decode_stream_json, map_error_response_for, map_reqwest_error,
-        map_stream_error_event_for, request_id_from_headers,
-    },
-    sse::consume_sse_response,
-    stream::{EventCallback, model_stream_from_callback},
+    error::{ErrorDialect, map_error_response_for, map_reqwest_error, request_id_from_headers},
 };
 
 #[derive(Debug, Clone)]
@@ -108,11 +104,7 @@ impl OpenAiCompatibleChatProvider {
         response::parse_buffered(raw)
     }
 
-    async fn stream_generate(
-        &self,
-        req: ModelRequest,
-        mut on_event: EventCallback,
-    ) -> Result<ModelResponse, ModelError> {
+    async fn start_stream(&self, req: ModelRequest) -> Result<ModelStream, ModelError> {
         let body = request::encode_request(&req, true, self.dialect, &self.extra_body)?;
         let response = self
             .transport
@@ -128,40 +120,12 @@ impl OpenAiCompatibleChatProvider {
             return Err(map_error_response_for(response, self.error_dialect()).await);
         }
         let provider_request_id = request_id_from_headers(response.headers());
-
-        let mut accumulator = ResponseAccumulator::new();
-        let mut tools = ToolStream::new();
-        consume_sse_response(response, |data| {
-            if data == "[DONE]" {
-                return Ok(true);
-            }
-            let event = decode_stream_json(data)?;
-            if let Some(error) = map_stream_error_event_for(&event, self.error_dialect()) {
-                return Err(error);
-            }
-            let (response_events, terminal) = accumulator.observe(&event);
-            for response_event in response_events {
-                on_event(response_event);
-            }
-            if let Some(tool_call_deltas) = event
-                .pointer("/choices/0/delta/tool_calls")
-                .and_then(Value::as_array)
-            {
-                for tool_call in tool_call_deltas {
-                    for tool_event in tools.append_openai_chat_delta(tool_call) {
-                        on_event(tool_event);
-                    }
-                }
-            }
-            Ok(terminal)
-        })
-        .await?;
-
-        for event in tools.drain_ends() {
-            on_event(event);
-        }
-        let tool_calls = tools.finish().map_err(ModelError::invalid_request)?;
-        Ok(accumulator.finish(provider_request_id, req.model, tool_calls))
+        Ok(stream::response_stream(
+            response,
+            provider_request_id,
+            req.model,
+            self.error_dialect(),
+        ))
     }
 }
 
@@ -172,9 +136,6 @@ impl ModelPort for OpenAiCompatibleChatProvider {
         request: ModelRequest,
         _options: ModelCallOptions,
     ) -> Result<ModelStream, ModelError> {
-        let provider = self.clone();
-        Ok(model_stream_from_callback(move |callback| async move {
-            provider.stream_generate(request, callback).await
-        }))
+        self.start_stream(request).await
     }
 }

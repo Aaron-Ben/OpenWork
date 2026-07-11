@@ -130,7 +130,7 @@ async fn retrying_port_retries_transient_generate_failures() {
 
 struct InterruptedStreamProvider {
     attempts: Arc<AtomicUsize>,
-    seen_callbacks: Arc<Mutex<usize>>,
+    invocations: Arc<Mutex<usize>>,
 }
 
 #[async_trait]
@@ -141,7 +141,7 @@ impl ModelPort for InterruptedStreamProvider {
         _options: ModelCallOptions,
     ) -> Result<ModelStream, ModelError> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        *self.seen_callbacks.lock().unwrap() += 1;
+        *self.invocations.lock().unwrap() += 1;
         Ok(Box::pin(stream::iter([
             Ok(ModelEvent::TextDelta {
                 index: 0,
@@ -155,10 +155,10 @@ impl ModelPort for InterruptedStreamProvider {
 #[tokio::test]
 async fn retrying_port_never_retries_after_semantic_stream_output() {
     let attempts = Arc::new(AtomicUsize::new(0));
-    let callbacks = Arc::new(Mutex::new(0));
+    let invocations = Arc::new(Mutex::new(0));
     let inner = Box::new(InterruptedStreamProvider {
         attempts: Arc::clone(&attempts),
-        seen_callbacks: Arc::clone(&callbacks),
+        invocations: Arc::clone(&invocations),
     });
     let policy = RetryPolicy::new(3, Duration::ZERO, Duration::ZERO).with_jitter(false);
     let provider = RetryingModelPort::new(inner, policy);
@@ -175,7 +175,7 @@ async fn retrying_port_never_retries_after_semantic_stream_output() {
 
     assert_eq!(error.code(), ModelErrorCode::Network);
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
-    assert_eq!(*callbacks.lock().unwrap(), 1);
+    assert_eq!(*invocations.lock().unwrap(), 1);
 }
 
 struct DropSignalStream {
@@ -226,14 +226,18 @@ async fn dropping_retry_stream_cancels_in_flight_attempt() {
         }),
         RetryPolicy::default(),
     );
-    let stream = provider
+    let mut stream = provider
         .invoke(request(), ModelCallOptions::new("attempt"))
         .await
         .unwrap();
+    assert!(!invoked.load(Ordering::SeqCst));
+
+    let polling = tokio::spawn(async move { stream.next().await });
     while !invoked.load(Ordering::SeqCst) {
         tokio::task::yield_now().await;
     }
-    drop(stream);
+    polling.abort();
+    let _ = polling.await;
 
     for _ in 0..20 {
         if dropped.load(Ordering::SeqCst) {

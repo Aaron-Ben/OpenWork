@@ -1,5 +1,120 @@
-use openwork_protocol::model::{ModelEvent, ToolCallBlock, ToolCallState};
+use std::{collections::VecDeque, pin::Pin};
+
+use futures_util::{Stream, StreamExt, stream};
+use openwork_protocol::model::{ModelError, ModelEvent, ModelStream, ToolCallBlock, ToolCallState};
 use serde_json::Value;
+
+use super::response::ResponseAccumulator;
+use crate::{
+    error::{ErrorDialect, decode_stream_json, map_stream_error_event_for},
+    sse::{SseFrame, sse_frames},
+};
+
+struct ChatResponseStreamState<F> {
+    frames: Pin<Box<F>>,
+    accumulator: Option<ResponseAccumulator>,
+    tools: Option<ToolStream>,
+    pending: VecDeque<ModelEvent>,
+    provider_request_id: Option<String>,
+    fallback_model: String,
+    dialect: ErrorDialect,
+    terminal: bool,
+    completed: bool,
+}
+
+pub(crate) fn response_stream(
+    response: reqwest::Response,
+    provider_request_id: Option<String>,
+    fallback_model: String,
+    dialect: ErrorDialect,
+) -> ModelStream {
+    let state = ChatResponseStreamState {
+        frames: Box::pin(sse_frames(response)),
+        accumulator: Some(ResponseAccumulator::new()),
+        tools: Some(ToolStream::new()),
+        pending: VecDeque::new(),
+        provider_request_id,
+        fallback_model,
+        dialect,
+        terminal: false,
+        completed: false,
+    };
+
+    Box::pin(stream::try_unfold(state, |mut state| async move {
+        loop {
+            if let Some(event) = state.pending.pop_front() {
+                return Ok(Some((event, state)));
+            }
+            if state.completed {
+                return Ok(None);
+            }
+            if state.terminal {
+                let tools = state
+                    .tools
+                    .take()
+                    .ok_or_else(|| ModelError::protocol("chat tool stream already finished"))?;
+                state.pending.extend(tools.drain_ends());
+                let tool_calls = tools.finish().map_err(ModelError::invalid_request)?;
+                let accumulator = state.accumulator.take().ok_or_else(|| {
+                    ModelError::protocol("chat response accumulator already finished")
+                })?;
+                let response = accumulator.finish(
+                    state.provider_request_id.take(),
+                    std::mem::take(&mut state.fallback_model),
+                    tool_calls,
+                );
+                state.pending.push_back(ModelEvent::ResponseCompleted {
+                    response: Box::new(response),
+                });
+                state.completed = true;
+                continue;
+            }
+
+            let frame = next_frame(&mut state.frames).await?;
+            if frame.data == "[DONE]" {
+                state.terminal = true;
+                continue;
+            }
+            let event = decode_stream_json(&frame.data)?;
+            if let Some(error) = map_stream_error_event_for(&event, state.dialect) {
+                return Err(error);
+            }
+            let accumulator = state
+                .accumulator
+                .as_mut()
+                .ok_or_else(|| ModelError::protocol("chat response accumulator is unavailable"))?;
+            let (events, terminal) = accumulator.observe(&event);
+            state.pending.extend(events);
+            if let Some(tool_call_deltas) = event
+                .pointer("/choices/0/delta/tool_calls")
+                .and_then(Value::as_array)
+            {
+                let tools = state
+                    .tools
+                    .as_mut()
+                    .ok_or_else(|| ModelError::protocol("chat tool stream is unavailable"))?;
+                for tool_call in tool_call_deltas {
+                    state
+                        .pending
+                        .extend(tools.append_openai_chat_delta(tool_call));
+                }
+            }
+            state.terminal = terminal;
+        }
+    }))
+}
+
+async fn next_frame<F>(frames: &mut Pin<Box<F>>) -> Result<SseFrame, ModelError>
+where
+    F: Stream<Item = Result<SseFrame, ModelError>>,
+{
+    match frames.next().await {
+        Some(frame) => frame,
+        None => Err(ModelError::network(
+            "chat stream ended before a terminal event",
+        )),
+    }
+}
 
 #[derive(Debug, Clone)]
 struct PendingTool {

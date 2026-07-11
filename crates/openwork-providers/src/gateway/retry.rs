@@ -2,12 +2,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, stream};
 use openwork_protocol::model::{
     ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest, ModelStream, RetryHint,
 };
-
-use crate::stream::model_stream_from_callback;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryDecision {
@@ -105,6 +103,47 @@ pub struct RetryingModelPort {
     policy: RetryPolicy,
 }
 
+struct RetryStreamState {
+    inner: Arc<dyn ModelPort>,
+    policy: RetryPolicy,
+    request: ModelRequest,
+    options: ModelCallOptions,
+    deadline: Option<tokio::time::Instant>,
+    attempt: usize,
+    current: Option<ModelStream>,
+    semantic_output_emitted: bool,
+    completed: bool,
+}
+
+impl RetryStreamState {
+    fn deadline(&mut self) -> tokio::time::Instant {
+        *self
+            .deadline
+            .get_or_insert_with(|| tokio::time::Instant::now() + self.options.total_timeout)
+    }
+
+    async fn prepare_retry(&mut self, error: ModelError) -> Result<(), ModelError> {
+        if self.attempt >= self.options.max_transport_attempts {
+            return Err(error);
+        }
+        let RetryDecision::RetryAfter(delay) =
+            self.policy
+                .decision(self.attempt, &error, self.semantic_output_emitted)
+        else {
+            return Err(error);
+        };
+        if tokio::time::Instant::now() + delay >= self.deadline() {
+            return Err(error);
+        }
+
+        self.current = None;
+        tokio::time::sleep(delay).await;
+        self.attempt += 1;
+        self.semantic_output_emitted = false;
+        Ok(())
+    }
+}
+
 impl RetryingModelPort {
     pub fn new(inner: Box<dyn ModelPort>, policy: RetryPolicy) -> Self {
         Self {
@@ -121,61 +160,86 @@ impl ModelPort for RetryingModelPort {
         request: ModelRequest,
         options: ModelCallOptions,
     ) -> Result<ModelStream, ModelError> {
-        let inner = Arc::clone(&self.inner);
-        let policy = self.policy.clone();
-        Ok(model_stream_from_callback(move |mut on_event| async move {
-            let started = tokio::time::Instant::now();
-            let deadline = started + options.total_timeout;
-            let mut attempt = 1;
-            loop {
+        let state = RetryStreamState {
+            inner: Arc::clone(&self.inner),
+            policy: self.policy.clone(),
+            request,
+            options,
+            deadline: None,
+            attempt: 1,
+            current: None,
+            semantic_output_emitted: false,
+            completed: false,
+        };
+
+        Ok(Box::pin(stream::try_unfold(
+            state,
+            |mut state| async move {
+                if state.completed {
+                    return Ok(None);
+                }
+
+                let deadline = state.deadline();
                 if tokio::time::Instant::now() >= deadline {
                     return Err(ModelError::timeout());
                 }
-                let mut semantic_output_emitted = false;
-                let result = tokio::time::timeout_at(
-                    deadline,
-                    inner.invoke(request.clone(), options.clone()),
-                )
-                .await
-                .map_err(|_| ModelError::timeout())?;
-                let error = match result {
-                    Err(error) => error,
-                    Ok(mut stream) => loop {
-                        match tokio::time::timeout_at(deadline, stream.next())
-                            .await
-                            .map_err(|_| ModelError::timeout())?
-                        {
-                            Some(Ok(ModelEvent::ResponseCompleted { response })) => {
-                                return Ok(*response);
+
+                loop {
+                    if state.current.is_none() {
+                        let result = tokio::time::timeout_at(
+                            deadline,
+                            state
+                                .inner
+                                .invoke(state.request.clone(), state.options.clone()),
+                        )
+                        .await
+                        .map_err(|_| ModelError::timeout());
+                        match result {
+                            Ok(Ok(stream)) => {
+                                state.current = Some(stream);
+                                state.semantic_output_emitted = false;
                             }
-                            Some(Ok(event)) => {
-                                semantic_output_emitted = true;
-                                on_event(event);
-                            }
-                            Some(Err(error)) => break error,
-                            None => {
-                                break ModelError::protocol(
-                                    "provider stream ended without ResponseCompleted",
-                                );
+                            Ok(Err(error)) | Err(error) => {
+                                state.prepare_retry(error).await?;
+                                continue;
                             }
                         }
-                    },
-                };
+                    }
 
-                if attempt >= options.max_transport_attempts {
-                    return Err(error);
+                    let next = {
+                        let current = state.current.as_mut().ok_or_else(|| {
+                            ModelError::protocol("retry stream attempt is unavailable")
+                        })?;
+                        tokio::time::timeout_at(deadline, current.next())
+                            .await
+                            .map_err(|_| ModelError::timeout())?
+                    };
+
+                    match next {
+                        Some(Ok(event)) => {
+                            if matches!(event, ModelEvent::ResponseCompleted { .. }) {
+                                state.completed = true;
+                                state.current = None;
+                            } else {
+                                state.semantic_output_emitted = true;
+                            }
+                            return Ok(Some((event, state)));
+                        }
+                        Some(Err(error)) => {
+                            state.current = None;
+                            state.prepare_retry(error).await?;
+                        }
+                        None => {
+                            state.current = None;
+                            state
+                                .prepare_retry(ModelError::protocol(
+                                    "provider stream ended without ResponseCompleted",
+                                ))
+                                .await?;
+                        }
+                    }
                 }
-                let RetryDecision::RetryAfter(delay) =
-                    policy.decision(attempt, &error, semantic_output_emitted)
-                else {
-                    return Err(error);
-                };
-                if tokio::time::Instant::now() + delay >= deadline {
-                    return Err(error);
-                }
-                tokio::time::sleep(delay).await;
-                attempt += 1;
-            }
-        }))
+            },
+        )))
     }
 }

@@ -5,9 +5,7 @@ fn providers_source_tree_matches_model_provider_design() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     for path in [
         "gateway/mod.rs",
-        "gateway/client.rs",
         "gateway/retry.rs",
-        "gateway/transport_signal.rs",
         "transport/mod.rs",
         "transport/http.rs",
         "transport/sse.rs",

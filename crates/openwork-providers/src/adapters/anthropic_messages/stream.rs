@@ -1,10 +1,124 @@
 //! Anthropic Messages stream event codec boundary.
 
+use std::{collections::VecDeque, pin::Pin};
+
+use futures_util::{Stream, StreamExt, stream};
 use openwork_protocol::{
-    model::{ModelEvent, ProviderOpaqueBlock, ToolCallBlock, ToolCallState},
+    model::{
+        ModelError, ModelEvent, ModelStream, ProviderOpaqueBlock, ToolCallBlock, ToolCallState,
+    },
     provider::ProviderDriver,
 };
 use serde_json::{Value, json};
+
+use super::response::ResponseAccumulator;
+use crate::{
+    error::{ErrorDialect, decode_stream_json, map_stream_error_event_for},
+    sse::{SseFrame, sse_frames},
+};
+
+struct AnthropicResponseStreamState<F> {
+    frames: Pin<Box<F>>,
+    accumulator: Option<ResponseAccumulator>,
+    tools: Option<AnthropicToolStream>,
+    thinking: Option<AnthropicThinkingStream>,
+    pending: VecDeque<ModelEvent>,
+    provider_request_id: Option<String>,
+    fallback_model: String,
+    terminal: bool,
+    completed: bool,
+}
+
+pub(crate) fn response_stream(
+    response: reqwest::Response,
+    provider_request_id: Option<String>,
+    fallback_model: String,
+) -> ModelStream {
+    let state = AnthropicResponseStreamState {
+        frames: Box::pin(sse_frames(response)),
+        accumulator: Some(ResponseAccumulator::default()),
+        tools: Some(AnthropicToolStream::default()),
+        thinking: Some(AnthropicThinkingStream::default()),
+        pending: VecDeque::new(),
+        provider_request_id,
+        fallback_model,
+        terminal: false,
+        completed: false,
+    };
+
+    Box::pin(stream::try_unfold(state, |mut state| async move {
+        loop {
+            if let Some(event) = state.pending.pop_front() {
+                return Ok(Some((event, state)));
+            }
+            if state.completed {
+                return Ok(None);
+            }
+            if state.terminal {
+                let tools = state.tools.take().ok_or_else(|| {
+                    ModelError::protocol("Anthropic tool stream already finished")
+                })?;
+                let (tool_calls, tool_end_events) = tools.finish().map_err(ModelError::protocol)?;
+                state.pending.extend(tool_end_events);
+                let opaque_blocks = state
+                    .thinking
+                    .take()
+                    .ok_or_else(|| {
+                        ModelError::protocol("Anthropic thinking stream already finished")
+                    })?
+                    .finish();
+                let accumulator = state.accumulator.take().ok_or_else(|| {
+                    ModelError::protocol("Anthropic response accumulator already finished")
+                })?;
+                let response = accumulator.finish(
+                    state.provider_request_id.take(),
+                    std::mem::take(&mut state.fallback_model),
+                    tool_calls,
+                    opaque_blocks,
+                );
+                state.pending.push_back(ModelEvent::ResponseCompleted {
+                    response: Box::new(response),
+                });
+                state.completed = true;
+                continue;
+            }
+
+            let frame = next_frame(&mut state.frames).await?;
+            let event = decode_stream_json(&frame.data)?;
+            if let Some(error) = map_stream_error_event_for(&event, ErrorDialect::Anthropic) {
+                return Err(error);
+            }
+            let accumulator = state.accumulator.as_mut().ok_or_else(|| {
+                ModelError::protocol("Anthropic response accumulator is unavailable")
+            })?;
+            let (events, terminal) = accumulator.observe(&event);
+            state.pending.extend(events);
+            let tools = state
+                .tools
+                .as_mut()
+                .ok_or_else(|| ModelError::protocol("Anthropic tool stream is unavailable"))?;
+            state.pending.extend(tools.observe(&event));
+            state
+                .thinking
+                .as_mut()
+                .ok_or_else(|| ModelError::protocol("Anthropic thinking stream is unavailable"))?
+                .observe(&event);
+            state.terminal = terminal;
+        }
+    }))
+}
+
+async fn next_frame<F>(frames: &mut Pin<Box<F>>) -> Result<SseFrame, ModelError>
+where
+    F: Stream<Item = Result<SseFrame, ModelError>>,
+{
+    match frames.next().await {
+        Some(frame) => frame,
+        None => Err(ModelError::network(
+            "Anthropic stream ended before a terminal event",
+        )),
+    }
+}
 
 #[derive(Debug)]
 struct PendingTool {

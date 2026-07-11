@@ -1,7 +1,105 @@
 //! OpenAI Responses stream event codec boundary.
 
-use openwork_protocol::model::{ModelEvent, ToolCallBlock, ToolCallState};
+use std::{collections::VecDeque, pin::Pin};
+
+use futures_util::{Stream, StreamExt, stream};
+use openwork_protocol::model::{ModelError, ModelEvent, ModelStream, ToolCallBlock, ToolCallState};
 use serde_json::Value;
+
+use super::response::ResponseAccumulator;
+use crate::{
+    error::{ErrorDialect, decode_stream_json, map_stream_error_event_for},
+    sse::{SseFrame, sse_frames},
+};
+
+struct OpenAiResponseStreamState<F> {
+    frames: Pin<Box<F>>,
+    accumulator: Option<ResponseAccumulator>,
+    tools: Option<OpenAiResponsesToolStream>,
+    pending: VecDeque<ModelEvent>,
+    provider_request_id: Option<String>,
+    fallback_model: String,
+    terminal: bool,
+    completed: bool,
+}
+
+pub(crate) fn response_stream(
+    response: reqwest::Response,
+    provider_request_id: Option<String>,
+    fallback_model: String,
+) -> ModelStream {
+    let state = OpenAiResponseStreamState {
+        frames: Box::pin(sse_frames(response)),
+        accumulator: Some(ResponseAccumulator::default()),
+        tools: Some(OpenAiResponsesToolStream::default()),
+        pending: VecDeque::new(),
+        provider_request_id,
+        fallback_model,
+        terminal: false,
+        completed: false,
+    };
+
+    Box::pin(stream::try_unfold(state, |mut state| async move {
+        loop {
+            if let Some(event) = state.pending.pop_front() {
+                return Ok(Some((event, state)));
+            }
+            if state.completed {
+                return Ok(None);
+            }
+            if state.terminal {
+                let tools = state
+                    .tools
+                    .take()
+                    .ok_or_else(|| ModelError::protocol("OpenAI tool stream already finished"))?;
+                let (tool_calls, tool_end_events) = tools.finish().map_err(ModelError::protocol)?;
+                state.pending.extend(tool_end_events);
+                let accumulator = state.accumulator.take().ok_or_else(|| {
+                    ModelError::protocol("OpenAI response accumulator already finished")
+                })?;
+                let response = accumulator.finish(
+                    state.provider_request_id.take(),
+                    std::mem::take(&mut state.fallback_model),
+                    tool_calls,
+                );
+                state.pending.push_back(ModelEvent::ResponseCompleted {
+                    response: Box::new(response),
+                });
+                state.completed = true;
+                continue;
+            }
+
+            let frame = next_frame(&mut state.frames).await?;
+            let event = decode_stream_json(&frame.data)?;
+            if let Some(error) = map_stream_error_event_for(&event, ErrorDialect::OpenAi) {
+                return Err(error);
+            }
+            let accumulator = state.accumulator.as_mut().ok_or_else(|| {
+                ModelError::protocol("OpenAI response accumulator is unavailable")
+            })?;
+            let (events, terminal) = accumulator.observe(&event);
+            state.pending.extend(events);
+            let tools = state
+                .tools
+                .as_mut()
+                .ok_or_else(|| ModelError::protocol("OpenAI tool stream is unavailable"))?;
+            state.pending.extend(tools.observe(&event));
+            state.terminal = terminal;
+        }
+    }))
+}
+
+async fn next_frame<F>(frames: &mut Pin<Box<F>>) -> Result<SseFrame, ModelError>
+where
+    F: Stream<Item = Result<SseFrame, ModelError>>,
+{
+    match frames.next().await {
+        Some(frame) => frame,
+        None => Err(ModelError::network(
+            "OpenAI stream ended before a terminal event",
+        )),
+    }
+}
 
 #[derive(Debug)]
 struct PendingTool {

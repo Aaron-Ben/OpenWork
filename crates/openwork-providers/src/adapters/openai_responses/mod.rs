@@ -5,19 +5,13 @@ mod stream;
 
 use async_trait::async_trait;
 use openwork_protocol::model::{
-    ModelCallOptions, ModelError, ModelPort, ModelRequest, ModelResponse, ModelStream,
+    ModelCallOptions, ModelError, ModelPort, ModelRequest, ModelStream,
 };
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
-use self::{response::ResponseAccumulator, stream::OpenAiResponsesToolStream};
 use crate::{
     config::{HttpProviderConfig, HttpTransport},
-    error::{
-        ErrorDialect, decode_stream_json, map_error_response_for, map_reqwest_error,
-        map_stream_error_event_for, request_id_from_headers,
-    },
-    sse::consume_sse_response,
-    stream::{EventCallback, model_stream_from_callback},
+    error::{ErrorDialect, map_error_response_for, map_reqwest_error, request_id_from_headers},
 };
 
 #[derive(Debug, Clone)]
@@ -47,11 +41,7 @@ impl OpenAiProvider {
         Ok(headers)
     }
 
-    async fn stream_generate(
-        &self,
-        req: ModelRequest,
-        mut on_event: EventCallback,
-    ) -> Result<ModelResponse, ModelError> {
+    async fn start_stream(&self, req: ModelRequest) -> Result<ModelStream, ModelError> {
         let body = request::encode_request(&req, true)?;
         let response = self
             .transport
@@ -67,30 +57,11 @@ impl OpenAiProvider {
             return Err(map_error_response_for(response, ErrorDialect::OpenAi).await);
         }
         let provider_request_id = request_id_from_headers(response.headers());
-        let mut accumulator = ResponseAccumulator::default();
-        let mut tools = OpenAiResponsesToolStream::default();
-
-        consume_sse_response(response, |data| {
-            let event = decode_stream_json(data)?;
-            if let Some(error) = map_stream_error_event_for(&event, ErrorDialect::OpenAi) {
-                return Err(error);
-            }
-            let (events, terminal) = accumulator.observe(&event);
-            for event in events {
-                on_event(event);
-            }
-            for event in tools.observe(&event) {
-                on_event(event);
-            }
-            Ok(terminal)
-        })
-        .await?;
-
-        let (tool_calls, tool_end_events) = tools.finish().map_err(ModelError::protocol)?;
-        for event in tool_end_events {
-            on_event(event);
-        }
-        Ok(accumulator.finish(provider_request_id, req.model, tool_calls))
+        Ok(stream::response_stream(
+            response,
+            provider_request_id,
+            req.model,
+        ))
     }
 }
 
@@ -101,9 +72,6 @@ impl ModelPort for OpenAiProvider {
         request: ModelRequest,
         _options: ModelCallOptions,
     ) -> Result<ModelStream, ModelError> {
-        let provider = self.clone();
-        Ok(model_stream_from_callback(move |callback| async move {
-            provider.stream_generate(request, callback).await
-        }))
+        self.start_stream(request).await
     }
 }
