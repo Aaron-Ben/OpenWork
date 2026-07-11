@@ -92,9 +92,10 @@ OpenWork/
 
 `openwork-core` / `openwork-app`
 
-- `ModelRegistry`
 - Core 持有 Turn 循环和审批暂停/恢复状态
-- App 组合 Provider、Capability Catalog、Execution、Core 和 Journal-backed Session
+- `OpenWorkApplication` 是唯一 Composition Root，组合 Provider、Capability Catalog、Execution、Core 和 Journal-backed Session
+- Desktop 只通过 Provider/Thread/Turn Application Service 访问应用能力
+- 模型始终由用户显式选择 `providerId + model`；不提供自动选模或跨模型 Fallback
 
 ## 桌面端
 

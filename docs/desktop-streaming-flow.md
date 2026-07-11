@@ -6,12 +6,15 @@ Last reviewed: 2026-07-11
 
 ```text
 apps/desktop/src/views/ChatView.tsx
+apps/desktop/src/api/providers.ts
+apps/desktop/src/api/sessions.ts
 apps/desktop/src/hooks/useChatStreamListener.ts
 apps/desktop/src/stores/sessionStore.ts
 apps/desktop/src/utils/streamAccumulator.ts
 apps/desktop/src/type/providers.ts
 apps/desktop/src/type/parts.ts
-apps/desktop/src-tauri/src/lib.rs
+crates/openwork-app/src/chat.rs
+apps/desktop/src-tauri/src/commands/chat.rs
 ```
 
 ## 2. 请求入口
@@ -43,6 +46,8 @@ apps/desktop/src-tauri/src/lib.rs
 ```text
 apps/desktop/src/type/providers.ts
 ```
+
+后端发送的是 `TurnLiveEvent`：`requestId`、`sessionId` 是公共信封字段，`event` 是 serde tag，其余字段由事件变体决定。前端以同构的 TypeScript discriminated union 表示，因此 `text_delta` 必有 `delta`，`tool_result` 必有 `toolCallId/toolName/output/isError`，不会再出现一个含大量可选字段的通用 payload。
 
 当前事件名包括：
 
@@ -98,6 +103,10 @@ chat-stream-event
 
 `tool_result` 的兜底很重要：只要工具结果已经回来，前端就不应该继续把对应 tool call 显示成 running。
 
+Rust 合同测试校验关键事件的精确 JSON；Vitest 覆盖 tool result、doom loop 等归并行为。新增事件时必须同时修改 Rust 枚举、TypeScript union 和 reducer，TypeScript 的穷尽检查会暴露遗漏分支。
+
+`TurnApplicationService` 是终态错误事件的统一出口：无论失败发生在 Provider/Session 加载、Turn 持久化还是 Agent 执行阶段，它都会先映射为安全的 `ApplicationError`，再发出一次 `error` Live Event，同时让 Tauri Command 返回同一错误码。这样 UI 不需要解析底层错误文本，也不会因早期失败收不到终态事件。
+
 ## 6. 状态恢复
 
 请求完成后，后端会发 `done`。前端收到后调用：
@@ -127,9 +136,10 @@ Allow / Deny
 
 拒绝后，Core 会把拒绝原因作为工具错误结果回传给模型。审批卡片使用内部 `ApprovalId`，同时携带 `TurnId`，不会按厂商 tool-call ID 做全局路由。
 
+当前 `providersApi` 除 Provider CRUD 外，还暂时承载 `resolveApproval` 和 `chat-stream-event` 监听。这是现有代码位置，不是最终职责边界；当 Turn API 继续增长时，应把审批和流订阅迁到独立 `turnApi`/`chatApi`，而不是继续扩大 `providersApi`。
+
 ## 8. 当前建议补强
 
-1. 给 `streamAccumulator.ts` 增加单元测试。
-2. 区分 `finished`、`success`、`error`、`denied`、`cancelled` 的 UI 表达。
-3. `done` 事件可以带 request summary，减少 reload 前后的短暂状态差。
-4. 审批弹窗增加风险原因和路径/diff 预览。
+1. 区分 `finished`、`success`、`error`、`denied`、`cancelled` 的 UI 表达。
+2. `done` 事件可以带 request summary，减少 reload 前后的短暂状态差。
+3. 审批弹窗增加风险原因和路径/diff 预览。

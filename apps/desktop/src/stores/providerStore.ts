@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import { providersApi } from '../api/providers'
+import { resolveErrorMessage } from '../utils/commandError'
 import type {
   ProviderConfig,
   ProviderIndex,
@@ -87,11 +88,4 @@ export function useActiveProvider(): ProviderConfig | null {
   const { providers, activeId } = useProviderStore()
   if (!activeId) return null
   return providers.find((provider) => provider.id === activeId) ?? null
-}
-
-// Tauri reject 通常传 string(Rust Err(String)),也可能是 Error。
-function resolveErrorMessage(error: unknown): string {
-  if (typeof error === 'string') return error
-  if (error instanceof Error) return error.message
-  return 'Unexpected error'
 }

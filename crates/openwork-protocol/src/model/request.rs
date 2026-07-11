@@ -2,18 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{Message, Role};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ModelCapability {
-    Chat,
-    Reasoning,
-    Vision,
-    VideoInput,
-    ToolCalling,
-    JsonSchema,
-    Streaming,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapabilities {
     pub chat: bool,
@@ -36,19 +24,6 @@ impl ModelCapabilities {
             json_schema: false,
             streaming: true,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelSpec {
-    pub provider: String,
-    pub model: String,
-    pub capabilities: Vec<ModelCapability>,
-}
-
-impl ModelSpec {
-    pub fn supports(&self, capability: ModelCapability) -> bool {
-        self.capabilities.contains(&capability)
     }
 }
 
@@ -113,20 +88,4 @@ impl ThinkingConfig {
 pub enum ThinkingMode {
     Enabled,
     Disabled,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn model_spec_checks_capability() {
-        let spec = ModelSpec {
-            provider: "openai".into(),
-            model: "gpt-4.1".into(),
-            capabilities: vec![ModelCapability::Chat, ModelCapability::Vision],
-        };
-        assert!(spec.supports(ModelCapability::Chat));
-        assert!(!spec.supports(ModelCapability::ToolCalling));
-    }
 }

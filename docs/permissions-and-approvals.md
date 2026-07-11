@@ -207,8 +207,9 @@ Desktop 收到 `approval_request` 后展示审批卡片。用户操作会调用�
 
 ```text
 resolve_approval(turn_id, approval_id, allow)
-  -> Tauri 构造 ResolveApproval
-  -> ChatRuntime::resolve_approval
+  -> Tauri 调用 OpenWorkApplication::turns
+  -> TurnApplicationService 构造 ResolveApproval
+  -> 内部 ChatRuntime::resolve_approval
   -> TurnSupervisor 查找 TurnCommandHandle
   -> Core 校验并应用命令
 ```

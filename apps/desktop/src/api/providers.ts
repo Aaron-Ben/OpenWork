@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
-  ChatStreamEventPayload,
+  TurnLiveEvent,
   ProviderConfig,
   ProviderIndex,
   ProviderInput,
@@ -26,7 +26,7 @@ export const providersApi = {
   resolveApproval: (turnId: string, approvalId: string, allow: boolean): Promise<void> =>
     invoke('resolve_approval', { turnId, approvalId, allow }),
   listenToChatStream: (
-    handler: (payload: ChatStreamEventPayload) => void,
+    handler: (payload: TurnLiveEvent) => void,
   ): Promise<UnlistenFn> =>
-    listen<ChatStreamEventPayload>('chat-stream-event', (event) => handler(event.payload)),
+    listen<TurnLiveEvent>('chat-stream-event', (event) => handler(event.payload)),
 }

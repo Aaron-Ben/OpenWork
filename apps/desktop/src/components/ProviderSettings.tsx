@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Loader2, Pencil, Plus, Trash2, Zap } from "lucide-rea
 
 import { useProviderStore } from "../stores/providerStore";
 import type { ProviderConfig, TestResult } from "../type/providers";
+import { resolveErrorMessage as resolveMessage } from "../utils/commandError";
 import { ProviderFormModal } from "./ProviderFormModal";
 
 type TestState = Record<string, TestResult | "loading">;
@@ -161,10 +162,4 @@ function IconButton({ title, onClick, disabled, children }: { title: string; onC
       {children}
     </button>
   );
-}
-
-function resolveMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  return "Unexpected error";
 }

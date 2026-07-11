@@ -8,7 +8,7 @@ Last reviewed: 2026-07-11
 
 ```text
 crates/openwork-core/src/{agent,approval}.rs
-crates/openwork-app/src/{chat,turn_supervisor}.rs
+crates/openwork-app/src/{application,chat,turn_service,turn_supervisor}.rs
 crates/openwork-protocol/src/approval/mod.rs
 crates/openwork-protocol/src/capability/
 crates/openwork-capabilities/src/
@@ -18,7 +18,7 @@ crates/openwork-execution/src/{context,handler,invoker,schema,service}.rs
 apps/desktop/src-tauri/src/lib.rs
 ```
 
-`openwork-core` 负责 Turn/Agent loop 和审批状态。`openwork-app::ChatRuntime` 组合 provider/session/Core，并把 Core 事件转换为宿主/UI payload。
+`openwork-core` 负责 Turn/Agent loop 和审批状态。Desktop 只调用 `openwork-app::OpenWorkApplication::turns()`；内部 `TurnApplicationService` 持有 `ChatRuntime` 和取消注册表，`ChatRuntime` 组合 provider/session/Core 并把 Core 事件转换为宿主/UI payload。
 
 ## 2. AgentConfig
 
@@ -34,7 +34,7 @@ apps/desktop/src-tauri/src/lib.rs
 - `cancel`
 - `max_steps`
 
-`AgentConfig` 不构造或持有具体 Tool Registry。App 的 `ChatRuntime` 作为 Composition Root，创建内置 `CapabilityCatalog`、`BuiltinActionInvoker` 和 `ExecutionService`，并用相同的 cancellation token 组合 Core 与 Execution。默认审批是 `ApprovalPolicy::Untrusted`。
+`AgentConfig` 不构造或持有具体 Tool Registry。`OpenWorkApplication` 是唯一 Composition Root；其内部 `ChatRuntime` 为每个 Turn 创建内置 `CapabilityCatalog`、`BuiltinActionInvoker` 和 `ExecutionService`，并用相同的 cancellation token 组合 Core 与 Execution。默认审批是 `ApprovalPolicy::Untrusted`。
 
 ## 3. 一轮 Agent Loop
 

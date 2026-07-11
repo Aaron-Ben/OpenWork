@@ -17,7 +17,6 @@ pub use message::{
 };
 pub use port::{ModelCallOptions, ModelPort, ModelStream};
 pub use request::{
-    GenerateRequest, ModelCapabilities, ModelCapability, ModelRequest, ModelSpec, ThinkingConfig,
-    ThinkingMode, ToolDefinition,
+    GenerateRequest, ModelCapabilities, ModelRequest, ThinkingConfig, ThinkingMode, ToolDefinition,
 };
 pub use response::{FinishReason, GenerateResponse, ModelResponse, TokenUsage};

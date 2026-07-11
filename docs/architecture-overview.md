@@ -58,7 +58,8 @@ crates/openwork-workspace/
 
 apps/desktop/
   Tauri + React + TypeScript 桌面端：provider 管理、session 管理、聊天 UI、
-  stream event 消费、审批 UI。Rust 后端 command 已按 provider/session/chat 拆分。
+  stream event 消费、审批 UI。Rust 后端 command 已按 provider/session/chat 拆分，
+  并且只通过单一 OpenWorkApplication 状态调用 Application API。
 ```
 
 ## 3. 核心数据流
@@ -68,10 +69,10 @@ apps/desktop/
 ```text
 ChatView
   -> chat_generate_stream Tauri command
-  -> SessionStore 读取会话历史
+  -> OpenWorkApplication::turns
+  -> 内部 ChatRuntime 从 SessionStore 读取会话历史
   -> PostgresProviderRepository 读取 Provider Profile，并解密 api_key_encrypted
   -> ProviderFactory::build 构造带 RetryPolicy 的 ModelPort
-  -> openwork-app::ChatRuntime 组装一次 Turn
   -> SessionStore 在模型调用前记录 turn_started + user_message_recorded
   -> openwork-core::Agent::run
      -> CapabilityResolverPort 获取本轮 Tool Schema
@@ -114,7 +115,35 @@ ChatView
 
 ### 4.3 `openwork-app` 是应用组合层
 
-`openwork-app` 组合 Provider、Session、Capabilities、Execution 与 Core，并提供 Desktop 使用的 `ChatRuntime`。旧 `openwork-runtime`、`openwork-agent` 和 `openwork-permissions` crate 已删除。
+`openwork-app::OpenWorkApplication` 是当前唯一 Composition Root：它组合 Provider、Session、Capabilities、Execution 与 Core，并向 Desktop 暴露 `ProviderApplicationService`、`ThreadApplicationService` 和 `TurnApplicationService`。内部 `ChatRuntime`、`RequestCancelRegistry`、Repository、Store 和 Factory 不再由 Tauri 直接管理。旧 `openwork-runtime`、`openwork-agent` 和 `openwork-permissions` crate 已删除。
+
+Tauri 当前只注册一个 `OpenWorkApplication` State，Command 名称保持兼容。Phase A/B 已完成：Command 返回稳定的 `{ code, message }`，Application Live Event 使用 Rust tagged enum，TypeScript 使用同构 discriminated union；统一 shutdown 仍属于 Phase C，见 [Desktop Tauri 与 Application API 边界重构设计](../plans/desktop-tauri-application-boundary-refactor.md)。
+
+当前 Desktop 到内部能力的依赖方向固定为：
+
+```text
+apps/desktop/src                    # React 展示、UI 状态、invoke/listen 封装
+  -> apps/desktop/src-tauri         # Tauri IPC 与桌面宿主适配
+  -> crates/openwork-app            # Application Command/Query、Turn 编排、Composition Root
+  -> Core/Providers/Persistence/Capabilities/Execution
+```
+
+`openwork-app/src` 当前按以下职责拆分：
+
+| 文件 | 当前职责 |
+| --- | --- |
+| `application.rs` | 创建具体 Adapter，并组装唯一 `OpenWorkApplication` |
+| `provider_service.rs` | Provider CRUD、Preset 和连接测试用例 |
+| `thread_service.rs` | Journal-backed Thread/Session 查询与管理用例 |
+| `turn_service.rs` | 对宿主提供 Turn 启动、审批和取消入口，并统一终态错误事件 |
+| `chat.rs` | 内部单 Turn 编排：加载 Provider/Session、创建 Execution/Core、持久化结果并映射 Live Event |
+| `cancel.rs` | 当前 `request_id -> CancellationToken` 注册表 |
+| `turn_supervisor.rs` | 当前 `TurnId -> TurnCommandHandle` 路由；审批状态仍由 Core inbox 持有 |
+| `error.rs` | 底层错误到稳定 Application Error Code 的映射 |
+
+`turn_service.rs` 是稳定的宿主用例门面，`chat.rs` 是其内部编排器，两者不是两套 Agent Runtime。`RequestCancelRegistry` 和 `TurnSupervisor` 目前分别承担取消与审批路由，统一活跃 Turn 生命周期及 cancel-all/shutdown 属于 Phase C。前端仍使用 `session_*` IPC 和 Session DTO，Application 层使用 Thread Service；这是有意保留的兼容层，不代表最终命名已经统一。
+
+当前不提供 `ModelRegistry`、默认模型解析、按任务或 tier 自动选模，也不做跨模型/跨 Provider 静默 Fallback。前端必须明确提交 `providerId + model`；`ProviderFactory` 只根据已经选定的 Provider 创建对应协议 Adapter，不参与模型选择。
 
 ### 4.4 `openwork-capabilities` 是声明与发现层
 

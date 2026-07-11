@@ -240,7 +240,8 @@ openwork-protocol
 openwork-protocol
   <- openwork-persistence
 
-apps/desktop -> openwork-app + openwork-persistence
+apps/desktop -> openwork-app
+openwork-app -> openwork-persistence
 ```
 
 ### 8.1 `openwork-protocol`

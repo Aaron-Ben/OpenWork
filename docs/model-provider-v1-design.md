@@ -84,10 +84,10 @@ Last reviewed: 2026-07-11
 - Provider API Key 的落库加密、解密和主密钥配置边界。
 - 三个 crate 的内部目标结构和迁移路线。
 
-### 3.2 本专题不做
+### 3.2 明确不支持的能力
 
 - Embedding、向量数据库和 RAG。
-- 自动模型路由、Fallback 和负载均衡。
+- 自动模型路由、默认模型解析、跨模型/跨 Provider Fallback 和负载均衡；调用方必须明确指定 `provider_id + model_id`。
 - Provider SDK Plugin 系统。
 - 在线价格表、账单结算和完整成本平台。
 - 模型列表自动同步或 Capability 远程探测。

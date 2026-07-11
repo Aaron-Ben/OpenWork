@@ -1,64 +1,63 @@
-use openwork_persistence::{
-    Session, SessionInput, SessionLoadResult, SessionStore, SessionSummary,
-};
+use openwork_app::{OpenWorkApplication, Session, SessionInput, SessionLoadResult, SessionSummary};
+
+use crate::CommandError;
 
 #[tauri::command]
 pub async fn session_list(
-    store: tauri::State<'_, SessionStore>,
-) -> Result<Vec<SessionSummary>, String> {
-    store
-        .list_sessions()
+    application: tauri::State<'_, OpenWorkApplication>,
+) -> Result<Vec<SessionSummary>, CommandError> {
+    application
+        .threads()
+        .list()
         .await
-        .map_err(|error| error.to_string())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn session_create(
-    store: tauri::State<'_, SessionStore>,
+    application: tauri::State<'_, OpenWorkApplication>,
     input: SessionInput,
-) -> Result<Session, String> {
-    store
-        .create_session(input)
+) -> Result<Session, CommandError> {
+    application
+        .threads()
+        .create(input)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn session_load(
-    store: tauri::State<'_, SessionStore>,
+    application: tauri::State<'_, OpenWorkApplication>,
     id: String,
-) -> Result<SessionLoadResult, String> {
-    let session = store
-        .load_session(&id)
+) -> Result<SessionLoadResult, CommandError> {
+    application
+        .threads()
+        .load(&id)
         .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("session not found: {id}"))?;
-    let messages = store
-        .load_messages(&id)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(SessionLoadResult { session, messages })
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn session_delete(
-    store: tauri::State<'_, SessionStore>,
+    application: tauri::State<'_, OpenWorkApplication>,
     id: String,
-) -> Result<(), String> {
-    store
-        .delete_session(&id)
+) -> Result<(), CommandError> {
+    application
+        .threads()
+        .delete(&id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn session_rename(
-    store: tauri::State<'_, SessionStore>,
+    application: tauri::State<'_, OpenWorkApplication>,
     id: String,
     title: String,
-) -> Result<Session, String> {
-    store
-        .rename_session(&id, &title)
+) -> Result<Session, CommandError> {
+    application
+        .threads()
+        .rename(&id, &title)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(CommandError::from)
 }

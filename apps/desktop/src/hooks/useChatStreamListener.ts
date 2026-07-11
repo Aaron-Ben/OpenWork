@@ -17,18 +17,18 @@ export function useChatStreamListener() {
       const sessionId = payload.sessionId
       if (!sessionId) return
 
-      if (payload.event === 'approval_request' && payload.approvalId) {
+      if (payload.event === 'approval_request') {
         useApprovalStore.getState().push({
           id: payload.approvalId,
           turnId: payload.requestId,
           sessionId,
-          toolName: payload.toolName ?? '',
-          input: payload.input ?? null,
+          toolName: payload.toolName,
+          input: payload.input,
         })
         return
       }
 
-      if (payload.event === 'approval_resolved' && payload.approvalId) {
+      if (payload.event === 'approval_resolved') {
         useApprovalStore.getState().remove(payload.approvalId)
         return
       }

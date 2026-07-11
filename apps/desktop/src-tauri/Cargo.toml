@@ -19,14 +19,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 openwork-app = { workspace = true }
-openwork-protocol = { workspace = true }
-openwork-providers = { workspace = true }
-openwork-persistence = { workspace = true }
-openwork-workspace = { workspace = true }
-async-trait = { workspace = true }
 dotenvy = { workspace = true }
-tokio-util = { workspace = true }
+serde = { workspace = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-serde = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }

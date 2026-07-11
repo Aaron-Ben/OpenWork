@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 
 import { sessionsApi } from '../api/sessions'
+import { resolveErrorMessage } from '../utils/commandError'
 import { applyEvent } from '../utils/streamAccumulator'
-import type { ChatStreamEventPayload } from '../type/providers'
+import type { TurnLiveEvent } from '../type/providers'
 import type { ChatItem } from '../type/chat'
 import type { SessionInput, SessionMessage, SessionSummary } from '../type/session'
 
@@ -22,7 +23,7 @@ interface SessionStoreState {
 
   pushUserMessage: (sessionId: string, text: string) => void
   ensureStreamingItem: (sessionId: string, requestId: string, model?: string) => void
-  applyStreamEvent: (sessionId: string, payload: ChatStreamEventPayload) => void
+  applyStreamEvent: (sessionId: string, payload: TurnLiveEvent) => void
   finishStreaming: (sessionId: string, requestId: string) => void
 
   activeStream: { sessionId: string; requestId: string } | null
@@ -207,10 +208,4 @@ export function useActiveSessionMessages(): ChatItem[] {
   return useSessionStore((state) =>
     activeSessionId ? state.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES,
   )
-}
-
-function resolveErrorMessage(error: unknown): string {
-  if (typeof error === 'string') return error
-  if (error instanceof Error) return error.message
-  return 'Unexpected error'
 }

@@ -852,14 +852,16 @@ cargo test --workspace
 
 ### S7：Application API 扩展与 Desktop 收口
 
-上下文：桌面端当前直接依赖多个内部 Store 和 Registry。
+上下文：Desktop 直接依赖 Repository/Store/Factory 的路径已经收口到单一 `OpenWorkApplication`；显式 Command/Query Service、结构化错误和 tagged Live Event 已完成，Durable Subscription、Resume/Reconcile 和统一 shutdown 仍未完成。
+
+当前专题设计与分阶段迁移门槛见 [Desktop Tauri 与 Application API 边界重构设计](./desktop-tauri-application-boundary-refactor.md)。
 
 任务：
 
-- Command、Query、Subscription。
+- 在当前显式 Provider/Thread/Turn Command/Query Service 和 typed Live Event 基线上，继续完成 Durable Subscription。
 - 扩展 S3 建立的 Turn Supervisor。
 - Approval、Cancel、Resume、Reconcile 路由。
-- UI 只依赖 App/Protocol。
+- UI 只依赖 App/Protocol；保持源码结构测试，禁止重新引入 Persistence/Providers/Execution 具体依赖。
 
 退出条件：Desktop 不直接访问 PostgreSQL Repository、SessionStore 或 ToolRegistry。
 

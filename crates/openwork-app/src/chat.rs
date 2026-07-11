@@ -39,43 +39,100 @@ pub struct ChatGenerateResponse {
     pub reasoning_text: Option<String>,
 }
 
-/// Frontend-consumable event payload for a chat stream.
-#[derive(Debug, Clone, Serialize)]
+/// Application live event envelope consumed by hosts such as Tauri.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChatStreamEventPayload {
+pub struct TurnLiveEvent {
     pub request_id: String,
     pub session_id: String,
-    pub event: &'static str,
-    pub delta: Option<String>,
-    pub message: Option<String>,
-    pub step: Option<usize>,
-    pub tool_call_id: Option<String>,
-    pub tool_name: Option<String>,
-    pub partial_input: Option<String>,
-    pub tool_output: Option<String>,
-    pub is_error: Option<bool>,
-    pub approval_id: Option<String>,
-    pub input: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub kind: TurnLiveEventKind,
 }
 
-impl ChatStreamEventPayload {
-    pub fn simple(request_id: &str, session_id: &str, event: &'static str) -> Self {
+impl TurnLiveEvent {
+    pub fn new(request_id: &str, session_id: &str, kind: TurnLiveEventKind) -> Self {
         Self {
             request_id: request_id.to_string(),
             session_id: session_id.to_string(),
-            event,
-            delta: None,
-            message: None,
-            step: None,
-            tool_call_id: None,
-            tool_name: None,
-            partial_input: None,
-            tool_output: None,
-            is_error: None,
-            approval_id: None,
-            input: None,
+            kind,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(
+    tag = "event",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum TurnLiveEventKind {
+    Step {
+        step: usize,
+    },
+    LlmStepStart {
+        step: usize,
+    },
+    LlmStepFinish {
+        step: usize,
+        reason: String,
+    },
+    LlmFinish {
+        reason: String,
+    },
+    TextStart {
+        block_id: String,
+    },
+    TextDelta {
+        delta: String,
+    },
+    TextEnd {
+        block_id: String,
+    },
+    ReasoningStart {
+        block_id: String,
+    },
+    ReasoningDelta {
+        delta: String,
+    },
+    ReasoningEnd {
+        block_id: String,
+    },
+    ToolCallStart {
+        tool_call_id: String,
+        tool_name: String,
+    },
+    ToolCallDelta {
+        tool_call_id: String,
+        partial_input: String,
+    },
+    ToolCallEnd {
+        tool_call_id: String,
+    },
+    ToolResult {
+        tool_call_id: String,
+        tool_name: String,
+        output: String,
+        is_error: bool,
+    },
+    ApprovalRequest {
+        approval_id: String,
+        tool_name: String,
+        input: serde_json::Value,
+    },
+    ApprovalResolved {
+        approval_id: String,
+    },
+    Finished {
+        text: String,
+    },
+    Done,
+    Cancelled,
+    DoomLoop {
+        tool_name: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -119,14 +176,6 @@ impl ChatRuntime {
         }
     }
 
-    pub fn provider_repository(&self) -> &dyn ProviderRepository {
-        self.provider_repository.as_ref()
-    }
-
-    pub fn session_store(&self) -> &SessionStore {
-        &self.session_store
-    }
-
     pub async fn resolve_approval(
         &self,
         command: ResolveApproval,
@@ -138,7 +187,7 @@ impl ChatRuntime {
         &self,
         request: ChatGenerateRequest,
         cancel: CancellationToken,
-        on_event: impl FnMut(ChatStreamEventPayload) + Send + 'static,
+        on_event: impl FnMut(TurnLiveEvent) + Send + 'static,
     ) -> Result<ChatGenerateResponse, ChatRuntimeError> {
         let request_id = request.request_id.clone();
         let session_id = request.session_id.clone();
@@ -236,7 +285,7 @@ impl ChatRuntime {
                 .await?;
                 emit_runtime_event(
                     &on_event,
-                    ChatStreamEventPayload::simple(&request_id, &session_id, "done"),
+                    TurnLiveEvent::new(&request_id, &session_id, TurnLiveEventKind::Done),
                 );
                 Ok(ChatGenerateResponse {
                     text: run_result.text,
@@ -254,7 +303,7 @@ impl ChatRuntime {
                 .await?;
                 emit_runtime_event(
                     &on_event,
-                    ChatStreamEventPayload::simple(&request_id, &session_id, "cancelled"),
+                    TurnLiveEvent::new(&request_id, &session_id, TurnLiveEventKind::Cancelled),
                 );
                 Ok(ChatGenerateResponse {
                     text: String::new(),
@@ -287,13 +336,6 @@ impl ChatRuntime {
                         },
                     )
                     .await?;
-                emit_runtime_event(
-                    &on_event,
-                    ChatStreamEventPayload {
-                        message: Some(message.clone()),
-                        ..ChatStreamEventPayload::simple(&request_id, &session_id, "error")
-                    },
-                );
                 Err(ChatRuntimeError::Agent(error))
             }
         }
@@ -321,113 +363,81 @@ impl ChatRuntime {
     }
 }
 
-fn emit_runtime_event(
-    on_event: &Arc<Mutex<impl FnMut(ChatStreamEventPayload)>>,
-    payload: ChatStreamEventPayload,
-) {
+fn emit_runtime_event(on_event: &Arc<Mutex<impl FnMut(TurnLiveEvent)>>, payload: TurnLiveEvent) {
     let mut on_event = on_event.lock().expect("chat runtime event mutex poisoned");
     on_event(payload);
 }
 
 /// Maps an agent loop event into a serializable stream payload.
-pub fn map_agent_event(
+pub(crate) fn map_agent_event(
     request_id: &str,
     session_id: &str,
     event: &AgentEvent,
-) -> ChatStreamEventPayload {
-    let mut payload = ChatStreamEventPayload::simple(request_id, session_id, "");
-    match event {
-        AgentEvent::Step(n) => {
-            payload.event = "step";
-            payload.step = Some(*n);
-        }
-        AgentEvent::LlmStepStart { index } => {
-            payload.event = "llm_step_start";
-            payload.step = Some(*index);
-        }
-        AgentEvent::LlmStepFinish { index, reason, .. } => {
-            payload.event = "llm_step_finish";
-            payload.step = Some(*index);
-            payload.message = Some(reason.clone());
-        }
-        AgentEvent::LlmFinish { reason, .. } => {
-            payload.event = "llm_finish";
-            payload.message = Some(reason.clone());
-        }
-        AgentEvent::TextStart { id } => {
-            payload.event = "text_start";
-            payload.message = Some(id.clone());
-        }
-        AgentEvent::TextDelta(delta) => {
-            payload.event = "text_delta";
-            payload.delta = Some(delta.clone());
-        }
-        AgentEvent::TextEnd { id } => {
-            payload.event = "text_end";
-            payload.message = Some(id.clone());
-        }
-        AgentEvent::ReasoningStart { id } => {
-            payload.event = "reasoning_start";
-            payload.message = Some(id.clone());
-        }
-        AgentEvent::ReasoningDelta(delta) => {
-            payload.event = "reasoning_delta";
-            payload.delta = Some(delta.clone());
-        }
-        AgentEvent::ReasoningEnd { id } => {
-            payload.event = "reasoning_end";
-            payload.message = Some(id.clone());
-        }
-        AgentEvent::ToolCallStart { id, name } => {
-            payload.event = "tool_call_start";
-            payload.tool_call_id = Some(id.clone());
-            payload.tool_name = Some(name.clone());
-        }
-        AgentEvent::ToolCallDelta { id, partial_input } => {
-            payload.event = "tool_call_delta";
-            payload.tool_call_id = Some(id.clone());
-            payload.partial_input = Some(partial_input.clone());
-        }
-        AgentEvent::ToolCallEnd { id } => {
-            payload.event = "tool_call_end";
-            payload.tool_call_id = Some(id.clone());
-        }
+) -> TurnLiveEvent {
+    let kind = match event {
+        AgentEvent::Step(step) => TurnLiveEventKind::Step { step: *step },
+        AgentEvent::LlmStepStart { index } => TurnLiveEventKind::LlmStepStart { step: *index },
+        AgentEvent::LlmStepFinish { index, reason, .. } => TurnLiveEventKind::LlmStepFinish {
+            step: *index,
+            reason: reason.clone(),
+        },
+        AgentEvent::LlmFinish { reason, .. } => TurnLiveEventKind::LlmFinish {
+            reason: reason.clone(),
+        },
+        AgentEvent::TextStart { id } => TurnLiveEventKind::TextStart {
+            block_id: id.clone(),
+        },
+        AgentEvent::TextDelta(delta) => TurnLiveEventKind::TextDelta {
+            delta: delta.clone(),
+        },
+        AgentEvent::TextEnd { id } => TurnLiveEventKind::TextEnd {
+            block_id: id.clone(),
+        },
+        AgentEvent::ReasoningStart { id } => TurnLiveEventKind::ReasoningStart {
+            block_id: id.clone(),
+        },
+        AgentEvent::ReasoningDelta(delta) => TurnLiveEventKind::ReasoningDelta {
+            delta: delta.clone(),
+        },
+        AgentEvent::ReasoningEnd { id } => TurnLiveEventKind::ReasoningEnd {
+            block_id: id.clone(),
+        },
+        AgentEvent::ToolCallStart { id, name } => TurnLiveEventKind::ToolCallStart {
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+        },
+        AgentEvent::ToolCallDelta { id, partial_input } => TurnLiveEventKind::ToolCallDelta {
+            tool_call_id: id.clone(),
+            partial_input: partial_input.clone(),
+        },
+        AgentEvent::ToolCallEnd { id } => TurnLiveEventKind::ToolCallEnd {
+            tool_call_id: id.clone(),
+        },
         AgentEvent::ToolResult {
             id,
             name,
             output,
             is_error,
-        } => {
-            payload.event = "tool_result";
-            payload.tool_call_id = Some(id.clone());
-            payload.tool_name = Some(name.clone());
-            payload.tool_output = Some(extract_text(output));
-            payload.is_error = Some(*is_error);
-        }
-        AgentEvent::ApprovalRequested(request) => {
-            payload.event = "approval_request";
-            payload.approval_id = Some(request.approval_id.to_string());
-            payload.tool_name = Some(request.tool_name.clone());
-            payload.input = Some(request.input.clone());
-        }
-        AgentEvent::ApprovalResolved(resolved) => {
-            payload.event = "approval_resolved";
-            payload.approval_id = Some(resolved.approval_id.to_string());
-            payload.message = Some(match &resolved.resolution {
-                openwork_protocol::approval::ApprovalResolution::Allow => "allow".to_string(),
-                openwork_protocol::approval::ApprovalResolution::Deny { reason } => reason.clone(),
-            });
-        }
-        AgentEvent::Finished(text) => {
-            payload.event = "finished";
-            payload.delta = Some(text.clone());
-        }
-        AgentEvent::DoomLoopDetected { repeated } => {
-            payload.event = "doom_loop";
-            payload.message = Some(repeated.clone());
-        }
-    }
-    payload
+        } => TurnLiveEventKind::ToolResult {
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+            output: extract_text(output),
+            is_error: *is_error,
+        },
+        AgentEvent::ApprovalRequested(request) => TurnLiveEventKind::ApprovalRequest {
+            approval_id: request.approval_id.to_string(),
+            tool_name: request.tool_name.clone(),
+            input: request.input.clone(),
+        },
+        AgentEvent::ApprovalResolved(resolved) => TurnLiveEventKind::ApprovalResolved {
+            approval_id: resolved.approval_id.to_string(),
+        },
+        AgentEvent::Finished(text) => TurnLiveEventKind::Finished { text: text.clone() },
+        AgentEvent::DoomLoopDetected { repeated } => TurnLiveEventKind::DoomLoop {
+            tool_name: repeated.clone(),
+        },
+    };
+    TurnLiveEvent::new(request_id, session_id, kind)
 }
 
 fn extract_text(blocks: &[ContentBlock]) -> String {

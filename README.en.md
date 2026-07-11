@@ -92,9 +92,10 @@ OpenWork/
 
 `openwork-core` / `openwork-app`
 
-- `ModelRegistry`
 - Core owns the Turn loop and approval pause/resume state
-- App composes providers, the capability catalog, execution, Core, and Journal-backed sessions
+- `OpenWorkApplication` is the single composition root for providers, the capability catalog, execution, Core, and Journal-backed sessions
+- Desktop accesses application capabilities only through the provider/thread/turn application services
+- The user always selects `providerId + model` explicitly; there is no automatic model selection or cross-model fallback
 
 ## Desktop App
 

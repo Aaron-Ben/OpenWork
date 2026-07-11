@@ -58,7 +58,9 @@ crates/openwork-persistence/src/session/
 
 ```text
 Desktop session command
-  -> openwork-persistence::SessionStore
+  -> OpenWorkApplication::threads
+  -> ThreadApplicationService
+  -> 内部 openwork-persistence::SessionStore
   -> EventJournal.append(Thread event, ExpectedVersion)
   -> 读取时按 global_position 重放 Thread events
 ```
@@ -66,7 +68,9 @@ Desktop session command
 一次聊天：
 
 ```text
-ChatRuntime
+OpenWorkApplication::turns
+  -> TurnApplicationService
+  -> 内部 ChatRuntime
   -> 从 recorded_events 回放历史 Message
   -> 在调用模型前持久化 turn_started + user_message_recorded
   -> Agent::run

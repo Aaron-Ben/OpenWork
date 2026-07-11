@@ -56,42 +56,38 @@ export interface TestResult {
   message: string
 }
 
-export type ChatStreamEventName =
-  | 'llm_step_start'
-  | 'llm_step_finish'
-  | 'llm_finish'
-  | 'text_start'
-  | 'text_delta'
-  | 'text_end'
-  | 'reasoning_start'
-  | 'reasoning_delta'
-  | 'reasoning_end'
-  | 'step'
-  | 'tool_call_start'
-  | 'tool_call_delta'
-  | 'tool_call_end'
-  | 'tool_result'
-  | 'approval_request'
-  | 'approval_resolved'
-  | 'finished'
-  | 'done'
-  | 'cancelled'
-  | 'doom_loop'
-  | 'error'
-
-/// 前端 `chat-stream-event` 监听的单帧 payload。`sessionId` 用于多会话隔离分派。
-export interface ChatStreamEventPayload {
+interface TurnLiveEventBase {
   requestId: string
   sessionId: string
-  event: ChatStreamEventName
-  delta?: string | null
-  message?: string | null
-  step?: number | null
-  toolCallId?: string | null
-  toolName?: string | null
-  partialInput?: string | null
-  toolOutput?: string | null
-  isError?: boolean | null
-  approvalId?: string | null
-  input?: unknown | null
 }
+
+type LiveEvent<E extends string, P extends object = Record<never, never>> = TurnLiveEventBase &
+  { event: E } & P
+
+/// 镜像 `openwork_app::TurnLiveEventKind` 的 tagged union。
+/// 每个事件只能携带该变体需要的字段，新增事件会迫使 reducer 穷尽处理。
+export type TurnLiveEvent =
+  | LiveEvent<'step', { step: number }>
+  | LiveEvent<'llm_step_start', { step: number }>
+  | LiveEvent<'llm_step_finish', { step: number; reason: string }>
+  | LiveEvent<'llm_finish', { reason: string }>
+  | LiveEvent<'text_start', { blockId: string }>
+  | LiveEvent<'text_delta', { delta: string }>
+  | LiveEvent<'text_end', { blockId: string }>
+  | LiveEvent<'reasoning_start', { blockId: string }>
+  | LiveEvent<'reasoning_delta', { delta: string }>
+  | LiveEvent<'reasoning_end', { blockId: string }>
+  | LiveEvent<'tool_call_start', { toolCallId: string; toolName: string }>
+  | LiveEvent<'tool_call_delta', { toolCallId: string; partialInput: string }>
+  | LiveEvent<'tool_call_end', { toolCallId: string }>
+  | LiveEvent<
+      'tool_result',
+      { toolCallId: string; toolName: string; output: string; isError: boolean }
+    >
+  | LiveEvent<'approval_request', { approvalId: string; toolName: string; input: unknown }>
+  | LiveEvent<'approval_resolved', { approvalId: string }>
+  | LiveEvent<'finished', { text: string }>
+  | LiveEvent<'done'>
+  | LiveEvent<'cancelled'>
+  | LiveEvent<'doom_loop', { toolName: string }>
+  | LiveEvent<'error', { message: string }>

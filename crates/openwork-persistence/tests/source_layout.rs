@@ -50,10 +50,16 @@ fn persistence_source_tree_matches_model_provider_design() {
     }
 
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let application =
+        std::fs::read_to_string(workspace.join("crates/openwork-app/src/application.rs"))
+            .expect("application composition root must be readable");
+    assert!(application.contains("persistence.session_store()"));
+    assert!(application.contains("PostgresPersistence::connect"));
+
     let desktop = std::fs::read_to_string(workspace.join("apps/desktop/src-tauri/src/lib.rs"))
-        .expect("desktop composition root must be readable");
-    assert!(desktop.contains("persistence.session_store()"));
-    assert_eq!(desktop.matches("connect_from_env_or_local()").count(), 1);
+        .expect("desktop host must be readable");
+    assert!(!desktop.contains("PostgresPersistence"));
+    assert!(!desktop.contains("SessionStore"));
 
     let chat = std::fs::read_to_string(workspace.join("crates/openwork-app/src/chat.rs"))
         .expect("chat runtime must be readable");

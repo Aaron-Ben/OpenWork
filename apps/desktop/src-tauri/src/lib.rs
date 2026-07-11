@@ -1,13 +1,10 @@
 mod commands;
+mod error;
 
-use std::sync::Arc;
-
-use commands::provider::ProviderRepositoryState;
-use openwork_app::{ChatRuntime, RequestCancelRegistry};
-use openwork_persistence::PostgresPersistence;
-use openwork_protocol::provider::ProviderRepository;
-use openwork_providers::ProviderFactory;
+use openwork_app::{ApplicationConfig, OpenWorkApplication};
 use tauri::Manager;
+
+pub use error::{CommandError, CommandErrorCode};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,21 +13,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let persistence =
-                tauri::async_runtime::block_on(PostgresPersistence::connect_from_env_or_local())?;
-            let provider_repository: Arc<dyn ProviderRepository> =
-                Arc::new(persistence.provider_repository());
-            let session_store = persistence.session_store();
-            let provider_factory = ProviderFactory::default();
-            app.manage(ChatRuntime::new(
-                Arc::clone(&provider_repository),
-                session_store.clone(),
-                provider_factory.clone(),
-            ));
-            app.manage(ProviderRepositoryState(provider_repository));
-            app.manage(provider_factory);
-            app.manage(session_store);
-            app.manage(RequestCancelRegistry::default());
+            let application = tauri::async_runtime::block_on(OpenWorkApplication::bootstrap(
+                ApplicationConfig::from_env_or_local(),
+            ))?;
+            app.manage(application);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -64,28 +50,3 @@ fn load_development_env() {
 
 #[cfg(not(debug_assertions))]
 fn load_development_env() {}
-
-#[cfg(test)]
-mod tests {
-    use crate::commands::provider::BUILTIN_PRESETS;
-
-    #[test]
-    fn builtin_presets_exclude_local_models() {
-        let ids: Vec<&str> = BUILTIN_PRESETS.iter().map(|preset| preset.id).collect();
-        assert!(!ids.contains(&"ollama"));
-        assert!(!ids.contains(&"lmstudio"));
-        assert!(!ids.contains(&"official"));
-        assert!(!ids.contains(&"custom"));
-    }
-
-    #[test]
-    fn provider_ui_excludes_custom_creation_path() {
-        let ui_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
-        for path in ["components/ProviderFormModal.tsx", "type/providers.ts"] {
-            let source = std::fs::read_to_string(ui_src.join(path)).unwrap();
-            assert!(!source.contains("openai_compatible"), "{path}");
-            assert!(!source.contains("custom"), "{path}");
-            assert!(!source.contains("Custom"), "{path}");
-        }
-    }
-}

@@ -4,6 +4,7 @@ import { Check, Eye, EyeOff, Loader2, X, Zap } from "lucide-react";
 import { useProviderStore } from "../stores/providerStore";
 import { providersApi } from "../api/providers";
 import type { ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../type/providers";
+import { resolveErrorMessage as resolveMessage } from "../utils/commandError";
 
 const KIND_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "openai", label: "OpenAI · Responses API" },
@@ -326,12 +327,6 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {hint ? <span className="text-xs text-ink-faint">{hint}</span> : null}
     </label>
   );
-}
-
-function resolveMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  return "Unexpected error";
 }
 
 function modelsTextForTier(

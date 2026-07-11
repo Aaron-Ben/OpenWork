@@ -6,6 +6,7 @@ Last reviewed: 2026-07-11
 
 - [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)：唯一的目标架构与建设顺序，定义 `openwork-core`、Protocol、Capabilities、Execution、Workspace、Persistence 等模块边界。
 - [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)：S2 Persistence 专题设计，冻结 `recorded_events`、Expected Version、事件边界、显式迁移和三旧 crate 的退出顺序。
+- [../plans/desktop-tauri-application-boundary-refactor.md](../plans/desktop-tauri-application-boundary-refactor.md)：S7 Desktop 收口专题设计，定义 Tauri Host、Application API、Command/Query/Subscription 和启动/退出边界。
 
 ## 当前实现参考
 

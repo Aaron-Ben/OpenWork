@@ -1,5 +1,5 @@
 import type { ChatItem } from '../type/chat'
-import type { ChatStreamEventPayload } from '../type/providers'
+import type { TurnLiveEvent } from '../type/providers'
 import type { ContentBlock } from '../type/parts'
 
 /// 纯函数:把一帧流式事件累积到 messages 里对应 `requestId` 的 assistant item。
@@ -7,7 +7,7 @@ import type { ContentBlock } from '../type/parts'
 /// 返回新数组(不可变);若无变化则原样返回。
 export function applyEvent(
   messages: ChatItem[],
-  payload: ChatStreamEventPayload,
+  payload: TurnLiveEvent,
   requestId: string,
 ): ChatItem[] {
   // 确保 requestId 对应的 assistant item 存在。
@@ -18,42 +18,39 @@ export function applyEvent(
 
   switch (payload.event) {
     case 'text_delta': {
-      const delta = payload.delta ?? ''
+      const delta = payload.delta
       if (!delta) return messages
       return mapAssistant(base, requestId, (item) => appendToPart(item, 'text', delta))
     }
     case 'reasoning_delta': {
-      const delta = payload.delta ?? ''
+      const delta = payload.delta
       if (!delta) return messages
       return mapAssistant(base, requestId, (item) => appendToPart(item, 'thinking', delta))
     }
     case 'tool_call_start': {
       const id = payload.toolCallId
-      if (!id) return messages
       return mapAssistant(base, requestId, (item) => {
         if (item.parts.some((part) => part.type === 'tool_call' && part.id === id)) return item
         const parts: ContentBlock[] = [
           ...item.parts,
-          { type: 'tool_call', id, name: payload.toolName ?? '', input: '', state: 'pending' },
+          { type: 'tool_call', id, name: payload.toolName, input: '', state: 'pending' },
         ]
         return { ...item, parts }
       })
     }
     case 'tool_call_delta': {
       const id = payload.toolCallId
-      if (!id) return messages
       return mapAssistant(base, requestId, (item) => ({
         ...item,
         parts: item.parts.map((part) =>
           part.type === 'tool_call' && part.id === id
-            ? { ...part, input: part.input + (payload.partialInput ?? '') }
+            ? { ...part, input: part.input + payload.partialInput }
             : part,
         ),
       }))
     }
     case 'tool_call_end': {
       const id = payload.toolCallId
-      if (!id) return messages
       return mapAssistant(base, requestId, (item) => ({
         ...item,
         parts: item.parts.map((part) =>
@@ -63,12 +60,11 @@ export function applyEvent(
     }
     case 'tool_result': {
       const id = payload.toolCallId
-      if (!id) return messages
       const result: ContentBlock = {
         type: 'tool_result',
         id,
-        name: payload.toolName ?? '',
-        output: [{ type: 'text', text: payload.toolOutput ?? '' }],
+        name: payload.toolName,
+        output: [{ type: 'text', text: payload.output }],
         state: payload.isError ? 'error' : 'success',
       }
       return mapAssistant(base, requestId, (item) => ({
@@ -89,7 +85,7 @@ export function applyEvent(
         isStreaming: false,
         parts: [
           ...item.parts,
-          { type: 'text', text: `Request failed: ${payload.message ?? 'Unexpected error'}` },
+          { type: 'text', text: `Request failed: ${payload.message}` },
         ],
       }))
     }
@@ -101,7 +97,7 @@ export function applyEvent(
       }))
     }
     case 'doom_loop': {
-      const tool = payload.message ?? 'tool'
+      const tool = payload.toolName
       return mapAssistant(base, requestId, (item) => ({
         ...item,
         isStreaming: false,
@@ -111,7 +107,18 @@ export function applyEvent(
         ],
       }))
     }
-    default:
+    case 'step':
+    case 'llm_step_start':
+    case 'llm_step_finish':
+    case 'llm_finish':
+    case 'text_start':
+    case 'text_end':
+    case 'reasoning_start':
+    case 'reasoning_end':
+    case 'approval_request':
+    case 'approval_resolved':
+    case 'finished':
+    case 'done':
       return messages
   }
 }
