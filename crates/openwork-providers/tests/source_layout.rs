@@ -116,3 +116,40 @@ fn http_transport_lifecycle_is_owned_outside_adapters() {
         );
     }
 }
+
+#[test]
+fn provider_streaming_is_pull_based_without_sync_callback_bridge() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let sse = std::fs::read_to_string(src.join("transport/sse.rs")).unwrap();
+    let retry = std::fs::read_to_string(src.join("gateway/retry.rs")).unwrap();
+
+    assert!(sse.contains("pub(crate) fn sse_frames"));
+    assert!(retry.contains("stream::try_unfold"));
+    assert!(!src.join("gateway/client.rs").exists());
+    assert!(!src.join("gateway/transport_signal.rs").exists());
+
+    for entry in walk_rs_files(&src) {
+        let source = std::fs::read_to_string(&entry).unwrap();
+        assert!(!source.contains("std::sync::mpsc"));
+        assert!(!source.contains("sync_channel"));
+        assert!(!source.contains("EventCallback"));
+        assert!(!source.contains("model_stream_from_callback"));
+        assert!(!source.contains("ModelTransportSignal"));
+    }
+}
+
+fn walk_rs_files(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(path) = pending.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
