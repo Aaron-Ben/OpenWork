@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import {
   Check,
   FileText,
@@ -44,24 +46,25 @@ function safeStringify(value: unknown): string {
   }
 }
 
-function titleFor(toolName: string, primary: string): string {
+function titleFor(t: TFunction, toolName: string, primary: string): string {
   const fileName = primary ? primary.split('/').pop() || primary : ''
   switch (toolName) {
     case 'bash':
-      return '允许执行 Bash 命令'
+      return t('tool.allowBash')
     case 'write':
-      return fileName ? `允许写入 ${fileName}` : '允许写入文件'
+      return fileName ? t('tool.allowWrite', { name: fileName }) : t('tool.allowWriteFile')
     case 'read':
-      return fileName ? `允许读取 ${fileName}` : '允许读取文件'
+      return fileName ? t('tool.allowRead', { name: fileName }) : t('tool.allowReadFile')
     case 'list':
-      return fileName ? `允许列出 ${fileName}` : '允许列出目录'
+      return fileName ? t('tool.allowList', { name: fileName }) : t('tool.allowListDirectory')
     default:
-      return `允许工具 ${toolName}`
+      return t('tool.allowTool', { name: toolName })
   }
 }
 
 /// 内联审批卡片:只渲染当前活跃 session 的 pending;允许/拒绝后回传 resolve_approval。
 export function ApprovalDialog() {
+  const { t } = useTranslation()
   const pending = useApprovalStore((state) => state.pending)
   const remove = useApprovalStore((state) => state.remove)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
@@ -102,7 +105,7 @@ export function ApprovalDialog() {
   const Icon = meta.icon
 
   const details = extractDetails(current.toolName, current.input)
-  const title = titleFor(current.toolName, details.primary)
+  const title = titleFor(t, current.toolName, details.primary)
   const showPath = Boolean(details.primary) && current.toolName !== 'bash'
   const showTerminal = current.toolName === 'bash' && Boolean(details.primary)
   const showContent =
@@ -120,7 +123,7 @@ export function ApprovalDialog() {
             <span className="min-w-0 break-words text-sm font-semibold text-ink">{title}</span>
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clay-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-clay">
               <span className="size-1.5 animate-pulse rounded-full bg-clay" />
-              等待审批
+              {t('tool.waitingApproval')}
             </span>
           </div>
         </div>
@@ -152,7 +155,7 @@ export function ApprovalDialog() {
 
         {!showPath && !showTerminal && !showContent && (
           <pre className="overflow-auto rounded-lg bg-paper-hover px-3 py-2 font-mono text-xs text-ink-soft">
-            {details.primary || '(no input)'}
+            {details.primary || t('tool.noInput')}
           </pre>
         )}
       </div>
@@ -166,7 +169,7 @@ export function ApprovalDialog() {
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-ink px-3.5 py-1.5 text-sm font-medium text-paper transition hover:bg-ink-soft disabled:opacity-50"
         >
           <Check size={14} />
-          {resolving ? '处理中...' : '允许'}
+          {resolving ? t('tool.processing') : t('tool.allow')}
         </button>
         <div className="flex-1" />
         <button
@@ -176,7 +179,7 @@ export function ApprovalDialog() {
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-paper px-3.5 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
         >
           <X size={14} />
-          拒绝
+          {t('tool.reject')}
         </button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, X, Zap } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useProviderStore } from "../stores/providerStore";
 import { providersApi } from "../api/providers";
@@ -26,6 +27,7 @@ interface ProviderFormModalProps {
 }
 
 export function ProviderFormModal({ open, mode, initial, onClose }: ProviderFormModalProps) {
+  const { t } = useTranslation();
   const presets = useProviderStore((state) => state.presets);
   const create = useProviderStore((state) => state.create);
   const update = useProviderStore((state) => state.update);
@@ -91,9 +93,9 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     const trimmedName = name.trim();
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedApiKey = apiKey.trim();
-    if (!trimmedName) return "Name is required";
-    if (!trimmedBaseUrl) return "Base URL is required";
-    if (!trimmedApiKey) return "API key is required";
+    if (!trimmedName) return t("settings.models.form.nameRequired");
+    if (!trimmedBaseUrl) return t("settings.models.form.baseUrlRequired");
+    if (!trimmedApiKey) return t("settings.models.form.apiKeyRequired");
 
     const models = [
       ...parseModels(liteModelsText, "lite"),
@@ -106,7 +108,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       modelIds.add(model.modelId);
       return false;
     });
-    if (duplicate) return `Model ${duplicate.modelId} is assigned to more than one tier`;
+    if (duplicate) return t("settings.models.form.duplicateModel", { model: duplicate.modelId });
 
     let extraBody: Record<string, unknown> | undefined;
     const trimmedExtra = extraBodyText.trim();
@@ -114,11 +116,11 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       try {
         const parsed = JSON.parse(trimmedExtra) as unknown;
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-          return "Extra body must be a JSON object";
+          return t("settings.models.form.extraBodyObject");
         }
         extraBody = parsed as Record<string, unknown>;
       } catch {
-        return "Extra body is not valid JSON";
+        return t("settings.models.form.extraBodyInvalid");
       }
     }
 
@@ -163,7 +165,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     }
     const firstModel = inputOrError.models.find((model) => model.enabled);
     if (!firstModel) {
-      setError("Add at least one model to test");
+      setError(t("settings.models.form.modelRequiredForTest"));
       return;
     }
     setError(null);
@@ -184,13 +186,13 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-line bg-paper shadow-xl">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 className="m-0 text-base font-semibold text-ink">
-            {mode === "edit" ? "Edit provider" : "Add provider"}
+            {mode === "edit" ? t("settings.models.form.editTitle") : t("settings.models.form.addTitle")}
           </h2>
           <button
             className="grid size-8 place-items-center rounded-lg text-ink-faint hover:bg-paper-hover"
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("settings.models.form.close")}
           >
             <X size={16} />
           </button>
@@ -199,7 +201,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
         <div className="grid gap-4 px-5 py-4">
           {mode === "create" ? (
             <div className="grid gap-1.5">
-              <span className="text-sm font-medium text-ink-soft">Preset</span>
+              <span className="text-sm font-medium text-ink-soft">{t("settings.models.form.preset")}</span>
               <div className="flex flex-wrap gap-2">
                 {presets.map((preset) => (
                   <button
@@ -219,15 +221,15 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
             </div>
           ) : null}
 
-          <Field label="Name">
+          <Field label={t("settings.models.form.name")}>
             <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="My DeepSeek" />
           </Field>
 
-          <Field label="Base URL">
+          <Field label={t("settings.models.form.baseUrl")}>
             <input className={inputClass} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com" />
           </Field>
 
-          <Field label="API key">
+          <Field label={t("settings.models.form.apiKey")}>
             <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
               <input
                 className={inputClass}
@@ -242,14 +244,14 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
                 type="button"
                 className="grid size-10 place-items-center rounded-lg border border-line-strong bg-paper text-ink-soft hover:bg-paper-hover"
                 onClick={() => setShowApiKey((value) => !value)}
-                aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                aria-label={showApiKey ? t("settings.models.form.hideApiKey") : t("settings.models.form.showApiKey")}
               >
                 {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
           </Field>
 
-          <Field label="Protocol">
+          <Field label={t("settings.models.form.protocol")}>
             <select className={inputClass} value={kind} onChange={(e) => setKind(e.target.value as ProviderKind)}>
               {KIND_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -259,19 +261,19 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
             </select>
           </Field>
 
-          <Field label="Lite models" hint="Fast or low-cost models, comma-separated">
+          <Field label={t("settings.models.form.liteModels")} hint={t("settings.models.form.liteHint")}>
             <input className={inputClass} value={liteModelsText} onChange={(e) => setLiteModelsText(e.target.value)} placeholder="deepseek-chat" />
           </Field>
 
-          <Field label="Plus models" hint="Balanced models, comma-separated">
+          <Field label={t("settings.models.form.plusModels")} hint={t("settings.models.form.plusHint")}>
             <input className={inputClass} value={plusModelsText} onChange={(e) => setPlusModelsText(e.target.value)} placeholder="qwen-plus" />
           </Field>
 
-          <Field label="Pro models" hint="High-capability models, comma-separated">
+          <Field label={t("settings.models.form.proModels")} hint={t("settings.models.form.proHint")}>
             <input className={inputClass} value={proModelsText} onChange={(e) => setProModelsText(e.target.value)} placeholder="deepseek-reasoner" />
           </Field>
 
-          <Field label="Extra body" hint="Optional JSON object merged into the request body">
+          <Field label={t("settings.models.form.extraBody")} hint={t("settings.models.form.extraBodyHint")}>
             <textarea
               className={`${inputClass} min-h-20 resize-y font-mono text-xs`}
               value={extraBodyText}
@@ -282,7 +284,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
 
           {testResult ? (
             <div className={`rounded-lg border px-3 py-2 text-xs ${testResult.success ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-              {testResult.success ? "Connectivity OK" : `Failed: ${testResult.message}`}
+              {testResult.success ? t("settings.models.form.connectivityOk") : t("settings.models.form.failed", { message: testResult.message })}
             </div>
           ) : null}
 
@@ -297,11 +299,11 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
             className="flex items-center gap-2 rounded-lg border border-line-strong bg-paper px-3 py-2 text-sm text-ink-soft hover:bg-paper-hover disabled:opacity-60"
           >
             {isTesting ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            Test
+            {t("settings.models.form.test")}
           </button>
           <div className="flex items-center gap-2">
             <button type="button" onClick={onClose} className="rounded-lg border border-line-strong bg-paper px-4 py-2 text-sm text-ink-soft hover:bg-paper-hover">
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -310,7 +312,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
               className="flex items-center gap-2 rounded-lg bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay/90 disabled:opacity-60"
             >
               {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              Save
+              {t("settings.models.form.save")}
             </button>
           </div>
         </div>

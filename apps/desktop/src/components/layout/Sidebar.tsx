@@ -1,22 +1,23 @@
 import { useState } from 'react'
 import {
+  ArrowLeft,
+  Bot,
   Check,
-  ChevronLeft,
-  ChevronRight,
   MessageSquare,
-  Monitor,
-  Moon,
+  PanelLeftClose,
+  Palette,
   Pencil,
   Plus,
   Settings as SettingsIcon,
-  Sun,
   Trash2,
   X,
 } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { useActiveProvider } from '../../stores/providerStore'
 import { useSessionStore } from '../../stores/sessionStore'
-import { useThemeStore, type Theme } from '../../stores/themeStore'
 import type { SessionSummary } from '../../type/session'
 import type { AppView } from './types'
 
@@ -28,33 +29,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: SidebarProps) {
-  return (
-    <aside
-      className={`grid h-screen overflow-hidden border-r border-line bg-paper-hover transition-[grid-template-columns] duration-200 ${
-        expanded ? 'grid-cols-[90px_230px]' : 'grid-cols-[90px]'
-      } max-[760px]:min-h-[90px] max-[760px]:grid-cols-[90px_1fr_auto] max-[760px]:border-r-0 max-[760px]:border-b`}
-    >
-      <div className="grid min-h-0 grid-rows-[1fr_auto] border-r border-line">
-        <nav className="flex flex-col items-center gap-8 pt-5 max-[760px]:flex-row max-[760px]:justify-center max-[760px]:pt-0">
-          <RailButton active={expanded} label={expanded ? 'Collapse sidebar' : 'Expand sidebar'} onClick={onToggleExpanded}>
-            {expanded ? <ChevronLeft size={24} /> : <ChevronRight size={24} />}
-          </RailButton>
-        </nav>
-
-        <div className="flex flex-col items-center gap-2 border-t border-line py-4 max-[760px]:flex-row max-[760px]:border-t-0 max-[760px]:border-l max-[760px]:px-4 max-[760px]:py-0">
-          <ThemeToggle />
-          <RailButton active={view === 'settings'} label="Settings" onClick={() => onNavigate('settings')}>
-            <SettingsIcon size={25} />
-          </RailButton>
-        </div>
-      </div>
-
-      {expanded ? <SidebarPanel /> : null}
-    </aside>
-  )
-}
-
-function SidebarPanel() {
+  const { t } = useTranslation()
   const sessions = useSessionStore((state) => state.sessions)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const select = useSessionStore((state) => state.select)
@@ -62,48 +37,164 @@ function SidebarPanel() {
   const rename = useSessionStore((state) => state.rename)
   const remove = useSessionStore((state) => state.remove)
   const active = useActiveProvider()
+  const reduceMotion = useReducedMotion()
 
   async function handleCreate() {
     if (!active) return
-    await create({
-      providerId: active.id,
-      model: active.models.find((item) => item.enabled)?.modelId ?? '',
-      title: 'New session',
-    })
+    const model = active.models.find((item) => item.enabled)?.modelId
+    if (!model) return
+    onNavigate('chat')
+    await create({ providerId: active.id, model, title: t('sidebar.untitledSession') })
+  }
+
+  if (!expanded) {
+    return (
+      <motion.aside
+        data-motion-sidebar="true"
+        aria-hidden="true"
+        className="h-screen shrink-0 overflow-hidden"
+        initial={false}
+        animate={{ width: 0 }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
+      />
+    )
+  }
+
+  if (view !== 'chat') {
+    return (
+      <motion.aside
+        data-motion-sidebar="true"
+        data-settings-sidebar="true"
+        className="flex h-screen shrink-0 flex-col overflow-hidden border-r border-line bg-paper-hover"
+        initial={false}
+        animate={{ width: 280 }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
+      >
+        <div className="flex h-16 shrink-0 items-center gap-3 px-3">
+          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-ink font-sans text-sm font-bold text-paper">OW</div>
+          <div className="min-w-0 flex-1 font-sans text-lg font-semibold text-ink">{t('settings.title')}</div>
+          <Button type="button" variant="ghost" size="icon" className="size-9 rounded-xl" aria-label={t('sidebar.collapse')} aria-expanded="true" onClick={onToggleExpanded}>
+            <PanelLeftClose size={19} />
+          </Button>
+        </div>
+        <div className="px-3 pb-5 pt-1">
+          <Button type="button" variant="ghost" className="h-10 w-full justify-start rounded-xl px-3" onClick={() => onNavigate('chat')}>
+            <ArrowLeft size={18} />
+            {t('sidebar.backToApp')}
+          </Button>
+        </div>
+        <nav className="min-h-0 flex-1 px-3" aria-label={t('sidebar.settingsNavigation')}>
+          <div className="px-3 pb-2 font-sans text-xs font-medium text-ink-faint">{t('settings.title')}</div>
+          <SettingsNavItem active={view === 'settings-models'} icon={<Bot size={18} />} onClick={() => onNavigate('settings-models')}>
+            {t('settings.models.title')}
+          </SettingsNavItem>
+          <SettingsNavItem active={view === 'settings-appearance'} icon={<Palette size={18} />} onClick={() => onNavigate('settings-appearance')}>
+            {t('settings.appearance.title')}
+          </SettingsNavItem>
+        </nav>
+      </motion.aside>
+    )
   }
 
   return (
-    <div className="flex min-w-0 flex-col border-r border-line bg-paper max-[760px]:hidden">
-      <div className="px-3 py-3">
-        <button
-          type="button"
-          onClick={() => void handleCreate()}
-          disabled={!active}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-clay px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-clay/90 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-faint"
-        >
-          <Plus size={16} />
-          新建会话
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto px-3 pb-4">
-        <div className="mb-2 px-2 text-xs font-medium uppercase tracking-wide text-ink-faint">Sessions</div>
-        <div className="grid gap-1">
-          {sessions.map((session) => (
-            <SessionItem
-              key={session.id}
-              session={session}
-              active={activeSessionId === session.id}
-              onSelect={() => void select(session.id)}
-              onRename={(title) => void rename(session.id, title)}
-              onDelete={() => void remove(session.id)}
-            />
-          ))}
-          {sessions.length === 0 ? (
-            <div className="px-2 py-4 text-xs text-ink-faint">暂无会话</div>
-          ) : null}
+    <motion.aside
+      data-motion-sidebar="true"
+      className="flex h-screen shrink-0 flex-col overflow-hidden border-r border-line bg-paper-hover"
+      initial={false}
+      animate={{ width: 280 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
+    >
+      <div className="flex h-16 shrink-0 items-center gap-3 px-3">
+        <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-ink font-sans text-sm font-bold tracking-tight text-paper">
+          OW
         </div>
+        <motion.div
+          className="min-w-0 flex-1 font-sans text-lg font-semibold tracking-tight text-ink"
+          initial={reduceMotion ? false : { opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.14 }}
+        >
+          {t('sidebar.brand')}
+        </motion.div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-9 shrink-0 rounded-xl"
+          aria-label={t('sidebar.collapse')}
+          aria-expanded="true"
+          title={t('sidebar.collapse')}
+          onClick={onToggleExpanded}
+        >
+          <PanelLeftClose size={19} />
+        </Button>
       </div>
-    </div>
+
+      <div className="px-3 pb-3 pt-1">
+        <Button
+          type="button"
+          variant="ghost"
+          className={`h-10 w-full rounded-xl text-ink ${expanded ? 'justify-start px-3' : 'px-0'}`}
+          aria-label={t('sidebar.newSession')}
+          title={t('sidebar.newSession')}
+          disabled={!active}
+          onClick={() => void handleCreate()}
+        >
+          <Plus size={19} className="shrink-0" />
+          {expanded ? <span>{t('sidebar.newSession')}</span> : null}
+        </Button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <AnimatePresence initial={false}>
+          {expanded ? (
+            <motion.div
+              className="flex h-full w-[280px] flex-col px-3"
+              initial={reduceMotion ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.14 }}
+            >
+              <div className="px-2 pb-2 pt-1 font-sans text-xs font-medium text-ink-faint">{t('sidebar.sessions')}</div>
+              <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+                <div className="grid gap-1">
+                  {sessions.map((session) => (
+                    <SessionItem
+                      key={session.id}
+                      session={session}
+                      active={activeSessionId === session.id && view === 'chat'}
+                      onSelect={() => {
+                        onNavigate('chat')
+                        void select(session.id)
+                      }}
+                      onRename={(title) => void rename(session.id, title)}
+                      onDelete={() => void remove(session.id)}
+                    />
+                  ))}
+                  {sessions.length === 0 ? (
+                    <div className="px-2 py-4 font-sans text-xs text-ink-faint">{t('sidebar.emptySessions')}</div>
+                  ) : null}
+                </div>
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+
+      <div data-sidebar-footer="true" className="shrink-0 border-t border-line p-3">
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-10 w-full justify-start rounded-xl px-3"
+          aria-label={t('sidebar.settings')}
+          title={t('sidebar.settings')}
+          onClick={() => onNavigate('settings-models')}
+        >
+          <SettingsIcon size={19} className="shrink-0" />
+          {expanded ? <span>{t('sidebar.settings')}</span> : null}
+        </Button>
+      </div>
+    </motion.aside>
   )
 }
 
@@ -117,38 +208,32 @@ interface SessionItemProps {
   onDelete: () => void
 }
 
-/// 单个会话项:正常态(悬停显示重命名/删除)、编辑态(就地输入框)、删除二次确认态。
 function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionItemProps) {
+  const { t } = useTranslation()
   const [mode, setMode] = useState<ItemMode>('view')
   const [draft, setDraft] = useState(session.title)
 
-  function startEdit() {
-    setDraft(session.title)
-    setMode('edit')
-  }
-
   function commitRename() {
     const title = draft.trim()
-    if (title && title !== session.title) {
-      onRename(title)
-    } else {
-      setDraft(session.title)
-    }
+    if (title && title !== session.title) onRename(title)
+    else setDraft(session.title)
     setMode('view')
   }
 
   if (mode === 'edit') {
     return (
       <form
+        className="flex items-center gap-1 rounded-lg bg-paper px-2 py-1.5"
         onSubmit={(event) => {
           event.preventDefault()
           commitRename()
         }}
-        className="flex items-center gap-1 rounded-lg bg-paper-hover px-2 py-1.5"
       >
         <input
           autoFocus
           value={draft}
+          aria-label={t('sidebar.sessionName')}
+          className="min-w-0 flex-1 rounded-md border border-line bg-paper px-2 py-1 text-sm outline-none focus:border-clay"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commitRename}
           onKeyDown={(event) => {
@@ -157,15 +242,10 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
               setMode('view')
             }
           }}
-          className="min-w-0 flex-1 rounded border border-line bg-paper px-2 py-1 text-sm text-ink outline-none focus:border-clay"
         />
-        <button
-          type="submit"
-          className="grid size-6 shrink-0 place-items-center rounded text-emerald-600 hover:bg-paper"
-          title="确认"
-        >
+        <Button type="submit" variant="ghost" size="icon" className="size-6 text-emerald-600" aria-label={t('common.confirm')}>
           <Check size={13} />
-        </button>
+        </Button>
       </form>
     )
   }
@@ -173,26 +253,23 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
   if (mode === 'confirm-delete') {
     return (
       <div className="flex items-center gap-1 rounded-lg bg-rose-50 px-2 py-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-rose-700">删除该会话?</span>
-        <button
+        <span className="min-w-0 flex-1 truncate font-sans text-xs text-rose-700">{t('sidebar.deleteSessionPrompt')}</span>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
+          className="size-6 text-rose-600"
+          aria-label={t('common.confirm')}
           onClick={() => {
             onDelete()
             setMode('view')
           }}
-          className="grid size-6 shrink-0 place-items-center rounded text-rose-600 hover:bg-paper"
-          title="确认删除"
         >
           <Check size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode('view')}
-          className="grid size-6 shrink-0 place-items-center rounded text-ink-faint hover:bg-paper hover:text-ink"
-          title="取消"
-        >
+        </Button>
+        <Button type="button" variant="ghost" size="icon" className="size-6" aria-label={t('common.cancel')} onClick={() => setMode('view')}>
           <X size={13} />
-        </button>
+        </Button>
       </div>
     )
   }
@@ -202,68 +279,45 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
       <button
         type="button"
         onClick={onSelect}
-        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${
-          active
-            ? 'bg-paper-hover font-medium text-ink shadow-sm'
-            : 'text-ink-soft hover:bg-paper-hover hover:text-ink'
+        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-sans text-sm transition ${
+          active ? 'bg-paper font-medium text-ink shadow-sm' : 'text-ink-soft hover:bg-paper hover:text-ink'
         }`}
       >
-        <MessageSquare
-          size={16}
-          className={`shrink-0 ${active ? 'text-clay' : 'text-ink-faint'}`}
-        />
+        <MessageSquare size={16} className={`shrink-0 ${active ? 'text-clay' : 'text-ink-faint'}`} />
         <span className="min-w-0 flex-1 truncate pr-12">{session.title}</span>
       </button>
-      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-        <button
+      <div className="absolute right-1 top-1/2 flex -translate-y-1/2 gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+        <Button
           type="button"
-          onClick={startEdit}
-          className="grid size-6 place-items-center rounded text-ink-faint hover:bg-paper hover:text-ink"
-          title="重命名"
+          variant="ghost"
+          size="icon"
+          className="size-6"
+          aria-label={t('sidebar.renameSession')}
+          onClick={() => {
+            setDraft(session.title)
+            setMode('edit')
+          }}
         >
           <Pencil size={12} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode('confirm-delete')}
-          className="grid size-6 place-items-center rounded text-ink-faint hover:bg-paper hover:text-rose-500"
-          title="删除"
-        >
+        </Button>
+        <Button type="button" variant="ghost" size="icon" className="size-6 hover:text-rose-500" aria-label={t('sidebar.deleteSession')} onClick={() => setMode('confirm-delete')}>
           <Trash2 size={12} />
-        </button>
+        </Button>
       </div>
     </div>
   )
 }
 
-/// 亮/暗/跟随系统三态循环切换;图标随当前偏好变化。
-function ThemeToggle() {
-  const theme = useThemeStore((state) => state.theme)
-  const cycleTheme = useThemeStore((state) => state.cycleTheme)
-  const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
-  const label: Record<Theme, string> = { light: '亮色', dark: '暗色', system: '跟随系统' }
-
+function SettingsNavItem({ active, icon, children, onClick }: { active: boolean; icon: React.ReactNode; children: React.ReactNode; onClick: () => void }) {
   return (
-    <RailButton active={false} label={`主题：${label[theme]}（点击切换）`} onClick={cycleTheme}>
-      <Icon size={24} />
-    </RailButton>
-  )
-}
-
-function RailButton({ active, label, children, onClick }: { active: boolean; label: string; children: React.ReactNode; onClick?: () => void }) {
-  return (
-    <button
-      className={`grid size-11 place-items-center rounded-xl text-ink-soft transition ${
-        active
-          ? 'bg-paper text-clay shadow-[0_0_22px_rgba(217,119,87,0.28)]'
-          : 'hover:bg-paper hover:text-ink'
-      }`}
+    <Button
       type="button"
+      variant="ghost"
+      className={`mb-1 h-10 w-full justify-start rounded-xl px-3 ${active ? 'bg-paper text-ink shadow-sm' : ''}`}
       onClick={onClick}
-      aria-label={label}
-      title={label}
     >
+      {icon}
       {children}
-    </button>
+    </Button>
   )
 }

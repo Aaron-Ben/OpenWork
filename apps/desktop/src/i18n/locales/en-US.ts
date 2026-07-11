@@ -1,0 +1,56 @@
+export const enUS = {
+  common: { confirm: 'Confirm', cancel: 'Cancel', delete: 'Delete', edit: 'Edit', add: 'Add', back: 'Back' },
+  errorBoundary: {
+    title: 'UI rendering error',
+    description: 'The application encountered a runtime error. Please share the details below with the developers or restart the app.',
+    retry: 'Retry',
+  },
+  sidebar: {
+    brand: 'OpenWork', sessions: 'Conversations', emptySessions: 'No conversations yet', newSession: 'New conversation',
+    untitledSession: 'New conversation', settings: 'Settings', backToApp: 'Back to OpenWork', settingsNavigation: 'Settings navigation',
+    collapse: 'Collapse sidebar', expand: 'Expand sidebar', renameSession: 'Rename conversation', deleteSession: 'Delete conversation',
+    deleteSessionPrompt: 'Delete this conversation?', sessionName: 'Conversation name',
+  },
+  header: { sessionActions: 'Conversation actions' },
+  chat: {
+    placeholder: 'Ask anything…', selectModel: 'Select model', noModel: 'No models', send: 'Send', stop: 'Stop generating',
+    approvalMode: 'Approval mode: Approve for me', approveForMe: 'Approve for me', executionPermission: 'Execution permissions',
+    approvalDescription: 'Pause before tool calls and wait for you to allow or deny them.', startConversation: 'Start a conversation',
+    createSession: 'New conversation', noSessionHelp: 'Select “New conversation” in the sidebar to start using OpenWork.',
+    readyHelp: 'Start a new coding conversation. OpenWork is ready to help you build, debug, and understand your project.',
+    providerRequired: 'Configure and enable a model provider in Settings before starting a coding conversation.', waiting: 'Waiting for response',
+  },
+  settings: {
+    title: 'Settings',
+    models: {
+      title: 'Model configuration', description: 'Add a model provider and activate a configuration to start a conversation.', providers: 'Model providers',
+      addProvider: 'Add provider', empty: 'No model providers yet. Select “Add provider” to configure one.', active: 'Active',
+      setActive: 'Set as active', test: 'Test connection', edit: 'Edit provider', delete: 'Delete provider', noModels: 'No models',
+      testFailed: 'Test failed: {{message}}', deleteConfirm: 'Delete provider “{{name}}”?',
+      form: {
+        addTitle: 'Add model provider', editTitle: 'Edit model provider', close: 'Close', preset: 'Preset', name: 'Name',
+        baseUrl: 'Base URL', apiKey: 'API key', protocol: 'Protocol', showApiKey: 'Show API key', hideApiKey: 'Hide API key',
+        liteModels: 'Lite models', liteHint: 'Fast or low-cost models, separated by commas', plusModels: 'Plus models',
+        plusHint: 'Balanced models, separated by commas', proModels: 'Pro models', proHint: 'High-capability models, separated by commas',
+        extraBody: 'Extra request body', extraBodyHint: 'Optional JSON object merged into the request body', test: 'Test', testing: 'Testing',
+        connectivityOk: 'Connection successful', save: 'Save', nameRequired: 'Name is required', baseUrlRequired: 'Base URL is required',
+        apiKeyRequired: 'API key is required', duplicateModel: 'Model {{model}} is assigned to more than one tier',
+        extraBodyObject: 'Extra request body must be a JSON object', extraBodyInvalid: 'Extra request body is not valid JSON',
+        modelRequiredForTest: 'Add at least one model before testing', failed: 'Failed: {{message}}',
+      },
+    },
+    appearance: {
+      title: 'Appearance', description: 'Choose how OpenWork looks on this device.', themeLabel: 'Theme', light: 'Light',
+      lightDescription: 'Always use the light appearance.', dark: 'Dark', darkDescription: 'Always use the dark appearance.', system: 'System',
+      systemDescription: 'Follow the operating system appearance.', language: 'Language', languageDescription: 'Choose the OpenWork interface language.',
+      simplifiedChinese: '简体中文', traditionalChinese: '繁體中文', english: 'English',
+    },
+  },
+  tool: {
+    thinking: 'Thinking', thought: 'Thought', running: 'Running', done: 'Done', result: 'Result', error: 'Error', input: 'Input', content: 'Content',
+    noInput: 'No input', waitingApproval: 'Waiting for approval', processing: 'Processing…', allow: 'Allow', reject: 'Deny',
+    allowBash: 'Allow Bash command', allowWrite: 'Allow writing {{name}}', allowWriteFile: 'Allow writing file',
+    allowRead: 'Allow reading {{name}}', allowReadFile: 'Allow reading file', allowList: 'Allow listing {{name}}',
+    allowListDirectory: 'Allow listing directory', allowTool: 'Allow tool {{name}}',
+  },
+} as const

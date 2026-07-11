@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 
 interface ThinkingBlockProps {
@@ -7,6 +8,7 @@ interface ThinkingBlockProps {
 }
 
 export function ThinkingBlock({ content, isActive = false }: ThinkingBlockProps) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const displayContent = useMemo(() => content.replace(/\r\n?/g, '\n').trimEnd(), [content])
@@ -30,7 +32,7 @@ export function ThinkingBlock({ content, isActive = false }: ThinkingBlockProps)
       >
         <span className="text-[10px]">{expanded ? '▾' : '▸'}</span>
         <span className="font-medium italic">
-          {isActive ? 'Thinking' : 'Thought'}
+          {isActive ? t('tool.thinking') : t('tool.thought')}
           {isActive ? <span className="ml-0.5 inline-block animate-pulse">...</span> : null}
         </span>
       </button>

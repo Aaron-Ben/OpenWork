@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Sparkles, SquareTerminal } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { sessionsApi } from '../api/sessions'
 import { ApprovalDialog } from '../components/chat/ApprovalDialog'
@@ -25,7 +26,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const activeStream = useSessionStore((state) => state.activeStream)
   // 是否正在发送 = 当前 session 有 in-flight 流式请求。
   const isSending = activeStream?.sessionId === sessionId
-  const modelOptions = active?.models.filter((item) => item.enabled).map((item) => item.modelId) ?? []
+  const modelOptions = active?.models.filter((item) => item.enabled) ?? []
 
   useEffect(() => {
     setModel(active?.models.find((item) => item.enabled)?.modelId ?? '')
@@ -90,7 +91,6 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
       </div>
 
       <ChatInput
-        activeProviderName={active?.name ?? 'No provider'}
         model={model}
         modelOptions={modelOptions}
         value={draft}
@@ -106,12 +106,13 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
 }
 
 function EmptySessionHero({ active, hasSession }: { active: boolean; hasSession: boolean }) {
-  const title = hasSession ? '开始对话' : '新建会话'
+  const { t } = useTranslation()
+  const title = hasSession ? t('chat.startConversation') : t('chat.createSession')
   const body = !hasSession
-    ? '点击侧栏的「新建会话」按钮,开始使用 OpenWork。'
+    ? t('chat.noSessionHelp')
     : active
-      ? '开始一个新的编码会话。OpenWork 已准备好帮你构建、调试和梳理项目。'
-      : '先在 Settings 中配置并启用一个云端 Provider,然后开始新的编码会话。'
+      ? t('chat.readyHelp')
+      : t('chat.providerRequired')
 
   return (
     <div className="grid min-h-full place-items-center px-6 py-14 text-center">

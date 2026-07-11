@@ -1,5 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
+import i18n from '../i18n'
+
 interface Props {
   children: ReactNode
 }
@@ -26,9 +28,9 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="grid min-h-screen place-items-center bg-paper p-8">
           <div className="max-w-2xl rounded-xl border border-rose-200 bg-paper p-6 shadow-sm">
-            <h2 className="mb-2 text-lg font-semibold text-rose-600">界面渲染出错</h2>
+            <h2 className="mb-2 text-lg font-semibold text-rose-600">{i18n.t('errorBoundary.title')}</h2>
             <p className="mb-4 text-sm text-ink-soft">
-              应用遇到了一个运行时错误。请把下面的信息反馈给开发者,或重启应用。
+              {i18n.t('errorBoundary.description')}
             </p>
             <pre className="max-h-80 overflow-auto rounded-lg bg-ink p-3 text-[11px] leading-relaxed text-paper">
               {this.state.error.message}
@@ -40,7 +42,7 @@ export class ErrorBoundary extends Component<Props, State> {
               className="mt-4 rounded-lg bg-ink px-4 py-2 text-sm font-medium text-paper hover:bg-ink-soft"
               onClick={() => this.setState({ error: null })}
             >
-              重试
+              {i18n.t('errorBoundary.retry')}
             </button>
           </div>
         </div>

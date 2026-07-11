@@ -1,10 +1,21 @@
-import { useEffect, useRef, useState } from 'react'
-import { CheckCircle2, ChevronDown, Loader2, Send, ShieldCheck, Square } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { ArrowUp, CheckCircle2, ShieldCheck, Square } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { ProviderModel } from '../../type/providers'
 
 interface ChatInputProps {
-  activeProviderName: string
   model: string
-  modelOptions: string[]
+  modelOptions: ProviderModel[]
   value: string
   isSending: boolean
   disabled?: boolean
@@ -15,7 +26,6 @@ interface ChatInputProps {
 }
 
 export function ChatInput({
-  activeProviderName,
   model,
   modelOptions,
   value,
@@ -26,10 +36,10 @@ export function ChatInput({
   onSubmit,
   onCancel,
 }: ChatInputProps) {
+  const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const permissionRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
-  const [permissionOpen, setPermissionOpen] = useState(false)
+  const selectedModel = modelOptions.find((option) => option.modelId === model)
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -37,27 +47,6 @@ export function ChatInput({
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
   }, [value])
-
-  useEffect(() => {
-    if (!permissionOpen) return
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!permissionRef.current?.contains(event.target as Node)) {
-        setPermissionOpen(false)
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setPermissionOpen(false)
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [permissionOpen])
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return
@@ -69,8 +58,12 @@ export function ChatInput({
 
   return (
     <div className="mx-auto w-full max-w-[980px] px-4 pb-7">
-      <form
+      <motion.form
+        data-motion-component="chat-input"
         className="overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_18px_60px_rgba(31,30,29,0.10)]"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
         onSubmit={(event) => {
           event.preventDefault()
           onSubmit()
@@ -78,7 +71,7 @@ export function ChatInput({
       >
         <textarea
           ref={textareaRef}
-          className="max-h-48 min-h-[118px] w-full resize-none border-0 bg-transparent px-5 py-5 text-base leading-7 text-ink outline-none placeholder:text-ink-faint focus:ring-0"
+          className="max-h-48 min-h-[80px] w-full resize-none border-0 bg-transparent px-5 py-3 text-base leading-7 text-ink outline-none placeholder:text-ink-faint focus:ring-0"
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -88,108 +81,99 @@ export function ChatInput({
           onCompositionEnd={() => {
             composingRef.current = false
           }}
-          placeholder="随便问点什么..."
-          rows={4}
+          placeholder={t('chat.placeholder')}
+          rows={2}
           disabled={disabled}
         />
 
         <div className="mx-5 border-t border-line" />
 
-        <div className="flex flex-nowrap items-center gap-3 px-5 py-3 max-[720px]:flex-wrap">
-          <div ref={permissionRef} className="relative">
-            <button
-              type="button"
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-paper-hover px-3 text-sm font-medium text-ink-soft transition hover:bg-clay-soft hover:text-clay"
-              aria-haspopup="menu"
-              aria-expanded={permissionOpen}
-              aria-label="执行权限: 审批权限"
-              onClick={() => setPermissionOpen((open) => !open)}
-            >
-              <ShieldCheck size={15} className="text-clay" />
-              <span>审批权限</span>
-              <ChevronDown size={14} className="text-ink-faint" />
-            </button>
-
-            {permissionOpen ? (
-              <div
-                role="menu"
-                className="absolute bottom-full left-0 z-30 mb-2 w-[280px] overflow-hidden rounded-xl border border-line bg-paper py-2 shadow-[0_16px_44px_rgba(31,30,29,0.16)]"
+        <div className="flex min-h-12 items-center gap-2 px-4 py-1 sm:px-5">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="px-1.5"
+                aria-label={t('chat.approvalMode')}
+                disabled={disabled || isSending}
               >
-                <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-ink-faint">
-                  执行权限
-                </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="flex w-full items-start gap-3 bg-clay-soft px-4 py-3 text-left"
-                  onClick={() => setPermissionOpen(false)}
-                >
-                  <ShieldCheck size={18} className="mt-0.5 shrink-0 text-clay" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold text-ink">审批权限</span>
-                    <span className="mt-0.5 block text-xs leading-5 text-ink-faint">
-                      工具调用前暂停，等待你确认允许或拒绝。
-                    </span>
-                  </span>
-                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-clay" />
-                </button>
+                <ShieldCheck size={17} strokeWidth={1.8} />
+                <span className="max-[420px]:hidden">{t('chat.approveForMe')}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-[280px]">
+              <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-ink-faint">
+                {t('chat.executionPermission')}
               </div>
-            ) : null}
-          </div>
+              <DropdownMenuItem className="flex items-start gap-3 bg-clay-soft px-4 py-3">
+                <ShieldCheck size={18} className="mt-0.5 shrink-0 text-clay" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-ink">{t('chat.approveForMe')}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-ink-faint">
+                    {t('chat.approvalDescription')}
+                  </span>
+                </span>
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-clay" />
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <div className="min-w-0 flex-1" />
 
-          {isSending ? (
-            <span className="inline-flex h-10 items-center gap-1.5 rounded-full bg-sky-50 px-3 text-sm font-medium text-sky-700">
-              <Loader2 size={14} className="animate-spin" /> Streaming
-            </span>
-          ) : null}
-
-          <span className="inline-flex h-10 max-w-[180px] items-center gap-2 rounded-full border border-line bg-paper px-3 text-sm text-ink-soft">
-            <span className={`size-2 rounded-full ${disabled ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-            <span className="truncate">{activeProviderName}</span>
-          </span>
-
-          <select
-            className="h-10 max-w-[260px] rounded-full border border-line bg-paper-hover px-4 text-sm font-semibold text-ink outline-none hover:bg-clay-soft"
+          <Select
             value={model}
-            onChange={(event) => onModelChange(event.target.value)}
-            disabled={isSending}
+            onValueChange={onModelChange}
+            disabled={disabled || isSending || modelOptions.length === 0}
           >
-            {modelOptions.length === 0 ? (
-              <option value="">no model</option>
-            ) : (
-              modelOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))
-            )}
-          </select>
+            <SelectTrigger className="w-[clamp(110px,28vw,260px)]" aria-label={t('chat.selectModel')}>
+              <SelectValue placeholder={t('chat.noModel')}>
+                {selectedModel ? formatModelLabel(selectedModel) : undefined}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent side="top" align="end">
+              {modelOptions.map((option) => (
+                <SelectItem key={option.modelId} value={option.modelId}>
+                  {formatModelLabel(option)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          {isSending ? (
-            <button
-              className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl border border-red-200 bg-paper px-5 text-sm font-semibold text-red-600 transition hover:bg-red-50"
-              type="button"
-              aria-label="停止"
-              onClick={onCancel}
+          <AnimatePresence initial={false} mode="wait">
+            <motion.div
+              key={isSending ? 'stop' : 'send'}
+              className="shrink-0"
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.85 }}
+              transition={{ duration: 0.14 }}
             >
-              <Square size={16} className="fill-current" />
-              停止
-            </button>
-          ) : (
-            <button
-              className="inline-flex h-11 min-w-[144px] items-center justify-center gap-2 rounded-2xl bg-clay px-5 text-sm font-semibold text-white transition hover:bg-clay/90 disabled:cursor-not-allowed disabled:bg-paper-hover disabled:text-ink-faint"
-              type="submit"
-              aria-label="Send"
-              disabled={disabled || !model || !value.trim()}
-            >
-              <Send size={18} />
-              运行
-            </button>
-          )}
+              {isSending ? (
+                <Button size="icon" type="button" aria-label={t('chat.stop')} onClick={onCancel}>
+                  <Square size={12} className="fill-current" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  type="submit"
+                  aria-label={t('chat.send')}
+                  disabled={disabled || !model || !value.trim()}
+                >
+                  <ArrowUp size={18} strokeWidth={2.1} />
+                </Button>
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
-      </form>
+      </motion.form>
     </div>
   )
+}
+
+function formatModelLabel(model: ProviderModel): string {
+  const name = model.displayName?.trim() || model.modelId
+  const tier = model.modelTier.charAt(0).toUpperCase() + model.modelTier.slice(1)
+  return `${name} · ${tier}`
 }

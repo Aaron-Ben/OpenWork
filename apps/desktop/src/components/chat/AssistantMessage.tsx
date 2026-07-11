@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import type { ContentBlock } from '../../type/parts'
@@ -17,6 +18,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   isStreaming = false,
   model,
 }: AssistantMessageProps) {
+  const { t } = useTranslation()
   const hasContent = parts.some((part) => part.type === 'text' && part.text.trim().length > 0)
 
   if (parts.length === 0 && !isStreaming) return null
@@ -42,7 +44,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             renderPart(part, index, isStreaming, hasContent, documentLayout),
           )}
           {parts.length === 0 && isStreaming ? (
-            <span className="text-ink-faint">Waiting for response</span>
+            <span className="text-ink-faint">{t('chat.waiting')}</span>
           ) : null}
         </div>
       </div>

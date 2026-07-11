@@ -1,4 +1,5 @@
 import { memo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   CheckCircle2,
   ChevronRight,
@@ -40,6 +41,7 @@ function summarize(toolName: string, input: Record<string, unknown> | null): str
 }
 
 export const ToolCallBlock = memo(function ToolCallBlock({ toolCall }: ToolCallBlockProps) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const Icon = TOOL_ICONS[toolCall.name] ?? Terminal
   const parsed = parseInput(toolCall.input)
@@ -64,12 +66,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolCall }: ToolCallB
         {isPending ? (
           <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-ink-faint">
             <Loader2 size={11} className="animate-spin" />
-            running
+            {t('tool.running')}
           </span>
         ) : (
           <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-emerald-600">
             <CheckCircle2 size={11} />
-            done
+            {t('tool.done')}
           </span>
         )}
         {hasDetails ? (
@@ -91,6 +93,7 @@ function InputView({
   toolName: string
   input: Record<string, unknown>
 }) {
+  const { t } = useTranslation()
   if (toolName === 'bash' && typeof input.command === 'string') {
     return (
       <div className="border-t border-line px-3 py-2">
@@ -104,7 +107,7 @@ function InputView({
     toolName === 'write' && typeof input.content === 'string'
       ? input.content
       : JSON.stringify(input, null, 2)
-  const label = toolName === 'write' ? 'content' : 'input'
+  const label = toolName === 'write' ? t('tool.content') : t('tool.input')
   return (
     <div className="border-t border-line px-3 py-2">
       <div className="overflow-hidden rounded-md border border-line bg-paper">
