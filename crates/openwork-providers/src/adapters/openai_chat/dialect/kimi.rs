@@ -8,7 +8,7 @@ use openwork_protocol::provider::OpenAiChatDialect;
 use reqwest::StatusCode;
 use serde_json::{Map, Value};
 
-use crate::{HttpProviderConfig, OpenAiCompatibleChatProvider};
+use crate::{HttpProviderConfig, HttpTransport, OpenAiCompatibleChatProvider};
 
 const KIMI_BASE_URL: &str = "https://api.moonshot.cn/v1";
 
@@ -53,14 +53,15 @@ pub struct KimiProvider {
 }
 
 impl KimiProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::new(config).with_dialect(OpenAiChatDialect::Kimi),
+            inner: OpenAiCompatibleChatProvider::new(config, transport)
+                .with_dialect(OpenAiChatDialect::Kimi),
         }
     }
 
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new(KIMI_BASE_URL, api_key))
+    pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(HttpProviderConfig::new(KIMI_BASE_URL, api_key), transport)
     }
 
     pub fn with_extra_body(mut self, extra_body: Map<String, Value>) -> Self {
@@ -102,7 +103,7 @@ mod tests {
 
     #[test]
     fn builds_kimi_request_with_thinking_enabled() {
-        let provider = KimiProvider::from_api_key("test-key");
+        let provider = KimiProvider::from_api_key("test-key", HttpTransport::default());
         let req =
             ModelRequest::text("kimi-k2.6", "solve it").with_thinking(ThinkingConfig::enabled());
 
@@ -114,7 +115,7 @@ mod tests {
 
     #[test]
     fn builds_kimi_request_with_thinking_disabled() {
-        let provider = KimiProvider::from_api_key("test-key");
+        let provider = KimiProvider::from_api_key("test-key", HttpTransport::default());
         let req = ModelRequest::text("kimi-k2.6", "answer directly")
             .with_thinking(ThinkingConfig::disabled());
 
@@ -142,7 +143,7 @@ mod tests {
 
     #[test]
     fn uses_the_documented_v1_chat_endpoint() {
-        let provider = KimiProvider::from_api_key("test-key");
+        let provider = KimiProvider::from_api_key("test-key", HttpTransport::default());
 
         assert_eq!(
             provider.inner.config.endpoint("/chat/completions"),
@@ -152,7 +153,7 @@ mod tests {
 
     #[test]
     fn supports_tools_and_uses_max_completion_tokens() {
-        let provider = KimiProvider::from_api_key("test-key");
+        let provider = KimiProvider::from_api_key("test-key", HttpTransport::default());
         let mut req = ModelRequest::text("kimi-k2.7-code", "list files");
         req.max_output_tokens = Some(256);
         req.tools.push(ToolDefinition {

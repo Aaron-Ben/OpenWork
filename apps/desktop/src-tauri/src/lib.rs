@@ -5,6 +5,7 @@ use std::sync::Arc;
 use commands::provider::ProviderRepositoryState;
 use openwork_persistence::PostgresPersistence;
 use openwork_protocol::provider::ProviderRepository;
+use openwork_providers::ProviderFactory;
 use openwork_runtime::{ApprovalBridge, ChatRuntime, RequestCancelRegistry};
 use openwork_session::SessionStore;
 use tauri::Manager;
@@ -20,11 +21,14 @@ pub fn run() {
                 Arc::new(persistence.provider_repository());
             let session_store =
                 tauri::async_runtime::block_on(SessionStore::connect_from_env_or_local())?;
+            let provider_factory = ProviderFactory::default();
             app.manage(ChatRuntime::new(
                 Arc::clone(&provider_repository),
                 session_store.clone(),
+                provider_factory.clone(),
             ));
             app.manage(ProviderRepositoryState(provider_repository));
+            app.manage(provider_factory);
             app.manage(session_store);
             app.manage(ApprovalBridge::new());
             app.manage(RequestCancelRegistry::default());

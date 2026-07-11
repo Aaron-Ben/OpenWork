@@ -6,7 +6,7 @@ use openwork_protocol::model::{ModelErrorCode, RetryHint};
 use reqwest::StatusCode;
 use serde_json::{Map, Value};
 
-use crate::{HttpProviderConfig, OpenAiCompatibleChatProvider};
+use crate::{HttpProviderConfig, HttpTransport, OpenAiCompatibleChatProvider};
 use openwork_protocol::provider::OpenAiChatDialect;
 
 const GLM_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
@@ -51,14 +51,15 @@ pub struct GlmProvider {
 }
 
 impl GlmProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::new(config).with_dialect(OpenAiChatDialect::Glm),
+            inner: OpenAiCompatibleChatProvider::new(config, transport)
+                .with_dialect(OpenAiChatDialect::Glm),
         }
     }
 
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new(GLM_BASE_URL, api_key))
+    pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(HttpProviderConfig::new(GLM_BASE_URL, api_key), transport)
     }
 
     pub fn with_extra_body(mut self, extra_body: Map<String, Value>) -> Self {
@@ -86,7 +87,7 @@ mod tests {
 
     #[test]
     fn builds_default_glm_provider() {
-        let provider = GlmProvider::from_api_key("test-key");
+        let provider = GlmProvider::from_api_key("test-key", HttpTransport::default());
         let req = ModelRequest::text("glm-4.6", "hello");
 
         let body = provider
@@ -102,7 +103,8 @@ mod tests {
     fn accepts_glm_specific_extra_body() {
         let mut extra = Map::new();
         extra.insert("request_id".to_string(), json!("req-test"));
-        let provider = GlmProvider::from_api_key("test-key").with_extra_body(extra);
+        let provider =
+            GlmProvider::from_api_key("test-key", HttpTransport::default()).with_extra_body(extra);
         let req = ModelRequest::text("glm-4.6", "hello");
 
         let body = provider
@@ -115,7 +117,7 @@ mod tests {
 
     #[test]
     fn maps_thinking_and_enables_streamed_tools() {
-        let provider = GlmProvider::from_api_key("test-key");
+        let provider = GlmProvider::from_api_key("test-key", HttpTransport::default());
         let mut req =
             ModelRequest::text("glm-5.1", "use a tool").with_thinking(ThinkingConfig::enabled());
         req.tools.push(ToolDefinition {

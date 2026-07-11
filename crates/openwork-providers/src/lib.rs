@@ -13,6 +13,6 @@ pub use adapters::{
     AnthropicProvider, DeepSeekProvider, GlmProvider, KimiProvider, OpenAiCompatibleChatProvider,
     OpenAiProvider, QwenProvider, StandardOpenAiChatProvider,
 };
-pub use factory::{build_provider, test_provider};
+pub use factory::ProviderFactory;
 pub use gateway::{ModelTransportSignal, RetryDecision, RetryPolicy, RetryingModelPort};
-pub use transport::{HttpProviderConfig, SseFrame, SseFramer};
+pub use transport::{HttpProviderConfig, HttpTransport, SseFrame, SseFramer};

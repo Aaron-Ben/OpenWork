@@ -5,85 +5,118 @@ use openwork_protocol::{
 };
 
 use crate::{
-    AnthropicProvider, DeepSeekProvider, GlmProvider, KimiProvider, OpenAiCompatibleChatProvider,
-    OpenAiProvider, QwenProvider, RetryPolicy, RetryingModelPort, config::HttpProviderConfig,
+    AnthropicProvider, DeepSeekProvider, GlmProvider, HttpProviderConfig, HttpTransport,
+    KimiProvider, OpenAiCompatibleChatProvider, OpenAiProvider, QwenProvider, RetryPolicy,
+    RetryingModelPort,
 };
 
-/// 将持久化配置组装为厂商 Adapter，并统一套用 transport retry。
-pub fn build_provider(config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
-    Box::new(RetryingModelPort::new(
-        build_provider_adapter(config),
-        RetryPolicy::default(),
-    ))
+/// 在应用生命周期内持有共享 HTTP Transport，并为每份运行时配置组装 Adapter。
+#[derive(Debug, Clone)]
+pub struct ProviderFactory {
+    transport: HttpTransport,
+    retry_policy: RetryPolicy,
 }
 
-fn build_provider_adapter(config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
-    let http = HttpProviderConfig::new(&config.profile.base_url, config.credential.expose());
-    match config.profile.kind {
-        ProviderKind::Openai => Box::new(OpenAiProvider::new(http)),
-        ProviderKind::Glm => {
-            let mut provider = GlmProvider::new(http);
-            if let Some(extra_body) = config.adapter_options.as_ref() {
-                provider = provider.with_extra_body(extra_body.clone());
-            }
-            Box::new(provider)
+impl ProviderFactory {
+    pub fn new(transport: HttpTransport) -> Self {
+        Self {
+            transport,
+            retry_policy: RetryPolicy::default(),
         }
-        ProviderKind::Kimi => {
-            let mut provider = KimiProvider::new(http);
-            if let Some(extra_body) = config.adapter_options.as_ref() {
-                provider = provider.with_extra_body(extra_body.clone());
+    }
+
+    pub fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
+        self.retry_policy = retry_policy;
+        self
+    }
+
+    /// 将持久化配置组装为厂商 Adapter，并统一套用 transport retry。
+    pub fn build(&self, config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
+        Box::new(RetryingModelPort::new(
+            self.build_adapter(config),
+            self.retry_policy.clone(),
+        ))
+    }
+
+    fn build_adapter(&self, config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
+        let http = HttpProviderConfig::new(&config.profile.base_url, config.credential.expose());
+        let transport = self.transport.clone();
+        match config.profile.kind {
+            ProviderKind::Openai => Box::new(OpenAiProvider::new(http, transport)),
+            ProviderKind::Glm => {
+                let mut provider = GlmProvider::new(http, transport);
+                if let Some(extra_body) = config.adapter_options.as_ref() {
+                    provider = provider.with_extra_body(extra_body.clone());
+                }
+                Box::new(provider)
             }
-            Box::new(provider)
-        }
-        ProviderKind::Deepseek => {
-            let mut provider = DeepSeekProvider::new(http);
-            if let Some(extra_body) = config.adapter_options.as_ref() {
-                provider = provider.with_extra_body(extra_body.clone());
+            ProviderKind::Kimi => {
+                let mut provider = KimiProvider::new(http, transport);
+                if let Some(extra_body) = config.adapter_options.as_ref() {
+                    provider = provider.with_extra_body(extra_body.clone());
+                }
+                Box::new(provider)
             }
-            Box::new(provider)
-        }
-        ProviderKind::Qwen => {
-            let mut provider = QwenProvider::new(http);
-            if let Some(extra_body) = config.adapter_options.as_ref() {
-                provider = provider.with_extra_body(extra_body.clone());
+            ProviderKind::Deepseek => {
+                let mut provider = DeepSeekProvider::new(http, transport);
+                if let Some(extra_body) = config.adapter_options.as_ref() {
+                    provider = provider.with_extra_body(extra_body.clone());
+                }
+                Box::new(provider)
             }
-            Box::new(provider)
-        }
-        ProviderKind::Anthropic => Box::new(AnthropicProvider::new(http)),
-        ProviderKind::OpenaiCompatible => {
-            let mut provider = OpenAiCompatibleChatProvider::new(http);
-            if let Some(extra_body) = config.adapter_options.as_ref() {
-                provider = provider.with_extra_body(extra_body.clone());
+            ProviderKind::Qwen => {
+                let mut provider = QwenProvider::new(http, transport);
+                if let Some(extra_body) = config.adapter_options.as_ref() {
+                    provider = provider.with_extra_body(extra_body.clone());
+                }
+                Box::new(provider)
             }
-            Box::new(provider)
+            ProviderKind::Anthropic => Box::new(AnthropicProvider::new(http, transport)),
+            ProviderKind::OpenaiCompatible => {
+                let mut provider = OpenAiCompatibleChatProvider::new(http, transport);
+                if let Some(extra_body) = config.adapter_options.as_ref() {
+                    provider = provider.with_extra_body(extra_body.clone());
+                }
+                Box::new(provider)
+            }
         }
+    }
+
+    /// 发出最小生成请求验证配置。UI 如何呈现结果不属于 Provider Adapter。
+    pub async fn test(
+        &self,
+        config: &ProviderRuntimeConfig,
+        model: &str,
+    ) -> Result<(), ModelError> {
+        let provider = self.build(config);
+        let mut stream = provider
+            .invoke(
+                ModelRequest {
+                    model: model.to_string(),
+                    messages: vec![Message::text(Role::User, "ping")],
+                    temperature: None,
+                    max_output_tokens: Some(16),
+                    thinking: None,
+                    tools: Vec::new(),
+                },
+                ModelCallOptions::new("provider-test"),
+            )
+            .await?;
+        while let Some(item) = stream.next().await {
+            if matches!(item?, ModelEvent::ResponseCompleted { .. }) {
+                return Ok(());
+            }
+        }
+        Err(ModelError::protocol(
+            "provider test stream ended without ResponseCompleted",
+        ))
     }
 }
 
-/// 发出最小生成请求验证配置。UI 如何呈现结果不属于 Provider Adapter。
-pub async fn test_provider(config: &ProviderRuntimeConfig, model: &str) -> Result<(), ModelError> {
-    let provider = build_provider(config);
-    let mut stream = provider
-        .invoke(
-            ModelRequest {
-                model: model.to_string(),
-                messages: vec![Message::text(Role::User, "ping")],
-                temperature: None,
-                max_output_tokens: Some(16),
-                thinking: None,
-                tools: Vec::new(),
-            },
-            ModelCallOptions::new("provider-test"),
-        )
-        .await?;
-    while let Some(item) = stream.next().await {
-        if matches!(item?, ModelEvent::ResponseCompleted { .. }) {
-            return Ok(());
-        }
+impl Default for ProviderFactory {
+    fn default() -> Self {
+        Self::new(HttpTransport::default())
     }
-    Err(ModelError::protocol(
-        "provider test stream ended without ResponseCompleted",
-    ))
 }
 
 #[cfg(test)]
@@ -112,7 +145,10 @@ mod tests {
     }
 
     #[test]
-    fn builds_every_supported_adapter() {
+    fn builds_every_supported_adapter_from_one_transport() {
+        let transport = HttpTransport::default();
+        let factory = ProviderFactory::new(transport.clone());
+
         for kind in [
             ProviderKind::Openai,
             ProviderKind::Glm,
@@ -122,7 +158,9 @@ mod tests {
             ProviderKind::Anthropic,
             ProviderKind::OpenaiCompatible,
         ] {
-            let _provider = build_provider(&sample_config(kind));
+            let _provider = factory.build(&sample_config(kind));
         }
+
+        assert!(transport.shares_lifecycle_with(&factory.transport));
     }
 }

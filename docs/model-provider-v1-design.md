@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-11
 
-> Status: core contract and primary provider paths implemented; infrastructure consolidation and full model-specific coverage remain. 本文是模型厂商集成的专题设计，受 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 约束。当前代码已完成 streaming-first Port、结构化错误、SSE framing/背压/取消、Secret/Profile 查询隔离、OpenAI Responses/Anthropic Tool 流式主链、Anthropic opaque thinking 往返、主要 Dialect 精确错误码和 Retry-After 解析。共享 HTTP Transport、全库唯一 PostgreSQL composition root、有序 output block、模型级 Thinking 参数和 M7 Attempt Projection 仍未完成。
+> Status: core contract and primary provider paths implemented; infrastructure consolidation and full model-specific coverage remain. 本文是模型厂商集成的专题设计，受 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 约束。当前代码已完成 streaming-first Port、结构化错误、SSE framing/背压/取消、Secret/Profile 查询隔离、共享 HTTP Transport 生命周期、OpenAI Responses/Anthropic Tool 流式主链、Anthropic opaque thinking 往返、主要 Dialect 精确错误码和 Retry-After 解析。全库唯一 PostgreSQL composition root、有序 output block、模型级 Thinking 参数和 M7 Attempt Projection 仍未完成。
 
 ### 2026-07-11 implementation checkpoint
 
@@ -13,7 +13,8 @@ Last reviewed: 2026-07-11
 - SSE transport 只负责 framing；`[DONE]` 和厂商终态由对应 Adapter 解释，不再累积 raw event 数组。
 - `ProviderProfile` 与不可序列化的 `ProviderRuntimeConfig/ApiCredential` 已分离；普通列表/详情 SQL 不读取 `api_key`。
 - Provider Registry 已由 `PostgresPersistence` 持有 Pool/Migration，`PostgresProviderRepository::new(PgPool)` 不再自行连接或迁移；列表使用固定两次批量查询。但 Session Store 仍有独立数据库生命周期，全库唯一 composition root 尚未完成。
-- 三个 crate 已建立 `domain/model/provider`、`gateway/transport/adapters`、`postgres/migrations/provider_registry` 物理边界；三类 Adapter 的 request/response/stream codec 已从 `mod.rs` 拆出。共享 HTTP Client/Transport 仍需继续下沉，不能仅凭目录存在判定完成。
+- 三个 crate 已建立 `domain/model/provider`、`gateway/transport/adapters`、`postgres/migrations/provider_registry` 物理边界；三类 Adapter 的 request/response/stream codec 已从 `mod.rs` 拆出。
+- Desktop Composition Root 只创建一个 `ProviderFactory`；Factory 持有 `HttpTransport`，其 Clone 通过 `Arc<HttpTransportInner>` 共享同一个 `reqwest::Client` 和连接池。Chat Runtime 与 Provider Test 使用同一 Factory 生命周期，Adapter 构造函数不再自行创建 Client。
 - Kimi 默认 endpoint 已对齐 `/v1/chat/completions`，并使用 `max_completion_tokens`；Kimi、Qwen、DeepSeek、GLM 流式请求显式获取 usage。
 - Kimi 已收敛为 OpenAI Chat 的薄 Dialect，不再复制 HTTP Client、headers、SSE 消费和响应累计；厂商文件只保留构造配置、错误码分类与方言 fixture。
 - OpenAI Responses 与 Anthropic Messages 已支持函数工具声明、工具历史和流式参数拼接；Anthropic `thinking.signature` 与 `redacted_thinking` 使用同 Driver opaque block 原样回传。
@@ -508,10 +509,11 @@ crates/openwork-providers/src/
 
 ### 7.2 Factory 和 Client 生命周期
 
-- Factory 接收 `ProviderRuntimeConfig`、共享 `reqwest::Client` 和 Retry/Trace 配置。
-- Factory 返回 `Arc<dyn ModelPort>`，符合蓝图 Composition Root 的共享 Port 规则。
-- Adapter 不在构造函数里各自创建默认 `reqwest::Client`；由 App 统一配置代理、连接池、TLS、User-Agent 和 Timeout。
-- `test_provider` 是应用用例，应迁移到 `openwork-app`。Providers 只执行传入的 Model Request，不自行决定发送 `ping`。
+- Desktop Composition Root 在应用启动时创建一个 `ProviderFactory`；Factory 持有共享 `HttpTransport` 和 Retry Policy。
+- `HttpTransport` 使用 `Arc<HttpTransportInner>` 管理一个 `reqwest::Client`；Factory、Chat Runtime、Provider Test 和各 Adapter 的 Clone 共用其连接池与配置。
+- Factory 根据 `ProviderRuntimeConfig` 返回套有 Retry decorator 的 `Box<dyn ModelPort>`；重新加载 Provider 配置不会重新创建 HTTP Client。
+- Adapter 构造函数必须接收 `HttpTransport`，不得自行创建默认 `reqwest::Client`。App 后续可在 Composition Root 统一配置代理、TLS、User-Agent 和 Timeout 后注入。
+- Provider connectivity test 当前是 `ProviderFactory::test`；它复用同一 Transport，但作为应用用例后续仍应迁移到 `openwork-app`。
 
 ### 7.3 Transport 边界
 
@@ -996,7 +998,7 @@ Provider Retry 失败后，Core 可以选择重新规划、修改 Context、切�
 
 - [已完成] 建立 `transport/adapters/gateway` 目录。
 - [已完成] 将三类 Adapter 的 request/response/stream codec 移出编排模块，并把 Kimi 改为薄 Dialect。
-- Shared Http Client 由 Factory 注入。
+- [已完成] Shared Http Client 由 `ProviderFactory` 持有并注入，Desktop/Runtime/Test 共享同一 Transport 生命周期。
 - `test_provider` 移到 App use case。
 
 退出条件：Fixture 输出与 M0 相同，crate 公共 surface 变小。

@@ -11,7 +11,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 use self::{response::ResponseAccumulator, stream::OpenAiResponsesToolStream};
 use crate::{
-    config::HttpProviderConfig,
+    config::{HttpProviderConfig, HttpTransport},
     error::{
         ErrorDialect, decode_stream_json, map_error_response_for, map_reqwest_error,
         map_stream_error_event_for, request_id_from_headers,
@@ -22,20 +22,20 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct OpenAiProvider {
-    client: reqwest::Client,
+    transport: HttpTransport,
     config: HttpProviderConfig,
 }
 
 impl OpenAiProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            config,
-        }
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
+        Self { transport, config }
     }
 
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new("https://api.openai.com", api_key))
+    pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(
+            HttpProviderConfig::new("https://api.openai.com", api_key),
+            transport,
+        )
     }
 
     fn headers(&self) -> Result<HeaderMap, ModelError> {
@@ -54,11 +54,12 @@ impl OpenAiProvider {
     ) -> Result<ModelResponse, ModelError> {
         let body = request::encode_request(&req, true)?;
         let response = self
-            .client
-            .post(self.config.endpoint("/v1/responses"))
-            .headers(self.headers()?)
-            .json(&body)
-            .send()
+            .transport
+            .post_json(
+                self.config.endpoint("/v1/responses"),
+                self.headers()?,
+                &body,
+            )
             .await
             .map_err(map_reqwest_error)?;
 

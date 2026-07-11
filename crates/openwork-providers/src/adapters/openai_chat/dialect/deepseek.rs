@@ -6,7 +6,7 @@ use openwork_protocol::model::{ModelErrorCode, RetryHint};
 use reqwest::StatusCode;
 use serde_json::{Map, Value};
 
-use crate::{HttpProviderConfig, OpenAiCompatibleChatProvider};
+use crate::{HttpProviderConfig, HttpTransport, OpenAiCompatibleChatProvider};
 use openwork_protocol::provider::OpenAiChatDialect;
 
 pub(crate) fn classify_error(
@@ -34,16 +34,16 @@ pub struct DeepSeekProvider {
 }
 
 impl DeepSeekProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::new(config)
+            inner: OpenAiCompatibleChatProvider::new(config, transport)
                 .with_dialect(OpenAiChatDialect::Deepseek),
         }
     }
 
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
+    pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
         Self {
-            inner: OpenAiCompatibleChatProvider::deepseek(api_key),
+            inner: OpenAiCompatibleChatProvider::deepseek(api_key, transport),
         }
     }
 
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn builds_default_deepseek_provider() {
-        let provider = DeepSeekProvider::from_api_key("test-key");
+        let provider = DeepSeekProvider::from_api_key("test-key", HttpTransport::default());
         let req = ModelRequest::text("deepseek-chat", "hello");
 
         let body = provider
@@ -88,7 +88,8 @@ mod tests {
     fn accepts_deepseek_specific_extra_body() {
         let mut extra = Map::new();
         extra.insert("reasoning_effort".to_string(), json!("high"));
-        let provider = DeepSeekProvider::from_api_key("test-key").with_extra_body(extra);
+        let provider = DeepSeekProvider::from_api_key("test-key", HttpTransport::default())
+            .with_extra_body(extra);
         let req = ModelRequest::text("deepseek-reasoner", "think");
 
         let body = provider
@@ -101,7 +102,7 @@ mod tests {
 
     #[test]
     fn maps_typed_thinking_and_requests_stream_usage() {
-        let provider = DeepSeekProvider::from_api_key("test-key");
+        let provider = DeepSeekProvider::from_api_key("test-key", HttpTransport::default());
         let req =
             ModelRequest::text("deepseek-v4-pro", "think").with_thinking(ThinkingConfig::enabled());
 

@@ -6,7 +6,7 @@ use openwork_protocol::model::{ModelErrorCode, RetryHint};
 use reqwest::StatusCode;
 use serde_json::{Map, Value};
 
-use crate::{HttpProviderConfig, OpenAiCompatibleChatProvider};
+use crate::{HttpProviderConfig, HttpTransport, OpenAiCompatibleChatProvider};
 use openwork_protocol::provider::OpenAiChatDialect;
 
 const DASHSCOPE_COMPATIBLE_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -47,17 +47,18 @@ pub struct QwenProvider {
 }
 
 impl QwenProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            chat: OpenAiCompatibleChatProvider::new(config).with_dialect(OpenAiChatDialect::Qwen),
+            chat: OpenAiCompatibleChatProvider::new(config, transport)
+                .with_dialect(OpenAiChatDialect::Qwen),
         }
     }
 
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new(
-            DASHSCOPE_COMPATIBLE_BASE_URL,
-            api_key,
-        ))
+    pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(
+            HttpProviderConfig::new(DASHSCOPE_COMPATIBLE_BASE_URL, api_key),
+            transport,
+        )
     }
 
     pub fn with_extra_body(mut self, extra_body: Map<String, Value>) -> Self {
@@ -89,7 +90,7 @@ mod tests {
 
     #[test]
     fn builds_qwen_chat_body() {
-        let provider = QwenProvider::from_api_key("test-key");
+        let provider = QwenProvider::from_api_key("test-key", HttpTransport::default());
         let req = ModelRequest::text("qwen-plus", "hello");
 
         let body = provider.chat_request_body(&req).unwrap();
@@ -100,7 +101,7 @@ mod tests {
 
     #[test]
     fn builds_qwen_multimodal_chat_body() {
-        let provider = QwenProvider::from_api_key("test-key");
+        let provider = QwenProvider::from_api_key("test-key", HttpTransport::default());
         let req = ModelRequest {
             model: "qwen-vl-plus".to_string(),
             messages: vec![Message {
@@ -124,7 +125,7 @@ mod tests {
 
     #[test]
     fn maps_thinking_and_requests_stream_usage() {
-        let provider = QwenProvider::from_api_key("test-key");
+        let provider = QwenProvider::from_api_key("test-key", HttpTransport::default());
         let req = ModelRequest::text("qwen-plus", "think").with_thinking(ThinkingConfig::enabled());
 
         let body = provider

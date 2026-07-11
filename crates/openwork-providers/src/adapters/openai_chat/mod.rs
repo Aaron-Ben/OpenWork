@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 
 use self::{response::ResponseAccumulator, stream::ToolStream};
 use crate::{
-    config::HttpProviderConfig,
+    config::{HttpProviderConfig, HttpTransport},
     error::{
         ErrorDialect, decode_stream_json, map_error_response_for, map_reqwest_error,
         map_stream_error_event_for, request_id_from_headers,
@@ -25,16 +25,16 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatibleChatProvider {
-    client: reqwest::Client,
+    transport: HttpTransport,
     config: HttpProviderConfig,
     extra_body: Map<String, Value>,
     dialect: OpenAiChatDialect,
 }
 
 impl OpenAiCompatibleChatProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            transport,
             config,
             extra_body: Map::new(),
             dialect: OpenAiChatDialect::Standard,
@@ -51,24 +51,27 @@ impl OpenAiCompatibleChatProvider {
         self
     }
 
-    pub fn kimi(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new(
-            "https://api.moonshot.cn/v1",
-            api_key,
-        ))
+    pub fn kimi(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(
+            HttpProviderConfig::new("https://api.moonshot.cn/v1", api_key),
+            transport,
+        )
         .with_dialect(OpenAiChatDialect::Kimi)
     }
 
-    pub fn deepseek(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new("https://api.deepseek.com", api_key))
-            .with_dialect(OpenAiChatDialect::Deepseek)
+    pub fn deepseek(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(
+            HttpProviderConfig::new("https://api.deepseek.com", api_key),
+            transport,
+        )
+        .with_dialect(OpenAiChatDialect::Deepseek)
     }
 
-    pub fn qwen_dashscope(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new(
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            api_key,
-        ))
+    pub fn qwen_dashscope(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(
+            HttpProviderConfig::new("https://dashscope.aliyuncs.com/compatible-mode/v1", api_key),
+            transport,
+        )
         .with_dialect(OpenAiChatDialect::Qwen)
     }
 
@@ -112,11 +115,12 @@ impl OpenAiCompatibleChatProvider {
     ) -> Result<ModelResponse, ModelError> {
         let body = request::encode_request(&req, true, self.dialect, &self.extra_body)?;
         let response = self
-            .client
-            .post(self.config.endpoint("/chat/completions"))
-            .headers(self.headers()?)
-            .json(&body)
-            .send()
+            .transport
+            .post_json(
+                self.config.endpoint("/chat/completions"),
+                self.headers()?,
+                &body,
+            )
             .await
             .map_err(map_reqwest_error)?;
 

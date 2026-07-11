@@ -14,7 +14,7 @@ use self::{
     stream::{AnthropicThinkingStream, AnthropicToolStream},
 };
 use crate::{
-    config::HttpProviderConfig,
+    config::{HttpProviderConfig, HttpTransport},
     error::{
         ErrorDialect, decode_stream_json, map_error_response_for, map_reqwest_error,
         map_stream_error_event_for, request_id_from_headers,
@@ -27,25 +27,25 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
-    client: reqwest::Client,
+    transport: HttpTransport,
     config: HttpProviderConfig,
     anthropic_version: String,
 }
 
 impl AnthropicProvider {
-    pub fn new(config: HttpProviderConfig) -> Self {
+    pub fn new(config: HttpProviderConfig, transport: HttpTransport) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            transport,
             config,
             anthropic_version: ANTHROPIC_VERSION.to_string(),
         }
     }
 
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
-        Self::new(HttpProviderConfig::new(
-            "https://api.anthropic.com",
-            api_key,
-        ))
+    pub fn from_api_key(api_key: impl Into<String>, transport: HttpTransport) -> Self {
+        Self::new(
+            HttpProviderConfig::new("https://api.anthropic.com", api_key),
+            transport,
+        )
     }
 
     fn headers(&self) -> Result<HeaderMap, ModelError> {
@@ -71,11 +71,8 @@ impl AnthropicProvider {
     ) -> Result<ModelResponse, ModelError> {
         let body = request::encode_request(&req, true)?;
         let response = self
-            .client
-            .post(self.config.endpoint("/v1/messages"))
-            .headers(self.headers()?)
-            .json(&body)
-            .send()
+            .transport
+            .post_json(self.config.endpoint("/v1/messages"), self.headers()?, &body)
             .await
             .map_err(map_reqwest_error)?;
 

@@ -4,7 +4,7 @@ use openwork_protocol::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderProfile, ProviderRepository,
     ProviderRuntimeConfig,
 };
-use openwork_providers::test_provider;
+use openwork_providers::ProviderFactory;
 use serde::Serialize;
 
 #[derive(Clone)]
@@ -205,6 +205,7 @@ pub async fn provider_activate(
 #[tauri::command]
 pub async fn provider_test(
     repository: tauri::State<'_, ProviderRepositoryState>,
+    provider_factory: tauri::State<'_, ProviderFactory>,
     id: Option<String>,
     input: Option<ProviderInput>,
     model: String,
@@ -244,7 +245,7 @@ pub async fn provider_test(
             message: "Either provider id or draft input is required".to_string(),
         });
     };
-    match test_provider(&config, &model).await {
+    match provider_factory.test(&config, &model).await {
         Ok(()) => Ok(TestResult {
             success: true,
             message: "Connectivity OK".to_string(),

@@ -1,4 +1,52 @@
+use std::sync::Arc;
+
 use openwork_protocol::model::ModelError;
+use reqwest::header::HeaderMap;
+use serde_json::Value;
+
+#[derive(Debug, Clone)]
+pub struct HttpTransport {
+    inner: Arc<HttpTransportInner>,
+}
+
+#[derive(Debug)]
+struct HttpTransportInner {
+    client: reqwest::Client,
+}
+
+impl HttpTransport {
+    pub fn new(client: reqwest::Client) -> Self {
+        Self {
+            inner: Arc::new(HttpTransportInner { client }),
+        }
+    }
+
+    pub(crate) async fn post_json(
+        &self,
+        endpoint: String,
+        headers: HeaderMap,
+        body: &Value,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        self.inner
+            .client
+            .post(endpoint)
+            .headers(headers)
+            .json(body)
+            .send()
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_lifecycle_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Default for HttpTransport {
+    fn default() -> Self {
+        Self::new(reqwest::Client::new())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct HttpProviderConfig {
@@ -43,5 +91,13 @@ mod tests {
             config.endpoint("/v1/messages"),
             "https://api.example.com/v1/messages"
         );
+    }
+
+    #[test]
+    fn cloned_transport_shares_client_lifecycle() {
+        let transport = HttpTransport::default();
+        let clone = transport.clone();
+
+        assert!(transport.shares_lifecycle_with(&clone));
     }
 }

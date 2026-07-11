@@ -7,7 +7,7 @@ use openwork_protocol::{
     model::{ContentBlock, Message, Role},
     provider::{ProviderRepository, ProviderRepositoryError},
 };
-use openwork_providers::build_provider;
+use openwork_providers::ProviderFactory;
 use openwork_session::{NewMessage, SessionError, SessionStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -88,6 +88,7 @@ pub enum ChatRuntimeError {
 #[derive(Clone)]
 pub struct ChatRuntime {
     provider_repository: Arc<dyn ProviderRepository>,
+    provider_factory: ProviderFactory,
     session_store: SessionStore,
 }
 
@@ -95,9 +96,11 @@ impl ChatRuntime {
     pub fn new(
         provider_repository: Arc<dyn ProviderRepository>,
         session_store: SessionStore,
+        provider_factory: ProviderFactory,
     ) -> Self {
         Self {
             provider_repository,
+            provider_factory,
             session_store,
         }
     }
@@ -125,7 +128,7 @@ impl ChatRuntime {
             .load_runtime(&request.provider_id)
             .await?
             .ok_or_else(|| ChatRuntimeError::ProviderNotFound(request.provider_id.clone()))?;
-        let provider = build_provider(&config);
+        let provider = self.provider_factory.build(&config);
 
         let session = self
             .session_store
