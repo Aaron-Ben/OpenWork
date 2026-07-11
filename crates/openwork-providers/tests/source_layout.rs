@@ -93,3 +93,26 @@ fn adapter_mod_files_only_orchestrate_protocol_codecs() {
     assert!(!kimi.contains("reqwest::Client"));
     assert!(!kimi.contains("consume_sse_response"));
 }
+
+#[test]
+fn http_transport_lifecycle_is_owned_outside_adapters() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let transport = std::fs::read_to_string(src.join("transport/http.rs")).unwrap();
+    let factory = std::fs::read_to_string(src.join("factory.rs")).unwrap();
+
+    assert!(transport.contains("pub struct HttpTransport"));
+    assert!(transport.contains("Arc<HttpTransportInner>"));
+    assert!(factory.contains("pub struct ProviderFactory"));
+
+    for adapter in [
+        "adapters/openai_responses/mod.rs",
+        "adapters/anthropic_messages/mod.rs",
+        "adapters/openai_chat/mod.rs",
+    ] {
+        let source = std::fs::read_to_string(src.join(adapter)).unwrap();
+        assert!(
+            !source.contains("reqwest::Client::new"),
+            "adapter creates its own HTTP client instead of receiving shared transport: {adapter}"
+        );
+    }
+}
