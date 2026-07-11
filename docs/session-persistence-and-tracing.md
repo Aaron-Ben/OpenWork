@@ -1,21 +1,24 @@
 # 会话持久化与 LLM Trace
 
-Last reviewed: 2026-06-24
+Last reviewed: 2026-07-11
+
+> Status: current implementation detail. 目标 Journal、Projection、Artifact 和恢复边界见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
 ## 1. 相关代码
 
 ```text
 crates/openwork-session/src/store.rs
+crates/openwork-persistence/src/postgres/provider_repository.rs
 crates/openwork-database/src/lib.rs
 apps/desktop/src-tauri/src/lib.rs
 apps/desktop/src/stores/sessionStore.ts
 ```
 
-`openwork-session` 使用 PostgreSQL 保存会话、消息、LLM 事件和工作区快照。桌面端启动时通过 `SessionStore::connect_from_env_or_local()` 连接数据库：优先读取 `DATABASE_URL`，未设置时使用本地 Docker 默认连接串 `postgres://openwork:openwork@localhost:5432/openwork`。
+`openwork-session` 使用 PostgreSQL 保存会话、消息和 LLM 事件，并已经创建尚未接入写入链路的 `tool_runs` 表。`openwork-workspace` 的捕获和回滚函数当前没有接入 runtime，也没有持久化 Turn Snapshot。桌面端启动时通过 `SessionStore::connect_from_env_or_local()` 连接数据库：优先读取 `DATABASE_URL`，未设置时使用本地 Docker 默认连接串 `postgres://openwork:openwork@localhost:5432/openwork`。
 
 ## 2. 表结构
 
-当前主要表：
+当前 PostgreSQL 表按所有权分为两组：
 
 | 表 | 用途 |
 | --- | --- |
@@ -23,6 +26,10 @@ apps/desktop/src/stores/sessionStore.ts
 | `messages` | 聊天消息，按 session 和 seq 排序；`parts_json` 保存完整 message blocks |
 | `llm_events` | 流式事件与 trace 数据 |
 | `tool_runs` | 工具调用审计表，当前 schema 已创建，写入路径待接入 |
+| `providers` | `openwork-persistence` 管理的 Provider 配置 |
+| `provider_models` | Provider 模型子表，保存模型 ID、`lite/plus/pro` 分类、启用状态和 UI 顺序 |
+
+`providers` 与 `provider_models` 不属于会话事件日志；它们是普通 Repository 数据。`PostgresProviderRepository` 通过 `openwork-protocol::provider::ProviderRepository` 注入 Runtime，Provider Adapter 本身不访问数据库。
 
 工作区文件变更不进入数据库。OpenWork 依赖 Git 作为变更查看与回滚机制：
 `git diff` 查看结果，`git restore` / `git restore -p` 回滚。
@@ -56,9 +63,9 @@ seq
 created_at
 ```
 
-Tauri 在 `chat_generate_stream` 中接收到 `AgentEvent` 后，会映射成前端 payload，并调用 `append_llm_event` 持久化。
+`ChatRuntime` 接收到 `AgentEvent` 后，会先映射成前端 payload，再以 detached best-effort 任务调用 `append_llm_event`。
 
-`seq` 在同一 session 内递增，用于恢复事件顺序。
+`seq` 通过查询同一 session 的 `MAX(seq) + 1` 分配。由于 runtime 为每个事件启动独立异步写任务，当前不能保证写入顺序与产生顺序一致，也不能把它视为可靠恢复日志。
 
 ## 5. Message 与 Event 的区别
 
@@ -84,7 +91,7 @@ Tauri 在 `chat_generate_stream` 中接收到 `AgentEvent` 后，会映射成前
 chat_generate_stream
   -> 读取 session 和 history
   -> Agent::run
-  -> 每个 AgentEvent 持久化到 llm_events
+  -> 每个 AgentEvent 尝试异步写入 llm_events
   -> Agent 返回 RunResult.messages
   -> 按 history_len 截取新增 messages
   -> append_messages
@@ -102,7 +109,7 @@ chat_generate_stream
 
 ### 7.1 `tool_runs` 写入路径未接入
 
-当前 PostgreSQL schema 已创建 `tool_runs` 表，但 runtime 还没有把工具开始、审批、结束、耗时和输出写入该表。目标结构：
+当前 PostgreSQL schema 已创建 `tool_runs` 表，但 runtime 还没有把工具开始、审批、结束、耗时和输出写入该表。后续应由 Recorded Event 幂等投影生成 ActionRun 查询记录；详细合同不在本文冻结。当前 schema 如下：
 
 ```text
 tool_runs
@@ -122,11 +129,11 @@ tool_runs
 
 这会让工具观测比从 `llm_events` 反推更可靠。
 
-### 8.2 事件 payload 仍是 UI payload
+### 7.2 事件 payload 仍是 UI payload
 
 现在 `llm_events.payload_json` 存的是 Tauri 发给前端的 payload。短期可用，但长期可以考虑保存更接近 `AgentEvent` 的结构化事件，再在前端层做映射。
 
-### 8.3 缺少 trace 查询接口
+### 7.3 缺少 trace 查询接口
 
 目前已有写入能力，但还没有专门的 UI 或 API 查询 trace。后续可以增加：
 

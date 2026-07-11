@@ -25,9 +25,10 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const activeStream = useSessionStore((state) => state.activeStream)
   // 是否正在发送 = 当前 session 有 in-flight 流式请求。
   const isSending = activeStream?.sessionId === sessionId
+  const modelOptions = active?.models.filter((item) => item.enabled).map((item) => item.modelId) ?? []
 
   useEffect(() => {
-    setModel(active?.models[0] ?? '')
+    setModel(active?.models.find((item) => item.enabled)?.modelId ?? '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id])
 
@@ -91,7 +92,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
       <ChatInput
         activeProviderName={active?.name ?? 'No provider'}
         model={model}
-        modelOptions={active?.models ?? []}
+        modelOptions={modelOptions}
         value={draft}
         isSending={isSending}
         disabled={!active || !sessionId}

@@ -4,7 +4,7 @@
   <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
 </p>
 
-OpenWork 是一个围绕 Rust workspace 和 Tauri 桌面客户端构建的 AI 应用基础项目。项目目前处于早期阶段，优先推进多厂商模型接入、统一消息类型和桌面端基础壳层。
+OpenWork 是一个以 Rust 实现的本地 Agent 工作台实验项目。当前代码已经具备多厂商模型调用、工具循环、审批和 PostgreSQL 持久化；目标架构是可恢复、可验证的 Durable Agent Harness。
 
 English version: [README.en.md](README.en.md)
 
@@ -14,18 +14,20 @@ English version: [README.en.md](README.en.md)
 
 - Rust workspace 基础结构
 - Tauri + React + TypeScript 桌面客户端骨架
-- 多厂商大模型 provider 初版
-- OpenAI、Anthropic、Kimi、DeepSeek、Qwen/DashScope 的接入骨架
-- 文本生成、文本 embedding、多模态 message block 的基础建模
-- Model Registry 基础能力
+- OpenAI、Anthropic、Kimi、DeepSeek、Qwen/DashScope、GLM 与自定义 OpenAI-compatible Adapter
+- 厂商无关的 `ModelRequest`、`ModelResponse`、`ModelEvent`、`ModelError` 与 `ModelPort`
+- 可区分限流与额度耗尽的错误映射，以及流式输出感知的 Transport Retry
+- Agent 多步工具调用、审批、取消和 doom-loop 检测
+- PostgreSQL Provider Repository、Session、Message 与基础 LLM event 持久化
+- Tauri + React + TypeScript 桌面端
 
 还没有完成：
 
-- 生产级 streaming
-- tool calling 完整闭环
-- credential 管理
-- 前端真实业务界面
-- live API smoke test
+- Durable Turn Journal、崩溃恢复和幂等 Projection
+- 操作系统级 Sandbox 与可靠副作用对账
+- Context 压缩、Plan、Memory、MCP 与 Skill 的目标实现
+- 系统 Keychain/SecretStore（当前 API Key 仍明文存于 PostgreSQL）
+- 自动化 live provider smoke test
 
 ## 目录结构
 
@@ -35,21 +37,23 @@ OpenWork/
     desktop/                 # Tauri + React desktop app
   crates/
     openwork-protocol/       # Core AI types, message blocks, traits, errors
-    openwork-providers/      # Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen
-    openwork-runtime/        # Model registry and runtime coordination
+    openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
+    openwork-persistence/    # PostgreSQL provider repository and migrations
+    openwork-agent/          # Current agent loop
+    openwork-runtime/        # Desktop-facing runtime composition
+    openwork-session/        # PostgreSQL sessions, messages and trace events
     openwork-tools/          # Tool abstractions and built-in tools
   docs/
-    ai-provider-integration-design.md
+    model-provider-v1-design.md
 ```
 
 ## Rust 模块
 
 `openwork-protocol`
 
-- 定义 `GenerateRequest`、`GenerateResponse`
-- 定义 `EmbeddingRequest`、`EmbeddingResponse`
+- 定义 `ModelRequest`、`ModelResponse`、`ModelEvent`
 - 定义 `Message` 和 `ContentBlock`
-- 定义 provider trait 和统一错误类型
+- 定义 `ModelPort`、`ProviderRepository` 和统一错误类型
 
 `openwork-providers`
 
@@ -59,6 +63,13 @@ OpenWork/
 - `DeepSeekProvider`
 - `QwenProvider`
 - `OpenAiCompatibleChatProvider`
+- 统一厂商错误分类与 `RetryingModelPort`
+
+`openwork-persistence`
+
+- `PostgresProviderRepository`
+- `providers` / `provider_models` migration
+- Provider 与 Models 的事务写入
 
 `openwork-runtime`
 
@@ -129,7 +140,7 @@ cargo fmt
 
 ## API Key
 
-当前 provider 通过环境变量或调用方传入 API key。建议使用以下变量名：
+桌面端当前把用户填写的 API Key 随 Provider 配置保存到 PostgreSQL；这是已知技术债，尚未接入系统 Keychain。底层 Adapter 也保留从调用方或环境变量构造配置的入口。常用变量名：
 
 ```bash
 OPENAI_API_KEY=...
@@ -143,17 +154,15 @@ DASHSCOPE_API_KEY=...
 
 ## 设计文档
 
-模型接入设计见：
-
-```text
-docs/ai-provider-integration-design.md
-```
+- [文档索引](docs/README.md)
+- [OpenWork Core 架构蓝图](plans/openwork-core-architecture-blueprint.md)
+- [Model Provider V1 设计](docs/model-provider-v1-design.md)
 
 ## 下一步
 
 建议优先推进：
 
-1. 完善 provider response 的 block 化解析。
-2. 增加 streaming 事件模型。
-3. 增加 credential 管理，但先避免过度抽象。
-4. 为桌面客户端接入最小可用的模型调用界面。
+1. 建立 Golden Case 与最小 Eval 骨架。
+2. 明确 Protocol Foundation，以及 Plan、Capability、Retry、Approval 的运行语义。
+3. 建立可回放的 Persistence 与 Capabilities/Execution 合同。
+4. 将当前 Agent loop 迁入可恢复、可验证的 `openwork-core` Durable Turn。

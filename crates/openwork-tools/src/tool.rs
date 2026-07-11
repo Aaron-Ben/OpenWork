@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use openwork_permissions::{AccessKind, PermissionProfile};
-use openwork_protocol::ai::{ContentBlock, ToolDefinition};
+use openwork_protocol::model::{ContentBlock, ToolDefinition};
 use thiserror::Error;
 
 /// 工具契约:可被 agent 调用的能力单元。
@@ -13,7 +13,7 @@ pub trait Tool: Send + Sync {
     /// 参数的 JSON Schema。
     fn parameters(&self) -> serde_json::Value;
 
-    /// 派生给模型的工具声明(喂给 `GenerateRequest::tools`)。
+    /// 派生给模型的工具声明（喂给 `ModelRequest::tools`）。
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: self.name().to_string(),

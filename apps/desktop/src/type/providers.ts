@@ -9,18 +9,32 @@ export type ProviderKind =
   | 'anthropic'
   | 'openai_compatible'
 
+export type ModelTier = 'lite' | 'plus' | 'pro'
+
+export interface ProviderModel {
+  modelId: string
+  displayName?: string
+  modelTier: ModelTier
+  enabled: boolean
+}
+
 export interface ProviderInput {
   name: string
   baseUrl: string
   apiKey: string
   kind: ProviderKind
-  models: string[]
+  models: ProviderModel[]
   enabled: boolean
   extraBody?: Record<string, unknown>
 }
 
-export interface ProviderConfig extends ProviderInput {
+export interface ProviderConfig {
   id: string
+  name: string
+  baseUrl: string
+  kind: ProviderKind
+  models: ProviderModel[]
+  enabled: boolean
 }
 
 export interface ProviderPreset {
@@ -28,7 +42,7 @@ export interface ProviderPreset {
   name: string
   baseUrl: string
   kind: ProviderKind
-  models: string[]
+  models: Array<Pick<ProviderModel, 'modelId' | 'modelTier'>>
   websiteUrl: string
   apiKeyUrl: string
 }

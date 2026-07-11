@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use openwork_protocol::ai::{ModelCapability, ModelSpec};
+use openwork_protocol::model::{ModelCapability, ModelSpec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -164,18 +164,12 @@ mod tests {
         capabilities = ["chat", "vision"]
 
         [[models]]
-        provider = "openai"
-        model = "text-embedding-3-small"
-        capabilities = ["embedding"]
-
-        [[models]]
         provider = "qwen"
         model = "qwen-plus"
         capabilities = ["chat", "tool_calling", "streaming"]
 
         [defaults]
         chat = "openai:gpt-4.1"
-        embedding = "openai:text-embedding-3-small"
 
         [[fallbacks.chat]]
         primary = "openai:gpt-4.1"
@@ -202,7 +196,7 @@ mod tests {
         let registry = ModelRegistry::from_toml_str(REGISTRY).unwrap();
 
         assert!(matches!(
-            registry.require_capability("qwen:qwen-plus", ModelCapability::Embedding),
+            registry.require_capability("qwen:qwen-plus", ModelCapability::Vision),
             Err(RegistryError::UnsupportedCapability { .. })
         ));
     }

@@ -1,6 +1,8 @@
 # OpenWork 当前架构概览
 
-Last reviewed: 2026-06-25
+Last reviewed: 2026-07-11
+
+> Status: current implementation snapshot. 目标架构和下一阶段顺序只见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
 ## 1. 项目定位
 
@@ -12,22 +14,26 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 - 内置工具：文件读写、搜索、bash
 - 基础权限模型与 human-in-the-loop 审批
 - 会话、message parts、LLM events 持久化
-- worktree 变更快照与还原
+- `openwork-workspace` 中的 worktree 变更快照与还原基础函数（尚未接入 runtime/Tauri/UI）
 - 桌面端流式 UI 与审批弹窗
 
 ## 2. Workspace 模块
 
 ```text
 crates/openwork-protocol/
-  AI 领域共享协议类型：Message、ContentBlock、GenerateRequest、GenerateResponse、
-  GenerateStreamEvent、Provider trait、错误类型。新代码应直接依赖它。
+  稳定协议与 Port：ModelRequest、ModelResponse、ModelEvent、ModelError、
+  ModelPort、ProviderConfig、ProviderRepository。新代码应直接依赖它。
 
 crates/openwork-db-macros/
   PostgreSQL entity derive 宏：当前提供 `PgEntity`，生成表名、字段、主键和索引 metadata。
 
 crates/openwork-providers/
-  Provider 适配层：OpenAI、Anthropic、Kimi、DeepSeek、Qwen、GLM、
-  OpenAI-compatible，以及 provider 配置存储。
+  纯模型协议适配层：OpenAI、Anthropic、Kimi、DeepSeek、Qwen、GLM、
+  OpenAI-compatible，以及统一 HTTP 错误映射和流式感知 Transport Retry。
+
+crates/openwork-persistence/
+  PostgreSQL Repository Adapter：当前实现 Provider 配置与 Provider Models 的事务、
+  Migration 和 `ProviderRepository`；不包含模型 HTTP 调用或 UI Preset。
 
 crates/openwork-agent/
   Agent loop：模型流式调用、工具调用调度、审批等待、doom-loop 检测、取消处理。
@@ -66,7 +72,8 @@ apps/desktop/
 ChatView
   -> chat_generate_stream Tauri command
   -> SessionStore 读取会话历史
-  -> ProviderStore 构造当前 provider
+  -> PostgresProviderRepository 通过 ProviderRepository Port 读取配置
+  -> openwork-providers::build_provider 构造带 RetryPolicy 的 ModelPort
   -> openwork-agent::Agent::run
      -> provider.stream_generate
      -> AgentEvent 流式转发给 Tauri
@@ -76,11 +83,11 @@ ChatView
      -> ToolResult 回填模型上下文
      -> 下一轮模型调用，直到无工具调用
   -> SessionStore 持久化新增 messages
-  -> openwork-workspace 捕获本轮 worktree diff
-  -> SessionStore 持久化 worktree snapshot
   -> emit done
   -> 前端 reload session
 ```
+
+当前主链路不会调用 `openwork-workspace`，也不会持久化本轮 snapshot/diff。它们是已有库能力，不是已完成的产品流程。
 
 ## 4. 当前已经成型的边界
 
@@ -92,7 +99,9 @@ ChatView
 - `ContentBlock`
 - `ToolCallBlock`
 - `ToolResultBlock`
-- `GenerateStreamEvent`
+- `ModelRequest` / `ModelResponse` / `ModelEvent`
+- `ModelError` / `RetryHint`
+- `ProviderRepository`
 - `ToolDefinition`
 
 不要在 provider 或前端独立发明另一套 message shape，除非只是 UI 层临时 view model。
@@ -105,29 +114,25 @@ ChatView
 
 工具定义 JSON Schema 和执行逻辑在这里。权限模型和审批策略在 `openwork-permissions`；工具执行时只通过 `ToolContext` 消费权限，不负责决定是否审批。
 
-### 4.4 `openwork-session` 是可恢复状态
+### 4.4 `openwork-session` 保存消息和 trace
 
-`messages.parts_json` 用于恢复聊天上下文并保存完整 message blocks；`llm_events` 用于 trace / observability，而不是直接替代 messages。
+`messages.parts_json` 用于重新加载聊天上下文并保存 message blocks；`llm_events` 用于 trace / observability，而不是直接替代 messages。当前还没有可恢复 Turn 状态机，工具执行后崩溃不能仅靠这些表可靠恢复。
 
 ### 4.5 `openwork-workspace` 是工作区变更层
 
-桌面端不直接操作 git status、文件 diff 或快照还原。`openwork-workspace` 负责把工作区变更转成稳定的 `WorktreeFileChange`，Tauri 只负责调用它并把结果交给 `SessionStore` 持久化。
+目标上应由 `openwork-workspace` 统一负责 git status、文件 diff 和快照还原。但当前 runtime、Tauri 和 UI 都没有调用这些函数，`SessionStore` 也没有持久化 worktree snapshot。
 
 ### 4.6 `openwork-database` 是 PostgreSQL 基础层
 
-当前已经有显式 `Database` / `DatabaseConfig` / `PgPool` 连接对象、`schema_migrations` migration runner，以及 `PgSchema` / `PgCrud` metadata 和基础 SQL 片段生成。`openwork-db-macros::PgEntity` 已能生成表名、字段、主键和索引 metadata；provider/session schema 已迁入 records + migrations，业务 store 的 CRUD SQL 还需要继续收口到 typed query。
+当前已经有显式 `Database` / `DatabaseConfig` / `PgPool` 连接对象与 `schema_migrations` runner。Provider 的 SQL、Migration 和事务已进入 `openwork-persistence`；Session 仍保留在 `openwork-session`，将在目标架构后续阶段迁移。
 
 ## 5. 关键约束
 
 - 当前没有真正的操作系统级 sandbox。
 - `ApprovalPolicy::OnFailure`、`OnRequest`、`Granular` 还没有沙箱支撑，目前保守降级为需要审批。
 - `bash` 使用 `sh -c` 执行命令；虽然有用户审批、超时、取消和受限环境变量，但不能保证命令内部文件访问被 `PermissionProfile` 精细约束。
-- provider streaming 的事件规范正在统一中，不同厂商的 tool call delta 差异需要更多测试。
+- Provider 的统一事件不包含 Runtime Step；不同厂商的 tool call delta 仍需持续补充 fixture 测试。
 
 ## 6. 推荐演进顺序
 
-1. 补齐工具生命周期与 `tool_runs` 持久化。
-2. 加强 `bash` 风险识别、审批上下文和执行记录。
-3. 给 `streamAccumulator`、`ToolStream`、provider streaming 增加测试。
-4. 将 model registry 真正接入桌面端请求路由。
-5. 处理前端资源体积，尤其是中文字体。
+以 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 为唯一执行入口；本页不再维护第二套路线顺序。

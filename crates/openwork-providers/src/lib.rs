@@ -1,29 +1,18 @@
-mod anthropic;
-mod config;
-mod deepseek;
-mod error;
-mod glm;
-mod kimi;
-mod openai;
-mod openai_compatible;
-mod presets;
-mod provider_config;
-mod qwen;
-mod records;
-mod serde_helpers;
-mod sse;
-mod store;
-mod tool_stream;
+mod adapters;
+mod factory;
+mod gateway;
+mod transport;
 
-pub use anthropic::AnthropicProvider;
-pub use config::HttpProviderConfig;
-pub use deepseek::DeepSeekProvider;
-pub use glm::GlmProvider;
-pub use kimi::KimiProvider;
-pub use openai::OpenAiProvider;
-pub use openai_compatible::OpenAiCompatibleChatProvider;
-pub use presets::{BUILTIN_PRESETS, ProviderPreset, find_preset, presets};
-pub use provider_config::{ProviderConfig, ProviderInput, ProviderKind, build_provider};
-pub use qwen::QwenProvider;
-pub use records::{PROVIDER_MIGRATIONS, ProviderRecord};
-pub use store::{ProviderIndex, ProviderStore, StoreError, TestResult, test_provider};
+// Crate 内部兼容别名；gateway/transport 的公开归属不受目录重构影响。
+pub(crate) use adapters::error;
+pub(crate) use gateway::client as stream;
+pub(crate) use transport::http as config;
+pub(crate) use transport::sse;
+
+pub use adapters::{
+    AnthropicProvider, DeepSeekProvider, GlmProvider, KimiProvider, OpenAiCompatibleChatProvider,
+    OpenAiProvider, QwenProvider, StandardOpenAiChatProvider,
+};
+pub use factory::{build_provider, test_provider};
+pub use gateway::{ModelTransportSignal, RetryDecision, RetryPolicy, RetryingModelPort};
+pub use transport::{HttpProviderConfig, SseFrame, SseFramer};

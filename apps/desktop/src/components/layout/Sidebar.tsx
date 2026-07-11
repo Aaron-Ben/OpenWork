@@ -67,7 +67,7 @@ function SidebarPanel() {
     if (!active) return
     await create({
       providerId: active.id,
-      model: active.models[0] ?? '',
+      model: active.models.find((item) => item.enabled)?.modelId ?? '',
       title: 'New session',
     })
   }

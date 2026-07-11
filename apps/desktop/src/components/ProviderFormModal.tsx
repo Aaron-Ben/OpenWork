@@ -2,7 +2,8 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, X, Zap } from "lucide-react";
 
 import { useProviderStore } from "../stores/providerStore";
-import type { ProviderConfig, ProviderInput, ProviderKind, ProviderPreset } from "../type/providers";
+import { providersApi } from "../api/providers";
+import type { ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../type/providers";
 
 const KIND_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "openai", label: "OpenAI · Responses API" },
@@ -28,14 +29,15 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
   const presets = useProviderStore((state) => state.presets);
   const create = useProviderStore((state) => state.create);
   const update = useProviderStore((state) => state.update);
-  const test = useProviderStore((state) => state.test);
 
   const [selectedPresetId, setSelectedPresetId] = useState("custom");
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [kind, setKind] = useState<ProviderKind>("openai_compatible");
-  const [modelsText, setModelsText] = useState("");
+  const [liteModelsText, setLiteModelsText] = useState("");
+  const [plusModelsText, setPlusModelsText] = useState("");
+  const [proModelsText, setProModelsText] = useState("");
   const [extraBodyText, setExtraBodyText] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,17 +53,22 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       setSelectedPresetId("custom");
       setName(initial.name);
       setBaseUrl(initial.baseUrl);
-      setApiKey(initial.apiKey);
+      // Provider profiles never contain credentials; editing requires an explicit replacement key.
+      setApiKey("");
       setKind(initial.kind);
-      setModelsText(initial.models.join(", "));
-      setExtraBodyText(initial.extraBody ? JSON.stringify(initial.extraBody, null, 2) : "");
+      setLiteModelsText(modelsTextForTier(initial.models, "lite"));
+      setPlusModelsText(modelsTextForTier(initial.models, "plus"));
+      setProModelsText(modelsTextForTier(initial.models, "pro"));
+      setExtraBodyText("");
     } else {
       setSelectedPresetId("custom");
       setName("");
       setBaseUrl("");
       setApiKey("");
       setKind("openai_compatible");
-      setModelsText("");
+      setLiteModelsText("");
+      setPlusModelsText("");
+      setProModelsText("");
       setExtraBodyText("");
     }
   }, [open, mode, initial]);
@@ -74,7 +81,9 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     setName(preset.name);
     setBaseUrl(preset.baseUrl);
     setKind(preset.kind);
-    setModelsText(preset.models.join(", "));
+    setLiteModelsText(modelsTextForTier(preset.models, "lite"));
+    setPlusModelsText(modelsTextForTier(preset.models, "plus"));
+    setProModelsText(modelsTextForTier(preset.models, "pro"));
   }
 
   function buildInput(): ProviderInput | string {
@@ -85,10 +94,18 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     if (!trimmedBaseUrl) return "Base URL is required";
     if (!trimmedApiKey) return "API key is required";
 
-    const models = modelsText
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const models = [
+      ...parseModels(liteModelsText, "lite"),
+      ...parseModels(plusModelsText, "plus"),
+      ...parseModels(proModelsText, "pro"),
+    ];
+    const modelIds = new Set<string>();
+    const duplicate = models.find((model) => {
+      if (modelIds.has(model.modelId)) return true;
+      modelIds.add(model.modelId);
+      return false;
+    });
+    if (duplicate) return `Model ${duplicate.modelId} is assigned to more than one tier`;
 
     let extraBody: Record<string, unknown> | undefined;
     const trimmedExtra = extraBodyText.trim();
@@ -143,7 +160,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       setError(inputOrError);
       return;
     }
-    const firstModel = inputOrError.models[0];
+    const firstModel = inputOrError.models.find((model) => model.enabled);
     if (!firstModel) {
       setError("Add at least one model to test");
       return;
@@ -152,8 +169,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     setIsTesting(true);
     setTestResult(null);
     try {
-      const draftConfig: ProviderConfig = { id: "draft", ...inputOrError };
-      const result = await test(draftConfig, firstModel);
+      const result = await providersApi.testDraft(inputOrError, firstModel.modelId);
       setTestResult({ success: result.success, message: result.message });
     } catch (testError) {
       setTestResult({ success: false, message: resolveMessage(testError) });
@@ -242,8 +258,16 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
             </select>
           </Field>
 
-          <Field label="Models" hint="Comma-separated model IDs">
-            <input className={inputClass} value={modelsText} onChange={(e) => setModelsText(e.target.value)} placeholder="deepseek-chat, deepseek-reasoner" />
+          <Field label="Lite models" hint="Fast or low-cost models, comma-separated">
+            <input className={inputClass} value={liteModelsText} onChange={(e) => setLiteModelsText(e.target.value)} placeholder="deepseek-chat" />
+          </Field>
+
+          <Field label="Plus models" hint="Balanced models, comma-separated">
+            <input className={inputClass} value={plusModelsText} onChange={(e) => setPlusModelsText(e.target.value)} placeholder="qwen-plus" />
+          </Field>
+
+          <Field label="Pro models" hint="High-capability models, comma-separated">
+            <input className={inputClass} value={proModelsText} onChange={(e) => setProModelsText(e.target.value)} placeholder="deepseek-reasoner" />
           </Field>
 
           <Field label="Extra body" hint="Optional JSON object merged into the request body">
@@ -308,4 +332,22 @@ function resolveMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   return "Unexpected error";
+}
+
+function modelsTextForTier(
+  models: Array<Pick<ProviderModel, "modelId" | "modelTier">>,
+  tier: ModelTier,
+): string {
+  return models
+    .filter((model) => model.modelTier === tier)
+    .map((model) => model.modelId)
+    .join(", ");
+}
+
+function parseModels(value: string, modelTier: ModelTier): ProviderModel[] {
+  return value
+    .split(",")
+    .map((modelId) => modelId.trim())
+    .filter(Boolean)
+    .map((modelId) => ({ modelId, modelTier, enabled: true }));
 }

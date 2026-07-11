@@ -1,18 +1,21 @@
 # Agent Runtime 与工具调用流程
 
-Last reviewed: 2026-06-17
+Last reviewed: 2026-07-11
+
+> Status: current implementation detail. 目标状态机、恢复和评测边界见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
 ## 1. 相关代码
 
 ```text
-crates/openwork-runtime/src/router.rs
+crates/openwork-agent/src/lib.rs
+crates/openwork-runtime/src/chat.rs
 crates/openwork-tools/src/tool.rs
 crates/openwork-tools/src/registry.rs
 crates/openwork-tools/src/builtin/
 apps/desktop/src-tauri/src/lib.rs
 ```
 
-`openwork-runtime` 负责 agent loop。它接收历史消息，调用 provider，处理模型返回的 tool calls，执行工具，再把工具结果回填给模型，直到模型返回最终文本或达到停止条件。
+`openwork-agent` 负责 agent loop。`openwork-runtime::ChatRuntime` 组合 provider/session/Agent，并把 Agent 事件转换为宿主/UI payload。
 
 ## 2. AgentConfig
 
@@ -40,8 +43,8 @@ apps/desktop/src-tauri/src/lib.rs
 
 for step in 1..=max_steps:
   发出 Step(step)
-  构造 GenerateRequest(stream=true, tools=tool_defs)
-  调用 provider.stream_generate
+  构造 ModelRequest(stream=true, tools=tool_defs)
+  调用 ModelPort.stream_generate
   转发 LLM stream events
 
   将 assistant text / reasoning / tool_calls 加入 messages
@@ -76,7 +79,9 @@ for step in 1..=max_steps:
 | `Finished` | agent 最终文本 |
 | `DoomLoopDetected` | 连续重复同名同参工具调用，被停止 |
 
-Provider 发出的 `GenerateStreamEvent` 会在 `router.rs` 里转换成 `AgentEvent`。如果 provider 只发 delta，没有显式 start/end，runtime 会通过 `StreamLifecycle` 补齐 text/reasoning 的 start/end。
+Provider 发出的 `ModelEvent` 只包含文本、推理和工具调用语义输出，并在 `openwork-agent/src/lib.rs` 中转换成 `AgentEvent`。如果 provider 只发 delta，没有显式 start/end，Agent 会通过 `StreamLifecycle` 补齐 text/reasoning 的 start/end；Runtime Step、Retry 和 UI done/error 不属于 `ModelEvent`。
+
+`openwork-providers::RetryingModelPort` 只允许在尚未发出任何 `ModelEvent` 时重试。已经出现文本、推理或工具调用增量后，网络中断会直接返回错误，避免重复文本或重复工具参数。
 
 ## 5. 工具上下文
 
@@ -119,7 +124,7 @@ runtime 会记录最近的工具调用 `(name, normalized_input)`。如果连续
 
 ## 8. 当前缺口
 
-- 缺少独立 `tool_runs` 表记录工具开始、结束、耗时、审批结果。
+- `tool_runs` 表已经存在，但当前没有写入路径，工具开始、结束、耗时和审批结果仍未形成闭环。
 - `bash` 无文件级隔离，不能把审批等同于 sandbox。
 - `ApprovalPolicy::OnFailure` / `OnRequest` / `Granular` 需要真正 sandbox 或 executor 支撑。
 - 工具状态机还可以进一步明确为 `requested -> approved -> running -> completed/failed/cancelled`。

@@ -80,7 +80,7 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
     await get().fetchAll()
   },
 
-  test: async (config, model) => providersApi.test(config, model),
+  test: async (config, model) => providersApi.test(config.id, model),
 }))
 
 export function useActiveProvider(): ProviderConfig | null {

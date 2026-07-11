@@ -1,6 +1,10 @@
 mod commands;
 
-use openwork_providers::ProviderStore;
+use std::sync::Arc;
+
+use commands::provider::ProviderRepositoryState;
+use openwork_persistence::PostgresPersistence;
+use openwork_protocol::provider::ProviderRepository;
 use openwork_runtime::{ApprovalBridge, ChatRuntime, RequestCancelRegistry};
 use openwork_session::SessionStore;
 use tauri::Manager;
@@ -10,15 +14,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let provider_store =
-                tauri::async_runtime::block_on(ProviderStore::connect_from_env_or_local())?;
+            let persistence =
+                tauri::async_runtime::block_on(PostgresPersistence::connect_from_env_or_local())?;
+            let provider_repository: Arc<dyn ProviderRepository> =
+                Arc::new(persistence.provider_repository());
             let session_store =
                 tauri::async_runtime::block_on(SessionStore::connect_from_env_or_local())?;
             app.manage(ChatRuntime::new(
-                provider_store.clone(),
+                Arc::clone(&provider_repository),
                 session_store.clone(),
             ));
-            app.manage(provider_store);
+            app.manage(ProviderRepositoryState(provider_repository));
             app.manage(session_store);
             app.manage(ApprovalBridge::new());
             app.manage(RequestCancelRegistry::default());
@@ -47,7 +53,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use openwork_providers::BUILTIN_PRESETS;
+    use crate::commands::provider::BUILTIN_PRESETS;
 
     #[test]
     fn builtin_presets_exclude_local_models() {

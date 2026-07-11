@@ -4,7 +4,7 @@
   <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
 </p>
 
-OpenWork is an AI application foundation built around a Rust workspace and a Tauri desktop client. The project is currently in early development and focuses first on multi-provider model integration, unified message types, and a desktop shell.
+OpenWork is a local agent workbench experiment implemented in Rust. The current code supports multi-provider model calls, an agent tool loop, approvals, and PostgreSQL persistence; the target architecture is a recoverable and verifiable Durable Agent Harness.
 
 中文版本: [README.md](README.md)
 
@@ -14,18 +14,20 @@ The current foundation includes:
 
 - Rust workspace structure
 - Tauri + React + TypeScript desktop shell
-- Initial multi-provider model integration
-- Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, and Qwen/DashScope
-- Basic text generation, text embedding, and multimodal message block modeling
-- Basic model registry support
+- Adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen/DashScope, GLM, and custom OpenAI-compatible endpoints
+- Vendor-neutral `ModelRequest`, `ModelResponse`, `ModelEvent`, `ModelError`, and `ModelPort`
+- Error mapping that separates rate limits from exhausted quota, plus stream-aware transport retry
+- Multi-step agent tool calls, approvals, cancellation, and doom-loop detection
+- PostgreSQL provider repository, sessions, messages, and basic LLM event persistence
+- Tauri + React + TypeScript desktop client
 
 Not yet complete:
 
-- Production-ready streaming
-- Full tool calling loop
-- Credential management
-- Real desktop application workflows
-- Live API smoke tests
+- Durable Turn journal, crash recovery, and idempotent projections
+- OS-level sandboxing and reliable side-effect reconciliation
+- Target implementations for context compaction, planning, memory, MCP, and skills
+- System keychain/secret store (API keys are currently stored in PostgreSQL as plaintext)
+- Automated live-provider smoke tests
 
 ## Structure
 
@@ -35,21 +37,23 @@ OpenWork/
     desktop/                 # Tauri + React desktop app
   crates/
     openwork-protocol/       # Core AI types, message blocks, traits, errors
-    openwork-providers/      # Provider adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen
-    openwork-runtime/        # Model registry and runtime coordination
+    openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
+    openwork-persistence/    # PostgreSQL provider repository and migrations
+    openwork-agent/          # Current agent loop
+    openwork-runtime/        # Desktop-facing runtime composition
+    openwork-session/        # PostgreSQL sessions, messages, and trace events
     openwork-tools/          # Tool abstractions and built-in tools
   docs/
-    ai-provider-integration-design.md
+    model-provider-v1-design.md
 ```
 
 ## Rust Crates
 
 `openwork-protocol`
 
-- Defines `GenerateRequest` and `GenerateResponse`
-- Defines `EmbeddingRequest` and `EmbeddingResponse`
+- Defines `ModelRequest`, `ModelResponse`, and `ModelEvent`
 - Defines `Message` and `ContentBlock`
-- Defines provider traits and normalized provider errors
+- Defines `ModelPort`, `ProviderRepository`, and normalized model errors
 
 `openwork-providers`
 
@@ -59,6 +63,13 @@ OpenWork/
 - `DeepSeekProvider`
 - `QwenProvider`
 - `OpenAiCompatibleChatProvider`
+- Normalized vendor error mapping and `RetryingModelPort`
+
+`openwork-persistence`
+
+- `PostgresProviderRepository`
+- `providers` / `provider_models` migrations
+- Transactional provider-and-model writes
 
 `openwork-runtime`
 
@@ -129,7 +140,7 @@ cargo fmt
 
 ## API Keys
 
-Provider API keys are currently passed through environment variables or caller configuration. Suggested names:
+The desktop currently persists user-entered API keys with provider configuration in PostgreSQL. This is known technical debt; a system keychain has not been integrated. Low-level adapters also accept caller-provided or environment-backed configuration. Common variable names:
 
 ```bash
 OPENAI_API_KEY=...
@@ -141,19 +152,17 @@ DASHSCOPE_API_KEY=...
 
 Do not commit real secrets.
 
-## Design Doc
+## Design Docs
 
-See:
-
-```text
-docs/ai-provider-integration-design.md
-```
+- [Documentation index](docs/README.md)
+- [OpenWork Core architecture blueprint](plans/openwork-core-architecture-blueprint.md)
+- [Model Provider V1 design](docs/model-provider-v1-design.md)
 
 ## Next Steps
 
 Recommended near-term work:
 
-1. Complete block-based provider response parsing.
-2. Add a streaming event model.
-3. Add credential management without over-abstracting it too early.
-4. Build a minimal desktop UI for model calls.
+1. Establish the Golden Case and a minimal eval harness.
+2. Define the Protocol Foundation and the runtime semantics for planning, capabilities, retries, and approvals.
+3. Build replayable persistence and the Capabilities/Execution contracts.
+4. Move the current agent loop into recoverable and verifiable `openwork-core` durable turns.

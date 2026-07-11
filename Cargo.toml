@@ -8,6 +8,7 @@ members = [
   "crates/openwork-runtime",
   "crates/openwork-tools",
   "crates/openwork-providers",
+  "crates/openwork-persistence",
   "crates/openwork-session",
   "crates/openwork-workspace",
   "apps/desktop/src-tauri",
@@ -27,6 +28,7 @@ openwork-permissions = { path = "crates/openwork-permissions" }
 openwork-runtime = { path = "crates/openwork-runtime" }
 openwork-tools = { path = "crates/openwork-tools" }
 openwork-providers = { path = "crates/openwork-providers" }
+openwork-persistence = { path = "crates/openwork-persistence" }
 openwork-session = { path = "crates/openwork-session" }
 openwork-workspace = { path = "crates/openwork-workspace" }
 async-trait = "0.1"
@@ -35,8 +37,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "json", "derive", "time"] }
 thiserror = "2"
-time = "0.3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+time = { version = "0.3", features = ["parsing"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"

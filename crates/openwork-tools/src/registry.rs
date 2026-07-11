@@ -1,4 +1,4 @@
-use openwork_protocol::ai::ToolDefinition;
+use openwork_protocol::model::ToolDefinition;
 
 use crate::tool::{Tool, ToolContext, ToolError, ToolOutput};
 
@@ -16,7 +16,7 @@ impl ToolRegistry {
         self.tools.push(tool);
     }
 
-    /// 导出所有工具声明,喂给 `GenerateRequest::tools`。
+    /// 导出所有工具声明，喂给 `ModelRequest::tools`。
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.iter().map(|tool| tool.definition()).collect()
     }

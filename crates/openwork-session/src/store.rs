@@ -7,7 +7,7 @@ use openwork_database::{
     Database, DatabaseConfig, DatabaseError, OrderDirection, PgCrud, PgFilterQuery, QueryCriteria,
     epoch_seconds, now_beijing,
 };
-use openwork_protocol::ai::{ContentBlock, Role};
+use openwork_protocol::model::{ContentBlock, Role};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -316,7 +316,6 @@ impl SessionStore {
             created_at: now_epoch,
         })
     }
-
 }
 
 fn session_to_record(session: Session) -> SessionRecord {
@@ -400,7 +399,9 @@ fn role_from_str(s: &str) -> Role {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openwork_protocol::ai::{ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState};
+    use openwork_protocol::model::{
+        ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
+    };
 
     async fn test_store() -> Option<SessionStore> {
         let url = std::env::var("TEST_DATABASE_URL").ok()?;

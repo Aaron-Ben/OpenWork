@@ -4,13 +4,13 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+use futures_util::StreamExt;
 use openwork_permissions::{
     ApprovalBridge, ApprovalDecision, ApprovalPolicy, ApprovalsReviewer, PermissionProfile,
 };
-use openwork_protocol::ai::{
-    ContentBlock, GenerateRequest, GenerateResponse, GenerateStreamCallback, GenerateStreamEvent,
-    LlmProvider, Message, ProviderError, Role, ToolCallBlock, ToolCallState, ToolResultBlock,
-    ToolResultState,
+use openwork_protocol::model::{
+    ContentBlock, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest,
+    ModelResponse, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{ToolContext, ToolOutput, ToolRegistry};
 use thiserror::Error;
@@ -27,7 +27,7 @@ Call a tool whenever it helps you make progress toward the task. \
 When the task is done or you have a final answer, respond with plain text and no tool calls.";
 
 pub struct AgentConfig {
-    pub provider: Box<dyn LlmProvider>,
+    pub provider: Box<dyn ModelPort>,
     pub model: String,
     pub tools: ToolRegistry,
     pub working_dir: PathBuf,
@@ -49,7 +49,7 @@ impl AgentConfig {
     /// 用内置工具(read/write/list/bash)与默认审批配置构造。
     /// 默认 `Untrusted` + `User`:每次工具调用都需宿主确认。
     pub fn new(
-        provider: Box<dyn LlmProvider>,
+        provider: Box<dyn ModelPort>,
         model: impl Into<String>,
         working_dir: PathBuf,
     ) -> Self {
@@ -78,11 +78,11 @@ pub enum AgentEvent {
     LlmStepFinish {
         index: usize,
         reason: String,
-        usage: Option<openwork_protocol::ai::TokenUsage>,
+        usage: Option<openwork_protocol::model::TokenUsage>,
     },
     LlmFinish {
         reason: String,
-        usage: Option<openwork_protocol::ai::TokenUsage>,
+        usage: Option<openwork_protocol::model::TokenUsage>,
     },
     TextStart {
         id: String,
@@ -132,7 +132,7 @@ pub enum AgentEvent {
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error("provider error: {0}")]
-    Provider(#[from] ProviderError),
+    Provider(#[from] ModelError),
     #[error("exceeded max steps ({0})")]
     MaxStepsExceeded(usize),
     /// 被外部取消;携带截止取消时的对话轨迹(不含 system prompt),供持久化部分结果。
@@ -179,12 +179,11 @@ impl Agent {
             }
             on_event(AgentEvent::Step(step));
 
-            let req = GenerateRequest {
+            let req = ModelRequest {
                 model: self.config.model.clone(),
                 messages: messages.clone(),
                 temperature: None,
-                max_tokens: None,
-                stream: true,
+                max_output_tokens: None,
                 thinking: None,
                 tools: tool_defs.clone(),
             };
@@ -200,10 +199,20 @@ impl Agent {
             // 记录 assistant 消息(thinking? + text + tool calls)。
             // thinking 放最前,与流式渲染顺序一致;落库后才不会在 reload 后丢失。
             let mut assistant_content: Vec<ContentBlock> = Vec::new();
-            if let Some(reasoning) = &response.reasoning_text
-                && !reasoning.is_empty()
-            {
-                assistant_content.push(ContentBlock::thinking(reasoning.clone()));
+            if response.provider_opaque_blocks.is_empty() {
+                if let Some(reasoning) = &response.reasoning_text
+                    && !reasoning.is_empty()
+                {
+                    assistant_content.push(ContentBlock::thinking(reasoning.clone()));
+                }
+            } else {
+                assistant_content.extend(
+                    response
+                        .provider_opaque_blocks
+                        .iter()
+                        .cloned()
+                        .map(ContentBlock::ProviderOpaque),
+                );
             }
             if !response.text.is_empty() {
                 assistant_content.push(ContentBlock::text(response.text.clone()));
@@ -289,56 +298,38 @@ impl Agent {
     /// 单次流式调用 provider,实时转发事件,返回累积响应。
     async fn stream_once(
         &self,
-        req: GenerateRequest,
+        req: ModelRequest,
         on_event: &mut impl FnMut(AgentEvent),
-    ) -> Result<GenerateResponse, AgentError> {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<GenerateStreamEvent>();
-        let callback: GenerateStreamCallback = Box::new(move |event| {
-            let _ = tx.send(event);
-        });
-
-        let provider_fut = self.config.provider.stream_generate(req, callback);
-        tokio::pin!(provider_fut);
+    ) -> Result<ModelResponse, AgentError> {
+        let mut provider_stream = self
+            .config
+            .provider
+            .invoke(req, ModelCallOptions::new("agent-model-attempt"))
+            .await?;
         let mut lifecycle = StreamLifecycle::new();
-        forward_event(
-            GenerateStreamEvent::StepStart { index: 0 },
-            on_event,
-            &mut lifecycle,
-        );
+        on_event(AgentEvent::LlmStepStart { index: 0 });
 
         let response = loop {
             tokio::select! {
                 biased;
                 _ = self.config.cancel.cancelled() => return Err(AgentError::Cancelled(Vec::new())),
-                Some(event) = rx.recv() => forward_event(event, on_event, &mut lifecycle),
-                result = &mut provider_fut => break result?,
+                item = provider_stream.next() => match item {
+                    Some(Ok(ModelEvent::ResponseCompleted { response })) => break *response,
+                    Some(Ok(event)) => forward_event(event, on_event, &mut lifecycle),
+                    Some(Err(error)) => return Err(error.into()),
+                    None => return Err(ModelError::protocol("provider stream ended without ResponseCompleted").into()),
+                },
             }
         };
-        while let Ok(event) = rx.try_recv() {
-            forward_event(event, on_event, &mut lifecycle);
-        }
         lifecycle.close_open(on_event);
-        let reason = if response.tool_calls.is_empty() {
-            "stop"
-        } else {
-            "tool_calls"
-        }
-        .to_string();
+        let reason = response.finish_reason.as_str().to_string();
         let usage = response.usage;
-        forward_event(
-            GenerateStreamEvent::StepFinish {
-                index: 0,
-                reason: reason.clone(),
-                usage,
-            },
-            on_event,
-            &mut lifecycle,
-        );
-        forward_event(
-            GenerateStreamEvent::Finish { reason, usage },
-            on_event,
-            &mut lifecycle,
-        );
+        on_event(AgentEvent::LlmStepFinish {
+            index: 0,
+            reason: reason.clone(),
+            usage,
+        });
+        on_event(AgentEvent::LlmFinish { reason, usage });
         Ok(response)
     }
 
@@ -454,29 +445,16 @@ impl StreamLifecycle {
 }
 
 fn forward_event(
-    event: GenerateStreamEvent,
+    event: ModelEvent,
     on_event: &mut impl FnMut(AgentEvent),
     lifecycle: &mut StreamLifecycle,
 ) {
     match event {
-        GenerateStreamEvent::StepStart { index } => on_event(AgentEvent::LlmStepStart { index }),
-        GenerateStreamEvent::StepFinish {
-            index,
-            reason,
-            usage,
-        } => on_event(AgentEvent::LlmStepFinish {
-            index,
-            reason,
-            usage,
-        }),
-        GenerateStreamEvent::Finish { reason, usage } => {
-            on_event(AgentEvent::LlmFinish { reason, usage })
-        }
-        GenerateStreamEvent::TextStart { id } => {
+        ModelEvent::TextStart { id, .. } => {
             lifecycle.text_open = true;
             on_event(AgentEvent::TextStart { id });
         }
-        GenerateStreamEvent::TextDelta { delta } => {
+        ModelEvent::TextDelta { delta, .. } => {
             if !lifecycle.text_open {
                 lifecycle.text_open = true;
                 on_event(AgentEvent::TextStart {
@@ -485,15 +463,15 @@ fn forward_event(
             }
             on_event(AgentEvent::TextDelta(delta));
         }
-        GenerateStreamEvent::TextEnd { id } => {
+        ModelEvent::TextEnd { id, .. } => {
             lifecycle.text_open = false;
             on_event(AgentEvent::TextEnd { id });
         }
-        GenerateStreamEvent::ReasoningStart { id } => {
+        ModelEvent::ReasoningStart { id, .. } => {
             lifecycle.reasoning_open = true;
             on_event(AgentEvent::ReasoningStart { id });
         }
-        GenerateStreamEvent::ReasoningDelta { delta } => {
+        ModelEvent::ReasoningDelta { delta, .. } => {
             if !lifecycle.reasoning_open {
                 lifecycle.reasoning_open = true;
                 on_event(AgentEvent::ReasoningStart {
@@ -502,17 +480,18 @@ fn forward_event(
             }
             on_event(AgentEvent::ReasoningDelta(delta))
         }
-        GenerateStreamEvent::ReasoningEnd { id } => {
+        ModelEvent::ReasoningEnd { id, .. } => {
             lifecycle.reasoning_open = false;
             on_event(AgentEvent::ReasoningEnd { id });
         }
-        GenerateStreamEvent::ToolCallStart { id, name } => {
+        ModelEvent::ToolCallStart { id, name, .. } => {
             on_event(AgentEvent::ToolCallStart { id, name })
         }
-        GenerateStreamEvent::ToolCallDelta { id, partial_input } => {
-            on_event(AgentEvent::ToolCallDelta { id, partial_input })
-        }
-        GenerateStreamEvent::ToolCallEnd { id } => on_event(AgentEvent::ToolCallEnd { id }),
+        ModelEvent::ToolCallDelta {
+            id, partial_input, ..
+        } => on_event(AgentEvent::ToolCallDelta { id, partial_input }),
+        ModelEvent::ToolCallEnd { id, .. } => on_event(AgentEvent::ToolCallEnd { id }),
+        ModelEvent::ResponseCompleted { .. } => {}
     }
 }
 
@@ -532,6 +511,8 @@ fn normalize_json(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use futures_util::stream;
+    use openwork_protocol::model::{FinishReason, ModelStream};
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Arc;
@@ -539,11 +520,11 @@ mod tests {
 
     /// 按 `stream_generate` 调用顺序依次返回预设响应的假 provider。
     struct FakeProvider {
-        responses: tokio::sync::Mutex<VecDeque<GenerateResponse>>,
+        responses: tokio::sync::Mutex<VecDeque<ModelResponse>>,
     }
 
     impl FakeProvider {
-        fn new(responses: Vec<GenerateResponse>) -> Self {
+        fn new(responses: Vec<ModelResponse>) -> Self {
             Self {
                 responses: tokio::sync::Mutex::new(responses.into_iter().collect()),
             }
@@ -551,54 +532,62 @@ mod tests {
     }
 
     #[async_trait]
-    impl LlmProvider for FakeProvider {
-        async fn generate(&self, _req: GenerateRequest) -> Result<GenerateResponse, ProviderError> {
-            Err(ProviderError::InvalidRequest {
-                message: "FakeProvider only supports stream_generate".to_string(),
-            })
-        }
-
-        async fn stream_generate(
+    impl ModelPort for FakeProvider {
+        async fn invoke(
             &self,
-            _req: GenerateRequest,
-            _on_event: GenerateStreamCallback,
-        ) -> Result<GenerateResponse, ProviderError> {
-            self.responses
+            _req: ModelRequest,
+            _options: ModelCallOptions,
+        ) -> Result<ModelStream, ModelError> {
+            let response = self
+                .responses
                 .lock()
                 .await
                 .pop_front()
-                .ok_or_else(|| ProviderError::InvalidRequest {
-                    message: "FakeProvider exhausted".to_string(),
-                })
+                .ok_or_else(|| ModelError::invalid_request("FakeProvider exhausted"))?;
+            Ok(Box::pin(stream::iter([Ok(
+                ModelEvent::ResponseCompleted {
+                    response: Box::new(response),
+                },
+            )])))
         }
     }
 
-    fn tool_call_response(id: &str, name: &str, input: serde_json::Value) -> GenerateResponse {
-        GenerateResponse {
+    fn tool_call_response(id: &str, name: &str, input: serde_json::Value) -> ModelResponse {
+        ModelResponse {
+            response_id: None,
+            provider_request_id: None,
+            model: Some("fake".to_string()),
             text: String::new(),
             reasoning_text: None,
-            usage: None,
-            raw: serde_json::Value::Null,
             tool_calls: vec![ToolCallBlock {
                 id: id.to_string(),
                 name: name.to_string(),
                 input: input.to_string(),
                 state: ToolCallState::Submitted,
             }],
+            provider_opaque_blocks: Vec::new(),
+            finish_reason: FinishReason::ToolUse,
+            raw_finish_reason: Some("tool_use".to_string()),
+            usage: None,
         }
     }
 
-    fn text_response(text: &str) -> GenerateResponse {
-        GenerateResponse {
+    fn text_response(text: &str) -> ModelResponse {
+        ModelResponse {
+            response_id: None,
+            provider_request_id: None,
+            model: Some("fake".to_string()),
             text: text.to_string(),
             reasoning_text: None,
-            usage: None,
-            raw: serde_json::Value::Null,
             tool_calls: Vec::new(),
+            provider_opaque_blocks: Vec::new(),
+            finish_reason: FinishReason::Stop,
+            raw_finish_reason: Some("stop".to_string()),
+            usage: None,
         }
     }
 
-    fn untrusted_user_config(provider: Box<dyn LlmProvider>) -> AgentConfig {
+    fn untrusted_user_config(provider: Box<dyn ModelPort>) -> AgentConfig {
         let mut config = AgentConfig::new(provider, "fake", PathBuf::from("."));
         config.approval_policy = ApprovalPolicy::Untrusted;
         config.approvals_reviewer = ApprovalsReviewer::User;

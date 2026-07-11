@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use globset::{Glob as GlobPattern, GlobSet};
 use ignore::WalkBuilder;
-use openwork_protocol::ai::ContentBlock;
+use openwork_protocol::model::ContentBlock;
 use serde_json::{Value, json};
 use std::path::Path;
 

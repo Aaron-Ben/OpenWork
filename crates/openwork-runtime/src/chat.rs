@@ -3,8 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use openwork_agent::{Agent, AgentConfig, AgentError, AgentEvent};
 use openwork_permissions::{ApprovalBridge, ApprovalPolicy};
-use openwork_protocol::ai::{ContentBlock, Message, Role};
-use openwork_providers::{ProviderStore, StoreError as ProviderStoreError, build_provider};
+use openwork_protocol::{
+    model::{ContentBlock, Message, Role},
+    provider::{ProviderRepository, ProviderRepositoryError},
+};
+use openwork_providers::build_provider;
 use openwork_session::{NewMessage, SessionError, SessionStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -73,8 +76,8 @@ pub enum ChatRuntimeError {
     ProviderNotFound(String),
     #[error("session not found: {0}")]
     SessionNotFound(String),
-    #[error("provider store error: {0}")]
-    ProviderStore(#[from] ProviderStoreError),
+    #[error("provider repository error: {0}")]
+    ProviderRepository(#[from] ProviderRepositoryError),
     #[error("session error: {0}")]
     Session(#[from] SessionError),
     #[error("agent error: {0}")]
@@ -84,20 +87,23 @@ pub enum ChatRuntimeError {
 /// Composes provider configuration, session persistence, tools, permissions, and the agent loop.
 #[derive(Clone)]
 pub struct ChatRuntime {
-    provider_store: ProviderStore,
+    provider_repository: Arc<dyn ProviderRepository>,
     session_store: SessionStore,
 }
 
 impl ChatRuntime {
-    pub fn new(provider_store: ProviderStore, session_store: SessionStore) -> Self {
+    pub fn new(
+        provider_repository: Arc<dyn ProviderRepository>,
+        session_store: SessionStore,
+    ) -> Self {
         Self {
-            provider_store,
+            provider_repository,
             session_store,
         }
     }
 
-    pub fn provider_store(&self) -> &ProviderStore {
-        &self.provider_store
+    pub fn provider_repository(&self) -> &dyn ProviderRepository {
+        self.provider_repository.as_ref()
     }
 
     pub fn session_store(&self) -> &SessionStore {
@@ -115,8 +121,8 @@ impl ChatRuntime {
         let session_id = request.session_id.clone();
 
         let config = self
-            .provider_store
-            .get(&request.provider_id)
+            .provider_repository
+            .load_runtime(&request.provider_id)
             .await?
             .ok_or_else(|| ChatRuntimeError::ProviderNotFound(request.provider_id.clone()))?;
         let provider = build_provider(&config);
@@ -242,7 +248,6 @@ impl ChatRuntime {
             .await
             .map(|_| ())
     }
-
 }
 
 fn emit_runtime_event(

@@ -1,6 +1,8 @@
 # 权限模型与 Human-in-the-loop 审批
 
-Last reviewed: 2026-06-17
+Last reviewed: 2026-07-11
+
+> Status: current implementation detail. 目标所有权是 Core 持有审批工作流、Execution 返回最终策略决定、App 路由用户命令，见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
 ## 1. 目标
 
@@ -16,9 +18,9 @@ Last reviewed: 2026-06-17
 代码位置：
 
 ```text
-crates/openwork-tools/src/permissions.rs
+crates/openwork-permissions/src/permissions.rs
 crates/openwork-tools/src/tool.rs
-crates/openwork-runtime/src/router.rs
+crates/openwork-agent/src/lib.rs
 ```
 
 核心类型：
@@ -93,10 +95,11 @@ OPENWORK_NETWORK_RESTRICTED=1
 代码位置：
 
 ```text
-crates/openwork-tools/src/approval.rs
-crates/openwork-runtime/src/router.rs
+crates/openwork-permissions/src/approval.rs
+crates/openwork-agent/src/lib.rs
+crates/openwork-runtime/src/chat.rs
 apps/desktop/src/components/chat/ApprovalDialog.tsx
-apps/desktop/src-tauri/src/lib.rs
+apps/desktop/src-tauri/src/commands/chat.rs
 ```
 
 核心类型：
@@ -132,14 +135,14 @@ pub enum ApprovalsReviewer {
 
 ```text
 模型返回 tool_call
-  -> runtime 判断 ApprovalPolicy
+  -> Agent 判断 ApprovalPolicy
   -> 发出 AgentEvent::ApprovalRequest
-  -> Tauri 映射为 approval_request
+  -> ChatRuntime 映射为 approval_request
   -> 前端 ApprovalDialog 展示工具名和参数
   -> 用户允许/拒绝
   -> resolve_approval
   -> ApprovalBridge::resolve
-  -> runtime 继续执行或返回拒绝错误
+  -> Agent 继续执行或返回拒绝错误
 ```
 
 这就是当前的 human-in-the-loop。
@@ -166,8 +169,8 @@ bash(command="cat /some/path && echo hi > /other/path")
 
 ## 8. 建议后续改进
 
-1. 新增 `tool_runs`，记录工具调用、审批、执行结果、耗时。
+1. 将当前未接线的 `tool_runs` 迁移为 Recorded Event 投影，记录工具调用、审批、执行结果和耗时。
 2. 给 `bash` 增加独立策略，例如 `allow_bash`、危险命令二次确认、输出大小限制。
-3. 将 `OnRequest` / `OnFailure` 接到真实 sandbox executor。
+3. 按蓝图拆分职责：Core 持有审批状态机，Execution 计算最终风险并接入真实 sandbox。
 4. 对写文件工具展示 diff 审批，而不是只展示 path。
 5. 把审批事件持久化到 trace，便于复盘。

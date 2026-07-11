@@ -19,8 +19,10 @@ export const providersApi = {
     invoke('provider_update', { id, input }),
   remove: (id: string): Promise<void> => invoke('provider_delete', { id }),
   activate: (id: string): Promise<void> => invoke('provider_activate', { id }),
-  test: (config: ProviderConfig, model: string): Promise<TestResult> =>
-    invoke('provider_test', { config, model }),
+  test: (id: string, model: string): Promise<TestResult> =>
+    invoke('provider_test', { id, model }),
+  testDraft: (input: ProviderInput, model: string): Promise<TestResult> =>
+    invoke('provider_test', { input, model }),
   resolveApproval: (approvalId: string, allow: boolean): Promise<void> =>
     invoke('resolve_approval', { approvalId, allow }),
   listenToChatStream: (

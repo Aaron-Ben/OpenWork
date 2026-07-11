@@ -42,7 +42,7 @@ export function ProviderSettings({ onBack }: { onBack: () => void }) {
   }
 
   async function handleTest(provider: ProviderConfig) {
-    const model = provider.models[0];
+    const model = provider.models.find((item) => item.enabled)?.modelId;
     if (!model) {
       setTests((prev) => ({ ...prev, [provider.id]: { success: false, message: "No model configured" } }));
       return;
@@ -100,7 +100,9 @@ export function ProviderSettings({ onBack }: { onBack: () => void }) {
                         {isActive ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Active</span> : null}
                       </div>
                       <p className="m-0 mt-1 break-words text-xs text-ink-faint">{provider.baseUrl}</p>
-                      <p className="m-0 mt-0.5 text-xs text-ink-faint">{provider.models.join(", ") || "no models"}</p>
+                      <p className="m-0 mt-0.5 text-xs text-ink-faint">
+                        {provider.models.map((model) => `${model.modelId} (${model.modelTier})`).join(", ") || "no models"}
+                      </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       {isActive ? null : (
