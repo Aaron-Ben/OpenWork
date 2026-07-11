@@ -7,15 +7,6 @@ import { providersApi } from "../api/providers";
 import type { ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../type/providers";
 import { resolveErrorMessage as resolveMessage } from "../utils/commandError";
 
-const KIND_OPTIONS: { value: ProviderKind; label: string }[] = [
-  { value: "openai", label: "OpenAI · Responses API" },
-  { value: "glm", label: "GLM · OpenAI-compatible" },
-  { value: "kimi", label: "Kimi · OpenAI-compatible" },
-  { value: "deepseek", label: "DeepSeek · OpenAI-compatible" },
-  { value: "qwen", label: "Qwen · OpenAI-compatible" },
-  { value: "anthropic", label: "Anthropic · /v1/messages" },
-];
-
 const inputClass =
   "h-10 w-full rounded-lg border border-line-strong bg-paper px-3 text-sm text-ink outline-none focus:ring-3 focus:ring-clay/20";
 
@@ -183,7 +174,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-line bg-paper shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-line bg-paper shadow-xl">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 className="m-0 text-base font-semibold text-ink">
             {mode === "edit" ? t("settings.models.form.editTitle") : t("settings.models.form.addTitle")}
@@ -221,66 +212,58 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
             </div>
           ) : null}
 
-          <Field label={t("settings.models.form.name")}>
-            <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="My DeepSeek" />
-          </Field>
+          <div data-provider-form-grid="true" className="grid gap-4 sm:grid-cols-2">
+            <Field label={t("settings.models.form.name")}>
+              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="My DeepSeek" />
+            </Field>
 
-          <Field label={t("settings.models.form.baseUrl")}>
-            <input className={inputClass} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com" />
-          </Field>
+            <Field label={t("settings.models.form.baseUrl")}>
+              <input className={inputClass} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com" />
+            </Field>
 
-          <Field label={t("settings.models.form.apiKey")}>
-            <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
-              <input
-                className={inputClass}
-                type={showApiKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-                autoComplete="off"
-                spellCheck={false}
+            <Field label={t("settings.models.form.apiKey")} className="sm:col-span-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
+                <input
+                  className={inputClass}
+                  type={showApiKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="grid size-10 place-items-center rounded-lg border border-line-strong bg-paper text-ink-soft hover:bg-paper-hover"
+                  onClick={() => setShowApiKey((value) => !value)}
+                  aria-label={showApiKey ? t("settings.models.form.hideApiKey") : t("settings.models.form.showApiKey")}
+                >
+                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </Field>
+
+            <Field label={t("settings.models.form.liteModels")}>
+              <input className={inputClass} value={liteModelsText} onChange={(e) => setLiteModelsText(e.target.value)} placeholder="deepseek-chat" />
+            </Field>
+
+            <Field label={t("settings.models.form.plusModels")}>
+              <input className={inputClass} value={plusModelsText} onChange={(e) => setPlusModelsText(e.target.value)} placeholder="qwen-plus" />
+            </Field>
+
+            <Field label={t("settings.models.form.proModels")}>
+              <input className={inputClass} value={proModelsText} onChange={(e) => setProModelsText(e.target.value)} placeholder="deepseek-reasoner" />
+            </Field>
+
+            <Field label={t("settings.models.form.extraBody")}>
+              <textarea
+                className={`${inputClass} min-h-10 resize-y py-2 font-mono text-xs`}
+                value={extraBodyText}
+                onChange={(e) => setExtraBodyText(e.target.value)}
+                placeholder='{"reasoning_effort": "high"}'
               />
-              <button
-                type="button"
-                className="grid size-10 place-items-center rounded-lg border border-line-strong bg-paper text-ink-soft hover:bg-paper-hover"
-                onClick={() => setShowApiKey((value) => !value)}
-                aria-label={showApiKey ? t("settings.models.form.hideApiKey") : t("settings.models.form.showApiKey")}
-              >
-                {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-          </Field>
-
-          <Field label={t("settings.models.form.protocol")}>
-            <select className={inputClass} value={kind} onChange={(e) => setKind(e.target.value as ProviderKind)}>
-              {KIND_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label={t("settings.models.form.liteModels")} hint={t("settings.models.form.liteHint")}>
-            <input className={inputClass} value={liteModelsText} onChange={(e) => setLiteModelsText(e.target.value)} placeholder="deepseek-chat" />
-          </Field>
-
-          <Field label={t("settings.models.form.plusModels")} hint={t("settings.models.form.plusHint")}>
-            <input className={inputClass} value={plusModelsText} onChange={(e) => setPlusModelsText(e.target.value)} placeholder="qwen-plus" />
-          </Field>
-
-          <Field label={t("settings.models.form.proModels")} hint={t("settings.models.form.proHint")}>
-            <input className={inputClass} value={proModelsText} onChange={(e) => setProModelsText(e.target.value)} placeholder="deepseek-reasoner" />
-          </Field>
-
-          <Field label={t("settings.models.form.extraBody")} hint={t("settings.models.form.extraBodyHint")}>
-            <textarea
-              className={`${inputClass} min-h-20 resize-y font-mono text-xs`}
-              value={extraBodyText}
-              onChange={(e) => setExtraBodyText(e.target.value)}
-              placeholder='{"reasoning_effort": "high"}'
-            />
-          </Field>
+            </Field>
+          </div>
 
           {testResult ? (
             <div className={`rounded-lg border px-3 py-2 text-xs ${testResult.success ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
@@ -321,12 +304,11 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function Field({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
-    <label className="grid gap-1.5">
+    <label className={`grid gap-1.5 ${className ?? ""}`}>
       <span className="text-sm font-medium text-ink-soft">{label}</span>
       {children}
-      {hint ? <span className="text-xs text-ink-faint">{hint}</span> : null}
     </label>
   );
 }
