@@ -30,7 +30,8 @@ describe('ChatInput toolbar', () => {
   it('renders the compact approval, model, and send controls', () => {
     const markup = renderToStaticMarkup(<ChatInput {...baseProps} />)
 
-    expect(markup).toContain('由我审批')
+    expect(markup).toContain('询问审批')
+    expect(markup).not.toContain('由我审批')
     expect(markup).toContain('aria-label="选择模型"')
     expect(markup).toContain('DeepSeek Chat · Plus')
     expect(markup).toContain('aria-label="发送"')

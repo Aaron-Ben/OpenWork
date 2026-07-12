@@ -1,15 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { ArrowUp, CheckCircle2, ShieldCheck, Square } from 'lucide-react'
+import { ArrowUp, ShieldCheck, Square } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProviderModel } from '../../type/providers'
 
@@ -89,36 +83,14 @@ export function ChatInput({
         <div className="mx-5 border-t border-line" />
 
         <div className="flex min-h-12 items-center gap-2 px-4 py-1 sm:px-5">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="px-1.5"
-                aria-label={t('chat.approvalMode')}
-                disabled={disabled || isSending}
-              >
-                <ShieldCheck size={17} strokeWidth={1.8} />
-                <span className="max-[420px]:hidden">{t('chat.approveForMe')}</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-[280px]">
-              <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-ink-faint">
-                {t('chat.executionPermission')}
-              </div>
-              <DropdownMenuItem className="flex items-start gap-3 bg-clay-soft px-4 py-3">
-                <ShieldCheck size={18} className="mt-0.5 shrink-0 text-clay" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold text-ink">{t('chat.approveForMe')}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-ink-faint">
-                    {t('chat.approvalDescription')}
-                  </span>
-                </span>
-                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-clay" />
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div
+            className="flex h-8 items-center gap-2 px-1.5 text-sm font-medium text-ink-faint"
+            aria-label={t('chat.approvalMode', { mode: t('chat.askForApproval') })}
+            title={t('chat.askForApprovalDescription')}
+          >
+            <ShieldCheck size={17} strokeWidth={1.8} />
+            <span className="max-[420px]:hidden">{t('chat.askForApproval')}</span>
+          </div>
 
           <div className="min-w-0 flex-1" />
 

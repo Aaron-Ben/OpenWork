@@ -15,6 +15,7 @@ import { UserMessage } from '../components/chat/UserMessage'
 import { useActiveProvider } from '../stores/providerStore'
 import { useApprovalStore } from '../stores/approvalStore'
 import { useSessionStore, useActiveSessionMessages } from '../stores/sessionStore'
+import { DEFAULT_APPROVAL_POLICY } from '../type/chat'
 
 export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
@@ -55,7 +56,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
         providerId: active.id,
         model,
         userText: text,
-        approvalPolicy: 'untrusted',
+        approvalPolicy: DEFAULT_APPROVAL_POLICY,
       })
     } catch {
       // 错误文本由 listener 的 error event 累积到 store;这里仅兜底结束流式态。
