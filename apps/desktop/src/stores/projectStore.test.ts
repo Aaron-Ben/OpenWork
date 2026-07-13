@@ -4,6 +4,7 @@ import {
   addOpenedProject,
   projectFromDirectory,
   removeOpenedProject,
+  toggleCollapsedProject,
 } from './projectStore'
 
 describe('projectStore helpers', () => {
@@ -33,5 +34,17 @@ describe('projectStore helpers', () => {
     expect(removeOpenedProject(projects, '/Volumes/Code/OpenWork')).toEqual([
       { name: 'mcp-client', path: '/Users/me/Code/mcp-client' },
     ])
+  })
+
+  it('toggles one project without changing the collapsed state of another project', () => {
+    expect(toggleCollapsedProject([], '/Volumes/Code/OpenWork')).toEqual([
+      '/Volumes/Code/OpenWork',
+    ])
+    expect(
+      toggleCollapsedProject(
+        ['/Volumes/Code/OpenWork', '/Users/me/Code/mcp-client'],
+        '/Volumes/Code/OpenWork',
+      ),
+    ).toEqual(['/Users/me/Code/mcp-client'])
   })
 })

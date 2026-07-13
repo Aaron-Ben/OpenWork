@@ -56,10 +56,13 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
   const projects = useProjectStore((state) => state.projects)
   const activeProjectPath = useProjectStore((state) => state.activeProjectPath)
   const projectsExpanded = useProjectStore((state) => state.projectsExpanded)
+  const collapsedProjectPaths = useProjectStore((state) => state.collapsedProjectPaths)
   const openDirectory = useProjectStore((state) => state.openDirectory)
   const selectProject = useProjectStore((state) => state.selectProject)
   const removeProject = useProjectStore((state) => state.removeProject)
   const toggleProjects = useProjectStore((state) => state.toggleProjects)
+  const toggleProject = useProjectStore((state) => state.toggleProject)
+  const expandProject = useProjectStore((state) => state.expandProject)
   const active = useActiveProvider()
   const reduceMotion = useReducedMotion()
   const [isOpeningDirectory, setIsOpeningDirectory] = useState(false)
@@ -69,6 +72,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
     const model = active.models.find((item) => item.enabled)?.modelId
     if (!model) return
     selectProject(project.path)
+    expandProject(project.path)
     onNavigate('chat')
     await create({
       providerId: active.id,
@@ -232,41 +236,59 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
                             normalizeDirectoryPath(session.workingDir ?? '') === project.path,
                         )
                         const projectActive = activeProjectPath === project.path
+                        const projectExpanded =
+                          projectActive && !collapsedProjectPaths.includes(project.path)
                         return (
                           <div key={project.path}>
                             <ProjectItem
                               project={project}
                               active={projectActive}
+                              expanded={projectExpanded}
                               canCreateSession={Boolean(active)}
                               onSelect={() => {
-                                selectProject(project.path)
+                                if (projectActive) {
+                                  toggleProject(project.path)
+                                } else {
+                                  selectProject(project.path)
+                                  expandProject(project.path)
+                                }
                                 onNavigate('chat')
                               }}
                               onRemove={() => removeProject(project.path)}
                               onCreateSession={() => void handleCreate(project)}
                             />
-                            {projectActive ? (
-                              <div className="ml-4 mt-1 grid gap-1 border-l border-line pl-2">
-                                {projectSessions.map((session) => (
-                                  <SessionItem
-                                    key={session.id}
-                                    session={session}
-                                    active={activeSessionId === session.id}
-                                    onSelect={() => {
-                                      onNavigate('chat')
-                                      void select(session.id)
-                                    }}
-                                    onRename={(title) => void rename(session.id, title)}
-                                    onDelete={() => void remove(session.id)}
-                                  />
-                                ))}
-                                {projectSessions.length === 0 ? (
-                                  <div className="px-3 py-2 font-sans text-xs text-ink-faint">
-                                    {t('sidebar.emptyProjectSessions')}
+                            <AnimatePresence initial={false}>
+                              {projectExpanded ? (
+                                <motion.div
+                                  className="overflow-hidden"
+                                  initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: reduceMotion ? 0 : 0.16, ease: 'easeOut' }}
+                                >
+                                  <div className="ml-4 mt-1 grid gap-1 border-l border-line pl-2">
+                                    {projectSessions.map((session) => (
+                                      <SessionItem
+                                        key={session.id}
+                                        session={session}
+                                        active={activeSessionId === session.id}
+                                        onSelect={() => {
+                                          onNavigate('chat')
+                                          void select(session.id)
+                                        }}
+                                        onRename={(title) => void rename(session.id, title)}
+                                        onDelete={() => void remove(session.id)}
+                                      />
+                                    ))}
+                                    {projectSessions.length === 0 ? (
+                                      <div className="px-3 py-2 font-sans text-xs text-ink-faint">
+                                        {t('sidebar.emptyProjectSessions')}
+                                      </div>
+                                    ) : null}
                                   </div>
-                                ) : null}
-                              </div>
-                            ) : null}
+                                </motion.div>
+                              ) : null}
+                            </AnimatePresence>
                           </div>
                         )
                       })}
@@ -304,6 +326,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
 interface ProjectItemProps {
   project: OpenedProject
   active: boolean
+  expanded: boolean
   canCreateSession: boolean
   onSelect: () => void
   onRemove: () => void
@@ -313,6 +336,7 @@ interface ProjectItemProps {
 export function ProjectItem({
   project,
   active,
+  expanded,
   canCreateSession,
   onSelect,
   onRemove,
@@ -330,8 +354,14 @@ export function ProjectItem({
           active ? 'font-medium text-ink' : 'text-ink-soft group-hover:text-ink'
         }`}
         title={project.path}
+        aria-expanded={expanded}
         onClick={onSelect}
       >
+        {expanded ? (
+          <ChevronDown size={14} className="shrink-0 text-ink-faint" />
+        ) : (
+          <ChevronRight size={14} className="shrink-0 text-ink-faint" />
+        )}
         <Folder size={17} className="shrink-0 text-ink-faint" />
         <span className="min-w-0 flex-1 truncate">{project.name}</span>
       </button>

@@ -34,6 +34,7 @@ describe('Sidebar', () => {
       <ProjectItem
         project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
         active
+        expanded
         canCreateSession
         onSelect={vi.fn()}
         onRemove={vi.fn()}
@@ -42,6 +43,7 @@ describe('Sidebar', () => {
     )
 
     expect(markup).toContain('data-project-row="true"')
+    expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-label="OpenWork 项目操作"')
     expect(markup).toContain('aria-label="在 OpenWork 中创建会话"')
     expect(markup).not.toContain('删除电脑上的项目')
