@@ -1,14 +1,20 @@
 import { useState } from 'react'
+import { open } from '@tauri-apps/plugin-dialog'
 import {
   ArrowLeft,
   Bot,
   Check,
+  ChevronDown,
+  ChevronRight,
+  Folder,
   MessageSquare,
+  MoreHorizontal,
   PanelLeftClose,
   Palette,
   Pencil,
   Plus,
   Settings as SettingsIcon,
+  SquarePen,
   Trash2,
   X,
 } from 'lucide-react'
@@ -16,7 +22,18 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useActiveProvider } from '../../stores/providerStore'
+import {
+  normalizeDirectoryPath,
+  type OpenedProject,
+  useProjectStore,
+} from '../../stores/projectStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import type { SessionSummary } from '../../type/session'
 import type { AppView } from './types'
@@ -36,15 +53,47 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
   const create = useSessionStore((state) => state.create)
   const rename = useSessionStore((state) => state.rename)
   const remove = useSessionStore((state) => state.remove)
+  const projects = useProjectStore((state) => state.projects)
+  const activeProjectPath = useProjectStore((state) => state.activeProjectPath)
+  const projectsExpanded = useProjectStore((state) => state.projectsExpanded)
+  const openDirectory = useProjectStore((state) => state.openDirectory)
+  const selectProject = useProjectStore((state) => state.selectProject)
+  const removeProject = useProjectStore((state) => state.removeProject)
+  const toggleProjects = useProjectStore((state) => state.toggleProjects)
   const active = useActiveProvider()
   const reduceMotion = useReducedMotion()
+  const [isOpeningDirectory, setIsOpeningDirectory] = useState(false)
 
-  async function handleCreate() {
+  async function handleCreate(project: OpenedProject) {
     if (!active) return
     const model = active.models.find((item) => item.enabled)?.modelId
     if (!model) return
+    selectProject(project.path)
     onNavigate('chat')
-    await create({ providerId: active.id, model, title: t('sidebar.untitledSession') })
+    await create({
+      providerId: active.id,
+      model,
+      title: t('sidebar.untitledSession'),
+      workingDir: project.path,
+    })
+  }
+
+  async function handleOpenDirectory() {
+    if (isOpeningDirectory) return
+    setIsOpeningDirectory(true)
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: t('sidebar.openFolder'),
+      })
+      if (typeof selected === 'string') {
+        openDirectory(selected)
+        onNavigate('chat')
+      }
+    } finally {
+      setIsOpeningDirectory(false)
+    }
   }
 
   if (!expanded) {
@@ -130,21 +179,6 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
         </Button>
       </div>
 
-      <div className="px-3 pb-3 pt-1">
-        <Button
-          type="button"
-          variant="ghost"
-          className={`h-10 w-full rounded-xl text-ink ${expanded ? 'justify-start px-3' : 'px-0'}`}
-          aria-label={t('sidebar.newSession')}
-          title={t('sidebar.newSession')}
-          disabled={!active}
-          onClick={() => void handleCreate()}
-        >
-          <Plus size={19} className="shrink-0" />
-          {expanded ? <span>{t('sidebar.newSession')}</span> : null}
-        </Button>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-hidden">
         <AnimatePresence initial={false}>
           {expanded ? (
@@ -155,26 +189,95 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
               exit={{ opacity: 0 }}
               transition={{ duration: 0.14 }}
             >
-              <div className="px-2 pb-2 pt-1 font-sans text-xs font-medium text-ink-faint">{t('sidebar.sessions')}</div>
+              <div
+                data-project-section="true"
+                className="flex items-center gap-1 px-1 pb-2 pt-1"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 min-w-0 flex-1 justify-start gap-1 rounded-lg px-2 text-xs font-medium text-ink-faint"
+                  aria-expanded={projectsExpanded}
+                  onClick={toggleProjects}
+                >
+                  {projectsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span>{t('sidebar.projects')}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 rounded-lg text-ink-faint"
+                  aria-label={t('sidebar.openFolder')}
+                  title={t('sidebar.openFolder')}
+                  disabled={isOpeningDirectory}
+                  onClick={() => void handleOpenDirectory()}
+                >
+                  <Plus size={17} />
+                </Button>
+              </div>
               <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-                <div className="grid gap-1">
-                  {sessions.map((session) => (
-                    <SessionItem
-                      key={session.id}
-                      session={session}
-                      active={activeSessionId === session.id && view === 'chat'}
-                      onSelect={() => {
-                        onNavigate('chat')
-                        void select(session.id)
-                      }}
-                      onRename={(title) => void rename(session.id, title)}
-                      onDelete={() => void remove(session.id)}
-                    />
-                  ))}
-                  {sessions.length === 0 ? (
-                    <div className="px-2 py-4 font-sans text-xs text-ink-faint">{t('sidebar.emptySessions')}</div>
+                <AnimatePresence initial={false}>
+                  {projectsExpanded ? (
+                    <motion.div
+                      className="grid gap-1"
+                      initial={reduceMotion ? false : { opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.14 }}
+                    >
+                      {projects.map((project) => {
+                        const projectSessions = sessions.filter(
+                          (session) =>
+                            normalizeDirectoryPath(session.workingDir ?? '') === project.path,
+                        )
+                        const projectActive = activeProjectPath === project.path
+                        return (
+                          <div key={project.path}>
+                            <ProjectItem
+                              project={project}
+                              active={projectActive}
+                              canCreateSession={Boolean(active)}
+                              onSelect={() => {
+                                selectProject(project.path)
+                                onNavigate('chat')
+                              }}
+                              onRemove={() => removeProject(project.path)}
+                              onCreateSession={() => void handleCreate(project)}
+                            />
+                            {projectActive ? (
+                              <div className="ml-4 mt-1 grid gap-1 border-l border-line pl-2">
+                                {projectSessions.map((session) => (
+                                  <SessionItem
+                                    key={session.id}
+                                    session={session}
+                                    active={activeSessionId === session.id}
+                                    onSelect={() => {
+                                      onNavigate('chat')
+                                      void select(session.id)
+                                    }}
+                                    onRename={(title) => void rename(session.id, title)}
+                                    onDelete={() => void remove(session.id)}
+                                  />
+                                ))}
+                                {projectSessions.length === 0 ? (
+                                  <div className="px-3 py-2 font-sans text-xs text-ink-faint">
+                                    {t('sidebar.emptyProjectSessions')}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                      {projects.length === 0 ? (
+                        <div className="px-3 py-4 font-sans text-xs leading-5 text-ink-faint">
+                          {t('sidebar.emptyProjects')}
+                        </div>
+                      ) : null}
+                    </motion.div>
                   ) : null}
-                </div>
+                </AnimatePresence>
               </div>
             </motion.div>
           ) : null}
@@ -195,6 +298,87 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
         </Button>
       </div>
     </motion.aside>
+  )
+}
+
+interface ProjectItemProps {
+  project: OpenedProject
+  active: boolean
+  canCreateSession: boolean
+  onSelect: () => void
+  onRemove: () => void
+  onCreateSession: () => void
+}
+
+export function ProjectItem({
+  project,
+  active,
+  canCreateSession,
+  onSelect,
+  onRemove,
+  onCreateSession,
+}: ProjectItemProps) {
+  const { t } = useTranslation()
+  return (
+    <div
+      data-project-row="true"
+      className={`group relative rounded-xl transition ${active ? 'bg-paper shadow-sm' : 'hover:bg-paper'}`}
+    >
+      <button
+        type="button"
+        className={`flex h-10 w-full items-center gap-2.5 rounded-xl px-3 pr-16 text-left text-sm transition ${
+          active ? 'font-medium text-ink' : 'text-ink-soft group-hover:text-ink'
+        }`}
+        title={project.path}
+        onClick={onSelect}
+      >
+        <Folder size={17} className="shrink-0 text-ink-faint" />
+        <span className="min-w-0 flex-1 truncate">{project.name}</span>
+      </button>
+      <div
+        className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition ${
+          active
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+        }`}
+      >
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7 rounded-lg text-ink-faint"
+              aria-label={t('sidebar.projectActions', { name: project.name })}
+              title={t('sidebar.projectActions', { name: project.name })}
+            >
+              <MoreHorizontal size={15} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="right" className="min-w-48">
+            <DropdownMenuItem
+              className="flex cursor-default items-center gap-2 px-3 py-2 text-sm text-rose-600 data-[highlighted]:bg-rose-50"
+              onSelect={onRemove}
+            >
+              <X size={15} />
+              {t('sidebar.removeProject')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 rounded-lg text-ink-faint"
+          aria-label={t('sidebar.newSessionInProject', { name: project.name })}
+          title={t('sidebar.newSessionInProject', { name: project.name })}
+          disabled={!canCreateSession}
+          onClick={onCreateSession}
+        >
+          <SquarePen size={15} />
+        </Button>
+      </div>
+    </div>
   )
 }
 

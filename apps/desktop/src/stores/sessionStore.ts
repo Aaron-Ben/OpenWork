@@ -20,6 +20,7 @@ interface SessionStoreState {
   remove: (id: string) => Promise<void>
   rename: (id: string, title: string) => Promise<void>
   reload: (id: string) => Promise<void>
+  clearSelection: () => void
 
   pushUserMessage: (sessionId: string, text: string) => void
   ensureStreamingItem: (sessionId: string, requestId: string, model?: string) => void
@@ -70,6 +71,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       title: session.title,
       providerId: session.providerId,
       model: session.model,
+      workingDir: session.workingDir,
       updatedAt: session.updatedAt,
     }
     set((state) => ({
@@ -128,6 +130,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       set({ error: resolveErrorMessage(error) })
     }
   },
+
+  clearSelection: () => set({ activeSessionId: null }),
 
   pushUserMessage: (sessionId, text) => {
     set((state) => {

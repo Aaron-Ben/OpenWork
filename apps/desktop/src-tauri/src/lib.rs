@@ -12,6 +12,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let application = tauri::async_runtime::block_on(OpenWorkApplication::bootstrap(
                 ApplicationConfig::from_env_or_local(),

@@ -7,6 +7,7 @@ export interface SessionSummary {
   title: string
   providerId: string
   model: string
+  workingDir: string | null
   updatedAt: number
 }
 

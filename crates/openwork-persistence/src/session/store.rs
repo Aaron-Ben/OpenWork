@@ -67,6 +67,7 @@ impl SessionStore {
                 title: session.title,
                 provider_id: session.provider_id,
                 model: session.model,
+                working_dir: session.working_dir,
                 updated_at: session.updated_at,
             })
             .collect())

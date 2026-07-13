@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ProviderSettings } from '../ProviderSettings'
 import { AppearanceSettings } from '../settings/AppearanceSettings'
 import { useChatStreamListener } from '../../hooks/useChatStreamListener'
 import { useSessionStore } from '../../stores/sessionStore'
+import { normalizeDirectoryPath, useProjectStore } from '../../stores/projectStore'
 import { ChatView } from '../../views/ChatView'
 import { MainHeader } from './MainHeader'
 import { Sidebar } from './Sidebar'
@@ -15,12 +16,32 @@ export function AppShell() {
   const [view, setView] = useState<AppView>('chat')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
+  const sessions = useSessionStore((state) => state.sessions)
+  const selectSession = useSessionStore((state) => state.select)
+  const clearSessionSelection = useSessionStore((state) => state.clearSelection)
+  const activeProjectPath = useProjectStore((state) => state.activeProjectPath)
   const activeSessionTitle = useSessionStore(
     (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.title ?? null,
   )
 
   // 全局单订阅 chat-stream-event(生命周期 = app)。
   useChatStreamListener()
+
+  useEffect(() => {
+    if (!activeProjectPath) {
+      if (activeSessionId) clearSessionSelection()
+      return
+    }
+    const normalizedProject = normalizeDirectoryPath(activeProjectPath)
+    const selected = sessions.find((session) => session.id === activeSessionId)
+    if (selected && normalizeDirectoryPath(selected.workingDir ?? '') === normalizedProject) return
+
+    const first = sessions.find(
+      (session) => normalizeDirectoryPath(session.workingDir ?? '') === normalizedProject,
+    )
+    if (first) void selectSession(first.id)
+    else if (activeSessionId) clearSessionSelection()
+  }, [activeProjectPath, activeSessionId, clearSessionSelection, selectSession, sessions])
 
   return (
     <main className="flex h-full overflow-hidden bg-paper text-ink">

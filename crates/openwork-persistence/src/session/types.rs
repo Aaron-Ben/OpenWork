@@ -20,6 +20,7 @@ pub struct SessionSummary {
     pub title: String,
     pub provider_id: String,
     pub model: String,
+    pub working_dir: Option<String>,
     pub updated_at: i64,
 }
 
@@ -64,4 +65,24 @@ pub enum TurnOutcome {
     Cancelled,
     DoomLoop { repeated: String },
     Failed { message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_summary_exposes_the_bound_working_directory() {
+        let summary = SessionSummary {
+            id: "session-1".to_string(),
+            title: "Conversation".to_string(),
+            provider_id: "provider-1".to_string(),
+            model: "model-1".to_string(),
+            working_dir: Some("/Volumes/Code/OpenWork".to_string()),
+            updated_at: 1,
+        };
+
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(value["workingDir"], "/Volumes/Code/OpenWork");
+    }
 }
