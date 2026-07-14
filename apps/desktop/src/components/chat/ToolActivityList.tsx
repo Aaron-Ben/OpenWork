@@ -214,7 +214,7 @@ function ActivityStatus({ state }: { state: ActivityState }) {
       </span>
     )
   }
-  if (state === 'denied' || state === 'cancelled' || state === 'interrupted') {
+  if (state === 'denied' || state === 'interrupted') {
     return (
       <span className="inline-flex shrink-0 items-center text-ink-faint" title={t('tool.stopped')}>
         <CircleX size={13} />
