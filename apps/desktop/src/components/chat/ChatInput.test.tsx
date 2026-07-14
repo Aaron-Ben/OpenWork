@@ -56,4 +56,19 @@ describe('ChatInput toolbar', () => {
     expect(markup).toContain('aria-label="停止生成"')
     expect(markup).not.toContain('Streaming')
   })
+
+  it('renders pending approval content immediately above the input form', () => {
+    const markup = renderToStaticMarkup(
+      <ChatInput
+        {...baseProps}
+        topContent={<div data-testid="pending-approval">需要审批</div>}
+      />,
+    )
+
+    const approvalPosition = markup.indexOf('data-testid="pending-approval"')
+    const inputPosition = markup.indexOf('data-motion-component="chat-input"')
+
+    expect(approvalPosition).toBeGreaterThan(-1)
+    expect(inputPosition).toBeGreaterThan(approvalPosition)
+  })
 })
