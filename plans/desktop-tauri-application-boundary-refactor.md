@@ -1,7 +1,7 @@
 # Desktop Tauri 与 Application API 边界重构设计
 
 > Status: Phase A/B implemented; Phase C proposed. 当前/目标状态以各阶段标记为准。
-> Last reviewed: 2026-07-11.
+> Last reviewed: 2026-07-14.
 > Parent blueprint: [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) S7。
 
 ## 1. 背景
@@ -28,14 +28,14 @@ RequestCancelRegistry
 1. `openwork-app` 成为唯一 Application Composition Root。
 2. Desktop 只管理一个 `OpenWorkApplication` 状态，不再分别管理 Repository、Store、Factory 和取消注册表。
 3. Tauri Command 只负责 IPC 参数转换、调用 Application API 和返回 Desktop DTO。
-4. Provider、Thread/Session、Turn、Approval 和 Cancel 用例全部由 `openwork-app` 提供显式 API。
-5. 第一阶段保持现有 Tauri Command 名称和 TypeScript API 不变，不把边界收口与前端 Session→Thread 改名混在一起。
+4. Provider、Session、Turn、Approval 和 Cancel 用例全部由 `openwork-app` 提供显式 API。
+5. Tauri Command、TypeScript API、Application Service 和 Journal aggregate 统一采用 Session 命名。
 6. 不引入通用 Command Bus、反射式路由或新的网络服务；在第二个宿主出现前继续使用进程内显式 Rust API。
 
 ### 2.1 Phase A/B 当前实现结果
 
 - `openwork-app::OpenWorkApplication` 已成为唯一 Composition Root。
-- App 已按 Provider、Thread 和 Turn 拆出三个显式 Application Service。
+- App 已按 Provider、Session 和 Turn 拆出三个显式 Application Service。
 - Tauri setup 只注册一个 `OpenWorkApplication` State。
 - Provider/Session/Chat Command 已不再引用 Repository、Store、Factory 或独立 Cancel Registry。
 - Desktop 已删除对 `openwork-persistence`、`openwork-providers`、`openwork-workspace` 和 `openwork-protocol` 的直接 Cargo 依赖。
@@ -79,7 +79,7 @@ React / TypeScript
 
 - 创建 `PostgresProviderRepository` 或 `SessionStore`。
 - 决定 Provider RuntimeConfig 如何加载或测试。
-- 执行 Thread/Session 业务规则和 Journal Projection。
+- 执行 Session 业务规则和 Journal Projection。
 - 维护 Turn、Approval 或 Cancel 的所有权状态。
 - 构造 Capability Catalog、ExecutionService 或 Agent。
 - 把底层 SQLx、加密或 Provider Adapter 错误直接暴露给前端。
@@ -87,7 +87,7 @@ React / TypeScript
 ### 3.3 `openwork-app` 负责
 
 - 当前根据 `ApplicationConfig` 组合 Persistence、Providers、Capabilities、Execution 和 Core；Workspace 接线仍待对应阶段。
-- 当前持有 Provider、Thread 和 Turn 的 Application Service。
+- 当前持有 Provider、Session 和 Turn 的 Application Service。
 - 当前持有 TurnSupervisor 和取消生命周期。
 - 当前提供显式 Command/Query 方法，并保留现有 Live Event callback 兼容入口。
 - 当前已把底层错误映射为稳定的 Application Error Code，并把 Live Event 冻结为 tagged enum。
@@ -106,7 +106,7 @@ React / TypeScript
 | --- | --- | --- |
 | Tauri setup 创建多个具体组件 | 出现第二个 Composition Root | `OpenWorkApplication::bootstrap` 统一组装 |
 | `ProviderRepositoryState` | Desktop 直接持有 Repository | `ProviderApplicationService` |
-| Command 直接持有 `SessionStore` | Desktop 知道 Persistence/Projection | `ThreadApplicationService` |
+| Command 直接持有 `SessionStore` | Desktop 知道 Persistence/Projection | `SessionApplicationService` |
 | Command 直接调用 `ProviderFactory` | Provider 测试用例落在宿主层 | App 的 `test_provider` Command |
 | `Result<T, String>` | 前端只能解析文案 | 稳定 `CommandError { code, message }` |
 | 字符串事件 + 大量 `Option` | Rust 可构造无效 payload | tagged Application Live Event 枚举 |
@@ -122,7 +122,7 @@ React / TypeScript
 ```rust
 pub struct OpenWorkApplication {
     providers: ProviderApplicationService,
-    threads: ThreadApplicationService,
+    sessions: SessionApplicationService,
     turns: TurnApplicationService,
 }
 
@@ -130,7 +130,7 @@ impl OpenWorkApplication {
     pub async fn bootstrap(config: ApplicationConfig) -> Result<Self, ApplicationBootstrapError>;
 
     pub fn providers(&self) -> &ProviderApplicationService;
-    pub fn threads(&self) -> &ThreadApplicationService;
+    pub fn sessions(&self) -> &SessionApplicationService;
     pub fn turns(&self) -> &TurnApplicationService;
 
 }
@@ -158,7 +158,7 @@ Command:
 
 Provider Preset 是产品级发现数据，可以作为 App Query 形状；它不进入 `openwork-providers` Adapter，也不进入稳定 Model Protocol。若以后某些 website/api-key URL 只服务 Desktop 展示，再把纯展示字段留在前端 DTO。
 
-### 5.3 Thread/Session Command/Query
+### 5.3 Session Command/Query
 
 ```text
 Query:
@@ -171,7 +171,7 @@ Command:
   delete_thread
 ```
 
-第一阶段继续由现有 `session_list/session_create/session_load/session_rename/session_delete` Tauri Command 调用这些 API，并返回兼容 Session DTO。等前端和 Application API 稳定后再单独讨论 Session→Thread 命名迁移。
+现有 `session_list/session_create/session_load/session_rename/session_delete` Tauri Command 调用这些 API，并返回 Session DTO；各层不再保留 Thread 兼容命名。
 
 ### 5.4 Turn Command/Subscription
 
@@ -211,7 +211,7 @@ async fn session_list(
     application: tauri::State<'_, OpenWorkApplication>,
 ) -> Result<Vec<SessionSummary>, CommandError> {
     application
-        .threads()
+        .sessions()
         .list()
         .await
         .map_err(CommandError::from)
@@ -248,7 +248,7 @@ V1 错误码至少覆盖：
 ```text
 invalid_request
 provider_not_found
-thread_not_found
+session_not_found
 turn_not_found
 approval_not_found
 database_unavailable
@@ -354,7 +354,7 @@ serde_json               # 仅 dev-dependencies，供 IPC JSON 合同测试
 ### 11.1 App 合同测试
 
 - Provider CRUD/Test 只通过 Application Service 完成。
-- Thread Query/Command 不暴露 `SessionStore`。
+- Session Query/Command 不暴露 `SessionStore`。
 - Approval/Cancel 只路由到匹配 Turn。
 - Application Error 映射不泄漏敏感配置。
 - `[Phase C]` shutdown 会取消全部活跃 Turn。
@@ -461,8 +461,7 @@ CI=true pnpm --dir apps/desktop build
 
 ### 代价
 
-- `openwork-app` 会新增 Provider/Thread/Turn Service 和 DTO 映射代码。
-- Phase A 会暂时保留 Session 命名兼容层。
+- `openwork-app` 会新增 Provider/Session/Turn Service 和 DTO 映射代码。
 - Event/Error 类型迁移需要同步 Rust 与 TypeScript。
 
 ### 风险与缓解
@@ -470,7 +469,7 @@ CI=true pnpm --dir apps/desktop build
 | 风险 | 缓解 |
 | --- | --- |
 | 重构同时改变前端协议导致回归 | Phase A 保持 Command 名和 JSON 不变 |
-| App 变成新的“万能 crate” | 按 Provider/Thread/Turn 用例拆模块，不把 SQL/HTTP Handler 搬入 App |
+| App 变成新的“万能 crate” | 按 Provider/Session/Turn 用例拆模块，不把 SQL/HTTP Handler 搬入 App |
 | 为未来宿主过度设计 | 不引入网络 Server、通用 Bus 或 Plugin API |
 | 隐式泄漏底层实现 | 删除 Store/Repository getter，并增加依赖方向测试 |
 | 启动生命周期范围膨胀 | Phase A 保持 fail-fast，初始化状态机延后 |

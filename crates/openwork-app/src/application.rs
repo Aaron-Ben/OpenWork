@@ -6,7 +6,7 @@ use openwork_providers::ProviderFactory;
 use thiserror::Error;
 
 use crate::{
-    ChatRuntime, ProviderApplicationService, ThreadApplicationService, TurnApplicationService,
+    ChatRuntime, ProviderApplicationService, SessionApplicationService, TurnApplicationService,
 };
 
 #[derive(Debug, Clone)]
@@ -31,7 +31,7 @@ pub enum ApplicationBootstrapError {
 /// The single in-process application entry point owned by a host such as Tauri.
 pub struct OpenWorkApplication {
     providers: ProviderApplicationService,
-    threads: ThreadApplicationService,
+    sessions: SessionApplicationService,
     turns: TurnApplicationService,
 }
 
@@ -51,7 +51,7 @@ impl OpenWorkApplication {
 
         Ok(Self {
             providers: ProviderApplicationService::new(provider_repository, provider_factory),
-            threads: ThreadApplicationService::new(session_store),
+            sessions: SessionApplicationService::new(session_store),
             turns: TurnApplicationService::new(chat_runtime),
         })
     }
@@ -60,8 +60,8 @@ impl OpenWorkApplication {
         &self.providers
     }
 
-    pub fn threads(&self) -> &ThreadApplicationService {
-        &self.threads
+    pub fn sessions(&self) -> &SessionApplicationService {
+        &self.sessions
     }
 
     pub fn turns(&self) -> &TurnApplicationService {

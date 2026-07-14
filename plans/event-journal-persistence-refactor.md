@@ -1,8 +1,8 @@
 # Event Journal 与会话持久化重构设计
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-14
 
-> Status: implemented for Thread/Turn/Message persistence; Durable Action/Approval remains staged. 本文细化 [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) 的 S2 Persistence，不改变蓝图中的模块所有权。
+> Status: implemented for Session/Turn/Message persistence; Durable Action/Approval remains staged. 本文细化 [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) 的 S2 Persistence，不改变蓝图中的模块所有权。
 
 ## 1. 为什么要重构
 
@@ -27,7 +27,7 @@ openwork-db-macros
 - `messages` 是当前唯一可靠的聊天恢复来源，但只保存最终消息，无法回答工具和审批过程发生了什么。
 - `llm_events` 保存的是 UI payload；每个事件通过 detached `tokio::spawn` best-effort 写入，错误被忽略，顺序也不可靠。
 - `tool_runs` 只有表结构，没有运行时写入路径。
-- `sessions` 混合了 UI 会话视图和未来 Thread 聚合的事实来源。
+- `sessions` 混合了 UI 会话视图和 Session 聚合的事实来源。
 
 因此这次重构不是简单把四张表换成一张表，而是建立以下分层：
 
@@ -35,7 +35,7 @@ openwork-db-macros
 Recorded facts       recorded_events（唯一事实来源、append-only）
         |
         v
-Query projections    threads / messages / action_runs / approvals（按需要逐步增加）
+Query projections    sessions / messages / action_runs / approvals（按需要逐步增加）
         |
         v
 Live UI stream       text_delta / reasoning_delta / tool_call_delta（不承诺回放）
@@ -47,7 +47,7 @@ Live UI stream       text_delta / reasoning_delta / tool_call_delta（不承诺�
 
 1. 在 `openwork-protocol` 定义稳定的 `EventJournal` Port、事件 Envelope 和 Expected Version。
 2. 在 `openwork-persistence` 实现 PostgreSQL append-only Journal、连接池和迁移生命周期。
-3. 使用 `recorded_events` 记录 Thread、Turn、Action、Approval 的可回放事实。
+3. 使用 `recorded_events` 记录 Session、Turn、Action、Approval 的可回放事实。
 4. 将 Session/Message DTO、Repository 和内存投影迁入 `openwork-persistence`。
 5. 删除 `openwork-session`、`openwork-db-macros` 和 `openwork-database`，由 Persistence 内部基础设施统一承担连接池与 migration 生命周期。
 
@@ -61,13 +61,12 @@ Live UI stream       text_delta / reasoning_delta / tool_call_delta（不承诺�
 
 ## 3. 术语与边界
 
-### 3.1 Session、Thread 与 Turn
+### 3.1 Session 与 Turn
 
-- `session`：当前前端 API 使用的兼容名称。
-- `thread`：领域中的长期对话聚合，可包含多个 Turn。
+- `session`：持续对话聚合，可包含多个 Turn，是前端到数据库的一致名称。
 - `turn`：一次用户输入到本次 Agent 结束、失败或取消的执行过程。
 
-前端命令暂时保留 `session_*` 名称，但 Persistence 中的新事实使用 `thread`/`turn` 语义。不能因为 UI 仍叫 Session，就继续让 `sessions` 表充当事实来源。
+`session_*` 命令、`SessionApplicationService`、`SessionStore` 和 Journal 的 `session` aggregate 使用同一术语。这里的 Session 不是数据库 `sessions` 表；事实来源仍然是 append-only `recorded_events`。
 
 ### 3.2 Recorded Event 与 Live Event
 
@@ -106,7 +105,7 @@ CREATE TABLE recorded_events (
     CONSTRAINT recorded_events_aggregate_id_not_blank
         CHECK (btrim(aggregate_id) <> ''),
     CONSTRAINT recorded_events_aggregate_type_valid
-        CHECK (aggregate_type IN ('thread', 'turn')),
+        CHECK (aggregate_type IN ('session', 'turn')),
     CONSTRAINT recorded_events_aggregate_version_positive
         CHECK (aggregate_version > 0),
     CONSTRAINT recorded_events_event_type_not_blank
@@ -136,8 +135,8 @@ CREATE INDEX idx_recorded_events_type_position
 | --- | --- | --- |
 | `global_position` | 全库事实的单调游标，Projector 从“上次处理到哪里”继续 | `aggregate_version` 只在单个聚合内递增，不能给全库投影排序 |
 | `event_id` | 事件的稳定身份，用于幂等写入和跨边界引用 | `global_position` 由数据库生成，重试前调用方无法持有它 |
-| `aggregate_type` | 事件所属业务对象种类，V1 为 `thread` 或 `turn` | 避免含糊的 `stream_kind`；它描述的是领域聚合类型，不是传输流格式 |
-| `aggregate_id` | 具体 ThreadId 或 TurnId | 不同聚合分别并发演进，不能只靠全局位置定位 |
+| `aggregate_type` | 事件所属业务对象种类，V1 为 `session` 或 `turn` | 避免含糊的 `stream_kind`；它描述的是领域聚合类型，不是传输流格式 |
+| `aggregate_id` | 具体 SessionId 或 TurnId | 不同聚合分别并发演进，不能只靠全局位置定位 |
 | `aggregate_version` | 同一聚合内的严格顺序，也是乐观并发版本 | 防止两个写者都基于旧状态追加冲突事实 |
 | `event_type` | 已发生事实的稳定名称 | payload 只保存数据，不应靠猜测 JSON 形状判断语义 |
 | `event_version` | 单个 `event_type` 的 payload schema 版本 | 数据库 migration 版本不能表达历史事件 JSON 的兼容版本 |
@@ -153,7 +152,7 @@ CREATE INDEX idx_recorded_events_type_position
 
 V1 只允许：
 
-- `thread`：标题、创建、归档/删除等跨 Turn 的对话事实。
+- `session`：标题、创建、归档/删除等跨 Turn 的对话事实。
 - `turn`：模型尝试、消息、Action、Approval 和 Turn 终态。
 
 Action 与 Approval 暂不各自创建独立 aggregate；它们在 payload 中携带 `action_run_id` / `approval_id`，并保持在所属 Turn 的严格顺序中。
@@ -162,19 +161,19 @@ Action 与 Approval 暂不各自创建独立 aggregate；它们在 payload 中�
 
 事件名称使用过去式，表达已经发生的事实：
 
-### 5.1 Thread aggregate
+### 5.1 Session aggregate
 
 | event_type | 关键 payload |
 | --- | --- |
-| `thread_created` | `title`、`provider_id`、`model`、`working_dir` |
-| `thread_title_changed` | `title` |
-| `thread_deleted` | 空对象 `{}` |
+| `session_created` | `title`、`provider_id`、`model`、`working_dir` |
+| `session_title_changed` | `title` |
+| `session_deleted` | 空对象 `{}` |
 
 ### 5.2 Turn aggregate
 
 | event_type | 关键 payload |
 | --- | --- |
-| `turn_started` | `thread_id`、`provider_id`、`model` |
+| `turn_started` | `session_id`、`provider_id`、`model` |
 | `user_message_recorded` | `message_id`、`content` |
 | `model_attempt_started` | `model_attempt_id`、`step` |
 | `model_attempt_completed` | `model_attempt_id`、`finish_reason`、`usage` |
@@ -219,14 +218,14 @@ PostgreSQL 实现的单批 append 算法：
 
 Journal 可以恢复一切，但不适合每次 UI 列表都扫描全量 JSON。后续表不是新的事实来源，而是可删除、可重建的查询投影：
 
-- `threads`：会话列表和标题。
+- `sessions`：会话列表和标题。
 - `messages`：聊天回放与上下文读取。
 - `action_runs`：工具调用审计。
 - `approvals`：待审批和历史决策。
 
 是否增加某张投影表，只由真实查询需求和性能证据决定。投影必须保存 `last_global_position` 或使用独立 projector checkpoint，并能从 `recorded_events` 清空重建。
 
-这符合三大范式：Journal 每行只表达一个事件；Provider 配置仍由 `providers` / `provider_models` 管理；投影中的 Thread、Message、Action、Approval 各自表示单一实体，不把重复 Provider 或 Message 字段塞入事件主表列。
+这符合三大范式：Journal 每行只表达一个事件；Provider 配置仍由 `providers` / `provider_models` 管理；投影中的 Session、Message、Action、Approval 各自表示单一实体，不把重复 Provider 或 Message 字段塞入事件主表列。
 
 ## 8. Crate 重构结果
 
@@ -285,9 +284,9 @@ openwork-app -> openwork-persistence
 - 增加 `recorded_events` migration、PostgreSQL Adapter 和并发/幂等测试。
 - Persistence 提供单一连接池和显式 migration API。
 
-### Phase B1：Thread/Turn/Message 直接切换（已完成）
+### Phase B1：Session/Turn/Message 直接切换（已完成）
 
-- Thread 创建/改名/删除只写 Journal。
+- Session 创建/改名/删除只写 Journal。
 - Turn 开始前持久化 `turn_started` 和 `user_message_recorded`。
 - Assistant/Tool Message 和 Turn 终态按批追加。
 - UI delta 仍只走订阅，不写 Journal。
@@ -307,7 +306,7 @@ openwork-app -> openwork-persistence
 ### Phase C：持久化查询 Projection（按需）
 
 - 当前内存投影在开发数据量下足够，不立即新增表。
-- 出现可测量的全量回放性能问题后，再增加 Thread/Message/ActionRun/Approval 查询投影。
+- 出现可测量的全量回放性能问题后，再增加 Session/Message/ActionRun/Approval 查询投影。
 - Synthetic Event 必须能从零 Replay 并重建相同投影。
 - 投影只由 `global_position` 推进，可删除重建。
 
@@ -325,6 +324,8 @@ sessions
 ## 10. 迁移生命周期
 
 当前 `connect()` 只建立连接并检查必需表，migration 是显式操作。Desktop 启动不再静默建表。
+
+早期开发 migration 曾使用 `thread`、`thread_created` 和 `threadId`。为避免修改已执行 migration，当前通过三次 forward migration 完成 expand/data/contract：临时同时允许 `thread/session`，原位改名既有事实，再将最终约束收紧为 `session/turn`。该过程不改变 `event_id`、`aggregate_version` 或 `global_position`。`connect()` 除检查四张必需表外，也会检查最终命名 migration 已应用。
 
 本地开发命令：
 

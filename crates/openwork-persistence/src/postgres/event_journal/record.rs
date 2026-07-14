@@ -23,7 +23,7 @@ impl TryFrom<RecordedEventRecord> for RecordedEventV1 {
 
     fn try_from(record: RecordedEventRecord) -> Result<Self, Self::Error> {
         let aggregate_type = match record.aggregate_type.as_str() {
-            "thread" => AggregateType::Thread,
+            "session" => AggregateType::Session,
             "turn" => AggregateType::Turn,
             value => {
                 return Err(EventJournalError::Persistence {

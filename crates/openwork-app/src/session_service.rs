@@ -4,11 +4,12 @@ use openwork_persistence::{
 
 use crate::ApplicationError;
 
-pub struct ThreadApplicationService {
+/// Application use cases for durable sessions and their projected messages.
+pub struct SessionApplicationService {
     store: SessionStore,
 }
 
-impl ThreadApplicationService {
+impl SessionApplicationService {
     pub(crate) fn new(store: SessionStore) -> Self {
         Self { store }
     }

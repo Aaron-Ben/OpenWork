@@ -12,7 +12,7 @@ OpenWork currently uses PostgreSQL for persistence. For local development, run P
 | --- | --- |
 | `providers` | Provider 名称、端点、Driver、加密后的 API Key、启用/激活状态、软删除状态和受限 Adapter Options |
 | `provider_models` | Provider 下可选模型、`lite/plus/pro` 分类、启用状态、UI 顺序和软删除状态 |
-| `recorded_events` | append-only Durable Event Journal；保存 Thread、Turn 和 Message 事实 |
+| `recorded_events` | append-only Durable Event Journal；保存 Session、Turn 和 Message 事实 |
 
 当前仍处于可清库的开发阶段，因此 Provider Registry 使用单一干净基线，不保留旧明文 `api_key`、`models_json` 或旧 `kind/extra_body_json` 兼容列。`api_key_encrypted` 保存 AES-256-GCM 版本化密文；Provider 与模型列表的新增、更新使用同一 PostgreSQL 事务。
 

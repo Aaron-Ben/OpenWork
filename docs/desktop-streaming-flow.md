@@ -115,7 +115,7 @@ Rust 合同测试校验关键事件的精确 JSON；Vitest 覆盖 tool result、
 sessionStore.reload(sessionId)
 ```
 
-这会调用后端 Journal-backed `SessionStore`：从 PostgreSQL 的 `recorded_events` 重放 Thread/Turn/Message 事实，再返回兼容的 Message DTO。当前数据库不存在 `messages` 表。
+这会调用后端 Journal-backed `SessionStore`：从 PostgreSQL 的 `recorded_events` 重放 Session/Turn/Message 事实，再返回 Message DTO。当前数据库不存在 `messages` 表。
 
 `text_delta`、`reasoning_delta` 和 `tool_call_delta` 只服务当前实时渲染，不逐帧持久化。请求结束时，后端会把新增的 Assistant/Tool Message 和 Turn 终态写入 Journal；为了避免 reload 后又显示 running，工具执行完成后持久化的 `ToolCallState` 会标记为 `Finished`。
 

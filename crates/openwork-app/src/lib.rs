@@ -5,7 +5,7 @@ mod cancel;
 mod chat;
 mod error;
 mod provider_service;
-mod thread_service;
+mod session_service;
 mod turn_service;
 mod turn_supervisor;
 
@@ -22,7 +22,7 @@ pub use provider_service::{
     ProviderApplicationService, ProviderIndex, ProviderPreset, ProviderPresetModel,
     ProviderTestResult,
 };
-pub use thread_service::ThreadApplicationService;
+pub use session_service::SessionApplicationService;
 pub use turn_service::TurnApplicationService;
 pub use turn_supervisor::{TurnSupervisor, TurnSupervisorError};
 

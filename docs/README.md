@@ -26,7 +26,7 @@ Last reviewed: 2026-07-11
 
 ## 持久化与观测
 
-- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Thread/Turn/Message、遗留表删除状态和未完成边界。
+- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Session/Turn/Message、遗留表删除状态和未完成边界。
 
 ## 维护原则
 

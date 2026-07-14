@@ -7,7 +7,7 @@ pub async fn session_list(
     application: tauri::State<'_, OpenWorkApplication>,
 ) -> Result<Vec<SessionSummary>, CommandError> {
     application
-        .threads()
+        .sessions()
         .list()
         .await
         .map_err(CommandError::from)
@@ -19,7 +19,7 @@ pub async fn session_create(
     input: SessionInput,
 ) -> Result<Session, CommandError> {
     application
-        .threads()
+        .sessions()
         .create(input)
         .await
         .map_err(CommandError::from)
@@ -31,7 +31,7 @@ pub async fn session_load(
     id: String,
 ) -> Result<SessionLoadResult, CommandError> {
     application
-        .threads()
+        .sessions()
         .load(&id)
         .await
         .map_err(CommandError::from)
@@ -43,7 +43,7 @@ pub async fn session_delete(
     id: String,
 ) -> Result<(), CommandError> {
     application
-        .threads()
+        .sessions()
         .delete(&id)
         .await
         .map_err(CommandError::from)
@@ -56,7 +56,7 @@ pub async fn session_rename(
     title: String,
 ) -> Result<Session, CommandError> {
     application
-        .threads()
+        .sessions()
         .rename(&id, &title)
         .await
         .map_err(CommandError::from)

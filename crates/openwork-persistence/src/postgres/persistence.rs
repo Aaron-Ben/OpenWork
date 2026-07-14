@@ -20,7 +20,6 @@ const REQUIRED_TABLES: &[&str] = &[
     "provider_models",
     "recorded_events",
 ];
-
 #[derive(Debug, Error)]
 pub enum PostgresPersistenceError {
     #[error("database error: {message}")]
@@ -28,9 +27,9 @@ pub enum PostgresPersistenceError {
     #[error("API key encryption configuration error: {message}")]
     Encryption { message: String },
     #[error(
-        "database schema is not ready; missing tables: {missing}. run `cargo run -p openwork-persistence --bin openwork-migrate`"
+        "database schema is not ready: {details}. run `cargo run -p openwork-persistence --bin openwork-migrate`"
     )]
-    SchemaNotReady { missing: String },
+    SchemaNotReady { details: String },
 }
 
 /// PostgreSQL composition root：统一拥有连接池和全库 migration 生命周期。
@@ -112,12 +111,33 @@ impl PostgresPersistence {
                 missing.push(*table);
             }
         }
-        if missing.is_empty() {
-            Ok(())
-        } else {
+        if !missing.is_empty() {
             Err(PostgresPersistenceError::SchemaNotReady {
-                missing: missing.join(", "),
+                details: format!("missing tables: {}", missing.join(", ")),
             })
+        } else {
+            let required_migration = RECORDED_EVENT_MIGRATIONS
+                .last()
+                .expect("recorded event migrations must not be empty");
+            let migration_applied: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                   SELECT 1 FROM schema_migrations WHERE version = $1
+                 )",
+            )
+            .bind(required_migration.version)
+            .fetch_one(self.pool())
+            .await
+            .map_err(database_error)?;
+            if migration_applied {
+                Ok(())
+            } else {
+                Err(PostgresPersistenceError::SchemaNotReady {
+                    details: format!(
+                        "required migration {} ({}) has not been applied",
+                        required_migration.version, required_migration.name
+                    ),
+                })
+            }
         }
     }
 }

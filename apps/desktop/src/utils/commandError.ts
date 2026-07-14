@@ -1,7 +1,7 @@
 export type CommandErrorCode =
   | 'invalid_request'
   | 'provider_not_found'
-  | 'thread_not_found'
+  | 'session_not_found'
   | 'turn_not_found'
   | 'approval_not_found'
   | 'database_unavailable'
@@ -19,7 +19,7 @@ export interface CommandError {
 const COMMAND_ERROR_CODES = new Set<CommandErrorCode>([
   'invalid_request',
   'provider_not_found',
-  'thread_not_found',
+  'session_not_found',
   'turn_not_found',
   'approval_not_found',
   'database_unavailable',

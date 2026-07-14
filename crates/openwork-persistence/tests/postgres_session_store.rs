@@ -22,7 +22,7 @@ async fn test_store() -> Option<SessionStore> {
 }
 
 #[tokio::test]
-async fn a_turn_cannot_be_finished_under_a_different_thread() {
+async fn a_turn_cannot_be_finished_under_a_different_session() {
     let Some(store) = test_store().await else {
         return;
     };
@@ -58,7 +58,7 @@ fn input() -> SessionInput {
 }
 
 #[tokio::test]
-async fn thread_events_replace_session_table_create_list_rename_and_delete() {
+async fn session_events_replace_session_table_create_list_rename_and_delete() {
     let Some(store) = test_store().await else {
         return;
     };

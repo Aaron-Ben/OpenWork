@@ -16,9 +16,9 @@ use super::types::{
 };
 
 const EVENT_PAGE_SIZE: u32 = 1_000;
-const THREAD_CREATED: &str = "thread_created";
-const THREAD_TITLE_CHANGED: &str = "thread_title_changed";
-const THREAD_DELETED: &str = "thread_deleted";
+const SESSION_CREATED: &str = "session_created";
+const SESSION_TITLE_CHANGED: &str = "session_title_changed";
+const SESSION_DELETED: &str = "session_deleted";
 const TURN_STARTED: &str = "turn_started";
 const TURN_COMPLETED: &str = "turn_completed";
 const TURN_CANCELLED: &str = "turn_cancelled";
@@ -87,7 +87,7 @@ impl SessionStore {
             created_at: now_ms / 1_000,
             updated_at: now_ms / 1_000,
         };
-        let payload = ThreadCreatedPayload {
+        let payload = SessionCreatedPayload {
             title: session.title.clone(),
             provider_id: session.provider_id.clone(),
             model: session.model.clone(),
@@ -95,10 +95,10 @@ impl SessionStore {
         };
         self.journal
             .append(
-                AggregateType::Thread,
+                AggregateType::Session,
                 &session.id,
                 ExpectedVersion::NoStream,
-                vec![new_event(THREAD_CREATED, &payload, now_ms)?],
+                vec![new_event(SESSION_CREATED, &payload, now_ms)?],
             )
             .await?;
         Ok(session)
@@ -133,11 +133,11 @@ impl SessionStore {
             })
             .collect::<Result<Vec<_>, serde_json::Error>>()?
             .into_iter()
-            .filter(|(_, payload)| payload.thread_id == session_id)
+            .filter(|(_, payload)| payload.session_id == session_id)
             .enumerate()
             .map(|(index, (event, payload))| SessionMessage {
                 id: payload.message_id,
-                session_id: payload.thread_id,
+                session_id: payload.session_id,
                 role: payload.role,
                 parts: payload.parts,
                 seq: index as i64 + 1,
@@ -157,10 +157,10 @@ impl SessionStore {
                 message: "session title must not be blank".to_string(),
             });
         }
-        self.append_thread_event(
+        self.append_session_event(
             id,
-            THREAD_TITLE_CHANGED,
-            &ThreadTitleChangedPayload {
+            SESSION_TITLE_CHANGED,
+            &SessionTitleChangedPayload {
                 title: title.to_string(),
             },
         )
@@ -174,7 +174,7 @@ impl SessionStore {
         let Some(_) = self.load_session(id).await? else {
             return Err(SessionError::NotFound { id: id.to_string() });
         };
-        self.append_thread_event(id, THREAD_DELETED, &EmptyPayload {})
+        self.append_session_event(id, SESSION_DELETED, &EmptyPayload {})
             .await
             .map(|_| ())
     }
@@ -198,7 +198,7 @@ impl SessionStore {
         }
         let now_ms = now_unix_ms();
         let turn = TurnStartedPayload {
-            thread_id: session_id.to_string(),
+            session_id: session_id.to_string(),
             provider_id: session.provider_id,
             model: session.model,
         };
@@ -245,11 +245,11 @@ impl SessionStore {
                 message: format!("turn {turn_id} has no turn_started event"),
             })?;
         let started: TurnStartedPayload = serde_json::from_value(started.payload.clone())?;
-        if started.thread_id != session_id {
+        if started.session_id != session_id {
             return Err(SessionError::InvalidEvent {
                 message: format!(
-                    "turn {turn_id} belongs to thread {}, not {session_id}",
-                    started.thread_id
+                    "turn {turn_id} belongs to session {}, not {session_id}",
+                    started.session_id
                 ),
             });
         }
@@ -286,7 +286,7 @@ impl SessionStore {
         Ok(())
     }
 
-    async fn append_thread_event(
+    async fn append_session_event(
         &self,
         id: &str,
         event_type: &str,
@@ -294,7 +294,7 @@ impl SessionStore {
     ) -> Result<Vec<RecordedEventV1>, SessionError> {
         let existing = self
             .journal
-            .load_aggregate(AggregateType::Thread, id, 0)
+            .load_aggregate(AggregateType::Session, id, 0)
             .await?;
         let Some(last) = existing.last() else {
             return Err(SessionError::NotFound { id: id.to_string() });
@@ -303,7 +303,7 @@ impl SessionStore {
         Ok(self
             .journal
             .append(
-                AggregateType::Thread,
+                AggregateType::Session,
                 id,
                 ExpectedVersion::Exact(last.aggregate_version),
                 vec![new_event(event_type, payload, now_ms)?],
@@ -332,7 +332,7 @@ impl SessionStore {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ThreadCreatedPayload {
+struct SessionCreatedPayload {
     title: String,
     provider_id: String,
     model: String,
@@ -340,14 +340,14 @@ struct ThreadCreatedPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ThreadTitleChangedPayload {
+struct SessionTitleChangedPayload {
     title: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TurnStartedPayload {
-    thread_id: String,
+    session_id: String,
     provider_id: String,
     model: String,
 }
@@ -356,7 +356,7 @@ struct TurnStartedPayload {
 #[serde(rename_all = "camelCase")]
 struct MessageRecordedPayload {
     message_id: String,
-    thread_id: String,
+    session_id: String,
     role: Role,
     parts: Vec<openwork_protocol::model::ContentBlock>,
 }
@@ -377,10 +377,10 @@ struct FailedPayload {
 fn project_sessions(events: &[RecordedEventV1]) -> Result<Vec<Session>, SessionError> {
     let mut states = HashMap::<String, (Session, bool)>::new();
     for event in events {
-        if event.aggregate_type == AggregateType::Thread {
+        if event.aggregate_type == AggregateType::Session {
             match event.event_type.as_str() {
-                THREAD_CREATED => {
-                    let payload: ThreadCreatedPayload =
+                SESSION_CREATED => {
+                    let payload: SessionCreatedPayload =
                         serde_json::from_value(event.payload.clone())?;
                     states.insert(
                         event.aggregate_id.clone(),
@@ -398,15 +398,15 @@ fn project_sessions(events: &[RecordedEventV1]) -> Result<Vec<Session>, SessionE
                         ),
                     );
                 }
-                THREAD_TITLE_CHANGED => {
+                SESSION_TITLE_CHANGED => {
                     if let Some((session, _)) = states.get_mut(&event.aggregate_id) {
-                        let payload: ThreadTitleChangedPayload =
+                        let payload: SessionTitleChangedPayload =
                             serde_json::from_value(event.payload.clone())?;
                         session.title = payload.title;
                         session.updated_at = event.occurred_at_unix_ms / 1_000;
                     }
                 }
-                THREAD_DELETED => {
+                SESSION_DELETED => {
                     if let Some((session, deleted)) = states.get_mut(&event.aggregate_id) {
                         *deleted = true;
                         session.updated_at = event.occurred_at_unix_ms / 1_000;
@@ -415,11 +415,11 @@ fn project_sessions(events: &[RecordedEventV1]) -> Result<Vec<Session>, SessionE
                 _ => {}
             }
         }
-        if let Some(thread_id) = event
+        if let Some(session_id) = event
             .payload
-            .get("threadId")
+            .get("sessionId")
             .and_then(|value| value.as_str())
-            && let Some((session, _)) = states.get_mut(thread_id)
+            && let Some((session, _)) = states.get_mut(session_id)
         {
             session.updated_at = session.updated_at.max(event.occurred_at_unix_ms / 1_000);
         }
@@ -443,10 +443,10 @@ fn new_event(
     ))
 }
 
-fn message_payload(thread_id: &str, message: NewMessage) -> MessageRecordedPayload {
+fn message_payload(session_id: &str, message: NewMessage) -> MessageRecordedPayload {
     MessageRecordedPayload {
         message_id: generate_id("msg"),
-        thread_id: thread_id.to_string(),
+        session_id: session_id.to_string(),
         role: message.role,
         parts: message.parts,
     }

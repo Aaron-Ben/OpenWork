@@ -10,10 +10,10 @@ fn application_root_is_the_single_send_sync_host_entrypoint() {
 }
 
 #[test]
-fn application_root_exposes_explicit_provider_thread_and_turn_services() {
+fn application_root_exposes_explicit_provider_session_and_turn_services() {
     fn assert_api(application: &OpenWorkApplication) {
         let _ = application.providers();
-        let _ = application.threads();
+        let _ = application.sessions();
         let _ = application.turns();
     }
 

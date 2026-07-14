@@ -1,6 +1,6 @@
 # OpenWork Model Provider 集成设计
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-14
 
 > Status: core contract and primary provider paths implemented; infrastructure consolidation and full model-specific coverage remain. 本文是模型厂商集成的专题设计，受 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 约束。当前代码已完成 streaming-first Port、结构化错误、SSE framing/背压/取消、API Key 落库加密、Secret/Profile 查询隔离、共享 HTTP Transport 生命周期、OpenAI Responses/Anthropic Tool 流式主链、Anthropic opaque thinking 往返、主要 Dialect 精确错误码和 Retry-After 解析。全库唯一 PostgreSQL composition root、有序 output block、模型级 Thinking 参数和 M7 Attempt Projection 仍未完成。
 
@@ -68,7 +68,7 @@ Last reviewed: 2026-07-11
 | Repository 同时返回 Secret 与 UI 数据 | `ProviderConfig` 可序列化且包含 `api_key` | Provider 列表可能把密钥带到不必要的边界 |
 | Provider 列表存在 N+1 查询 | 每条 Provider 分别调用 `models_for` | Provider 增长后产生不必要的数据库往返 |
 | Repository 自己连接并迁移 | `PostgresProviderRepository::connect` 持有完整 `Database` | 后续 Journal、Projection、Artifact Repository 会重复基础设施生命周期 |
-| Attempt 记录尚未成为可靠事实 | UI stream 不落库，当前 Journal 只记录 Thread/Turn/Message | 崩溃时仍无法审计某次 HTTP attempt、重试和计费风险 |
+| Attempt 记录尚未成为可靠事实 | UI stream 不落库，当前 Journal 只记录 Session/Turn/Message | 崩溃时仍无法审计某次 HTTP attempt、重试和计费风险 |
 
 ## 3. 范围与非目标
 

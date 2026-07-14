@@ -34,13 +34,22 @@ fn new_event_carries_fact_data_but_not_database_assigned_positions() {
     let event = NewRecordedEventV1::new(
         EventId::new("evt-2"),
         "turn_started",
-        serde_json::json!({"threadId": "thread-1"}),
+        serde_json::json!({"sessionId": "session-1"}),
         1_752_166_800_000,
     );
 
     assert_eq!(event.event_version, 1);
     assert_eq!(event.event_type, "turn_started");
-    assert_eq!(event.payload["threadId"], "thread-1");
+    assert_eq!(event.payload["sessionId"], "session-1");
+}
+
+#[test]
+fn session_is_the_durable_conversation_aggregate_name() {
+    assert_eq!(AggregateType::Session.as_str(), "session");
+    assert_eq!(
+        serde_json::to_string(&AggregateType::Session).unwrap(),
+        "\"session\""
+    );
 }
 
 #[test]

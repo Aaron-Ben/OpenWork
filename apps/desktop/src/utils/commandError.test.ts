@@ -15,6 +15,18 @@ describe('command error parsing', () => {
     })
   })
 
+  it('recognizes the session-not-found domain error', () => {
+    expect(
+      resolveCommandError({
+        code: 'session_not_found',
+        message: 'Session not found: sess-1',
+      }),
+    ).toEqual({
+      code: 'session_not_found',
+      message: 'Session not found: sess-1',
+    })
+  })
+
   it('normalizes unknown rejections without parsing backend message text', () => {
     expect(resolveCommandError(new Error('network failed'))).toEqual({
       code: 'internal_error',

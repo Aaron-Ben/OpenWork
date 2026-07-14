@@ -7,14 +7,14 @@ use crate::domain::EventId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AggregateType {
-    Thread,
+    Session,
     Turn,
 }
 
 impl AggregateType {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Thread => "thread",
+            Self::Session => "session",
             Self::Turn => "turn",
         }
     }

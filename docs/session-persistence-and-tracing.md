@@ -1,6 +1,6 @@
 # Session、Message 与 Event Journal
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-14
 
 > Status: current implementation snapshot. 字段、事件目录和设计决策见 [Event Journal 与会话持久化重构设计](../plans/event-journal-persistence-refactor.md)。
 
@@ -13,7 +13,7 @@ Last reviewed: 2026-07-11
 | `schema_migrations` | migration 版本记录 |
 | `providers` | Provider 配置与加密 API Key |
 | `provider_models` | Provider 模型和 `lite/plus/pro` 用户分类 |
-| `recorded_events` | Thread、Turn 和 Message 的 append-only 事实日志 |
+| `recorded_events` | Session、Turn 和 Message 的 append-only 事实日志 |
 
 以下四张遗留表已由 forward migration 删除：
 
@@ -24,17 +24,17 @@ llm_events
 tool_runs
 ```
 
-现有开发数据不做 backfill。`openwork-session` 和只为它生成通用 CRUD 的 `openwork-db-macros` crate 也已经删除。
+旧 `sessions/messages/llm_events/tool_runs` 数据不做 backfill。早期 `recorded_events` 中使用 Thread 命名的事实会由 forward migration 原位改名；`openwork-session` 和只为它生成通用 CRUD 的 `openwork-db-macros` crate 已经删除。
 
-## 2. Session API 为什么仍然存在
+## 2. Session、Turn 与事件命名
 
-前端仍使用 `session_create`、`session_list`、`session_load` 等兼容命令，但数据库领域语义已经切换为 Thread/Turn：
+前端、Tauri、Application、Persistence 和 Journal 统一使用 Session/Turn。Session 表示一个持续对话，可包含多个 Turn：
 
-| 前端概念 | Journal aggregate/event |
+| 领域操作 | Journal aggregate/event |
 | --- | --- |
-| 创建 Session | Thread aggregate 的 `thread_created` |
-| 重命名 Session | `thread_title_changed` |
-| 删除 Session | `thread_deleted`，不删除历史事实 |
+| 创建 Session | Session aggregate 的 `session_created` |
+| 重命名 Session | `session_title_changed` |
+| 删除 Session | `session_deleted`，不删除历史事实 |
 | 开始聊天 | Turn aggregate 的 `turn_started` |
 | 用户消息 | `user_message_recorded` |
 | Assistant 消息 | `assistant_message_recorded` |
@@ -48,7 +48,7 @@ tool_runs
 
 ```text
 crates/openwork-persistence/src/session/
-  types.rs       Desktop 兼容 DTO
+  types.rs       Session DTO
   store.rs       Journal 写入与当前内存投影
 ```
 
@@ -58,11 +58,11 @@ crates/openwork-persistence/src/session/
 
 ```text
 Desktop session command
-  -> OpenWorkApplication::threads
-  -> ThreadApplicationService
+  -> OpenWorkApplication::sessions
+  -> SessionApplicationService
   -> 内部 openwork-persistence::SessionStore
-  -> EventJournal.append(Thread event, ExpectedVersion)
-  -> 读取时按 global_position 重放 Thread events
+  -> EventJournal.append(Session event, ExpectedVersion)
+  -> 读取时按 global_position 重放 Session events
 ```
 
 一次聊天：
@@ -83,10 +83,10 @@ OpenWorkApplication::turns
 
 ## 4. 当前投影方式
 
-目前没有新增 `threads` 或 `messages` 投影表。`SessionStore` 分页读取 `recorded_events`，在内存中重放：
+目前没有新增 `sessions` 或 `messages` 投影表。`SessionStore` 分页读取 `recorded_events`，在内存中重放：
 
-- Thread 列表和标题状态；
-- 某个 Thread 的 Message 顺序；
+- Session 列表和标题状态；
+- 某个 Session 的 Message 顺序；
 - 删除状态和最近更新时间。
 
 这保证当前数据库保持四张表，适合开发期数据量。数据量增大后，如果全量重放成为性能瓶颈，再增加可删除、可重建的 `threads/messages/action_runs/approvals` 查询投影；投影不是新的事实来源。
@@ -99,7 +99,7 @@ OpenWorkApplication::turns
 
 ## 6. 仍未完成的 Durable Action/Approval
 
-当前已持久化 Thread、Turn、Message 和 Turn 终态，但以下语义还未直接写入 Journal：
+当前已持久化 Session、Turn、Message 和 Turn 终态，但以下语义还未直接写入 Journal：
 
 - `action_requested`
 - `approval_requested`
@@ -126,6 +126,8 @@ cargo run -p openwork-persistence --bin openwork-migrate
 ```
 
 该命令创建/更新 Provider 和 Journal schema，并执行 `drop_legacy_session_tables`。然后启动：
+
+如果数据库已经应用过早期使用 `thread` 命名的 Journal migration，migrator 会按 expand/data/contract 三步迁移：先允许 `session`，再把既有 aggregate、event type 和 payload key 改名，最后移除 `thread` 约束。事件 ID、聚合版本和全局位置不会改变。历史 migration 源码保持不可变。
 
 ```bash
 cd apps/desktop

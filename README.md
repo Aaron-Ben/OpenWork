@@ -19,7 +19,7 @@ English version: [README.en.md](README.en.md)
 - 可区分限流与额度耗尽的错误映射，以及流式输出感知的 Transport Retry
 - Agent 多步工具调用、审批、取消和 doom-loop 检测
 - PostgreSQL Provider Repository 与 Provider Model 配置持久化
-- append-only Event Journal、Journal-backed Thread/Turn/Message 与显式 migration
+- append-only Event Journal、Journal-backed Session/Turn/Message 与显式 migration
 - PostgreSQL Provider API Key 加密存储
 - Tauri + React + TypeScript 桌面端
 
@@ -75,7 +75,7 @@ OpenWork/
 - `PostgresEventJournal`
 - `providers` / `provider_models` migration
 - `recorded_events` append-only migration 与显式 migrator
-- 基于 Thread/Turn 事件的 Session/Message 创建、回放、改名和删除
+- 基于 Session/Turn 事件的 Session/Message 创建、回放、改名和删除
 - Provider 与 Models 的事务写入
 - 使用 AES-256-GCM 加密 Provider API Key 后写入 PostgreSQL
 
@@ -94,7 +94,7 @@ OpenWork/
 
 - Core 持有 Turn 循环和审批暂停/恢复状态
 - `OpenWorkApplication` 是唯一 Composition Root，组合 Provider、Capability Catalog、Execution、Core 和 Journal-backed Session
-- Desktop 只通过 Provider/Thread/Turn Application Service 访问应用能力
+- Desktop 只通过 Provider/Session/Turn Application Service 访问应用能力
 - 模型始终由用户显式选择 `providerId + model`；不提供自动选模或跨模型 Fallback
 
 ## 桌面端

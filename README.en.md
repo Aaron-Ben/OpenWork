@@ -75,7 +75,7 @@ OpenWork/
 - `PostgresEventJournal`
 - `providers` / `provider_models` migrations
 - Append-only `recorded_events` migration and explicit migrator
-- Thread/Turn-event-backed session/message creation, replay, rename, and deletion
+- Session/Turn-event-backed session/message creation, replay, rename, and deletion
 - Transactional provider-and-model writes
 - AES-256-GCM encryption for provider API keys stored in PostgreSQL
 
@@ -94,7 +94,7 @@ OpenWork/
 
 - Core owns the Turn loop and approval pause/resume state
 - `OpenWorkApplication` is the single composition root for providers, the capability catalog, execution, Core, and Journal-backed sessions
-- Desktop accesses application capabilities only through the provider/thread/turn application services
+- Desktop accesses application capabilities only through the provider/session/turn application services
 - The user always selects `providerId + model` explicitly; there is no automatic model selection or cross-model fallback
 
 ## Desktop App

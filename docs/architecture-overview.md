@@ -1,6 +1,6 @@
 # OpenWork 当前架构概览
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-14
 
 > Status: current implementation snapshot. 目标架构和下一阶段顺序只见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
@@ -13,7 +13,7 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 - Agent loop：模型调用、工具审批、工具执行、多步循环
 - 内置工具：文件读写、搜索、bash
 - 基础权限模型与 human-in-the-loop 审批
-- 基于 Event Journal 的 Thread、Turn 和 Message 持久化
+- 基于 Event Journal 的 Session、Turn 和 Message 持久化
 - PostgreSQL 中的 Provider API Key 加密存储
 - `openwork-workspace` 中的 worktree 变更快照与还原基础函数（尚未接入 runtime/Tauri/UI）
 - 桌面端流式 UI 与审批弹窗
@@ -115,7 +115,7 @@ ChatView
 
 ### 4.3 `openwork-app` 是应用组合层
 
-`openwork-app::OpenWorkApplication` 是当前唯一 Composition Root：它组合 Provider、Session、Capabilities、Execution 与 Core，并向 Desktop 暴露 `ProviderApplicationService`、`ThreadApplicationService` 和 `TurnApplicationService`。内部 `ChatRuntime`、`RequestCancelRegistry`、Repository、Store 和 Factory 不再由 Tauri 直接管理。旧 `openwork-runtime`、`openwork-agent` 和 `openwork-permissions` crate 已删除。
+`openwork-app::OpenWorkApplication` 是当前唯一 Composition Root：它组合 Provider、Session、Capabilities、Execution 与 Core，并向 Desktop 暴露 `ProviderApplicationService`、`SessionApplicationService` 和 `TurnApplicationService`。内部 `ChatRuntime`、`RequestCancelRegistry`、Repository、Store 和 Factory 不再由 Tauri 直接管理。旧 `openwork-runtime`、`openwork-agent` 和 `openwork-permissions` crate 已删除。
 
 Tauri 当前只注册一个 `OpenWorkApplication` State，Command 名称保持兼容。Phase A/B 已完成：Command 返回稳定的 `{ code, message }`，Application Live Event 使用 Rust tagged enum，TypeScript 使用同构 discriminated union；统一 shutdown 仍属于 Phase C，见 [Desktop Tauri 与 Application API 边界重构设计](../plans/desktop-tauri-application-boundary-refactor.md)。
 
@@ -134,14 +134,14 @@ apps/desktop/src                    # React 展示、UI 状态、invoke/listen �
 | --- | --- |
 | `application.rs` | 创建具体 Adapter，并组装唯一 `OpenWorkApplication` |
 | `provider_service.rs` | Provider CRUD、Preset 和连接测试用例 |
-| `thread_service.rs` | Journal-backed Thread/Session 查询与管理用例 |
+| `session_service.rs` | Journal-backed Session 查询与管理用例 |
 | `turn_service.rs` | 对宿主提供 Turn 启动、审批和取消入口，并统一终态错误事件 |
 | `chat.rs` | 内部单 Turn 编排：加载 Provider/Session、创建 Execution/Core、持久化结果并映射 Live Event |
 | `cancel.rs` | 当前 `request_id -> CancellationToken` 注册表 |
 | `turn_supervisor.rs` | 当前 `TurnId -> TurnCommandHandle` 路由；审批状态仍由 Core inbox 持有 |
 | `error.rs` | 底层错误到稳定 Application Error Code 的映射 |
 
-`turn_service.rs` 是稳定的宿主用例门面，`chat.rs` 是其内部编排器，两者不是两套 Agent Runtime。`RequestCancelRegistry` 和 `TurnSupervisor` 目前分别承担取消与审批路由，统一活跃 Turn 生命周期及 cancel-all/shutdown 属于 Phase C。前端仍使用 `session_*` IPC 和 Session DTO，Application 层使用 Thread Service；这是有意保留的兼容层，不代表最终命名已经统一。
+`turn_service.rs` 是稳定的宿主用例门面，`chat.rs` 是其内部编排器，两者不是两套 Agent Runtime。`RequestCancelRegistry` 和 `TurnSupervisor` 目前分别承担取消与审批路由，统一活跃 Turn 生命周期及 cancel-all/shutdown 属于 Phase C。前端、Tauri、Application、Persistence 和 Journal 聚合统一使用 Session；`session_*` IPC 与 Session DTO 不再是临时兼容命名。
 
 当前不提供 `ModelRegistry`、默认模型解析、按任务或 tier 自动选模，也不做跨模型/跨 Provider 静默 Fallback。前端必须明确提交 `providerId + model`；`ProviderFactory` 只根据已经选定的 Provider 创建对应协议 Adapter，不参与模型选择。
 
@@ -194,7 +194,7 @@ API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapt
 - 当前没有真正的操作系统级 sandbox。
 - `CapabilityRiskHint` 已参与审批原因生成，但当前策略仍只有 `Untrusted` 和 `Never` 两种真实语义。
 - `schema.rs` 只支持当前内置 Action 使用的 JSON Schema 子集，不是通用 JSON Schema 引擎。
-- Thread/Turn/Message 已进入 Event Journal；Action/Approval 状态仍是进程内状态，重启恢复尚未完成。
+- Session/Turn/Message 已进入 Event Journal；Action/Approval 状态仍是进程内状态，重启恢复尚未完成。
 - `bash` 使用 `sh -c` 执行命令；虽然有用户审批、超时、取消和受限环境变量，但不能保证命令内部文件访问被 `PermissionProfile` 精细约束。
 - Provider 的统一事件不包含 Runtime Step；不同厂商的 tool call delta 仍需持续补充 fixture 测试。
 

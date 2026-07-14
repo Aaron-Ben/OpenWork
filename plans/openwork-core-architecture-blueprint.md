@@ -1,6 +1,6 @@
 # OpenWork Core 架构蓝图
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-14
 
 > Status: architecture direction and invariant baseline. 本文冻结 OpenWork 要解决的核心问题、模块所有权、依赖方向和关键不变量，但不冻结具体实现方案，也不把 S0-S8 固定为必须照序执行的项目排期。Plan、Tool、Skill、MCP、Context、Memory、Sandbox 等重要子系统进入实现前，必须分别完成专题设计，并以当时的代码、评测和项目目标决定是否采用蓝图中的参考路径。
 
@@ -49,7 +49,7 @@ OpenWork 使用以下层级表达任务：
 
 ```text
 Project
-└── Thread                       持续对话与项目上下文
+└── Session                      持续对话与项目上下文
     └── Turn                     一项可持续数分钟或数小时的完整任务
         ├── Plan                 可版本化执行计划
         ├── ModelAttempt[]       Turn 内的多次模型调用
@@ -198,7 +198,7 @@ apps/
 
 包含：
 
-- 强类型 ID：`ProjectId`、`ThreadId`、`TurnId`、`ModelAttemptId`、`ActionRunId`、`ApprovalId`、`ArtifactId`。
+- 强类型 ID：`ProjectId`、`SessionId`、`TurnId`、`ModelAttemptId`、`ActionRunId`、`ApprovalId`、`ArtifactId`。
 - 状态：`TurnStatus`、`PlanStepStatus`、`ActionRunStatus`。
 - 命令：`StartTurn`、`CancelTurn`、`ResolveApproval`、`ReconcileAction`、`SteerTurn`。
 - 事件：`RecordedEventV1`、`LiveEventV1` 及版本化 Envelope。
@@ -395,7 +395,7 @@ Execution 只通过注入的 `WorkspaceAccessPort` 和 `WorkspaceSnapshotPort` �
 - Aggregate Expected Version。
 - Context Checkpoint。
 - 幂等 Projector。
-- Thread、Turn、Message、ActionRun、Approval、Artifact 查询投影。
+- Session、Turn、Message、ActionRun、Approval、Artifact 查询投影。
 - Content-addressed Artifact 存储。
 - Provider 配置、Project、Settings 等普通 Repository。
 - Provider 等普通 Repository 中敏感字段的认证加密；主密钥不进入数据库。
@@ -412,7 +412,7 @@ Persistence 不决定：
 
 ### 7.8 `openwork-memory`
 
-Memory 是跨 Turn/Thread 的长期事实与偏好系统，后置实现。
+Memory 是跨 Turn/Session 的长期事实与偏好系统，后置实现。
 
 负责：
 
@@ -444,7 +444,7 @@ Memory Record 存在 Persistence；提取、检索和纠错逻辑属于 Memory�
 
 负责：
 
-- 创建 Project、Thread 和 Turn。
+- 创建 Project、Session 和 Turn。
 - 启动、暂停、取消、恢复和 Steering。
 - 路由 Approval 与 Reconciliation。
 - 管理活跃 `TurnActor`。
@@ -858,7 +858,7 @@ cargo test --workspace
 
 任务：
 
-- 在当前显式 Provider/Thread/Turn Command/Query Service 和 typed Live Event 基线上，继续完成 Durable Subscription。
+- 在当前显式 Provider/Session/Turn Command/Query Service 和 typed Live Event 基线上，继续完成 Durable Subscription。
 - 扩展 S3 建立的 Turn Supervisor。
 - Approval、Cancel、Resume、Reconcile 路由。
 - UI 只依赖 App/Protocol；保持源码结构测试，禁止重新引入 Persistence/Providers/Execution 具体依赖。

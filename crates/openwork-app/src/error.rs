@@ -10,7 +10,7 @@ use crate::{AgentError, ChatRuntimeError, TurnSupervisorError};
 pub enum ApplicationErrorCode {
     InvalidRequest,
     ProviderNotFound,
-    ThreadNotFound,
+    SessionNotFound,
     TurnNotFound,
     ApprovalNotFound,
     DatabaseUnavailable,
@@ -76,7 +76,7 @@ impl From<SessionError> for ApplicationError {
     fn from(error: SessionError) -> Self {
         match error {
             SessionError::NotFound { id } => Self::new(
-                ApplicationErrorCode::ThreadNotFound,
+                ApplicationErrorCode::SessionNotFound,
                 format!("Session not found: {id}"),
             ),
             SessionError::TurnNotFound { id } => Self::new(
@@ -178,7 +178,7 @@ impl From<ChatRuntimeError> for ApplicationError {
                 format!("Provider not found: {id}"),
             ),
             ChatRuntimeError::SessionNotFound(id) => Self::new(
-                ApplicationErrorCode::ThreadNotFound,
+                ApplicationErrorCode::SessionNotFound,
                 format!("Session not found: {id}"),
             ),
             ChatRuntimeError::ProviderRepository(error) => error.into(),
