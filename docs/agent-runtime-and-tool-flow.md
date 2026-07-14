@@ -1,6 +1,6 @@
 # Agent Runtime 与工具调用流程
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-15
 
 > Status: current implementation detail. 目标状态机、恢复和评测边界见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
@@ -10,7 +10,9 @@ Last reviewed: 2026-07-11
 crates/openwork-core/src/{agent,approval}.rs
 crates/openwork-app/src/{application,chat,turn_service,turn_supervisor}.rs
 crates/openwork-protocol/src/approval/mod.rs
+crates/openwork-protocol/src/turn/mod.rs
 crates/openwork-protocol/src/capability/
+crates/openwork-persistence/src/session/lifecycle.rs
 crates/openwork-capabilities/src/
 crates/openwork-execution/src/actions/filesystem/
 crates/openwork-execution/src/actions/process/
@@ -28,6 +30,7 @@ apps/desktop/src-tauri/src/lib.rs
 - `model`
 - `capabilities: Arc<dyn CapabilityResolverPort>`
 - `execution: Arc<dyn ExecutionPort>`
+- `recorder: Arc<dyn TurnRecorderPort>`
 - `turn_id`
 - `approval_policy`
 - `approval_commands: TurnCommandInbox`
@@ -45,11 +48,13 @@ apps/desktop/src-tauri/src/lib.rs
 通过 CapabilityResolverPort 获取 Tool Schema
 
 for step in 1..=max_steps:
+  await persist step_started
   发出 Step(step)
   构造 ModelRequest(tools=tool_defs)
   调用 ModelPort::invoke，消费返回的异步 ModelStream
   转发 LLM stream events
 
+  await persist assistant_message_recorded
   将 assistant text / reasoning / tool_calls 加入 messages
 
   如果没有 tool_calls:
@@ -58,17 +63,22 @@ for step in 1..=max_steps:
 
   for tool_call in tool_calls:
     检测 doom loop
+    创建 ToolRunId，await persist tool_run_requested
     调用 ExecutionPort::authorize
-    RequireApproval 时 Core 进入 Waiting 并等待 ResolveApproval 命令
+    RequireApproval 时 await persist approval_requested，并等待 ResolveApproval 命令
+    执行前 await persist tool_run_started
     通过 ExecutionPort 执行 Action
+    await persist ToolRun 终态 + tool_message_recorded
     标记 tool_call finished
     发出 ToolResult
     将 tool result 加入 messages
+
+  await persist step_completed / step_failed
 ```
 
 `ModelRequest` 不再包含 `stream` 开关。流式生命周期由 `ModelPort::invoke` 返回的 `ModelStream` 表达，Core 直接异步消费该 Stream，不再经过同步 callback 或第二层 channel 桥接。
 
-App 在进入 Agent Loop 前通过 `SessionStore::start_turn` 原子写入 `turn_started` 和 `user_message_recorded`。Turn 结束后，App 再通过 `SessionStore::finish_turn` 写入新增的 Assistant/Tool Message 和 Turn 终态。文本、推理和工具参数 delta 只是 Live Event，不逐帧写入数据库。
+App 在进入 Agent Loop 前通过 `SessionStore::start_turn` 原子写入 `turn_started` 和 `user_message_recorded`，并向 Core 注入绑定该 Turn 的 `JournalTurnRecorder`。Assistant/Tool Message 与 Step/ToolRun/Approval 生命周期由 Core 在语义点同步追加；Turn 结束后，App 只写 Turn 终态。文本、推理和工具参数 delta 只是 Live Event，不逐帧写入数据库。
 
 ## 4. Runtime 事件
 
@@ -150,11 +160,11 @@ Capability 声明位于 `openwork-capabilities/src/builtin.rs`；真实 Handler 
 
 runtime 会记录最近的工具调用 `(name, normalized_input)`。如果连续达到阈值且完全相同，会发出 `DoomLoopDetected` 并停止。这是防止模型反复执行同一工具调用的基础保护。
 
-## 8. 当前缺口
+## 8. Durable 恢复边界与当前缺口
 
-- `ApprovalRequested` 与 `ApprovalResolved` 当前只进入 UI stream，尚未在各自语义点写入可重放 Event Journal。
+- `ApprovalRequested`、`ApprovalResolved` 和 ToolRun 生命周期已经在语义点写入可重放 Event Journal。
+- 应用重启后，可从 `pending_approval` 恢复尚未开始执行的工具调用；普通 interrupted Turn 暂不自动续跑。
+- 已有 `tool_run_started` 但没有终态的调用只会投影为 `outcome_unknown`，不会自动重跑；外部副作用对账尚未实现。
 - `bash` 无文件级隔离，不能把审批等同于 sandbox。
-- Durable Turn 和应用重启后的审批恢复尚未完成。
-- 工具状态机还可以进一步明确为 `requested -> approved -> running -> completed/failed/cancelled`。
 - `risk_hint` 已参与审批原因生成，但仍不能替代针对实际参数和路径的最终风险判断。
 - `schema.rs` 只实现当前内置 Action 所需子集；接入任意 MCP Schema 前需要重新确定兼容策略。

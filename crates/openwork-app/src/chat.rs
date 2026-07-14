@@ -2,15 +2,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use openwork_capabilities::{CapabilityCatalog, CatalogError};
-use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent};
+use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent, AgentPorts, ApprovalRecovery};
 use openwork_execution::{
     BuiltinActionInvoker, ExecutionContext, ExecutionService, PermissionProfile,
 };
 use openwork_persistence::{NewMessage, SessionError, SessionStore, TurnOutcome};
 use openwork_protocol::{
-    approval::{ApprovalPolicy, ResolveApproval},
+    approval::{ApprovalPolicy, ApprovalRequested, ResolveApproval},
     capability::{ActionInvoker, CapabilityResolverPort, ExecutionPort},
-    domain::TurnId,
+    domain::{ApprovalId, StepId, ToolRunId, TurnId},
     model::{ContentBlock, Message, Role},
     provider::{ProviderRepository, ProviderRepositoryError},
 };
@@ -68,6 +68,7 @@ impl TurnLiveEvent {
 pub enum TurnLiveEventKind {
     Step {
         step: usize,
+        step_id: String,
     },
     LlmStepStart {
         step: usize,
@@ -110,14 +111,17 @@ pub enum TurnLiveEventKind {
     },
     ToolResult {
         tool_call_id: String,
+        tool_run_id: String,
         tool_name: String,
         output: String,
         is_error: bool,
     },
     ApprovalRequest {
         approval_id: String,
+        tool_run_id: String,
         tool_name: String,
         input: serde_json::Value,
+        reason: String,
     },
     ApprovalResolved {
         approval_id: String,
@@ -151,6 +155,8 @@ pub enum ChatRuntimeError {
     Agent(#[from] AgentError),
     #[error("turn supervisor error: {0}")]
     TurnSupervisor(#[from] TurnSupervisorError),
+    #[error("pending approval not found: {0}")]
+    PendingApprovalNotFound(String),
 }
 
 /// Composes provider configuration, session persistence, tools, permissions, and the agent loop.
@@ -176,11 +182,155 @@ impl ChatRuntime {
         }
     }
 
-    pub async fn resolve_approval(
+    pub fn is_turn_active(&self, turn_id: &TurnId) -> Result<bool, TurnSupervisorError> {
+        self.turn_supervisor.contains(turn_id)
+    }
+
+    pub async fn resolve_active_approval(
         &self,
         command: ResolveApproval,
     ) -> Result<(), TurnSupervisorError> {
         self.turn_supervisor.resolve(command).await
+    }
+
+    pub async fn resume_approval(
+        &self,
+        command: ResolveApproval,
+        cancel: CancellationToken,
+        on_event: impl FnMut(TurnLiveEvent) + Send + 'static,
+    ) -> Result<(), ChatRuntimeError> {
+        let turn_id = command.turn_id.clone();
+        let snapshot = self
+            .session_store
+            .load_turn_lifecycle(turn_id.as_str())
+            .await?
+            .ok_or_else(|| {
+                ChatRuntimeError::PendingApprovalNotFound(command.approval_id.to_string())
+            })?;
+        let pending = snapshot.pending_approval.ok_or_else(|| {
+            ChatRuntimeError::PendingApprovalNotFound(command.approval_id.to_string())
+        })?;
+        if pending.approval_id != command.approval_id.as_str() {
+            return Err(ChatRuntimeError::PendingApprovalNotFound(
+                command.approval_id.to_string(),
+            ));
+        }
+
+        let provider_config = self
+            .provider_repository
+            .load_runtime(&snapshot.provider_id)
+            .await?
+            .ok_or_else(|| ChatRuntimeError::ProviderNotFound(snapshot.provider_id.clone()))?;
+        let provider = self.provider_factory.build(&provider_config);
+        let session = self
+            .session_store
+            .load_session(&snapshot.session_id)
+            .await?
+            .ok_or_else(|| ChatRuntimeError::SessionNotFound(snapshot.session_id.clone()))?;
+        let history = self
+            .session_store
+            .load_messages(&snapshot.session_id)
+            .await?
+            .into_iter()
+            .map(|message| Message {
+                role: message.role,
+                content: message.parts,
+            })
+            .collect::<Vec<_>>();
+        let working_dir = session
+            .working_dir
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let capabilities: Arc<dyn CapabilityResolverPort> = Arc::new(CapabilityCatalog::builtin()?);
+        let invoker: Arc<dyn ActionInvoker> =
+            Arc::new(BuiltinActionInvoker::new(ExecutionContext::new(
+                working_dir.clone(),
+                PermissionProfile::workspace_write(working_dir),
+                cancel.clone(),
+            )));
+        let execution: Arc<dyn ExecutionPort> =
+            Arc::new(ExecutionService::new(Arc::clone(&capabilities), invoker));
+        let approval_commands = self.turn_supervisor.register(turn_id.clone())?;
+        let recorder = Arc::new(
+            self.session_store
+                .turn_recorder(turn_id.as_str(), &snapshot.session_id),
+        );
+        let agent_config = AgentConfig::new(
+            provider,
+            snapshot.model,
+            AgentPorts::new(capabilities, execution, recorder),
+            turn_id.clone(),
+            approval_commands,
+            cancel,
+        );
+        let mut agent = Agent::new(agent_config);
+        let recovery = ApprovalRecovery {
+            request: ApprovalRequested {
+                approval_id: ApprovalId::new(pending.approval_id),
+                turn_id: turn_id.clone(),
+                step_id: StepId::new(pending.step_id),
+                tool_run_id: ToolRunId::new(pending.tool_run_id),
+                tool_name: pending.tool_name,
+                input: pending.input,
+                reason: pending.reason,
+            },
+            provider_tool_call_id: pending.provider_tool_call_id,
+            step_index: pending.step_index,
+        };
+        let session_id = snapshot.session_id;
+        let event_turn_id = turn_id.to_string();
+        let on_event = Arc::new(Mutex::new(on_event));
+        let stream_on_event = Arc::clone(&on_event);
+        let event_session_id = session_id.clone();
+        let result = agent
+            .resume_after_approval(history, recovery, command.resolution, move |event| {
+                let payload = map_agent_event(&event_turn_id, &event_session_id, &event);
+                emit_runtime_event(&stream_on_event, payload);
+            })
+            .await;
+        self.turn_supervisor.remove(&turn_id)?;
+
+        match result {
+            Ok(_) => {
+                self.finish_turn(turn_id.as_str(), &session_id, TurnOutcome::Completed)
+                    .await?;
+                emit_runtime_event(
+                    &on_event,
+                    TurnLiveEvent::new(turn_id.as_str(), &session_id, TurnLiveEventKind::Done),
+                );
+                Ok(())
+            }
+            Err(AgentError::Cancelled(_)) => {
+                self.finish_turn(turn_id.as_str(), &session_id, TurnOutcome::Cancelled)
+                    .await?;
+                emit_runtime_event(
+                    &on_event,
+                    TurnLiveEvent::new(turn_id.as_str(), &session_id, TurnLiveEventKind::Cancelled),
+                );
+                Ok(())
+            }
+            Err(AgentError::DoomLoop(name, _)) => {
+                self.finish_turn(
+                    turn_id.as_str(),
+                    &session_id,
+                    TurnOutcome::DoomLoop { repeated: name },
+                )
+                .await?;
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.finish_turn(
+                    turn_id.as_str(),
+                    &session_id,
+                    TurnOutcome::Failed {
+                        message: message.clone(),
+                    },
+                )
+                .await?;
+                Err(ChatRuntimeError::Agent(error))
+            }
+        }
     }
 
     pub async fn generate_stream(
@@ -206,7 +356,6 @@ impl ChatRuntime {
             .ok_or_else(|| ChatRuntimeError::SessionNotFound(session_id.clone()))?;
 
         let stored = self.session_store.load_messages(&session_id).await?;
-        let persisted_history_len = stored.len() + 1;
         let mut history: Vec<Message> = stored
             .into_iter()
             .map(|message| Message {
@@ -235,8 +384,11 @@ impl ChatRuntime {
         let mut agent_config = AgentConfig::new(
             provider,
             request.model,
-            capabilities,
-            execution,
+            AgentPorts::new(
+                capabilities,
+                execution,
+                Arc::new(self.session_store.turn_recorder(&request_id, &session_id)),
+            ),
             turn_id.clone(),
             approval_commands,
             cancel,
@@ -275,14 +427,8 @@ impl ChatRuntime {
 
         match result {
             Ok(run_result) => {
-                self.finish_turn(
-                    &request_id,
-                    &session_id,
-                    run_result.messages,
-                    persisted_history_len,
-                    TurnOutcome::Completed,
-                )
-                .await?;
+                self.finish_turn(&request_id, &session_id, TurnOutcome::Completed)
+                    .await?;
                 emit_runtime_event(
                     &on_event,
                     TurnLiveEvent::new(&request_id, &session_id, TurnLiveEventKind::Done),
@@ -293,14 +439,9 @@ impl ChatRuntime {
                 })
             }
             Err(AgentError::Cancelled(messages)) => {
-                self.finish_turn(
-                    &request_id,
-                    &session_id,
-                    messages,
-                    persisted_history_len,
-                    TurnOutcome::Cancelled,
-                )
-                .await?;
+                let _ = messages;
+                self.finish_turn(&request_id, &session_id, TurnOutcome::Cancelled)
+                    .await?;
                 emit_runtime_event(
                     &on_event,
                     TurnLiveEvent::new(&request_id, &session_id, TurnLiveEventKind::Cancelled),
@@ -311,11 +452,10 @@ impl ChatRuntime {
                 })
             }
             Err(AgentError::DoomLoop(name, messages)) => {
+                let _ = messages;
                 self.finish_turn(
                     &request_id,
                     &session_id,
-                    messages,
-                    persisted_history_len,
                     TurnOutcome::DoomLoop { repeated: name },
                 )
                 .await?;
@@ -345,20 +485,10 @@ impl ChatRuntime {
         &self,
         turn_id: &str,
         session_id: &str,
-        messages: Vec<Message>,
-        persisted_history_len: usize,
         outcome: TurnOutcome,
     ) -> Result<(), SessionError> {
-        let new_messages = messages
-            .into_iter()
-            .skip(persisted_history_len)
-            .map(|message| NewMessage {
-                role: message.role,
-                parts: message.content,
-            })
-            .collect();
         self.session_store
-            .finish_turn(turn_id, session_id, new_messages, outcome)
+            .finish_turn(turn_id, session_id, Vec::new(), outcome)
             .await
     }
 }
@@ -375,7 +505,10 @@ pub(crate) fn map_agent_event(
     event: &AgentEvent,
 ) -> TurnLiveEvent {
     let kind = match event {
-        AgentEvent::Step(step) => TurnLiveEventKind::Step { step: *step },
+        AgentEvent::Step { id, index } => TurnLiveEventKind::Step {
+            step: *index,
+            step_id: id.to_string(),
+        },
         AgentEvent::LlmStepStart { index } => TurnLiveEventKind::LlmStepStart { step: *index },
         AgentEvent::LlmStepFinish { index, reason, .. } => TurnLiveEventKind::LlmStepFinish {
             step: *index,
@@ -415,19 +548,23 @@ pub(crate) fn map_agent_event(
         },
         AgentEvent::ToolResult {
             id,
+            tool_run_id,
             name,
             output,
             is_error,
         } => TurnLiveEventKind::ToolResult {
             tool_call_id: id.clone(),
+            tool_run_id: tool_run_id.to_string(),
             tool_name: name.clone(),
             output: extract_text(output),
             is_error: *is_error,
         },
         AgentEvent::ApprovalRequested(request) => TurnLiveEventKind::ApprovalRequest {
             approval_id: request.approval_id.to_string(),
+            tool_run_id: request.tool_run_id.to_string(),
             tool_name: request.tool_name.clone(),
             input: request.input.clone(),
+            reason: request.reason.clone(),
         },
         AgentEvent::ApprovalResolved(resolved) => TurnLiveEventKind::ApprovalResolved {
             approval_id: resolved.approval_id.to_string(),

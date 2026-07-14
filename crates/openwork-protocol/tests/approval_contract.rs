@@ -3,7 +3,7 @@ use openwork_protocol::{
         ApprovalPolicy, ApprovalRequested, ApprovalResolution, ApprovalResolved,
         ExecutionPolicyDecision, ResolveApproval,
     },
-    domain::{ActionRunId, ApprovalId, TurnId},
+    domain::{ApprovalId, StepId, ToolRunId, TurnId},
 };
 use serde_json::json;
 
@@ -12,7 +12,8 @@ fn approval_contract_round_trips_with_strong_ids() {
     let requested = ApprovalRequested {
         approval_id: ApprovalId::new("approval-1"),
         turn_id: TurnId::new("turn-1"),
-        action_run_id: ActionRunId::new("action-1"),
+        step_id: StepId::new("step-1"),
+        tool_run_id: ToolRunId::new("tool-run-1"),
         tool_name: "bash".to_string(),
         input: json!({"command": "cargo test"}),
         reason: "process execution requires user approval".to_string(),
@@ -25,7 +26,7 @@ fn approval_contract_round_trips_with_strong_ids() {
     assert_eq!(decoded, requested);
     assert_ne!(
         requested.approval_id.as_str(),
-        requested.action_run_id.as_str()
+        requested.tool_run_id.as_str()
     );
 }
 
@@ -34,7 +35,8 @@ fn approval_resolution_is_a_recordable_fact() {
     let resolved = ApprovalResolved {
         approval_id: ApprovalId::new("approval-1"),
         turn_id: TurnId::new("turn-1"),
-        action_run_id: ActionRunId::new("action-1"),
+        step_id: StepId::new("step-1"),
+        tool_run_id: ToolRunId::new("tool-run-1"),
         resolution: ApprovalResolution::Allow,
     };
 
@@ -55,8 +57,8 @@ fn resolve_approval_carries_turn_and_approval_identity() {
     };
 
     let encoded = serde_json::to_value(&command).expect("command serializes");
-    assert_eq!(encoded["turn_id"], "turn-1");
-    assert_eq!(encoded["approval_id"], "approval-1");
+    assert_eq!(encoded["turnId"], "turn-1");
+    assert_eq!(encoded["approvalId"], "approval-1");
     assert_eq!(encoded["resolution"]["type"], "deny");
 }
 

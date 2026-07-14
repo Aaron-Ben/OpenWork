@@ -1,6 +1,6 @@
 # OpenWork 文档索引
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-15
 
 ## 目标架构与路线
 
@@ -26,6 +26,7 @@ Last reviewed: 2026-07-11
 
 ## 持久化与观测
 
+- [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前可持久化 Turn 生命周期、Recorded/Live Event 边界、审批等待恢复、Replay 状态与崩溃窗口。
 - [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Session/Turn/Message、遗留表删除状态和未完成边界。
 
 ## 维护原则

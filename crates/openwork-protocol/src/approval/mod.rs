@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::domain::{ActionRunId, ApprovalId, TurnId};
+use crate::domain::{ApprovalId, StepId, ToolRunId, TurnId};
 
 /// User-selected policy supplied to the execution policy evaluator.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,10 +27,12 @@ pub enum ExecutionPolicyDecision {
 
 /// Recorded/live fact emitted when a Turn pauses for user approval.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApprovalRequested {
     pub approval_id: ApprovalId,
     pub turn_id: TurnId,
-    pub action_run_id: ActionRunId,
+    pub step_id: StepId,
+    pub tool_run_id: ToolRunId,
     pub tool_name: String,
     pub input: Value,
     pub reason: String,
@@ -46,6 +48,7 @@ pub enum ApprovalResolution {
 
 /// Command routed by the application layer back to the owning Turn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolveApproval {
     pub turn_id: TurnId,
     pub approval_id: ApprovalId,
@@ -54,9 +57,11 @@ pub struct ResolveApproval {
 
 /// Recorded/live fact emitted after Core applies a user resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApprovalResolved {
     pub approval_id: ApprovalId,
     pub turn_id: TurnId,
-    pub action_run_id: ActionRunId,
+    pub step_id: StepId,
+    pub tool_run_id: ToolRunId,
     pub resolution: ApprovalResolution,
 }

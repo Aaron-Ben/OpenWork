@@ -11,9 +11,11 @@ use openwork_protocol::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::lifecycle::replay_session_turns;
 use super::types::{
     NewMessage, Session, SessionInput, SessionMessage, SessionSummary, TurnOutcome,
 };
+use super::{JournalTurnRecorder, TurnLifecycleSnapshot, replay_turn_lifecycle};
 
 const EVENT_PAGE_SIZE: u32 = 1_000;
 const SESSION_CREATED: &str = "session_created";
@@ -49,6 +51,28 @@ pub struct SessionStore {
 impl SessionStore {
     pub fn new(journal: Arc<dyn EventJournal>) -> Self {
         Self { journal }
+    }
+
+    pub fn turn_recorder(&self, turn_id: &str, session_id: &str) -> JournalTurnRecorder {
+        JournalTurnRecorder::new(Arc::clone(&self.journal), turn_id, session_id)
+    }
+
+    pub async fn load_turn_lifecycle(
+        &self,
+        turn_id: &str,
+    ) -> Result<Option<TurnLifecycleSnapshot>, SessionError> {
+        let events = self
+            .journal
+            .load_aggregate(AggregateType::Turn, turn_id, 0)
+            .await?;
+        replay_turn_lifecycle(&events)
+    }
+
+    pub async fn load_session_turns(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<TurnLifecycleSnapshot>, SessionError> {
+        replay_session_turns(&self.read_all_events().await?, session_id)
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, SessionError> {

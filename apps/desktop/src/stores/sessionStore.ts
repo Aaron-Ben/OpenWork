@@ -1,11 +1,17 @@
 import { create } from 'zustand'
 
 import { sessionsApi } from '../api/sessions'
+import { useApprovalStore } from './approvalStore'
 import { resolveErrorMessage } from '../utils/commandError'
 import { applyEvent } from '../utils/streamAccumulator'
 import type { TurnLiveEvent } from '../type/providers'
 import type { ChatItem } from '../type/chat'
-import type { SessionInput, SessionMessage, SessionSummary } from '../type/session'
+import type {
+  SessionInput,
+  SessionLoadResult,
+  SessionMessage,
+  SessionSummary,
+} from '../type/session'
 
 interface SessionStoreState {
   sessions: SessionSummary[]
@@ -41,6 +47,25 @@ function toChatItems(messages: SessionMessage[]): ChatItem[] {
     .map((message) => {
       return { id: message.id, role: message.role, parts: message.parts }
     })
+}
+
+function restorePendingApprovals(result: SessionLoadResult) {
+  const prompts = result.turns.flatMap((turn) => {
+    const pending = turn.pendingApproval
+    if (!pending || turn.status !== 'waiting_approval') return []
+    return [
+      {
+        id: pending.approvalId,
+        turnId: pending.turnId,
+        sessionId: turn.sessionId,
+        toolRunId: pending.toolRunId,
+        toolName: pending.toolName,
+        input: pending.input,
+        reason: pending.reason,
+      },
+    ]
+  })
+  useApprovalStore.getState().replaceSession(result.session.id, prompts)
 }
 
 export const useSessionStore = create<SessionStoreState>((set, get) => ({
@@ -87,6 +112,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     if (!(id in get().messagesBySession)) {
       try {
         const result = await sessionsApi.load(id)
+        restorePendingApprovals(result)
         set((state) => ({
           messagesBySession: {
             ...state.messagesBySession,
@@ -123,6 +149,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   reload: async (id) => {
     try {
       const result = await sessionsApi.load(id)
+      restorePendingApprovals(result)
       set((state) => ({
         messagesBySession: { ...state.messagesBySession, [id]: toChatItems(result.messages) },
       }))

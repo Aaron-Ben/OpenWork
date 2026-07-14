@@ -22,8 +22,10 @@ export function useChatStreamListener() {
           id: payload.approvalId,
           turnId: payload.requestId,
           sessionId,
+          toolRunId: payload.toolRunId,
           toolName: payload.toolName,
           input: payload.input,
+          reason: payload.reason,
         })
         return
       }

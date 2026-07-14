@@ -8,6 +8,15 @@ use openwork_persistence::{
     SessionStore, TurnOutcome,
 };
 use openwork_protocol::model::{ContentBlock, Role};
+use openwork_protocol::{
+    approval::ApprovalRequested,
+    domain::{ApprovalId, StepId, ToolRunId, TurnId},
+    turn::{
+        AssistantMessageRecorded, StepStarted, ToolRunRequested, TurnRecordedEvent,
+        TurnRecorderPort,
+    },
+};
+use serde_json::json;
 use uuid::Uuid;
 
 async fn test_store() -> Option<SessionStore> {
@@ -127,4 +136,73 @@ async fn turn_message_events_replace_messages_table_and_replay_in_order() {
     assert_eq!(messages[1].role, Role::Assistant);
     assert_eq!(messages[0].seq, 1);
     assert_eq!(messages[1].seq, 2);
+}
+
+#[tokio::test]
+async fn step_messages_and_pending_approval_replay_from_the_same_turn_stream() {
+    let Some(store) = test_store().await else {
+        return;
+    };
+    let session = store.create_session(input()).await.unwrap();
+    let turn_id = format!("turn-{}", Uuid::new_v4().simple());
+    store
+        .start_turn(
+            &turn_id,
+            &session.id,
+            NewMessage {
+                role: Role::User,
+                parts: vec![ContentBlock::text("run tests")],
+            },
+        )
+        .await
+        .unwrap();
+    let recorder = store.turn_recorder(&turn_id, &session.id);
+    let step_id = StepId::new("step-1");
+    let tool_run_id = ToolRunId::new("tool-run-1");
+    recorder
+        .append(vec![
+            TurnRecordedEvent::StepStarted(StepStarted {
+                step_id: step_id.clone(),
+                step_index: 1,
+            }),
+            TurnRecordedEvent::AssistantMessageRecorded(AssistantMessageRecorded {
+                message_id: "message-2".to_string(),
+                step_id: step_id.clone(),
+                parts: vec![ContentBlock::text("I will run the tests")],
+            }),
+            TurnRecordedEvent::ToolRunRequested(ToolRunRequested {
+                step_id: step_id.clone(),
+                tool_run_id: tool_run_id.clone(),
+                provider_tool_call_id: "call-1".to_string(),
+                tool_name: "bash".to_string(),
+                input: json!({"command": "cargo test"}),
+            }),
+            TurnRecordedEvent::ApprovalRequested(ApprovalRequested {
+                approval_id: ApprovalId::new("approval-1"),
+                turn_id: TurnId::new(&turn_id),
+                step_id,
+                tool_run_id,
+                tool_name: "bash".to_string(),
+                input: json!({"command": "cargo test"}),
+                reason: "process execution requires approval".to_string(),
+            }),
+        ])
+        .await
+        .unwrap();
+
+    let messages = store.load_messages(&session.id).await.unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1].role, Role::Assistant);
+    let lifecycle = store
+        .load_turn_lifecycle(&turn_id)
+        .await
+        .unwrap()
+        .expect("turn lifecycle");
+    assert_eq!(
+        lifecycle
+            .pending_approval
+            .expect("pending approval")
+            .provider_tool_call_id,
+        "call-1"
+    );
 }

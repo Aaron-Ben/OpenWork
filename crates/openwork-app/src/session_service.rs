@@ -29,7 +29,12 @@ impl SessionApplicationService {
             .await?
             .ok_or_else(|| SessionError::NotFound { id: id.to_string() })?;
         let messages = self.store.load_messages(id).await?;
-        Ok(SessionLoadResult { session, messages })
+        let turns = self.store.load_session_turns(id).await?;
+        Ok(SessionLoadResult {
+            session,
+            messages,
+            turns,
+        })
     }
 
     pub async fn delete(&self, id: &str) -> Result<(), ApplicationError> {

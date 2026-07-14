@@ -1,7 +1,7 @@
 //! Turn 内的 Agent 主循环:取消息 → 喂模型(流式)→ 解析工具调用 → 执行 → 回填 → 重复,
 //! 直到模型返回不带工具调用的纯文本。
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -13,10 +13,15 @@ use openwork_protocol::capability::{
     ActionRequest, CapabilityResolveError, CapabilityResolverPort, ExecutionPort, Observation,
     ObservationContent, ObservationStatus,
 };
-use openwork_protocol::domain::{ActionRunId, ApprovalId, TurnId};
+use openwork_protocol::domain::{ApprovalId, StepId, ToolRunId, TurnId};
 use openwork_protocol::model::{
     ContentBlock, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest,
     ModelResponse, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
+};
+use openwork_protocol::turn::{
+    AssistantMessageRecorded, StepCompleted, StepFailed, StepStarted, ToolMessageRecorded,
+    ToolRunFinished, ToolRunRequested, ToolRunStarted, TurnRecordError, TurnRecordedEvent,
+    TurnRecorderPort,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -34,11 +39,34 @@ You have tools to read and write files, list directories, and run shell commands
 Call a tool whenever it helps you make progress toward the task. \
 When the task is done or you have a final answer, respond with plain text and no tool calls.";
 
+pub struct AgentPorts {
+    pub capabilities: Arc<dyn CapabilityResolverPort>,
+    pub execution: Arc<dyn ExecutionPort>,
+    /// Awaited durable fact sink. A failed append stops the control loop before
+    /// any following side effect is invoked.
+    pub recorder: Arc<dyn TurnRecorderPort>,
+}
+
+impl AgentPorts {
+    pub fn new(
+        capabilities: Arc<dyn CapabilityResolverPort>,
+        execution: Arc<dyn ExecutionPort>,
+        recorder: Arc<dyn TurnRecorderPort>,
+    ) -> Self {
+        Self {
+            capabilities,
+            execution,
+            recorder,
+        }
+    }
+}
+
 pub struct AgentConfig {
     pub provider: Box<dyn ModelPort>,
     pub model: String,
     pub capabilities: Arc<dyn CapabilityResolverPort>,
     pub execution: Arc<dyn ExecutionPort>,
+    pub recorder: Arc<dyn TurnRecorderPort>,
     pub turn_id: TurnId,
     /// 何时需要对工具调用发起审批。
     pub approval_policy: ApprovalPolicy,
@@ -48,6 +76,8 @@ pub struct AgentConfig {
     /// [`AgentError::Cancelled`],携带截止当前的对话轨迹。
     pub cancel: CancellationToken,
     pub max_steps: usize,
+    /// First model step to run. Recovery continues after the checkpointed step.
+    pub first_step: usize,
 }
 
 impl AgentConfig {
@@ -55,8 +85,7 @@ impl AgentConfig {
     pub fn new(
         provider: Box<dyn ModelPort>,
         model: impl Into<String>,
-        capabilities: Arc<dyn CapabilityResolverPort>,
-        execution: Arc<dyn ExecutionPort>,
+        ports: AgentPorts,
         turn_id: TurnId,
         approval_commands: TurnCommandInbox,
         cancel: CancellationToken,
@@ -64,21 +93,31 @@ impl AgentConfig {
         Self {
             provider,
             model: model.into(),
-            capabilities,
-            execution,
+            capabilities: ports.capabilities,
+            execution: ports.execution,
+            recorder: ports.recorder,
             turn_id,
             approval_policy: ApprovalPolicy::Untrusted,
             approval_commands,
             cancel,
             max_steps: DEFAULT_MAX_STEPS,
+            first_step: 1,
         }
+    }
+
+    pub fn with_first_step(mut self, first_step: usize) -> Self {
+        self.first_step = first_step.max(1);
+        self
     }
 }
 
 /// agent loop 向外发出的事件,供调用方(UI/测试)消费。
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
-    Step(usize),
+    Step {
+        id: StepId,
+        index: usize,
+    },
     LlmStepStart {
         index: usize,
     },
@@ -118,6 +157,7 @@ pub enum AgentEvent {
     },
     ToolResult {
         id: String,
+        tool_run_id: ToolRunId,
         name: String,
         output: Vec<ContentBlock>,
         is_error: bool,
@@ -139,6 +179,10 @@ pub enum AgentError {
     Provider(#[from] ModelError),
     #[error("capability resolver error: {0}")]
     Capability(#[from] CapabilityResolveError),
+    #[error("turn lifecycle record error: {0}")]
+    Record(#[from] TurnRecordError),
+    #[error("turn recovery state is invalid: {0}")]
+    InvalidRecovery(String),
     #[error("exceeded max steps ({0})")]
     MaxStepsExceeded(usize),
     /// 被外部取消;携带截止取消时的对话轨迹(不含 system prompt),供持久化部分结果。
@@ -155,6 +199,14 @@ pub enum AgentError {
 pub struct RunResult {
     pub text: String,
     pub messages: Vec<Message>,
+}
+
+/// Durable state needed to continue one Step that was parked for approval.
+#[derive(Debug, Clone)]
+pub struct ApprovalRecovery {
+    pub request: ApprovalRequested,
+    pub provider_tool_call_id: String,
+    pub step_index: usize,
 }
 
 pub struct Agent {
@@ -175,22 +227,159 @@ impl Agent {
     ) -> Result<RunResult, AgentError> {
         let mut messages = vec![Message::text(Role::System, AGENT_SYSTEM_PROMPT)];
         messages.extend(history);
-        let tool_defs = self
-            .config
-            .capabilities
-            .list()
-            .await?
-            .iter()
-            .map(|spec| spec.model_definition())
-            .collect::<Vec<_>>();
-        // 最近若干次工具调用的 (name, 规范化 input),用于 doom-loop 检测。
-        let mut recent: VecDeque<(String, String)> = VecDeque::new();
+        let tool_defs = self.tool_definitions().await?;
+        self.run_steps(
+            messages,
+            tool_defs,
+            self.config.first_step,
+            VecDeque::new(),
+            &mut on_event,
+        )
+        .await
+    }
 
-        for step in 1..=self.config.max_steps {
+    /// Continues a Turn that was durably parked before invoking one tool.
+    /// Only a still-pending approval is resumable. A recorded `tool_run_started`
+    /// without a terminal fact is deliberately handled as outcome-unknown by
+    /// the recovery projection and never enters this method.
+    pub async fn resume_after_approval(
+        &mut self,
+        history: Vec<Message>,
+        recovery: ApprovalRecovery,
+        resolution: ApprovalResolution,
+        mut on_event: impl FnMut(AgentEvent),
+    ) -> Result<RunResult, AgentError> {
+        let mut messages = vec![Message::text(Role::System, AGENT_SYSTEM_PROMPT)];
+        messages.extend(history);
+        let tool_calls = messages
+            .iter()
+            .rev()
+            .find_map(|message| {
+                if message.role != Role::Assistant {
+                    return None;
+                }
+                let calls = message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::ToolCall(call) => Some(call.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                calls
+                    .iter()
+                    .any(|call| call.id == recovery.provider_tool_call_id)
+                    .then_some(calls)
+            })
+            .ok_or_else(|| {
+                AgentError::InvalidRecovery(format!(
+                    "assistant tool call {} is missing",
+                    recovery.provider_tool_call_id
+                ))
+            })?;
+        let pending_call = tool_calls
+            .iter()
+            .find(|call| call.id == recovery.provider_tool_call_id)
+            .cloned()
+            .ok_or_else(|| {
+                AgentError::InvalidRecovery(format!(
+                    "tool call {} is missing",
+                    recovery.provider_tool_call_id
+                ))
+            })?;
+        if pending_call.name != recovery.request.tool_name {
+            return Err(AgentError::InvalidRecovery(format!(
+                "tool call name {} does not match pending approval {}",
+                pending_call.name, recovery.request.tool_name
+            )));
+        }
+
+        let mut completed_call_ids = tool_result_ids(&messages);
+        if completed_call_ids.contains(&pending_call.id) {
+            return Err(AgentError::InvalidRecovery(format!(
+                "tool call {} already has a result",
+                pending_call.id
+            )));
+        }
+
+        let observation = self
+            .execute_recovered_tool_call(
+                &pending_call,
+                &recovery.request,
+                resolution,
+                &mut on_event,
+            )
+            .await?;
+        self.finish_tool_run(
+            &mut messages,
+            &recovery.request.step_id,
+            &recovery.request.tool_run_id,
+            &pending_call,
+            observation,
+            &mut on_event,
+        )
+        .await?;
+        completed_call_ids.insert(pending_call.id.clone());
+
+        // A provider may return multiple tool calls in one Step. Calls that
+        // follow the recovered approval must finish before the next model call.
+        for tool_call in tool_calls {
+            if completed_call_ids.contains(&tool_call.id) {
+                continue;
+            }
+            let input = parse_tool_input(&tool_call);
+            let (tool_run_id, observation) = self
+                .execute_new_tool_call(&recovery.request.step_id, &tool_call, input, &mut on_event)
+                .await?;
+            self.finish_tool_run(
+                &mut messages,
+                &recovery.request.step_id,
+                &tool_run_id,
+                &tool_call,
+                observation,
+                &mut on_event,
+            )
+            .await?;
+        }
+        self.record(vec![TurnRecordedEvent::StepCompleted(StepCompleted {
+            step_id: recovery.request.step_id.clone(),
+            step_index: recovery.step_index,
+        })])
+        .await?;
+
+        let tool_defs = self.tool_definitions().await?;
+        self.run_steps(
+            messages,
+            tool_defs,
+            recovery.step_index.saturating_add(1),
+            VecDeque::new(),
+            &mut on_event,
+        )
+        .await
+    }
+
+    async fn run_steps(
+        &mut self,
+        mut messages: Vec<Message>,
+        tool_defs: Vec<openwork_protocol::model::ToolDefinition>,
+        first_step: usize,
+        mut recent: VecDeque<(String, String)>,
+        on_event: &mut impl FnMut(AgentEvent),
+    ) -> Result<RunResult, AgentError> {
+        for step_index in first_step..=self.config.max_steps {
             if self.config.cancel.is_cancelled() {
                 return Err(AgentError::Cancelled(messages[1..].to_vec()));
             }
-            on_event(AgentEvent::Step(step));
+            let step_id = StepId::new(new_runtime_id("step"));
+            self.record(vec![TurnRecordedEvent::StepStarted(StepStarted {
+                step_id: step_id.clone(),
+                step_index,
+            })])
+            .await?;
+            on_event(AgentEvent::Step {
+                id: step_id.clone(),
+                index: step_index,
+            });
 
             let req = ModelRequest {
                 model: self.config.model.clone(),
@@ -201,44 +390,31 @@ impl Agent {
                 tools: tool_defs.clone(),
             };
 
-            let response = match self.stream_once(req, &mut on_event).await {
+            let response = match self.stream_once(step_index, req, on_event).await {
                 Ok(response) => response,
                 Err(AgentError::Cancelled(_)) => {
+                    self.record_step_failed(&step_id, step_index, "cancelled")
+                        .await?;
                     return Err(AgentError::Cancelled(messages[1..].to_vec()));
                 }
-                Err(error) => return Err(error),
+                Err(error @ AgentError::Record(_)) => return Err(error),
+                Err(error) => {
+                    self.record_step_failed(&step_id, step_index, &error.to_string())
+                        .await?;
+                    return Err(error);
+                }
             };
 
-            // 记录 assistant 消息(thinking? + text + tool calls)。
-            // thinking 放最前,与流式渲染顺序一致;落库后才不会在 reload 后丢失。
-            let mut assistant_content: Vec<ContentBlock> = Vec::new();
-            if response.provider_opaque_blocks.is_empty() {
-                if let Some(reasoning) = &response.reasoning_text
-                    && !reasoning.is_empty()
-                {
-                    assistant_content.push(ContentBlock::thinking(reasoning.clone()));
-                }
-            } else {
-                assistant_content.extend(
-                    response
-                        .provider_opaque_blocks
-                        .iter()
-                        .cloned()
-                        .map(ContentBlock::ProviderOpaque),
-                );
-            }
-            if !response.text.is_empty() {
-                assistant_content.push(ContentBlock::text(response.text.clone()));
-            }
-            for tc in &response.tool_calls {
-                assistant_content.push(ContentBlock::ToolCall(ToolCallBlock {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    input: tc.input.clone(),
-                    state: ToolCallState::Submitted,
-                }));
-            }
+            let assistant_content = assistant_content(&response);
             if !assistant_content.is_empty() {
+                self.record(vec![TurnRecordedEvent::AssistantMessageRecorded(
+                    AssistantMessageRecorded {
+                        message_id: new_runtime_id("msg"),
+                        step_id: step_id.clone(),
+                        parts: assistant_content.clone(),
+                    },
+                )])
+                .await?;
                 messages.push(Message {
                     role: Role::Assistant,
                     content: assistant_content,
@@ -247,6 +423,11 @@ impl Agent {
 
             // 无工具调用 → 结束。返回完整轨迹(跳过 system prompt)。
             if response.tool_calls.is_empty() {
+                self.record(vec![TurnRecordedEvent::StepCompleted(StepCompleted {
+                    step_id,
+                    step_index,
+                })])
+                .await?;
                 on_event(AgentEvent::Finished(response.text.clone()));
                 return Ok(RunResult {
                     text: response.text,
@@ -257,10 +438,11 @@ impl Agent {
             // 执行工具并回填结果(含审批决策)。
             for tc in response.tool_calls {
                 if self.config.cancel.is_cancelled() {
+                    self.record_step_failed(&step_id, step_index, "cancelled")
+                        .await?;
                     return Err(AgentError::Cancelled(messages[1..].to_vec()));
                 }
-                let input = serde_json::from_str::<serde_json::Value>(&tc.input)
-                    .unwrap_or(serde_json::Value::Null);
+                let input = parse_tool_input(&tc);
 
                 // doom-loop 检测:连续 N 次同名 + 规范化同参 → 停止。
                 let key = (tc.name.clone(), normalize_json(&input));
@@ -269,6 +451,12 @@ impl Agent {
                     recent.pop_front();
                 }
                 if recent.len() == DOOM_LOOP_THRESHOLD && recent.iter().all(|k| k == &key) {
+                    self.record_step_failed(
+                        &step_id,
+                        step_index,
+                        &format!("doom loop detected for tool {}", tc.name),
+                    )
+                    .await?;
                     on_event(AgentEvent::DoomLoopDetected {
                         repeated: tc.name.clone(),
                     });
@@ -278,35 +466,26 @@ impl Agent {
                     ));
                 }
 
-                let output = self.execute_tool_call(&tc, input, &mut on_event).await;
+                let (tool_run_id, output) = self
+                    .execute_new_tool_call(&step_id, &tc, input, on_event)
+                    .await?;
                 if self.config.cancel.is_cancelled() {
+                    // The terminal tool observation is still recorded below;
+                    // cancellation must not erase what already happened.
+                }
+                self.finish_tool_run(&mut messages, &step_id, &tool_run_id, &tc, output, on_event)
+                    .await?;
+                if self.config.cancel.is_cancelled() {
+                    self.record_step_failed(&step_id, step_index, "cancelled")
+                        .await?;
                     return Err(AgentError::Cancelled(messages[1..].to_vec()));
                 }
-                mark_tool_call_finished(&mut messages, &tc.id);
-                let model_output = observation_content(&output);
-                on_event(AgentEvent::ToolResult {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    output: model_output.clone(),
-                    is_error: output.is_error(),
-                });
-                messages.push(Message {
-                    role: Role::Tool,
-                    content: vec![ContentBlock::ToolResult(ToolResultBlock {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        output: model_output,
-                        state: match output.status {
-                            ObservationStatus::Succeeded => ToolResultState::Success,
-                            ObservationStatus::Denied => ToolResultState::Denied,
-                            ObservationStatus::Cancelled => ToolResultState::Interrupted,
-                            ObservationStatus::Failed | ObservationStatus::OutcomeUnknown => {
-                                ToolResultState::Error
-                            }
-                        },
-                    })],
-                });
             }
+            self.record(vec![TurnRecordedEvent::StepCompleted(StepCompleted {
+                step_id,
+                step_index,
+            })])
+            .await?;
         }
 
         Err(AgentError::MaxStepsExceeded(self.config.max_steps))
@@ -315,16 +494,17 @@ impl Agent {
     /// 单次流式调用 provider,实时转发事件,返回累积响应。
     async fn stream_once(
         &self,
+        step_index: usize,
         req: ModelRequest,
         on_event: &mut impl FnMut(AgentEvent),
     ) -> Result<ModelResponse, AgentError> {
         let mut provider_stream = self
             .config
             .provider
-            .invoke(req, ModelCallOptions::new("agent-model-attempt"))
+            .invoke(req, ModelCallOptions::new(new_runtime_id("attempt")))
             .await?;
         let mut lifecycle = StreamLifecycle::new();
-        on_event(AgentEvent::LlmStepStart { index: 0 });
+        on_event(AgentEvent::LlmStepStart { index: step_index });
 
         let response = loop {
             tokio::select! {
@@ -342,7 +522,7 @@ impl Agent {
         let reason = response.finish_reason.as_str().to_string();
         let usage = response.usage;
         on_event(AgentEvent::LlmStepFinish {
-            index: 0,
+            index: step_index,
             reason: reason.clone(),
             usage,
         });
@@ -350,27 +530,46 @@ impl Agent {
         Ok(response)
     }
 
-    /// 对单个工具调用做审批决策并执行,返回工具输出。
-    async fn execute_tool_call(
+    async fn execute_new_tool_call(
         &mut self,
+        step_id: &StepId,
         tc: &ToolCallBlock,
         input: serde_json::Value,
         on_event: &mut impl FnMut(AgentEvent),
-    ) -> Observation {
+    ) -> Result<(ToolRunId, Observation), AgentError> {
+        let tool_run_id = ToolRunId::new(new_runtime_id("tool-run"));
+        self.record(vec![TurnRecordedEvent::ToolRunRequested(
+            ToolRunRequested {
+                step_id: step_id.clone(),
+                tool_run_id: tool_run_id.clone(),
+                provider_tool_call_id: tc.id.clone(),
+                tool_name: tc.name.clone(),
+                input: input.clone(),
+            },
+        )])
+        .await?;
         let action = ActionRequest::new(&tc.name, input.clone());
-        match self
+        let observation = match self
             .config
             .execution
             .authorize(&action, self.config.approval_policy)
             .await
         {
-            ExecutionPolicyDecision::Allow => self.run_tool(&tc.name, input).await,
+            ExecutionPolicyDecision::Allow => {
+                self.record(vec![TurnRecordedEvent::ToolRunStarted(ToolRunStarted {
+                    step_id: step_id.clone(),
+                    tool_run_id: tool_run_id.clone(),
+                })])
+                .await?;
+                self.run_tool(&tc.name, input).await
+            }
             ExecutionPolicyDecision::Deny { reason } => Observation::denied(reason),
             ExecutionPolicyDecision::RequireApproval { reason } => {
                 let request = ApprovalRequested {
-                    approval_id: ApprovalId::new(Uuid::new_v4().to_string()),
+                    approval_id: ApprovalId::new(new_runtime_id("approval")),
                     turn_id: self.config.turn_id.clone(),
-                    action_run_id: ActionRunId::new(Uuid::new_v4().to_string()),
+                    step_id: step_id.clone(),
+                    tool_run_id: tool_run_id.clone(),
                     tool_name: tc.name.clone(),
                     input: input.clone(),
                     reason,
@@ -380,8 +579,10 @@ impl Agent {
                     .approval_commands
                     .begin_approval(request.clone())
                 {
-                    return Observation::approval_denied(error.to_string());
+                    return Ok((tool_run_id, Observation::approval_denied(error.to_string())));
                 }
+                self.record(vec![TurnRecordedEvent::ApprovalRequested(request.clone())])
+                    .await?;
                 on_event(AgentEvent::ApprovalRequested(request.clone()));
 
                 let outcome = self
@@ -390,12 +591,22 @@ impl Agent {
                     .wait_for_resolution(&self.config.cancel)
                     .await;
                 if let ApprovalWaitOutcome::Resolved(resolution) = &outcome {
-                    on_event(AgentEvent::ApprovalResolved(ApprovalResolved {
-                        approval_id: request.approval_id,
-                        turn_id: request.turn_id,
-                        action_run_id: request.action_run_id,
+                    let resolved = ApprovalResolved {
+                        approval_id: request.approval_id.clone(),
+                        turn_id: request.turn_id.clone(),
+                        step_id: request.step_id.clone(),
+                        tool_run_id: request.tool_run_id.clone(),
                         resolution: resolution.clone(),
-                    }));
+                    };
+                    let mut events = vec![TurnRecordedEvent::ApprovalResolved(resolved.clone())];
+                    if matches!(resolution, ApprovalResolution::Allow) {
+                        events.push(TurnRecordedEvent::ToolRunStarted(ToolRunStarted {
+                            step_id: step_id.clone(),
+                            tool_run_id: tool_run_id.clone(),
+                        }));
+                    }
+                    self.record(events).await?;
+                    on_event(AgentEvent::ApprovalResolved(resolved));
                 }
 
                 match outcome {
@@ -414,7 +625,115 @@ impl Agent {
                     }
                 }
             }
+        };
+        Ok((tool_run_id, observation))
+    }
+
+    async fn execute_recovered_tool_call(
+        &mut self,
+        tc: &ToolCallBlock,
+        request: &ApprovalRequested,
+        resolution: ApprovalResolution,
+        on_event: &mut impl FnMut(AgentEvent),
+    ) -> Result<Observation, AgentError> {
+        let resolved = ApprovalResolved {
+            approval_id: request.approval_id.clone(),
+            turn_id: request.turn_id.clone(),
+            step_id: request.step_id.clone(),
+            tool_run_id: request.tool_run_id.clone(),
+            resolution: resolution.clone(),
+        };
+        let mut events = vec![TurnRecordedEvent::ApprovalResolved(resolved.clone())];
+        if matches!(resolution, ApprovalResolution::Allow) {
+            events.push(TurnRecordedEvent::ToolRunStarted(ToolRunStarted {
+                step_id: request.step_id.clone(),
+                tool_run_id: request.tool_run_id.clone(),
+            }));
         }
+        self.record(events).await?;
+        on_event(AgentEvent::ApprovalResolved(resolved));
+
+        Ok(match resolution {
+            ApprovalResolution::Allow => self.run_tool(&tc.name, request.input.clone()).await,
+            ApprovalResolution::Deny { reason } => Observation::approval_denied(reason),
+        })
+    }
+
+    async fn finish_tool_run(
+        &self,
+        messages: &mut Vec<Message>,
+        step_id: &StepId,
+        tool_run_id: &ToolRunId,
+        tc: &ToolCallBlock,
+        observation: Observation,
+        on_event: &mut impl FnMut(AgentEvent),
+    ) -> Result<(), AgentError> {
+        mark_tool_call_finished(messages, &tc.id);
+        let model_output = observation_content(&observation);
+        let parts = vec![ContentBlock::ToolResult(ToolResultBlock {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            output: model_output.clone(),
+            state: tool_result_state(observation.status),
+        })];
+        self.record(vec![
+            TurnRecordedEvent::ToolRunFinished(ToolRunFinished {
+                step_id: step_id.clone(),
+                tool_run_id: tool_run_id.clone(),
+                observation: observation.clone(),
+            }),
+            TurnRecordedEvent::ToolMessageRecorded(ToolMessageRecorded {
+                message_id: new_runtime_id("msg"),
+                step_id: step_id.clone(),
+                tool_run_id: tool_run_id.clone(),
+                parts: parts.clone(),
+            }),
+        ])
+        .await?;
+        on_event(AgentEvent::ToolResult {
+            id: tc.id.clone(),
+            tool_run_id: tool_run_id.clone(),
+            name: tc.name.clone(),
+            output: model_output,
+            is_error: observation.is_error(),
+        });
+        messages.push(Message {
+            role: Role::Tool,
+            content: parts,
+        });
+        Ok(())
+    }
+
+    async fn record_step_failed(
+        &self,
+        step_id: &StepId,
+        step_index: usize,
+        message: &str,
+    ) -> Result<(), AgentError> {
+        self.record(vec![TurnRecordedEvent::StepFailed(StepFailed {
+            step_id: step_id.clone(),
+            step_index,
+            message: message.to_string(),
+        })])
+        .await
+    }
+
+    async fn record(&self, events: Vec<TurnRecordedEvent>) -> Result<(), AgentError> {
+        self.config.recorder.append(events).await?;
+        Ok(())
+    }
+
+    async fn tool_definitions(
+        &self,
+    ) -> Result<Vec<openwork_protocol::model::ToolDefinition>, AgentError> {
+        Ok(self
+            .config
+            .capabilities
+            .list()
+            .await?
+            .iter()
+            .map(|spec| spec.model_definition())
+            .collect())
     }
 
     /// 真正执行 Action(无审批),只依赖稳定的 ExecutionPort。
@@ -426,6 +745,65 @@ impl Agent {
             observation = self.config.execution.execute(request) => observation,
         }
     }
+}
+
+fn assistant_content(response: &ModelResponse) -> Vec<ContentBlock> {
+    let mut content = Vec::new();
+    if response.provider_opaque_blocks.is_empty() {
+        if let Some(reasoning) = &response.reasoning_text
+            && !reasoning.is_empty()
+        {
+            content.push(ContentBlock::thinking(reasoning.clone()));
+        }
+    } else {
+        content.extend(
+            response
+                .provider_opaque_blocks
+                .iter()
+                .cloned()
+                .map(ContentBlock::ProviderOpaque),
+        );
+    }
+    if !response.text.is_empty() {
+        content.push(ContentBlock::text(response.text.clone()));
+    }
+    content.extend(response.tool_calls.iter().map(|tool_call| {
+        ContentBlock::ToolCall(ToolCallBlock {
+            id: tool_call.id.clone(),
+            name: tool_call.name.clone(),
+            input: tool_call.input.clone(),
+            state: ToolCallState::Submitted,
+        })
+    }));
+    content
+}
+
+fn parse_tool_input(tool_call: &ToolCallBlock) -> serde_json::Value {
+    serde_json::from_str(&tool_call.input).unwrap_or(serde_json::Value::Null)
+}
+
+fn tool_result_ids(messages: &[Message]) -> HashSet<String> {
+    messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult(result) => Some(result.id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn tool_result_state(status: ObservationStatus) -> ToolResultState {
+    match status {
+        ObservationStatus::Succeeded => ToolResultState::Success,
+        ObservationStatus::Denied => ToolResultState::Denied,
+        ObservationStatus::Cancelled => ToolResultState::Interrupted,
+        ObservationStatus::Failed | ObservationStatus::OutcomeUnknown => ToolResultState::Error,
+    }
+}
+
+fn new_runtime_id(prefix: &str) -> String {
+    format!("{prefix}-{}", Uuid::new_v4().simple())
 }
 
 fn observation_content(observation: &Observation) -> Vec<ContentBlock> {
@@ -639,6 +1017,15 @@ mod tests {
         }
     }
 
+    struct FakeRecorder;
+
+    #[async_trait]
+    impl TurnRecorderPort for FakeRecorder {
+        async fn append(&self, _events: Vec<TurnRecordedEvent>) -> Result<(), TurnRecordError> {
+            Ok(())
+        }
+    }
+
     fn bash_spec() -> CapabilitySpec {
         CapabilitySpec {
             name: "bash".to_string(),
@@ -661,8 +1048,11 @@ mod tests {
             AgentConfig::new(
                 provider,
                 "fake",
-                Arc::new(FakeCapabilities),
-                Arc::new(FakeExecution),
+                AgentPorts::new(
+                    Arc::new(FakeCapabilities),
+                    Arc::new(FakeExecution),
+                    Arc::new(FakeRecorder),
+                ),
                 turn_id,
                 inbox,
                 CancellationToken::new(),

@@ -1,6 +1,8 @@
 use openwork_protocol::model::{ContentBlock, Role};
 use serde::{Deserialize, Serialize};
 
+use super::lifecycle::TurnLifecycleSnapshot;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -57,6 +59,7 @@ pub struct SessionMessage {
 pub struct SessionLoadResult {
     pub session: Session,
     pub messages: Vec<SessionMessage>,
+    pub turns: Vec<TurnLifecycleSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

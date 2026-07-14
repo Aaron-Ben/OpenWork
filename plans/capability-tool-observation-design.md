@@ -1,7 +1,7 @@
 # Capability、Tool 与 Observation V1 设计
 
 > Status: implemented V1 structure and current contract snapshot. Execution 风险出口与 Core/App 审批迁移已完成；Sandbox、Artifact 与 MCP Schema 兼容仍未完成。
-> Last reviewed: 2026-07-11.
+> Last reviewed: 2026-07-15.
 > Parent blueprint: [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md).
 
 ## 1. 要解决的问题
@@ -37,7 +37,7 @@
 - 不实现 MCP、Skill 或 Plugin。
 - 不实现 Tool Search、按需加载或模型侧自动路由。
 - 不实现 macOS Seatbelt/Sandbox Runtime。
-- Capability/Execution 不直接写 `tool_runs` 或 Recorded Event。当前 App 只持久化 Turn/Message 事实；Action/Approval 的独立 intent/outcome 事件等待 Durable Core 接入。
+- Capability/Execution 不直接写 Recorded Event；Core 通过 `TurnRecorderPort` 持久化 Step/ToolRun/Approval 生命周期，Persistence Adapter 负责写入 `recorded_events`。
 - 不实现 ArtifactStore；V1 继续在 Execution 内截断文本输出。
 - 不声称支持完整 JSON Schema；只实现并测试当前内置 Tool 使用的受控子集。
 
@@ -104,7 +104,7 @@ pub struct ActionRequest {
 }
 ```
 
-V1 不把 provider tool-call id 当作 ActionRunId。真正的 `ActionRunId` 由 Durable Core 创建；在该状态机落地前不伪造稳定标识。
+V1 不把 provider tool-call id 当作 ToolRunId。真正的 `ToolRunId` 由 Durable Core 为每个工具调用创建；provider ID 只用于协议关联和向模型回填结果。
 
 ### 4.3 Observation
 

@@ -78,10 +78,11 @@ export function ApprovalDialog() {
     setResolving(true)
     try {
       await providersApi.resolveApproval(current.turnId, current.id, allow)
-    } catch {
-      // 回传失败(id 已过期 / 通道关闭)也移除本地条目,避免 UI 卡住。
-    } finally {
       remove(current.id)
+    } catch {
+      // Durable approval remains pending when routing or recovery fails. Keep
+      // the card so the user can retry instead of hiding unresolved state.
+    } finally {
       setResolving(false)
     }
   }

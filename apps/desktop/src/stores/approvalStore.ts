@@ -5,8 +5,10 @@ export interface ApprovalPrompt {
   id: string
   turnId: string
   sessionId: string
+  toolRunId: string
   toolName: string
   input: unknown
+  reason: string
 }
 
 interface ApprovalStoreState {
@@ -14,6 +16,7 @@ interface ApprovalStoreState {
   push: (prompt: ApprovalPrompt) => void
   remove: (id: string) => void
   removeByTurn: (turnId: string) => void
+  replaceSession: (sessionId: string, prompts: ApprovalPrompt[]) => void
 }
 
 /// 全局审批队列:agent loop 发出 `approval_request` 时 push(带 sessionId),
@@ -30,4 +33,13 @@ export const useApprovalStore = create<ApprovalStoreState>((set) => ({
     set((state) => ({ pending: state.pending.filter((item) => item.id !== id) })),
   removeByTurn: (turnId) =>
     set((state) => ({ pending: state.pending.filter((item) => item.turnId !== turnId) })),
+  replaceSession: (sessionId, prompts) =>
+    set((state) => ({
+      pending: [
+        ...state.pending.filter((item) => item.sessionId !== sessionId),
+        ...prompts.filter(
+          (prompt, index, items) => items.findIndex((item) => item.id === prompt.id) === index,
+        ),
+      ],
+    })),
 }))

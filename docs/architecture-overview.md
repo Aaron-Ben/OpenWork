@@ -1,6 +1,6 @@
 # OpenWork 当前架构概览
 
-Last reviewed: 2026-07-14
+Last reviewed: 2026-07-15
 
 > Status: current implementation snapshot. 目标架构和下一阶段顺序只见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
 
@@ -13,7 +13,7 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 - Agent loop：模型调用、工具审批、工具执行、多步循环
 - 内置工具：文件读写、搜索、bash
 - 基础权限模型与 human-in-the-loop 审批
-- 基于 Event Journal 的 Session、Turn 和 Message 持久化
+- 基于 Event Journal 的 Session、Turn、Step、ToolRun、Approval 和 Message 持久化
 - PostgreSQL 中的 Provider API Key 加密存储
 - `openwork-workspace` 中的 worktree 变更快照与还原基础函数（尚未接入 runtime/Tauri/UI）
 - 桌面端流式 UI 与审批弹窗
@@ -32,7 +32,7 @@ crates/openwork-providers/
 
 crates/openwork-persistence/
   PostgreSQL Adapter 与统一迁移入口：实现 Provider Repository 和 append-only
-  Event Journal、Journal-backed Session/Message 和内存投影；API Key 使用
+  Event Journal、Journal-backed Session/Turn 生命周期和内存投影；API Key 使用
   AES-256-GCM 加密后落库。
 
 crates/openwork-core/
@@ -75,17 +75,20 @@ ChatView
   -> ProviderFactory::build 构造带 RetryPolicy 的 ModelPort
   -> SessionStore 在模型调用前记录 turn_started + user_message_recorded
   -> openwork-core::Agent::run
+     -> 记录 step_started
      -> CapabilityResolverPort 获取本轮 Tool Schema
      -> ModelPort::invoke
      -> AgentEvent 流式转发给 Tauri
+     -> 记录 assistant_message_recorded + tool_run_requested
      -> ExecutionPort::authorize 返回 Allow / Deny / RequireApproval
-     -> RequireApproval 时 Core 进入 Waiting 并发出 ApprovalRequested
+     -> RequireApproval 时 Core 进入 Waiting，再记录 approval_requested
      -> 前端提交 ResolveApproval(turn_id, approval_id)
-     -> App 将命令路由回拥有该 Turn 的 Core inbox
-     -> Allow 后 ExecutionPort 执行 Action
-     -> ToolResult 回填模型上下文
+     -> 活跃 Turn 由 App 路由回 Core inbox；重启后的待审批 Turn 从 Journal 恢复
+     -> Allow 时先记录 approval_resolved + tool_run_started，再执行 Action
+     -> 原子记录 ToolRun 终态 + tool_message_recorded
+     -> ToolResult 回填模型上下文，并记录 step_completed
      -> 下一轮模型调用，直到无工具调用
-  -> SessionStore 批量记录新增 Assistant/Tool Message 和 Turn 终态
+  -> SessionStore 记录 Turn 终态
   -> emit done
   -> 前端 reload session
 ```
@@ -136,9 +139,9 @@ apps/desktop/src                    # React 展示、UI 状态、invoke/listen �
 | `provider_service.rs` | Provider CRUD、Preset 和连接测试用例 |
 | `session_service.rs` | Journal-backed Session 查询与管理用例 |
 | `turn_service.rs` | 对宿主提供 Turn 启动、审批和取消入口，并统一终态错误事件 |
-| `chat.rs` | 内部单 Turn 编排：加载 Provider/Session、创建 Execution/Core、持久化结果并映射 Live Event |
+| `chat.rs` | 内部单 Turn 编排：加载 Provider/Session、创建 Execution/Core、注入 Journal Recorder、恢复待审批 Turn，并映射 Live Event |
 | `cancel.rs` | 当前 `request_id -> CancellationToken` 注册表 |
-| `turn_supervisor.rs` | 当前 `TurnId -> TurnCommandHandle` 路由；审批状态仍由 Core inbox 持有 |
+| `turn_supervisor.rs` | 活跃进程内的 `TurnId -> TurnCommandHandle` 路由；重启恢复由 Journal 投影和 App 兜底 |
 | `error.rs` | 底层错误到稳定 Application Error Code 的映射 |
 
 `turn_service.rs` 是稳定的宿主用例门面，`chat.rs` 是其内部编排器，两者不是两套 Agent Runtime。`RequestCancelRegistry` 和 `TurnSupervisor` 目前分别承担取消与审批路由，统一活跃 Turn 生命周期及 cancel-all/shutdown 属于 Phase C。前端、Tauri、Application、Persistence 和 Journal 聚合统一使用 Session；`session_*` IPC 与 Session DTO 不再是临时兼容命名。
@@ -173,9 +176,11 @@ openwork-execution/src/
 
 “统一执行边界”不等于“已经安全隔离”：当前只有应用层路径检查，尚无 OS 级 sandbox，`bash` 的命令内部访问也无法由 `PermissionProfile` 精细约束。
 
-### 4.6 Session 与 Message 已切换到 Journal
+### 4.6 Turn 生命周期已切换到 Journal
 
-`openwork-protocol::journal` 定义 Recorded Event Envelope、Expected Version 和 `EventJournal`；`openwork-persistence::PostgresEventJournal` 实现聚合锁、批量 append 和读取。Session 的创建、改名、删除以及 Turn/Message 读写已经使用 `recorded_events`，查询时通过当前内存投影重放。旧 `sessions/messages/llm_events/tool_runs` 表和 `openwork-session/openwork-db-macros` crate 已删除。Action/Approval 的 intent/outcome 仍待在 Core 语义点直接持久化。
+`openwork-protocol::journal` 定义 Recorded Event Envelope、Expected Version 和 `EventJournal`；`openwork-persistence::PostgresEventJournal` 实现聚合锁、批量 append 和读取。Session、Turn、Message、Step、ToolRun 与 Approval 都写入同一张 `recorded_events`，查询时通过内存投影重放。Core 通过 `TurnRecorderPort` 在副作用前后同步等待事实入库，而不是由 App 在 Turn 结束后补写工具生命周期。旧 `sessions/messages/llm_events/tool_runs` 表和 `openwork-session/openwork-db-macros` crate 已删除。
+
+应用重启后，尚未记录 `tool_run_started` 的 pending approval 可以由 App 从 Journal 恢复并继续；如果已有 `tool_run_started` 但缺少终态，投影只会标记为 `outcome_unknown`，不会自动重跑可能已经产生副作用的工具。
 
 ### 4.7 `openwork-workspace` 是工作区变更层
 
@@ -194,7 +199,7 @@ API Key 仍是 Provider Repository 的字段，因此没有新增 Port 或 Adapt
 - 当前没有真正的操作系统级 sandbox。
 - `CapabilityRiskHint` 已参与审批原因生成，但当前策略仍只有 `Untrusted` 和 `Never` 两种真实语义。
 - `schema.rs` 只支持当前内置 Action 使用的 JSON Schema 子集，不是通用 JSON Schema 引擎。
-- Session/Turn/Message 已进入 Event Journal；Action/Approval 状态仍是进程内状态，重启恢复尚未完成。
+- Session/Turn/Step/ToolRun/Approval/Message 已进入 Event Journal；当前只支持从 pending approval 恢复，不会自动续跑普通 `interrupted` 或 `outcome_unknown` Turn。
 - `bash` 使用 `sh -c` 执行命令；虽然有用户审批、超时、取消和受限环境变量，但不能保证命令内部文件访问被 `PermissionProfile` 精细约束。
 - Provider 的统一事件不包含 Runtime Step；不同厂商的 tool call delta 仍需持续补充 fixture 测试。
 

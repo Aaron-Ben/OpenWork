@@ -1,8 +1,8 @@
 # 权限策略与 Human-in-the-loop 审批
 
-Last reviewed: 2026-07-11
+Last reviewed: 2026-07-15
 
-> Status: current implementation detail. 当前已经完成进程内的策略判定、人工审批和资源权限检查链路；应用重启后的审批恢复仍依赖后续 Event Journal 与 Durable Turn。
+> Status: current implementation detail. 当前已完成策略判定、人工审批、资源权限检查、审批事实持久化，以及 pending approval 的应用重启恢复；OS 级 sandbox 和已开始工具的自动对账仍未完成。
 
 ## 1. 三道不同的安全边界
 
@@ -53,6 +53,7 @@ Resource Enforcement
 ```text
 crates/openwork-protocol/src/approval/mod.rs
 crates/openwork-protocol/src/domain/ids.rs
+crates/openwork-protocol/src/turn/mod.rs
 ```
 
 当前合同包括：
@@ -66,13 +67,14 @@ crates/openwork-protocol/src/domain/ids.rs
 | `ResolveApproval` | App 路由回所属 Turn 的命令 |
 | `ApprovalResolved` | Core 已经应用决定的事实 |
 
-`TurnId`、`ActionRunId` 和 `ApprovalId` 是不同的强类型 ID：
+`TurnId`、`StepId`、`ToolRunId` 和 `ApprovalId` 是不同的强类型 ID：
 
 - `TurnId` 当前来自聊天请求的 `request_id`。
+- `StepId` 标识一次模型调用及其返回的一组工具调用。
+- `ToolRunId` 由 Core 为每个工具调用创建，不复用厂商 tool-call ID。
 - `ApprovalId` 由 Core 使用 UUID 创建，不复用厂商 tool-call ID。
-- `ActionRunId` 当前只在 `RequireApproval` 分支创建，用于关联审批请求和结果。
 
-最后一点是当前实现边界：尚未做到“每一个 Action 都先创建 ActionRunId 并记录完整生命周期”。
+Provider tool-call ID 只用于回填模型上下文；`ToolRunId` 才是内部执行生命周期身份。无论策略结果是 Allow、Deny 还是 RequireApproval，每个工具调用都会先创建并记录自己的 `ToolRunId`。
 
 ## 4. 第一阶段：Execution Policy
 
@@ -134,14 +136,15 @@ crates/openwork-core/src/approval.rs
 
 ```text
 ExecutionPort::authorize 返回 RequireApproval
-  -> Core 创建 ApprovalId 和 ActionRunId
+  -> Core 已持有该调用的 StepId 和 ToolRunId，并创建 ApprovalId
   -> TurnCommandInbox::begin_approval
   -> ApprovalState = Waiting
+  -> await persist approval_requested
   -> emit ApprovalRequested
   -> wait_for_resolution
 ```
 
-Core 先写入 `Waiting` 状态，再发出 `ApprovalRequested`。因此 Desktop 看到审批卡片时，Core 已经能够接收对应的 `ResolveApproval` 命令。
+Core 先写入进程内 `Waiting` 状态，再同步持久化 `approval_requested`，最后发出 Live `ApprovalRequested`。因此 Desktop 看到审批卡片时，Core 已经能够接收命令，Journal 也已经能够重建该待审批状态。
 
 ### 状态变化
 
@@ -177,8 +180,8 @@ Core 使用容量为 8 的 `mpsc` channel 接收 Turn 命令。`TurnCommandHandl
 
 | 结果 | 后续行为 |
 | --- | --- |
-| 用户 Allow | emit `ApprovalResolved`，然后调用 Action |
-| 用户 Deny | emit `ApprovalResolved`，生成 `ApprovalDenied` Observation，不调用 Action |
+| 用户 Allow | 持久化 `approval_resolved + tool_run_started`，emit `ApprovalResolved`，然后调用 Action |
+| 用户 Deny | 持久化 `approval_resolved`，emit `ApprovalResolved`，生成 `ApprovalDenied` Observation，不调用 Action |
 | Cancelled | 生成 Cancelled Observation，不调用 Action |
 | Channel/State 异常 | fail closed，生成 ApprovalDenied Observation |
 
@@ -209,12 +212,11 @@ Desktop 收到 `approval_request` 后展示审批卡片。用户操作会调用�
 resolve_approval(turn_id, approval_id, allow)
   -> Tauri 调用 OpenWorkApplication::turns
   -> TurnApplicationService 构造 ResolveApproval
-  -> 内部 ChatRuntime::resolve_approval
-  -> TurnSupervisor 查找 TurnCommandHandle
-  -> Core 校验并应用命令
+  -> 活跃 Turn：TurnSupervisor 查找 TurnCommandHandle，Core 校验并应用命令
+  -> 非活跃 Turn：从 Journal 查询 pending approval，重建 Core/Execution 后应用命令
 ```
 
-Turn 完成、失败或取消后，App 会移除 `TurnId -> TurnCommandHandle` 路由。迟到的审批命令会得到 `TurnNotFound`，不会执行 Action。
+Turn 完成、失败或取消后，App 会移除 `TurnId -> TurnCommandHandle` 路由。若 Journal 中没有匹配的 pending approval，迟到或错误的审批命令会被拒绝，不会执行 Action。
 
 ## 7. 第三阶段：资源权限检查和执行
 
@@ -291,6 +293,8 @@ OPENWORK_NETWORK_RESTRICTED=1
 
 ```text
 模型返回 tool call
+  -> Core 创建 StepId + ToolRunId
+  -> await persist tool_run_requested
   -> 构造 ActionRequest
   -> ExecutionPort::authorize
 
@@ -300,22 +304,26 @@ OPENWORK_NETWORK_RESTRICTED=1
        -> 不调用 Handler
 
      [Allow]
+       -> await persist tool_run_started
        -> ExecutionPort::execute
        -> Handler 仍可因 PermissionProfile 拒绝
 
      [RequireApproval]
-       -> Core 创建 ApprovalId + ActionRunId
+       -> Core 创建 ApprovalId
        -> Waiting
+       -> await persist approval_requested
        -> emit ApprovalRequested
        -> Desktop 显示审批卡片
        -> ResolveApproval(turn_id, approval_id, resolution)
 
           [Deny]
+            -> await persist approval_resolved
             -> emit ApprovalResolved
             -> ApprovalDenied Observation
             -> 不调用 Handler
 
           [Allow]
+            -> await persist approval_resolved + tool_run_started
             -> emit ApprovalResolved
             -> ExecutionPort::execute
             -> Handler 权限检查
@@ -324,9 +332,12 @@ OPENWORK_NETWORK_RESTRICTED=1
           [Cancel / Channel closed / State unavailable]
             -> 不调用 Handler
             -> Cancelled 或 ApprovalDenied Observation
+
+  -> await persist ToolRun 终态 + tool_message_recorded
+  -> await persist step_completed / step_failed
 ```
 
-## 9. 事件记录和持久化边界
+## 9. 事件记录和恢复边界
 
 `ApprovalRequested` 和 `ApprovalResolved` 会被 App 映射为：
 
@@ -335,9 +346,11 @@ approval_request
 approval_resolved
 ```
 
-这些 payload 只实时发送给 Desktop，不再通过 detached task 写数据库。Turn 结束时 Tool Call/Tool Result 会作为 Assistant/Tool Message 写入 `recorded_events`，但 `approval_requested` 和 `approval_resolved` 尚未在各自语义点持久化。
+Live payload 只负责当前 UI；对应的 `approval_requested`、`approval_resolved`、`tool_run_started` 和 ToolRun 终态由 Core 通过 `TurnRecorderPort` 在真实语义点同步写入 `recorded_events`。任何必须先于副作用成立的事实如果写入失败，本次工具执行不会开始。
 
-因此当前真正的审批状态仍只存在于进程内的 Core Turn 中，不能在应用重启后恢复 Waiting 状态。下一阶段必须在暂停和恢复状态转换前直接 await `EventJournal`，不能重新引入 best-effort trace。
+Session 查询会重放 Turn 事实并返回 `pending_approval`。应用重启后，前端重新加载 Session 即可恢复审批卡片；用户决定到达时，App 重建 Provider、Execution 和 Core，从被暂停的 Step 继续。
+
+安全边界是：只有存在 `approval_requested` 且不存在对应 `approval_resolved/tool_run_started` 的调用可自动恢复。若日志已有 `tool_run_started` 但没有完成、失败、拒绝、取消或未知终态，投影标记为 `outcome_unknown`，系统不会自动重跑，因为无法证明上一次进程是否已经产生副作用。
 
 ## 10. 拒绝与失败语义
 
@@ -361,26 +374,32 @@ approval_resolved
 - Desktop 必须同时提交 `turn_id` 和 `approval_id`；
 - 错误 Turn、错误审批 ID 和并发重复 resolution 被拒绝；
 - 用户 Deny、取消或审批基础设施异常不会调用 Action；
-- 用户 Allow 后仍必须通过 Handler 权限检查。
+- 用户 Allow 后仍必须通过 Handler 权限检查；
+- 每个工具调用都有独立 `ToolRunId` 和可重放生命周期；
+- pending approval 可在应用重启后恢复；
+- `tool_run_started` 写入失败时不会调用 Handler；
+- 已开始但没有终态的 ToolRun 被标记为 `outcome_unknown`，不会自动重跑。
 
 尚未保证：
 
 - OS 级 sandbox；
 - 参数语义级风险计算；
 - 真正网络隔离；
-- 每个 Action 都具有完整 ActionRun 生命周期；
-- 审批事件的可靠、原子持久化；
-- 应用崩溃或重启后的审批恢复；
+- 对 `outcome_unknown` ToolRun 的外部副作用对账和人工处置；
+- 普通 interrupted Turn 的自动续跑；
 - 跨进程或远程宿主的 Turn 命令协议。
 
 ## 12. 当前测试覆盖重点
 
 - Protocol 审批合同序列化和强类型 ID；
+- Turn/Step/ToolRun/Approval 事实序列化与生命周期投影；
 - `Untrusted -> RequireApproval`、`Never -> Allow`；
 - 错误 `turn_id`、错误 `approval_id` 和未知 Turn；
 - 并发重复 resolution；
 - 用户 Allow 后执行 Action；
 - 用户 Deny 不执行 Action；
+- 副作用开始前的持久化失败不会执行 Action；
+- pending approval 的 Journal 恢复和继续执行；
 - Cancel 唤醒等待状态；
 - workspace 内读写、workspace 外拒绝和受保护元数据拒绝；
 - Capability Catalog 与 Handler 名称一致。

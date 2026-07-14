@@ -3,7 +3,7 @@ use openwork_core::{
 };
 use openwork_protocol::{
     approval::{ApprovalRequested, ApprovalResolution, ResolveApproval},
-    domain::{ActionRunId, ApprovalId, TurnId},
+    domain::{ApprovalId, StepId, ToolRunId, TurnId},
 };
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -12,7 +12,8 @@ fn request(turn_id: &TurnId, approval_id: &str) -> ApprovalRequested {
     ApprovalRequested {
         approval_id: ApprovalId::new(approval_id),
         turn_id: turn_id.clone(),
-        action_run_id: ActionRunId::new("action-1"),
+        step_id: StepId::new("step-1"),
+        tool_run_id: ToolRunId::new("tool-run-1"),
         tool_name: "bash".to_string(),
         input: json!({"command": "cargo test"}),
         reason: "process execution requires user approval".to_string(),

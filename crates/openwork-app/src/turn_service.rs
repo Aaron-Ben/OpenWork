@@ -67,6 +67,7 @@ impl TurnApplicationService {
         turn_id: String,
         approval_id: String,
         allow: bool,
+        on_event: impl FnMut(TurnLiveEvent) + Send + 'static,
     ) -> Result<(), ApplicationError> {
         let resolution = if allow {
             ApprovalResolution::Allow
@@ -75,14 +76,25 @@ impl TurnApplicationService {
                 reason: "denied by user".to_string(),
             }
         };
-        Ok(self
+        let turn_id = TurnId::new(turn_id);
+        let command = ResolveApproval {
+            turn_id: turn_id.clone(),
+            approval_id: ApprovalId::new(approval_id),
+            resolution,
+        };
+        if self.runtime.is_turn_active(&turn_id)? {
+            self.runtime.resolve_active_approval(command).await?;
+            return Ok(());
+        }
+
+        let request_id = turn_id.to_string();
+        let cancel = self.cancels.register(&request_id);
+        let result = self
             .runtime
-            .resolve_approval(ResolveApproval {
-                turn_id: TurnId::new(turn_id),
-                approval_id: ApprovalId::new(approval_id),
-                resolution,
-            })
-            .await?)
+            .resume_approval(command, cancel, on_event)
+            .await;
+        self.cancels.remove(&request_id);
+        result.map_err(ApplicationError::from)
     }
 
     pub fn cancel(&self, request_id: &str) -> bool {

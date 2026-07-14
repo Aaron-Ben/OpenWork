@@ -1,6 +1,6 @@
 # Session、Message 与 Event Journal
 
-Last reviewed: 2026-07-14
+Last reviewed: 2026-07-15
 
 > Status: current implementation snapshot. 字段、事件目录和设计决策见 [Event Journal 与会话持久化重构设计](../plans/event-journal-persistence-refactor.md)。
 
@@ -13,7 +13,7 @@ Last reviewed: 2026-07-14
 | `schema_migrations` | migration 版本记录 |
 | `providers` | Provider 配置与加密 API Key |
 | `provider_models` | Provider 模型和 `lite/plus/pro` 用户分类 |
-| `recorded_events` | Session、Turn 和 Message 的 append-only 事实日志 |
+| `recorded_events` | Session、Turn、Step、ToolRun、Approval 和 Message 的 append-only 事实日志 |
 
 以下四张遗留表已由 forward migration 删除：
 
@@ -37,8 +37,14 @@ tool_runs
 | 删除 Session | `session_deleted`，不删除历史事实 |
 | 开始聊天 | Turn aggregate 的 `turn_started` |
 | 用户消息 | `user_message_recorded` |
+| 开始模型步骤 | `step_started` |
 | Assistant 消息 | `assistant_message_recorded` |
+| 请求工具 | `tool_run_requested` |
+| 请求/解决审批 | `approval_requested` / `approval_resolved` |
+| 开始执行工具 | `tool_run_started` |
+| 工具执行终态 | `tool_run_completed/failed/denied/cancelled/outcome_unknown` |
 | Tool 消息 | `tool_message_recorded` |
+| Step 终态 | `step_completed` / `step_failed` |
 | 正常结束 | `turn_completed` |
 | 取消 | `turn_cancelled` |
 | Doom loop | `turn_doom_loop_detected` |
@@ -49,7 +55,8 @@ tool_runs
 ```text
 crates/openwork-persistence/src/session/
   types.rs       Session DTO
-  store.rs       Journal 写入与当前内存投影
+  store.rs       Session/Turn Journal 入口
+  lifecycle.rs   TurnRecorder 与生命周期重放投影
 ```
 
 ## 3. 当前读写流程
@@ -73,13 +80,14 @@ OpenWorkApplication::turns
   -> 内部 ChatRuntime
   -> 从 recorded_events 回放历史 Message
   -> 在调用模型前持久化 turn_started + user_message_recorded
-  -> Agent::run
+  -> Agent::run，通过 TurnRecorderPort 在每个 Step/ToolRun/Approval 语义点 await append
   -> UI delta 只实时发送给 Desktop
-  -> 持久化本轮 Assistant/Tool Message + Turn 终态
+  -> Assistant/Tool Message 随对应 Step/ToolRun 立即持久化
+  -> App 持久化 Turn 终态
   -> Desktop reload，重新从 Journal 回放
 ```
 
-用户输入在任何模型或工具动作之前落库。成功、取消和 doom-loop 返回的完整 Message trace 会与 Turn 终态在同一批 append 中提交。
+用户输入在任何模型或工具动作之前落库。工具副作用开始前必须先持久化 `tool_run_started`；工具返回后，ToolRun 终态与 Tool Message 在同一批 append 中提交。Turn 终态由 App 最后追加。
 
 ## 4. 当前投影方式
 
@@ -87,9 +95,11 @@ OpenWorkApplication::turns
 
 - Session 列表和标题状态；
 - 某个 Session 的 Message 顺序；
+- 某个 Session 下的 Turn/Step/ToolRun 状态；
+- 尚未解决的 pending approval；
 - 删除状态和最近更新时间。
 
-这保证当前数据库保持四张表，适合开发期数据量。数据量增大后，如果全量重放成为性能瓶颈，再增加可删除、可重建的 `threads/messages/action_runs/approvals` 查询投影；投影不是新的事实来源。
+`SessionLoadResult` 同时返回 `messages` 和 `turns`；Desktop 用后者在重启后恢复审批卡片。这保证当前数据库保持四张表，适合开发期数据量。数据量增大后，如果全量重放成为性能瓶颈，再增加可删除、可重建的 `sessions/messages/tool_runs/approvals` 查询投影；投影不是新的事实来源。
 
 ## 5. UI Stream 不再写数据库
 
@@ -97,25 +107,28 @@ OpenWorkApplication::turns
 
 这样消除了“看起来已经持久化，但实际可能乱序或丢失”的路径。数据库只接收需要恢复的 Recorded Fact。
 
-## 6. 仍未完成的 Durable Action/Approval
+## 6. Durable ToolRun/Approval 与恢复边界
 
-当前已持久化 Session、Turn、Message 和 Turn 终态，但以下语义还未直接写入 Journal：
+当前 Core 会在真实语义点同步写入：
 
-- `action_requested`
+- `step_started`
+- `assistant_message_recorded`
+- `tool_run_requested`
 - `approval_requested`
 - `approval_resolved`
-- `action_started`
-- `action_completed` / `action_failed` / `action_outcome_unknown`
+- `tool_run_started`
+- ToolRun 终态与 `tool_message_recorded`
+- `step_completed` / `step_failed`
 
-工具调用和结果会随 Assistant/Tool Message 在 Turn 结束时保存，因此聊天回放不会丢失；但这不等于已经具备崩溃中途恢复和副作用对账。
+`JournalTurnRecorder` 绑定一个既有 Turn，使用 `ExpectedVersion::Exact` 追加事实；并发版本冲突或持久化失败会返回给 Core，不会退化为 detached best-effort 写入。
 
-下一阶段必须在 Core 的真实语义点执行：
+副作用顺序固定为：
 
 ```text
 Persist Intent -> Execute -> Persist Outcome
 ```
 
-不能重新引入同步 callback + 后台 best-effort 写入。
+应用重启后可以恢复仍停在 `approval_requested` 的 Turn：App 从投影读取 pending approval，重建运行依赖，记录用户决定，并从当前 Step 继续。普通 `interrupted` Turn 暂不自动续跑；如果已有 `tool_run_started` 却没有终态，投影会标记 `outcome_unknown`，也不会自动重跑。后者需要外部副作用对账或人工处置，不能靠事件重放猜测工具是否执行成功。
 
 ## 7. Migration 与启动
 

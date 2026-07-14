@@ -1,8 +1,8 @@
 # Event Journal 与会话持久化重构设计
 
-Last reviewed: 2026-07-14
+Last reviewed: 2026-07-15
 
-> Status: implemented for Session/Turn/Message persistence; Durable Action/Approval remains staged. 本文细化 [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) 的 S2 Persistence，不改变蓝图中的模块所有权。
+> Status: implemented for Session/Turn/Step/ToolRun/Approval/Message persistence and pending-approval recovery. `outcome_unknown` reconciliation 与持久化查询表仍属于后续阶段。本文细化 [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) 的 S2 Persistence，不改变蓝图中的模块所有权。
 
 ## 1. 为什么要重构
 
@@ -35,7 +35,7 @@ openwork-db-macros
 Recorded facts       recorded_events（唯一事实来源、append-only）
         |
         v
-Query projections    sessions / messages / action_runs / approvals（按需要逐步增加）
+Query projections    sessions / messages / tool_runs / approvals（按需要逐步增加）
         |
         v
 Live UI stream       text_delta / reasoning_delta / tool_call_delta（不承诺回放）
@@ -47,7 +47,7 @@ Live UI stream       text_delta / reasoning_delta / tool_call_delta（不承诺�
 
 1. 在 `openwork-protocol` 定义稳定的 `EventJournal` Port、事件 Envelope 和 Expected Version。
 2. 在 `openwork-persistence` 实现 PostgreSQL append-only Journal、连接池和迁移生命周期。
-3. 使用 `recorded_events` 记录 Session、Turn、Action、Approval 的可回放事实。
+3. 使用 `recorded_events` 记录 Session、Turn、Step、ToolRun、Approval 的可回放事实。
 4. 将 Session/Message DTO、Repository 和内存投影迁入 `openwork-persistence`。
 5. 删除 `openwork-session`、`openwork-db-macros` 和 `openwork-database`，由 Persistence 内部基础设施统一承担连接池与 migration 生命周期。
 
@@ -153,9 +153,9 @@ CREATE INDEX idx_recorded_events_type_position
 V1 只允许：
 
 - `session`：标题、创建、归档/删除等跨 Turn 的对话事实。
-- `turn`：模型尝试、消息、Action、Approval 和 Turn 终态。
+- `turn`：模型尝试、消息、Step、ToolRun、Approval 和 Turn 终态。
 
-Action 与 Approval 暂不各自创建独立 aggregate；它们在 payload 中携带 `action_run_id` / `approval_id`，并保持在所属 Turn 的严格顺序中。
+Step、ToolRun 与 Approval 暂不各自创建独立 aggregate；它们在 payload 中携带 `step_id`、`tool_run_id` / `approval_id`，并保持在所属 Turn 的严格顺序中。
 
 ## 5. 最小事件目录
 
@@ -175,19 +175,23 @@ Action 与 Approval 暂不各自创建独立 aggregate；它们在 payload 中�
 | --- | --- |
 | `turn_started` | `session_id`、`provider_id`、`model` |
 | `user_message_recorded` | `message_id`、`content` |
+| `step_started` | `step_id`、`step_index` |
 | `model_attempt_started` | `model_attempt_id`、`step` |
 | `model_attempt_completed` | `model_attempt_id`、`finish_reason`、`usage` |
 | `model_attempt_failed` | `model_attempt_id`、稳定错误分类 |
-| `assistant_message_recorded` | `message_id`、`content` |
-| `action_requested` | `action_run_id`、`name`、`input` |
-| `approval_requested` | `approval_id`、`action_run_id`、`reason` |
-| `approval_resolved` | `approval_id`、`action_run_id`、`resolution` |
-| `action_started` | `action_run_id` |
-| `action_completed` | `action_run_id`、`observation` 或 `artifact_id` |
-| `action_failed` | `action_run_id`、稳定错误分类 |
-| `action_denied` | `action_run_id`、`reason` |
-| `action_cancelled` | `action_run_id` |
-| `action_outcome_unknown` | `action_run_id`、`reason` |
+| `assistant_message_recorded` | `message_id`、`step_id`、`content` |
+| `tool_run_requested` | `step_id`、`tool_run_id`、`provider_tool_call_id`、`name`、`input` |
+| `approval_requested` | `approval_id`、`step_id`、`tool_run_id`、`reason` |
+| `approval_resolved` | `approval_id`、`step_id`、`tool_run_id`、`resolution` |
+| `tool_run_started` | `step_id`、`tool_run_id` |
+| `tool_run_completed` | `step_id`、`tool_run_id`、`observation` 或 `artifact_id` |
+| `tool_run_failed` | `step_id`、`tool_run_id`、稳定错误分类 |
+| `tool_run_denied` | `step_id`、`tool_run_id`、`reason` |
+| `tool_run_cancelled` | `step_id`、`tool_run_id` |
+| `tool_run_outcome_unknown` | `step_id`、`tool_run_id`、`reason` |
+| `tool_message_recorded` | `message_id`、`step_id`、`tool_run_id`、`content` |
+| `step_completed` | `step_id`、`step_index` |
+| `step_failed` | `step_id`、`step_index`、稳定错误分类 |
 | `turn_completed` | 最终 message/结果引用 |
 | `turn_failed` | 稳定错误分类 |
 | `turn_cancelled` | 空对象 `{}` |
@@ -220,12 +224,12 @@ Journal 可以恢复一切，但不适合每次 UI 列表都扫描全量 JSON。
 
 - `sessions`：会话列表和标题。
 - `messages`：聊天回放与上下文读取。
-- `action_runs`：工具调用审计。
+- `tool_runs`：工具调用审计。
 - `approvals`：待审批和历史决策。
 
 是否增加某张投影表，只由真实查询需求和性能证据决定。投影必须保存 `last_global_position` 或使用独立 projector checkpoint，并能从 `recorded_events` 清空重建。
 
-这符合三大范式：Journal 每行只表达一个事件；Provider 配置仍由 `providers` / `provider_models` 管理；投影中的 Session、Message、Action、Approval 各自表示单一实体，不把重复 Provider 或 Message 字段塞入事件主表列。
+这符合三大范式：Journal 每行只表达一个事件；Provider 配置仍由 `providers` / `provider_models` 管理；投影中的 Session、Message、ToolRun、Approval 各自表示单一实体，不把重复 Provider 或 Message 字段塞入事件主表列。
 
 ## 8. Crate 重构结果
 
@@ -288,7 +292,7 @@ openwork-app -> openwork-persistence
 
 - Session 创建/改名/删除只写 Journal。
 - Turn 开始前持久化 `turn_started` 和 `user_message_recorded`。
-- Assistant/Tool Message 和 Turn 终态按批追加。
+- Assistant/Tool Message 在各自语义点追加，Turn 终态由 App 最后追加。
 - UI delta 仍只走订阅，不写 Journal。
 - Session/Message 查询通过内存重放 `recorded_events` 完成。
 - forward migration 删除 `sessions/messages/llm_events/tool_runs`。
@@ -296,17 +300,19 @@ openwork-app -> openwork-persistence
 
 由于用户明确接受丢弃开发数据，本阶段没有双写或 backfill。应用代码先切换到 Journal，随后由 migration DROP 旧表。
 
-### Phase B2：Durable Action/Approval（待完成）
+### Phase B2：Durable ToolRun/Approval（核心链路已完成）
 
-- Core 在副作用 Action 前持久化 intent，在执行后持久化 outcome。
-- Approval request 必须在 UI 可见前持久化，resolution 必须在继续执行前持久化。
-- Journal 写失败时，涉及副作用的 Turn 不得继续执行。
-- 补齐 `outcome_unknown` 与 reconciliation。
+- 已完成：Core 在工具副作用前持久化 intent，在执行后持久化 outcome。
+- 已完成：Approval request 在 UI 可见前持久化，resolution 在继续执行前持久化。
+- 已完成：Journal 写失败时，涉及副作用的 Turn 不继续执行。
+- 已完成：Session 投影重建 pending approval，App 可在重启后继续该 Step。
+- 已完成：已开始但缺少终态的 ToolRun 投影为 `outcome_unknown`，且不会自动重跑。
+- 待完成：对 `outcome_unknown` 的外部副作用 reconciliation 和人工处置流程。
 
 ### Phase C：持久化查询 Projection（按需）
 
 - 当前内存投影在开发数据量下足够，不立即新增表。
-- 出现可测量的全量回放性能问题后，再增加 Session/Message/ActionRun/Approval 查询投影。
+- 出现可测量的全量回放性能问题后，再增加 Session/Message/ToolRun/Approval 查询投影。
 - Synthetic Event 必须能从零 Replay 并重建相同投影。
 - 投影只由 `global_position` 推进，可删除重建。
 

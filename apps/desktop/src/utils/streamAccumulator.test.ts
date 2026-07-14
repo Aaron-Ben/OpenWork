@@ -19,6 +19,7 @@ describe('applyEvent', () => {
       sessionId: 'sess-1',
       event: 'tool_result',
       toolCallId: 'call-1',
+      toolRunId: 'tool-run-1',
       toolName: 'bash',
       output: '/workspace',
       isError: false,

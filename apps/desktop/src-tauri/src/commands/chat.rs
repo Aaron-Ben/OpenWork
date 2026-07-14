@@ -20,6 +20,7 @@ pub async fn chat_generate_stream(
 
 #[tauri::command]
 pub async fn resolve_approval(
+    app: tauri::AppHandle,
     application: tauri::State<'_, OpenWorkApplication>,
     turn_id: String,
     approval_id: String,
@@ -27,7 +28,9 @@ pub async fn resolve_approval(
 ) -> Result<(), CommandError> {
     application
         .turns()
-        .resolve_approval(turn_id, approval_id, allow)
+        .resolve_approval(turn_id, approval_id, allow, move |payload| {
+            let _ = app.emit("chat-stream-event", payload);
+        })
         .await
         .map_err(CommandError::from)
 }

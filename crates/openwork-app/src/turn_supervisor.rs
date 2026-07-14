@@ -26,6 +26,14 @@ pub struct TurnSupervisor {
 }
 
 impl TurnSupervisor {
+    pub fn contains(&self, turn_id: &TurnId) -> Result<bool, TurnSupervisorError> {
+        Ok(self
+            .active
+            .lock()
+            .map_err(|_| TurnSupervisorError::LockPoisoned)?
+            .contains_key(turn_id))
+    }
+
     pub fn register(&self, turn_id: TurnId) -> Result<TurnCommandInbox, TurnSupervisorError> {
         let mut active = self
             .active

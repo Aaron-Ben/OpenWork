@@ -1,6 +1,6 @@
 # OpenWork Core 架构蓝图
 
-Last reviewed: 2026-07-14
+Last reviewed: 2026-07-15
 
 > Status: architecture direction and invariant baseline. 本文冻结 OpenWork 要解决的核心问题、模块所有权、依赖方向和关键不变量，但不冻结具体实现方案，也不把 S0-S8 固定为必须照序执行的项目排期。Plan、Tool、Skill、MCP、Context、Memory、Sandbox 等重要子系统进入实现前，必须分别完成专题设计，并以当时的代码、评测和项目目标决定是否采用蓝图中的参考路径。
 
@@ -51,19 +51,18 @@ OpenWork 使用以下层级表达任务：
 Project
 └── Session                      持续对话与项目上下文
     └── Turn                     一项可持续数分钟或数小时的完整任务
-        ├── Plan                 可版本化执行计划
-        ├── ModelAttempt[]       Turn 内的多次模型调用
-        ├── ActionRun[]          文件、Shell、MCP 等动作执行
-        ├── Approval[]           人工或策略审批
-        ├── ContextCheckpoint[]  上下文阶段检查点
-        ├── VerificationRun[]    测试与成果验证
-        └── Artifact[]           日志、Diff、报告、PPT 等成果
+        ├── Step[]               一次模型调用及其返回的工具调用
+        │   ├── ModelAttempt     当前 Step 的模型调用
+        │   └── ToolRun[]        文件、Shell、MCP 等工具执行；Approval 与其关联
+        └── TurnItem[]           由事实日志重建的查询/UI 投影
 ```
+
+Plan、ContextCheckpoint、VerificationRun 和 Artifact 是后续附着在 Turn/Step 上的领域对象，不改变上述运行生命周期主层级。
 
 重要定义：
 
 - 一个 `Turn` 不是一次 LLM API 请求，而是一项完整目标驱动任务。
-- 一个 `Turn` 内可以有多次 `ModelAttempt`、`ActionRun`、重试、压缩和重新规划。
+- 一个 `Turn` 内可以有多个 `Step`；每个 Step 有一次逻辑模型调用和零到多个 `ToolRun`。
 - 用户审批、暂停和恢复不会自动创建新 Turn。
 - 后续用户提出新的目标或明确结束当前目标后，才创建新的 Turn。
 
@@ -76,13 +75,13 @@ Project
   -> Context Builder 构造本次 ModelAttempt 上下文
   -> 调用 ModelPort
   -> 解析文本、计划更新或 Capability Call
-  -> 持久化 ActionRequested
+  -> 创建 StepId/ToolRunId，持久化 ToolRunRequested
   -> 权限与风险判断
   -> 必要时暂停并等待 Approval
-  -> 持久化 ActionStarted
+  -> 持久化 ToolRunStarted
   -> 在受控环境中执行 Action
   -> 规范化 Observation
-  -> 持久化 Action Outcome
+  -> 持久化 ToolRun Outcome
   -> Recovery Policy 决定继续、重试、重新规划、对账或停止
   -> Context Policy 决定保留、Artifact 化、压缩或 Context Reset
   -> Verification Policy 检查完成条件
@@ -95,8 +94,8 @@ Project
 persist intent -> execute effect -> persist outcome
 ```
 
-- 对副作用 Action，`started` 事件必须先于真实执行持久化。
-- 已有 `started` 但没有终态的 Action 不得自动重放。
+- 对副作用 ToolRun，`started` 事件必须先于真实执行持久化。
+- 已有 `started` 但没有终态的 ToolRun 不得自动重放。
 - 无法确定外部结果时进入 `outcome_unknown`，Turn 进入 `needs_reconciliation`。
 - 只读、幂等或带可靠 Idempotency Key 的 Action 才允许策略化自动重试。
 
@@ -111,13 +110,15 @@ TurnStarted
 PlanCreated
 ModelAttemptStarted
 ModelAttemptCompleted
-ActionRequested
+StepStarted
+ToolRunRequested
 ApprovalRequested
 ApprovalResolved
-ActionStarted
-ActionCompleted
-ActionFailed
-ActionOutcomeUnknown
+ToolRunStarted
+ToolRunCompleted
+ToolRunFailed
+ToolRunOutcomeUnknown
+StepCompleted
 ContextCheckpointCreated
 VerificationStarted
 VerificationCompleted
@@ -198,9 +199,9 @@ apps/
 
 包含：
 
-- 强类型 ID：`ProjectId`、`SessionId`、`TurnId`、`ModelAttemptId`、`ActionRunId`、`ApprovalId`、`ArtifactId`。
-- 状态：`TurnStatus`、`PlanStepStatus`、`ActionRunStatus`。
-- 命令：`StartTurn`、`CancelTurn`、`ResolveApproval`、`ReconcileAction`、`SteerTurn`。
+- 强类型 ID：`ProjectId`、`SessionId`、`TurnId`、`StepId`、`ModelAttemptId`、`ToolRunId`、`ApprovalId`、`ArtifactId`。
+- 状态：`TurnStatus`、`StepStatus`、`ToolRunStatus`。
+- 命令：`StartTurn`、`CancelTurn`、`ResolveApproval`、`ReconcileToolRun`、`SteerTurn`。
 - 事件：`RecordedEventV1`、`LiveEventV1` 及版本化 Envelope。
 - 模型合同：`ModelRequest`、`ModelEvent`、`ModelCapabilities`、`ModelPort`。
 - Capability 合同：`CapabilitySpec`、`ActionRequest`、`Observation`。
@@ -395,7 +396,7 @@ Execution 只通过注入的 `WorkspaceAccessPort` 和 `WorkspaceSnapshotPort` �
 - Aggregate Expected Version。
 - Context Checkpoint。
 - 幂等 Projector。
-- Session、Turn、Message、ActionRun、Approval、Artifact 查询投影。
+- Session、Turn、Message、ToolRun、Approval、Artifact 查询投影。
 - Content-addressed Artifact 存储。
 - Provider 配置、Project、Settings 等普通 Repository。
 - Provider 等普通 Repository 中敏感字段的认证加密；主密钥不进入数据库。
@@ -472,8 +473,8 @@ Memory Record 存在 Persistence；提取、检索和纠错逻辑属于 Memory�
 | --- | --- | --- |
 | Plan Mode | `openwork-core/planning` | Plan Artifact + Recorded Event |
 | Tool 定义与发现 | `openwork-capabilities/tool` | Capability Catalog |
-| Tool 实际执行 | `openwork-execution` | ActionRun Event + Artifact |
-| Tool 失败恢复 | `openwork-core/recovery` | Action terminal event |
+| Tool 实际执行 | `openwork-execution` | ToolRun Event + Artifact |
+| Tool 失败恢复 | `openwork-core/recovery` | ToolRun terminal event |
 | Provider HTTP 重试 | `openwork-providers` | ModelAttempt trace/event |
 | 语义重新规划 | `openwork-core/planning` | Plan version/event |
 | 多轮上下文治理 | `openwork-core/context` | Context source-use record |
@@ -499,13 +500,13 @@ Memory Record 存在 Persistence；提取、检索和纠错逻辑属于 Memory�
 CapabilityCatalog 提供候选 Tool
   -> Context Builder 选择本轮相关 Tool Schema
   -> ModelAttempt 返回 provider tool call
-  -> Core 创建内部 ActionRunId
+  -> Core 创建内部 StepId + ToolRunId
   -> 参数 Schema 校验
-  -> persist ActionRequested
+  -> persist ToolRunRequested
   -> Execution 根据来源、运行位置和参数计算最终风险
   -> Execution Policy 返回 Allow / Deny / RequireApproval
   -> RequireApproval 时由 Core persist ApprovalRequested 并暂停
-  -> persist ActionStarted
+  -> persist ToolRunStarted
   -> Sandbox 中执行 Handler
   -> Observation Normalizer
   -> 大输出写入 ArtifactStore
@@ -595,7 +596,7 @@ Memory 是跨任务候选事实。优先级低于当前 Workspace 和当前 Turn
 
 ## 12. Rust 设计原则
 
-1. 使用强类型 ID，内部 `ActionRunId` 与 Provider Call ID 分离。
+1. 使用强类型 ID，内部 `ToolRunId` 与 Provider Call ID 分离。
 2. 使用枚举表达状态，不使用多个互相矛盾的布尔字段。
 3. 使用纯 Reducer：`state + recorded event -> new state`。
 4. 每个活跃 Turn 由单个 Actor 串行拥有状态。
@@ -762,8 +763,8 @@ cargo test --workspace
 
 任务：
 
-- `StartTurn`、`CancelTurn`、`ResolveApproval`、`ReconcileAction`、`SteerTurn`。
-- 完整 Turn/Action/Approval 状态机。
+- `StartTurn`、`CancelTurn`、`ResolveApproval`、`ReconcileToolRun`、`SteerTurn`。
+- 完整 Turn/Step/ToolRun/Approval 状态机。
 - `RecordedEventV1`、`LiveEventV1`。
 - `CapabilityResolverPort`、`ActionInvoker`、`ExecutionPort`、Workspace Port。
 - 序列化、Reducer 合同和兼容性测试。
@@ -780,7 +781,7 @@ cargo test --workspace
 
 - PostgreSQL Event Journal、事务和迁移。
 - Event Journal 与 Expected Version。
-- Turn/Action/Approval 最小 Projector。
+- Turn/Step/ToolRun/Approval 最小 Projector。
 - Artifact metadata 和内容寻址目录。
 
 退出条件：Synthetic Event 可从零 Replay 并重建相同投影。
@@ -795,7 +796,7 @@ cargo test --workspace
 
 - 最小 Capability Catalog 与 `CapabilityResolverPort`。
 - `ActionInvoker` 注册和注入合同。
-- 内部 ActionRunId。
+- 内部 StepId 与 ToolRunId。
 - Schema 校验和结构化 Observation。
 - Permission Policy；只返回 `Allow | Deny | RequireApproval`。
 - Sandbox Port 和 macOS V1 实现路径；优先评估 Anthropic Sandbox Runtime。
@@ -808,7 +809,7 @@ cargo test --workspace
 
 ### S4：建立 `openwork-core` Durable Turn
 
-上下文：将当前 callback 驱动 Agent Loop 转为单所有者 Turn Actor。
+上下文：当前 Core 已通过异步 `TurnRecorderPort` 在 Step、ToolRun 和 Approval 语义点同步写 Journal，并支持 pending approval 的重启恢复；纯 Reducer/完整 TurnActor、普通 interrupted Turn 恢复和外部副作用 reconciliation 尚未完成。
 
 任务：
 
@@ -820,6 +821,8 @@ cargo test --workspace
 - 接入 S2 Journal 和 S3 的 Fake/Real Port。
 
 退出条件：崩溃恢复不会自动重复副作用 Action，Execution 不会自行等待 UI 审批。
+
+当前进展：`tool_run_started` 后缺少终态的调用会被投影为 `outcome_unknown` 且不会自动重跑，Execution 也不等待 UI；reconciliation 和完整 TurnActor 仍未达到退出条件。
 
 回滚：保留旧 Agent 路径，通过 Feature Flag 切换。
 
@@ -852,7 +855,7 @@ cargo test --workspace
 
 ### S7：Application API 扩展与 Desktop 收口
 
-上下文：Desktop 直接依赖 Repository/Store/Factory 的路径已经收口到单一 `OpenWorkApplication`；显式 Command/Query Service、结构化错误和 tagged Live Event 已完成，Durable Subscription、Resume/Reconcile 和统一 shutdown 仍未完成。
+上下文：Desktop 直接依赖 Repository/Store/Factory 的路径已经收口到单一 `OpenWorkApplication`；显式 Command/Query Service、结构化错误、tagged Live Event 和 pending-approval Resume 已完成，Durable Subscription、普通 Turn Resume/Reconcile 和统一 shutdown 仍未完成。
 
 当前专题设计与分阶段迁移门槛见 [Desktop Tauri 与 Application API 边界重构设计](./desktop-tauri-application-boundary-refactor.md)。
 

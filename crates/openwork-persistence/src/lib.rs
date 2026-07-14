@@ -13,6 +13,8 @@ pub use postgres::{
     PostgresProviderRepository, RECORDED_EVENT_MIGRATIONS,
 };
 pub use session::{
-    NewMessage, Session, SessionError, SessionInput, SessionLoadResult, SessionMessage,
-    SessionStore, SessionSummary, TurnOutcome,
+    JournalTurnRecorder, NewMessage, PendingApprovalSnapshot, Session, SessionError, SessionInput,
+    SessionLoadResult, SessionMessage, SessionStore, SessionSummary, StepLifecycleSnapshot,
+    StepLifecycleStatus, ToolRunLifecycleSnapshot, ToolRunLifecycleStatus, TurnLifecycleSnapshot,
+    TurnLifecycleStatus, TurnOutcome, replay_turn_lifecycle,
 };

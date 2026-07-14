@@ -67,7 +67,7 @@ type LiveEvent<E extends string, P extends object = Record<never, never>> = Turn
 /// 镜像 `openwork_app::TurnLiveEventKind` 的 tagged union。
 /// 每个事件只能携带该变体需要的字段，新增事件会迫使 reducer 穷尽处理。
 export type TurnLiveEvent =
-  | LiveEvent<'step', { step: number }>
+  | LiveEvent<'step', { step: number; stepId: string }>
   | LiveEvent<'llm_step_start', { step: number }>
   | LiveEvent<'llm_step_finish', { step: number; reason: string }>
   | LiveEvent<'llm_finish', { reason: string }>
@@ -82,9 +82,24 @@ export type TurnLiveEvent =
   | LiveEvent<'tool_call_end', { toolCallId: string }>
   | LiveEvent<
       'tool_result',
-      { toolCallId: string; toolName: string; output: string; isError: boolean }
+      {
+        toolCallId: string
+        toolRunId: string
+        toolName: string
+        output: string
+        isError: boolean
+      }
     >
-  | LiveEvent<'approval_request', { approvalId: string; toolName: string; input: unknown }>
+  | LiveEvent<
+      'approval_request',
+      {
+        approvalId: string
+        toolRunId: string
+        toolName: string
+        input: unknown
+        reason: string
+      }
+    >
   | LiveEvent<'approval_resolved', { approvalId: string }>
   | LiveEvent<'finished', { text: string }>
   | LiveEvent<'done'>

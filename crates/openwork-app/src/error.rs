@@ -150,6 +150,12 @@ impl From<AgentError> for ApplicationError {
                 ApplicationErrorCode::ConfigurationInvalid,
                 error.to_string(),
             ),
+            AgentError::Record(error) => {
+                Self::new(ApplicationErrorCode::DatabaseUnavailable, error.to_string())
+            }
+            AgentError::InvalidRecovery(message) => {
+                Self::new(ApplicationErrorCode::OperationConflict, message)
+            }
             AgentError::MaxStepsExceeded(limit) => Self::new(
                 ApplicationErrorCode::OperationConflict,
                 format!("Agent exceeded the maximum number of steps: {limit}"),
@@ -185,6 +191,10 @@ impl From<ChatRuntimeError> for ApplicationError {
             ChatRuntimeError::Session(error) => error.into(),
             ChatRuntimeError::Agent(error) => error.into(),
             ChatRuntimeError::TurnSupervisor(error) => error.into(),
+            ChatRuntimeError::PendingApprovalNotFound(id) => Self::new(
+                ApplicationErrorCode::ApprovalNotFound,
+                format!("Pending approval not found: {id}"),
+            ),
         }
     }
 }
