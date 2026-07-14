@@ -56,5 +56,10 @@ export const zhTW = {
     allowBash: '允許執行 Bash 指令', allowWrite: '允許寫入 {{name}}', allowWriteFile: '允許寫入檔案',
     allowRead: '允許讀取 {{name}}', allowReadFile: '允許讀取檔案', allowList: '允許列出 {{name}}',
     allowListDirectory: '允許列出目錄', allowTool: '允許工具 {{name}}',
+    editedFiles: '編輯了檔案', readFiles: '讀取了檔案', listedDirectories: '查看了目錄', ranCommands: '執行了指令',
+    ranCommand: '執行 {{command}}', ranCommandFallback: '執行了指令', editedFile: '編輯 {{name}}',
+    editedFileFallback: '編輯了檔案', readFile: '讀取 {{name}}', readFileFallback: '讀取了檔案',
+    listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目錄', calledTool: '呼叫 {{name}}',
+    summarySeparator: '、', stopped: '已停止', output: '輸出',
   },
 } as const

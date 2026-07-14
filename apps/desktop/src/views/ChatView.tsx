@@ -10,10 +10,10 @@ import {
   ConversationNavigator,
   getConversationTurns,
 } from '../components/chat/ConversationNavigator'
-import { ToolResultView } from '../components/chat/ToolResultView'
+import { ToolActivityList } from '../components/chat/ToolActivityList'
+import { mergeToolMessages } from '../components/chat/toolActivity'
 import { UserMessage } from '../components/chat/UserMessage'
 import { useActiveProvider } from '../stores/providerStore'
-import { useApprovalStore } from '../stores/approvalStore'
 import { useSessionStore, useActiveSessionMessages } from '../stores/sessionStore'
 import { DEFAULT_APPROVAL_POLICY } from '../type/chat'
 
@@ -23,8 +23,8 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const [model, setModel] = useState('')
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messages = useActiveSessionMessages()
-  const turns = useMemo(() => getConversationTurns(messages), [messages])
-  const hasPendingApproval = useApprovalStore((state) => state.pending.length > 0)
+  const displayMessages = useMemo(() => mergeToolMessages(messages), [messages])
+  const turns = useMemo(() => getConversationTurns(displayMessages), [displayMessages])
   const pushUserMessage = useSessionStore((state) => state.pushUserMessage)
   const ensureStreamingItem = useSessionStore((state) => state.ensureStreamingItem)
   const finishStreaming = useSessionStore((state) => state.finishStreaming)
@@ -71,20 +71,16 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="relative min-h-0">
         <div ref={scrollContainerRef} className="h-full overflow-auto" aria-live="polite">
-          {messages.length === 0 && !hasPendingApproval ? (
+          {displayMessages.length === 0 ? (
             <EmptySessionHero active={!!active} hasSession={!!sessionId} />
           ) : (
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
-              {messages.map((message) => {
+              {displayMessages.map((message) => {
                 const content =
                   message.role === 'user' ? (
                     <UserMessage parts={message.parts} />
                   ) : message.role === 'tool' ? (
-                    message.parts.map((part) =>
-                      part.type === 'tool_result' ? (
-                        <ToolResultView key={part.id} part={part} />
-                      ) : null,
-                    )
+                    <ToolActivityList parts={message.parts} />
                   ) : (
                     <AssistantMessage
                       parts={message.parts}
@@ -102,7 +98,6 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
                   </div>
                 )
               })}
-              <ApprovalDialog />
             </div>
           )}
         </div>
@@ -110,6 +105,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
       </div>
 
       <ChatInput
+        topContent={<ApprovalDialog />}
         model={model}
         modelOptions={modelOptions}
         value={draft}

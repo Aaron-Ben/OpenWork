@@ -57,5 +57,10 @@ export const enUS = {
     allowBash: 'Allow Bash command', allowWrite: 'Allow writing {{name}}', allowWriteFile: 'Allow writing file',
     allowRead: 'Allow reading {{name}}', allowReadFile: 'Allow reading file', allowList: 'Allow listing {{name}}',
     allowListDirectory: 'Allow listing directory', allowTool: 'Allow tool {{name}}',
+    editedFiles: 'Edited files', readFiles: 'Read files', listedDirectories: 'Listed directories', ranCommands: 'Ran commands',
+    ranCommand: 'Ran {{command}}', ranCommandFallback: 'Ran a command', editedFile: 'Edited {{name}}',
+    editedFileFallback: 'Edited a file', readFile: 'Read {{name}}', readFileFallback: 'Read a file',
+    listedDirectory: 'Listed {{name}}', listedDirectoryFallback: 'Listed a directory', calledTool: 'Called {{name}}',
+    summarySeparator: ', ', stopped: 'Stopped', output: 'Output',
   },
 } as const

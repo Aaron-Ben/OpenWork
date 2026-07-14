@@ -62,7 +62,7 @@ function titleFor(t: TFunction, toolName: string, primary: string): string {
   }
 }
 
-/// 内联审批卡片:只渲染当前活跃 session 的 pending;允许/拒绝后回传 resolve_approval。
+/// 输入框上方的审批卡片:只渲染当前活跃 session 的 pending;允许/拒绝后回传 resolve_approval。
 export function ApprovalDialog() {
   const { t } = useTranslation()
   const pending = useApprovalStore((state) => state.pending)
@@ -113,7 +113,10 @@ export function ApprovalDialog() {
     current.toolName === 'write' && typeof details.content === 'string' && details.content.length > 0
 
   return (
-    <div className="mb-4 overflow-hidden rounded-lg border border-clay-soft bg-paper shadow-sm">
+    <div
+      data-approval-dialog="true"
+      className="overflow-hidden rounded-lg border border-clay-soft bg-paper shadow-sm"
+    >
       {/* Header */}
       <div className="flex items-center gap-3 bg-clay-soft px-4 py-3">
         <div className="grid size-8 place-items-center rounded-lg bg-paper shadow-sm ring-1 ring-clay-soft">

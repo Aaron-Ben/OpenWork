@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { ArrowUp, ShieldCheck, Square } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +17,7 @@ interface ChatInputProps {
   onModelChange: (model: string) => void
   onSubmit: () => void
   onCancel?: () => void
+  topContent?: ReactNode
 }
 
 export function ChatInput({
@@ -29,6 +30,7 @@ export function ChatInput({
   onModelChange,
   onSubmit,
   onCancel,
+  topContent,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -52,6 +54,11 @@ export function ChatInput({
 
   return (
     <div className="mx-auto w-full max-w-[980px] px-4 pb-7">
+      {topContent ? (
+        <div data-chat-input-top-content="true" className="mb-3">
+          {topContent}
+        </div>
+      ) : null}
       <motion.form
         data-motion-component="chat-input"
         className="overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_18px_60px_rgba(31,30,29,0.10)]"

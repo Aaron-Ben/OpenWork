@@ -4,8 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import type { ContentBlock } from '../../type/parts'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ToolCallBlock } from './ToolCallBlock'
-import { ToolResultView } from './ToolResultView'
+import { ToolActivityList } from './ToolActivityList'
 
 interface AssistantMessageProps {
   parts: ContentBlock[]
@@ -19,40 +18,50 @@ export const AssistantMessage = memo(function AssistantMessage({
   model,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
-  const hasContent = parts.some((part) => part.type === 'text' && part.text.trim().length > 0)
+  const messageParts = parts.filter((part) => part.type !== 'tool_call' && part.type !== 'tool_result')
+  const toolParts = parts.filter((part) => part.type === 'tool_call' || part.type === 'tool_result')
+  const hasContent = messageParts.some(
+    (part) => part.type === 'text' && part.text.trim().length > 0,
+  )
 
   if (parts.length === 0 && !isStreaming) return null
 
-  const documentLayout = parts.some(
+  const documentLayout = messageParts.some(
     (part) => part.type === 'text' && shouldUseDocumentLayout(part.text),
   )
+  const showMessageCard = messageParts.length > 0 || (parts.length === 0 && isStreaming)
 
   return (
     <div className="mb-5 flex justify-start">
       <div
-        className={`group flex min-w-0 flex-col items-start ${
-          documentLayout ? 'w-full max-w-full' : 'max-w-[88%] sm:max-w-[80%] lg:max-w-[72%]'
+        className={`group flex min-w-0 flex-col items-start gap-2 ${
+          documentLayout
+            ? 'w-full max-w-full'
+            : 'w-full max-w-[88%] sm:max-w-[80%] lg:max-w-[72%]'
         }`}
       >
-        <div
-          className={`rounded-[20px] rounded-tl-lg border border-line bg-paper px-4 py-3 text-sm text-ink shadow-sm ${
-            documentLayout ? 'w-full' : 'max-w-full'
-          }`}
-        >
-          {model ? <div className="mb-2 text-xs text-ink-faint">{model}</div> : null}
-          {parts.map((part, index) =>
-            renderPart(part, index, isStreaming, hasContent, documentLayout),
-          )}
-          {parts.length === 0 && isStreaming ? (
-            <span className="text-ink-faint">{t('chat.waiting')}</span>
-          ) : null}
-        </div>
+        {showMessageCard ? (
+          <div
+            className={`rounded-[20px] rounded-tl-lg border border-line bg-paper px-4 py-3 text-sm text-ink shadow-sm ${
+              documentLayout ? 'w-full' : 'max-w-full'
+            }`}
+          >
+            {model ? <div className="mb-2 text-xs text-ink-faint">{model}</div> : null}
+            {messageParts.map((part, index) =>
+              renderMessagePart(part, index, isStreaming, hasContent, documentLayout),
+            )}
+            {parts.length === 0 && isStreaming ? (
+              <span className="text-ink-faint">{t('chat.waiting')}</span>
+            ) : null}
+          </div>
+        ) : null}
+        {toolParts.length > 0 ? <ToolActivityList parts={toolParts} /> : null}
       </div>
     </div>
   )
 })
 
-function renderPart(
+function renderMessagePart(
   part: ContentBlock,
   index: number,
   isStreaming: boolean,
@@ -74,17 +83,7 @@ function renderPart(
         />
       )
     case 'tool_call':
-      return (
-        <div key={index} className="mb-2">
-          <ToolCallBlock toolCall={part} />
-        </div>
-      )
     case 'tool_result':
-      return (
-        <div key={index} className="mb-2">
-          <ToolResultView part={part} />
-        </div>
-      )
     case 'data':
       return null
     default:

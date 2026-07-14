@@ -110,5 +110,10 @@ export const zhCN = {
     allowBash: '允许执行 Bash 命令', allowWrite: '允许写入 {{name}}', allowWriteFile: '允许写入文件',
     allowRead: '允许读取 {{name}}', allowReadFile: '允许读取文件', allowList: '允许列出 {{name}}',
     allowListDirectory: '允许列出目录', allowTool: '允许工具 {{name}}',
+    editedFiles: '编辑了文件', readFiles: '读取了文件', listedDirectories: '查看了目录', ranCommands: '运行了命令',
+    ranCommand: '运行 {{command}}', ranCommandFallback: '运行了命令', editedFile: '编辑 {{name}}',
+    editedFileFallback: '编辑了文件', readFile: '读取 {{name}}', readFileFallback: '读取了文件',
+    listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目录', calledTool: '调用 {{name}}',
+    summarySeparator: '、', stopped: '已停止', output: '输出',
   },
 } as const
