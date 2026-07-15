@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use openwork_observability::TraceRuntime;
 use openwork_persistence::{DatabaseConfig, PostgresPersistence, PostgresPersistenceError};
-use openwork_protocol::provider::ProviderRepository;
+use openwork_protocol::{provider::ProviderRepository, trace::TraceRepository};
 use openwork_providers::ProviderFactory;
 use thiserror::Error;
 
 use crate::{
-    ChatRuntime, ProviderApplicationService, SessionApplicationService, TurnApplicationService,
+    ChatRuntime, ProviderApplicationService, SessionApplicationService, TraceApplicationService,
+    TurnApplicationService,
 };
 
 #[derive(Debug, Clone)]
@@ -33,6 +35,7 @@ pub struct OpenWorkApplication {
     providers: ProviderApplicationService,
     sessions: SessionApplicationService,
     turns: TurnApplicationService,
+    traces: TraceApplicationService,
 }
 
 impl OpenWorkApplication {
@@ -41,18 +44,22 @@ impl OpenWorkApplication {
         let provider_repository: Arc<dyn ProviderRepository> =
             Arc::new(persistence.provider_repository());
         let session_store = persistence.session_store();
+        let trace_repository: Arc<dyn TraceRepository> = Arc::new(persistence.trace_repository());
+        let trace_runtime = TraceRuntime::new(Arc::clone(&trace_repository));
         let provider_factory = ProviderFactory::default();
 
         let chat_runtime = ChatRuntime::new(
             Arc::clone(&provider_repository),
             session_store.clone(),
             provider_factory.clone(),
+            trace_runtime,
         );
 
         Ok(Self {
             providers: ProviderApplicationService::new(provider_repository, provider_factory),
             sessions: SessionApplicationService::new(session_store),
             turns: TurnApplicationService::new(chat_runtime),
+            traces: TraceApplicationService::new(trace_repository),
         })
     }
 
@@ -66,5 +73,9 @@ impl OpenWorkApplication {
 
     pub fn turns(&self) -> &TurnApplicationService {
         &self.turns
+    }
+
+    pub fn traces(&self) -> &TraceApplicationService {
+        &self.traces
     }
 }

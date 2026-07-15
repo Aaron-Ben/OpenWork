@@ -148,8 +148,8 @@ async fn retrying_port_reports_each_real_transport_attempt() {
     });
     let policy = RetryPolicy::new(3, Duration::ZERO, Duration::ZERO).with_jitter(false);
     let provider = RetryingModelPort::new(inner, policy);
-    let options = ModelCallOptions::new("model-attempt-1")
-        .with_transport_observer(collector.clone());
+    let options =
+        ModelCallOptions::new("model-attempt-1").with_transport_observer(collector.clone());
 
     let mut stream = provider.invoke(request(), options).await.unwrap();
     let _ = stream.next().await.unwrap().unwrap();
@@ -173,10 +173,15 @@ async fn retrying_port_reports_each_real_transport_attempt() {
         }
     ));
     assert!(matches!(signals[4].kind, ModelTransportSignalKind::Started));
-    assert!(matches!(signals[5].kind, ModelTransportSignalKind::Succeeded { .. }));
-    assert!(signals
-        .iter()
-        .all(|signal| signal.model_attempt_id == "model-attempt-1"));
+    assert!(matches!(
+        signals[5].kind,
+        ModelTransportSignalKind::Succeeded { .. }
+    ));
+    assert!(
+        signals
+            .iter()
+            .all(|signal| signal.model_attempt_id == "model-attempt-1")
+    );
     assert_eq!(signals[5].transport_attempt, 3);
 }
 

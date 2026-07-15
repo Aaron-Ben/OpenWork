@@ -6,11 +6,11 @@ use thiserror::Error;
 use crate::{ApiKeyCipher, SessionStore};
 
 use super::{
-    PostgresEventJournal, PostgresProviderRepository,
+    PostgresEventJournal, PostgresProviderRepository, PostgresTraceRepository,
     database::{Database, DatabaseConfig},
     migrations::{
         DATABASE_INFRA_MIGRATIONS, DROP_LEGACY_SESSION_MIGRATIONS, PROVIDER_MIGRATIONS,
-        RECORDED_EVENT_MIGRATIONS,
+        RECORDED_EVENT_MIGRATIONS, TRACE_SPAN_MIGRATIONS,
     },
 };
 
@@ -19,6 +19,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "providers",
     "provider_models",
     "recorded_events",
+    "trace_spans",
 ];
 #[derive(Debug, Error)]
 pub enum PostgresPersistenceError {
@@ -71,6 +72,7 @@ impl PostgresPersistence {
             PROVIDER_MIGRATIONS,
             RECORDED_EVENT_MIGRATIONS,
             DROP_LEGACY_SESSION_MIGRATIONS,
+            TRACE_SPAN_MIGRATIONS,
             DATABASE_INFRA_MIGRATIONS,
         ] {
             database.migrate(migrations).await.map_err(database_error)?;
@@ -92,6 +94,10 @@ impl PostgresPersistence {
 
     pub fn event_journal(&self) -> PostgresEventJournal {
         PostgresEventJournal::new(self.pool().clone())
+    }
+
+    pub fn trace_repository(&self) -> PostgresTraceRepository {
+        PostgresTraceRepository::new(self.pool().clone())
     }
 
     pub fn session_store(&self) -> SessionStore {
@@ -116,28 +122,31 @@ impl PostgresPersistence {
                 details: format!("missing tables: {}", missing.join(", ")),
             })
         } else {
-            let required_migration = RECORDED_EVENT_MIGRATIONS
-                .last()
-                .expect("recorded event migrations must not be empty");
-            let migration_applied: bool = sqlx::query_scalar(
-                "SELECT EXISTS(
-                   SELECT 1 FROM schema_migrations WHERE version = $1
-                 )",
-            )
-            .bind(required_migration.version)
-            .fetch_one(self.pool())
-            .await
-            .map_err(database_error)?;
-            if migration_applied {
-                Ok(())
-            } else {
-                Err(PostgresPersistenceError::SchemaNotReady {
-                    details: format!(
-                        "required migration {} ({}) has not been applied",
-                        required_migration.version, required_migration.name
-                    ),
-                })
+            for required_migration in [
+                RECORDED_EVENT_MIGRATIONS
+                    .last()
+                    .expect("recorded event migrations"),
+                TRACE_SPAN_MIGRATIONS.last().expect("trace span migrations"),
+            ] {
+                let migration_applied: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM schema_migrations WHERE version = $1
+                     )",
+                )
+                .bind(required_migration.version)
+                .fetch_one(self.pool())
+                .await
+                .map_err(database_error)?;
+                if !migration_applied {
+                    return Err(PostgresPersistenceError::SchemaNotReady {
+                        details: format!(
+                            "required migration {} ({}) has not been applied",
+                            required_migration.version, required_migration.name
+                        ),
+                    });
+                }
             }
+            Ok(())
         }
     }
 }

@@ -15,6 +15,7 @@ fn application_root_exposes_explicit_provider_session_and_turn_services() {
         let _ = application.providers();
         let _ = application.sessions();
         let _ = application.turns();
+        let _ = application.traces();
     }
 
     let _ = assert_api;

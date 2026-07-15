@@ -19,6 +19,7 @@ export interface Session extends SessionSummary {
 export interface SessionMessage {
   id: string
   sessionId: string
+  turnId: string
   role: 'system' | 'user' | 'assistant' | 'tool'
   parts: ContentBlock[]
   seq: number

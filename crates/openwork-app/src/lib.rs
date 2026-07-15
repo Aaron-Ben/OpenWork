@@ -6,6 +6,7 @@ mod chat;
 mod error;
 mod provider_service;
 mod session_service;
+mod trace_service;
 mod turn_service;
 mod turn_supervisor;
 
@@ -23,6 +24,7 @@ pub use provider_service::{
     ProviderTestResult,
 };
 pub use session_service::SessionApplicationService;
+pub use trace_service::{TraceApplicationService, TraceSpanView, TurnTrace, TurnTraceSummary};
 pub use turn_service::TurnApplicationService;
 pub use turn_supervisor::{TurnSupervisor, TurnSupervisorError};
 

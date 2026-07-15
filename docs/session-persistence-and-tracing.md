@@ -4,7 +4,7 @@ Last reviewed: 2026-07-15
 
 > Status: current implementation snapshot. 字段、事件目录和设计决策见 [Event Journal 与会话持久化重构设计](../plans/event-journal-persistence-refactor.md)。
 
-## 1. 当前数据库只有四张表
+## 1. 当前数据库有五张表
 
 显式 migration 完成后，业务库结构为：
 
@@ -14,6 +14,7 @@ Last reviewed: 2026-07-15
 | `providers` | Provider 配置与加密 API Key |
 | `provider_models` | Provider 模型和 `lite/plus/pro` 用户分类 |
 | `recorded_events` | Session、Turn、Step、ToolRun、Approval 和 Message 的 append-only 事实日志 |
+| `trace_spans` | 可丢弃的运行诊断 Span；记录耗时、重试和归一化错误，不是恢复事实来源 |
 
 以下四张遗留表已由 forward migration 删除：
 
@@ -99,7 +100,7 @@ OpenWorkApplication::turns
 - 尚未解决的 pending approval；
 - 删除状态和最近更新时间。
 
-`SessionLoadResult` 同时返回 `messages` 和 `turns`；Desktop 用后者在重启后恢复审批卡片。这保证当前数据库保持四张表，适合开发期数据量。数据量增大后，如果全量重放成为性能瓶颈，再增加可删除、可重建的 `sessions/messages/tool_runs/approvals` 查询投影；投影不是新的事实来源。
+`SessionLoadResult` 同时返回 `messages` 和 `turns`；Desktop 用后者在重启后恢复审批卡片。Session/Message 仍不需要独立查询表。`trace_spans` 是独立的 best-effort 诊断投影，不改变 Journal 的事实来源地位。数据量增大后，如果全量重放成为性能瓶颈，再增加可删除、可重建的 `sessions/messages/tool_runs/approvals` 查询投影。
 
 ## 5. UI Stream 不再写数据库
 
@@ -138,7 +139,7 @@ Persist Intent -> Execute -> Persist Outcome
 cargo run -p openwork-persistence --bin openwork-migrate
 ```
 
-该命令创建/更新 Provider 和 Journal schema，并执行 `drop_legacy_session_tables`。然后启动：
+该命令创建/更新 Provider、Journal 和 Trace schema，并执行 `drop_legacy_session_tables`。然后启动：
 
 如果数据库已经应用过早期使用 `thread` 命名的 Journal migration，migrator 会按 expand/data/contract 三步迁移：先允许 `session`，再把既有 aggregate、event type 和 payload key 改名，最后移除 `thread` 约束。事件 ID、聚合版本和全局位置不会改变。历史 migration 源码保持不可变。
 
@@ -147,13 +148,14 @@ cd apps/desktop
 pnpm tauri dev
 ```
 
-Desktop 启动只检查 `schema_migrations/providers/provider_models/recorded_events`，不会自动建表。
+Desktop 启动只检查 `schema_migrations/providers/provider_models/recorded_events/trace_spans`，不会自动建表。
 
 ## 8. Crate 状态
 
 | crate | 当前状态 |
 | --- | --- |
 | `openwork-persistence` | 拥有 Provider Repository、Event Journal、Session Repository 和 migration |
+| `openwork-observability` | 拥有 best-effort Trace 缓冲、Span 归并和 Turn 生命周期装饰器 |
 | `openwork-session` | 已删除，职责迁入 Persistence |
 | `openwork-db-macros` | 已删除，不再需要通用 `PgEntity` |
 | `openwork-database` | 已删除；连接池和 migration runner 已内聚到 Persistence |

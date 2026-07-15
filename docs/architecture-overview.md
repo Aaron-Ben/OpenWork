@@ -14,6 +14,7 @@ OpenWork 当前是一个基于 Rust workspace 和 Tauri 桌面端的 agent 应�
 - 内置工具：文件读写、搜索、bash
 - 基础权限模型与 human-in-the-loop 审批
 - 基于 Event Journal 的 Session、Turn、Step、ToolRun、Approval 和 Message 持久化
+- 可持久化的 Turn Trace：模型/Transport 重试、工具、审批、恢复与耗时诊断
 - PostgreSQL 中的 Provider API Key 加密存储
 - `openwork-workspace` 中的 worktree 变更快照与还原基础函数（尚未接入 runtime/Tauri/UI）
 - 桌面端流式 UI 与审批弹窗
@@ -35,13 +36,17 @@ crates/openwork-persistence/
   Event Journal、Journal-backed Session/Turn 生命周期和内存投影；API Key 使用
   AES-256-GCM 加密后落库。
 
+crates/openwork-observability/
+  Best-effort Trace Runtime：有序归并 Span 信号、装饰 Durable Turn Recorder，
+  写入失败不改变 Agent 控制流。
+
 crates/openwork-core/
   Turn 控制循环与状态机：模型流式调用、工具调用调度、审批暂停/恢复、
   doom-loop 检测和取消处理；不依赖具体 Capabilities 或 Execution Adapter。
 
 crates/openwork-app/
   Application API 与 Composition Root：组合 Capability Catalog、Execution、Core、
-  Provider 和 Session，并通过 TurnSupervisor 路由 ResolveApproval 命令。
+  Provider、Session 和 Trace，并通过 TurnSupervisor 路由 ResolveApproval 命令。
 
 crates/openwork-capabilities/
   Capability Catalog：持有 read、write、edit、list、grep、glob、bash 的名称、
@@ -89,6 +94,7 @@ ChatView
      -> ToolResult 回填模型上下文，并记录 step_completed
      -> 下一轮模型调用，直到无工具调用
   -> SessionStore 记录 Turn 终态
+  -> TraceRuntime 完成 Turn Span；Desktop 可按 Session/Turn 查询摘要和详情
   -> emit done
   -> 前端 reload session
 ```
@@ -142,6 +148,7 @@ apps/desktop/src                    # React 展示、UI 状态、invoke/listen �
 | `chat.rs` | 内部单 Turn 编排：加载 Provider/Session、创建 Execution/Core、注入 Journal Recorder、恢复待审批 Turn，并映射 Live Event |
 | `cancel.rs` | 当前 `request_id -> CancellationToken` 注册表 |
 | `turn_supervisor.rs` | 活跃进程内的 `TurnId -> TurnCommandHandle` 路由；重启恢复由 Journal 投影和 App 兜底 |
+| `trace_service.rs` | 按 Session/Turn 查询 Trace，并生成步骤、工具、重试、Token 和错误摘要 |
 | `error.rs` | 底层错误到稳定 Application Error Code 的映射 |
 
 `turn_service.rs` 是稳定的宿主用例门面，`chat.rs` 是其内部编排器，两者不是两套 Agent Runtime。`RequestCancelRegistry` 和 `TurnSupervisor` 目前分别承担取消与审批路由，统一活跃 Turn 生命周期及 cancel-all/shutdown 属于 Phase C。前端、Tauri、Application、Persistence 和 Journal 聚合统一使用 Session；`session_*` IPC 与 Session DTO 不再是临时兼容命名。
@@ -188,7 +195,7 @@ openwork-execution/src/
 
 ### 4.8 Persistence 统一拥有 PostgreSQL 生命周期
 
-数据库 migration 由 `cargo run -p openwork-persistence --bin openwork-migrate` 显式执行；Desktop 启动只检查四张必需表。Provider、Journal 和 Session Repository 共享一个连接池。`DatabaseConfig`、私有连接对象和 migration runner 都位于 `openwork-persistence::postgres`，不存在第二个数据库基础设施 crate。
+数据库 migration 由 `cargo run -p openwork-persistence --bin openwork-migrate` 显式执行；Desktop 启动检查 `schema_migrations/providers/provider_models/recorded_events/trace_spans` 五张必需表。Provider、Journal、Session 和 Trace Repository 共享一个连接池。`DatabaseConfig`、私有连接对象和 migration runner 都位于 `openwork-persistence::postgres`，不存在第二个数据库基础设施 crate。
 
 ### 4.9 API Key 加密是 Persistence 内部实现
 

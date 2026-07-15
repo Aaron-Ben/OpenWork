@@ -22,7 +22,13 @@ fn trace_span_migration_is_a_diagnostic_projection_not_a_second_transcript() {
     assert!(sql.contains("idx_trace_spans_session_started"));
     assert!(sql.contains("idx_trace_spans_turn_started"));
 
-    for forbidden in ["api_key", "authorization", "system_prompt", "request_body", "response_body"] {
+    for forbidden in [
+        "api_key",
+        "authorization",
+        "system_prompt",
+        "request_body",
+        "response_body",
+    ] {
         assert!(!sql.to_ascii_lowercase().contains(forbidden));
     }
     assert!(!sql.contains("TIMESTAMPTZ"));

@@ -15,7 +15,10 @@ pub use message::{
     Base64Source, ContentBlock, DataBlock, DataSource, Message, ProviderOpaqueBlock, Role,
     TextBlock, ThinkingBlock, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
 };
-pub use port::{ModelCallOptions, ModelPort, ModelStream};
+pub use port::{
+    ModelCallOptions, ModelPort, ModelStream, ModelTransportObserver, ModelTransportSignal,
+    ModelTransportSignalKind,
+};
 pub use request::{
     GenerateRequest, ModelCapabilities, ModelRequest, ThinkingConfig, ThinkingMode, ToolDefinition,
 };

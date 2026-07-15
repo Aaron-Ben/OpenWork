@@ -2,7 +2,8 @@
 //! 直到模型返回不带工具调用的纯文本。
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::SystemTime;
 
 use futures_util::StreamExt;
 use openwork_protocol::approval::{
@@ -15,8 +16,13 @@ use openwork_protocol::capability::{
 };
 use openwork_protocol::domain::{ApprovalId, StepId, ToolRunId, TurnId};
 use openwork_protocol::model::{
-    ContentBlock, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest,
-    ModelResponse, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
+    ContentBlock, Message, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent, ModelPort,
+    ModelRequest, ModelResponse, ModelTransportObserver, ModelTransportSignal,
+    ModelTransportSignalKind, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
+};
+use openwork_protocol::trace::{
+    NoopTraceRecorder, TraceRecorderPort, TraceSignal, TraceSpanKind, TraceSpanStart,
+    TraceSpanStatus, TraceSpanUpdate,
 };
 use openwork_protocol::turn::{
     AssistantMessageRecorded, StepCompleted, StepFailed, StepStarted, ToolMessageRecorded,
@@ -45,6 +51,7 @@ pub struct AgentPorts {
     /// Awaited durable fact sink. A failed append stops the control loop before
     /// any following side effect is invoked.
     pub recorder: Arc<dyn TurnRecorderPort>,
+    pub trace: Arc<dyn TraceRecorderPort>,
 }
 
 impl AgentPorts {
@@ -57,8 +64,21 @@ impl AgentPorts {
             capabilities,
             execution,
             recorder,
+            trace: Arc::new(NoopTraceRecorder),
         }
     }
+
+    pub fn with_trace(mut self, trace: Arc<dyn TraceRecorderPort>) -> Self {
+        self.trace = trace;
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentTraceContext {
+    pub trace_id: String,
+    pub session_id: String,
+    pub provider_id: String,
 }
 
 pub struct AgentConfig {
@@ -78,6 +98,8 @@ pub struct AgentConfig {
     pub max_steps: usize,
     /// First model step to run. Recovery continues after the checkpointed step.
     pub first_step: usize,
+    pub trace: Arc<dyn TraceRecorderPort>,
+    pub trace_context: Option<AgentTraceContext>,
 }
 
 impl AgentConfig {
@@ -102,11 +124,18 @@ impl AgentConfig {
             cancel,
             max_steps: DEFAULT_MAX_STEPS,
             first_step: 1,
+            trace: ports.trace,
+            trace_context: None,
         }
     }
 
     pub fn with_first_step(mut self, first_step: usize) -> Self {
         self.first_step = first_step.max(1);
+        self
+    }
+
+    pub fn with_trace_context(mut self, context: AgentTraceContext) -> Self {
+        self.trace_context = Some(context);
         self
     }
 }
@@ -390,7 +419,7 @@ impl Agent {
                 tools: tool_defs.clone(),
             };
 
-            let response = match self.stream_once(step_index, req, on_event).await {
+            let response = match self.stream_once(&step_id, step_index, req, on_event).await {
                 Ok(response) => response,
                 Err(AgentError::Cancelled(_)) => {
                     self.record_step_failed(&step_id, step_index, "cancelled")
@@ -494,33 +523,121 @@ impl Agent {
     /// 单次流式调用 provider,实时转发事件,返回累积响应。
     async fn stream_once(
         &self,
+        step_id: &StepId,
         step_index: usize,
         req: ModelRequest,
         on_event: &mut impl FnMut(AgentEvent),
     ) -> Result<ModelResponse, AgentError> {
-        let mut provider_stream = self
-            .config
-            .provider
-            .invoke(req, ModelCallOptions::new(new_runtime_id("attempt")))
-            .await?;
+        let model_attempt_id = new_runtime_id("model-attempt");
+        let started_at = now_unix_ms();
+        let transport_observer = self.config.trace_context.as_ref().map(|context| {
+            Arc::new(TraceTransportObserver::new(
+                Arc::clone(&self.config.trace),
+                context.clone(),
+                step_id.to_string(),
+            ))
+        });
+        if let Some(context) = &self.config.trace_context {
+            self.config.trace.record(TraceSignal::Start(TraceSpanStart {
+                trace_id: context.trace_id.clone(),
+                span_id: model_attempt_id.clone(),
+                parent_span_id: Some(step_id.to_string()),
+                span_kind: TraceSpanKind::ModelAttempt,
+                span_name: "model.attempt".to_string(),
+                status: TraceSpanStatus::Running,
+                session_id: context.session_id.clone(),
+                turn_id: self.config.turn_id.to_string(),
+                step_id: Some(step_id.to_string()),
+                tool_run_id: None,
+                started_at_unix_ms: started_at,
+                attributes: serde_json::json!({
+                    "providerId": context.provider_id,
+                    "model": self.config.model,
+                    "stepIndex": step_index
+                }),
+            }));
+        }
+        let mut options = ModelCallOptions::new(model_attempt_id.clone());
+        if let Some(observer) = &transport_observer {
+            let observer: Arc<dyn ModelTransportObserver> = observer.clone();
+            options = options.with_transport_observer(observer);
+        }
+        let mut provider_stream = match self.config.provider.invoke(req, options).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                self.finish_model_error(&model_attempt_id, &error, now_unix_ms());
+                return Err(error.into());
+            }
+        };
         let mut lifecycle = StreamLifecycle::new();
+        let mut first_output_at = None;
         on_event(AgentEvent::LlmStepStart { index: step_index });
 
         let response = loop {
             tokio::select! {
                 biased;
-                _ = self.config.cancel.cancelled() => return Err(AgentError::Cancelled(Vec::new())),
+                _ = self.config.cancel.cancelled() => {
+                    let ended_at = now_unix_ms();
+                    if let Some(observer) = &transport_observer {
+                        observer.cancel_active(ended_at);
+                    }
+                    self.config.trace.record(TraceSignal::Update(TraceSpanUpdate {
+                        span_id: model_attempt_id.clone(),
+                        status: TraceSpanStatus::Cancelled,
+                        occurred_at_unix_ms: ended_at,
+                        ended: true,
+                        attributes: serde_json::json!({}),
+                        error_type: Some("model_cancelled".to_string()),
+                        error_code: Some("cancelled".to_string()),
+                        error_message: Some("model call cancelled".to_string()),
+                    }));
+                    return Err(AgentError::Cancelled(Vec::new()));
+                },
                 item = provider_stream.next() => match item {
                     Some(Ok(ModelEvent::ResponseCompleted { response })) => break *response,
-                    Some(Ok(event)) => forward_event(event, on_event, &mut lifecycle),
-                    Some(Err(error)) => return Err(error.into()),
-                    None => return Err(ModelError::protocol("provider stream ended without ResponseCompleted").into()),
+                    Some(Ok(event)) => {
+                        first_output_at.get_or_insert_with(now_unix_ms);
+                        forward_event(event, on_event, &mut lifecycle)
+                    },
+                    Some(Err(error)) => {
+                        self.finish_model_error(&model_attempt_id, &error, now_unix_ms());
+                        return Err(error.into());
+                    },
+                    None => {
+                        let error = ModelError::protocol("provider stream ended without ResponseCompleted");
+                        self.finish_model_error(&model_attempt_id, &error, now_unix_ms());
+                        return Err(error.into());
+                    },
                 },
             }
         };
         lifecycle.close_open(on_event);
         let reason = response.finish_reason.as_str().to_string();
         let usage = response.usage;
+        let ended_at = now_unix_ms();
+        self.config
+            .trace
+            .record(TraceSignal::Update(TraceSpanUpdate {
+                span_id: model_attempt_id,
+                status: TraceSpanStatus::Succeeded,
+                occurred_at_unix_ms: ended_at,
+                ended: true,
+                attributes: serde_json::json!({
+                    "finishReason": reason.clone(),
+                    "rawFinishReason": response.raw_finish_reason.clone(),
+                    "responseId": response.response_id.clone(),
+                    "providerRequestId": response.provider_request_id.clone(),
+                    "firstOutputMs": first_output_at.map(|at| at.saturating_sub(started_at).max(0)),
+                    "inputTokens": usage.and_then(|usage| usage.input_tokens),
+                    "outputTokens": usage.and_then(|usage| usage.output_tokens),
+                    "totalTokens": usage.and_then(|usage| usage.total_tokens),
+                    "cachedInputTokens": usage.and_then(|usage| usage.cached_input_tokens),
+                    "reasoningTokens": usage.and_then(|usage| usage.reasoning_tokens)
+                }),
+                error_type: None,
+                error_code: None,
+                error_message: None,
+            }));
         on_event(AgentEvent::LlmStepFinish {
             index: step_index,
             reason: reason.clone(),
@@ -528,6 +645,30 @@ impl Agent {
         });
         on_event(AgentEvent::LlmFinish { reason, usage });
         Ok(response)
+    }
+
+    fn finish_model_error(&self, span_id: &str, error: &ModelError, ended_at: i64) {
+        self.config
+            .trace
+            .record(TraceSignal::Update(TraceSpanUpdate {
+                span_id: span_id.to_string(),
+                status: if error.kind == openwork_protocol::model::ModelErrorCode::Cancelled {
+                    TraceSpanStatus::Cancelled
+                } else {
+                    TraceSpanStatus::Failed
+                },
+                occurred_at_unix_ms: ended_at,
+                ended: true,
+                attributes: serde_json::json!({
+                    "failurePhase": error.phase,
+                    "deliveryState": error.delivery,
+                    "httpStatus": error.http_status,
+                    "providerRequestId": error.provider_request_id
+                }),
+                error_type: Some("model_error".to_string()),
+                error_code: Some(enum_value(&error.kind)),
+                error_message: Some(error.message.clone()),
+            }));
     }
 
     async fn execute_new_tool_call(
@@ -747,6 +888,130 @@ impl Agent {
     }
 }
 
+struct TraceTransportObserver {
+    trace: Arc<dyn TraceRecorderPort>,
+    context: AgentTraceContext,
+    step_id: String,
+    active: StdMutex<HashSet<String>>,
+}
+
+impl TraceTransportObserver {
+    fn new(trace: Arc<dyn TraceRecorderPort>, context: AgentTraceContext, step_id: String) -> Self {
+        Self {
+            trace,
+            context,
+            step_id,
+            active: StdMutex::new(HashSet::new()),
+        }
+    }
+
+    fn span_id(model_attempt_id: &str, transport_attempt: usize) -> String {
+        format!("{model_attempt_id}:transport:{transport_attempt}")
+    }
+
+    fn cancel_active(&self, ended_at: i64) {
+        let active = self
+            .active
+            .lock()
+            .expect("transport trace active set poisoned")
+            .drain()
+            .collect::<Vec<_>>();
+        for span_id in active {
+            self.trace.record(TraceSignal::Update(TraceSpanUpdate {
+                span_id,
+                status: TraceSpanStatus::Cancelled,
+                occurred_at_unix_ms: ended_at,
+                ended: true,
+                attributes: serde_json::json!({}),
+                error_type: Some("transport_cancelled".to_string()),
+                error_code: Some("cancelled".to_string()),
+                error_message: Some("transport attempt cancelled".to_string()),
+            }));
+        }
+    }
+}
+
+impl ModelTransportObserver for TraceTransportObserver {
+    fn observe(&self, signal: ModelTransportSignal) {
+        let occurred_at = now_unix_ms();
+        let span_id = Self::span_id(&signal.model_attempt_id, signal.transport_attempt);
+        match signal.kind {
+            ModelTransportSignalKind::Started => {
+                self.active
+                    .lock()
+                    .expect("transport trace active set poisoned")
+                    .insert(span_id.clone());
+                self.trace.record(TraceSignal::Start(TraceSpanStart {
+                    trace_id: self.context.trace_id.clone(),
+                    span_id,
+                    parent_span_id: Some(signal.model_attempt_id),
+                    span_kind: TraceSpanKind::TransportAttempt,
+                    span_name: "model.transport_attempt".to_string(),
+                    status: TraceSpanStatus::Running,
+                    session_id: self.context.session_id.clone(),
+                    turn_id: self.context.trace_id.clone(),
+                    step_id: Some(self.step_id.clone()),
+                    tool_run_id: None,
+                    started_at_unix_ms: occurred_at,
+                    attributes: serde_json::json!({
+                        "providerId": self.context.provider_id,
+                        "transportAttempt": signal.transport_attempt
+                    }),
+                }));
+            }
+            ModelTransportSignalKind::Failed {
+                error,
+                retry_delay_ms,
+            } => {
+                self.active
+                    .lock()
+                    .expect("transport trace active set poisoned")
+                    .remove(&span_id);
+                self.trace.record(TraceSignal::Update(TraceSpanUpdate {
+                    span_id,
+                    status: TraceSpanStatus::Failed,
+                    occurred_at_unix_ms: occurred_at,
+                    ended: true,
+                    attributes: serde_json::json!({
+                        "transportAttempt": signal.transport_attempt,
+                        "retryDelayMs": retry_delay_ms,
+                        "willRetry": retry_delay_ms.is_some(),
+                        "httpStatus": error.http_status,
+                        "providerCode": error.provider_code,
+                        "providerRequestId": error.provider_request_id,
+                        "failurePhase": error.phase,
+                        "deliveryState": error.delivery
+                    }),
+                    error_type: Some("transport_error".to_string()),
+                    error_code: Some(enum_value(&error.kind)),
+                    error_message: Some(error.message),
+                }));
+            }
+            ModelTransportSignalKind::Succeeded {
+                provider_request_id,
+            } => {
+                self.active
+                    .lock()
+                    .expect("transport trace active set poisoned")
+                    .remove(&span_id);
+                self.trace.record(TraceSignal::Update(TraceSpanUpdate {
+                    span_id,
+                    status: TraceSpanStatus::Succeeded,
+                    occurred_at_unix_ms: occurred_at,
+                    ended: true,
+                    attributes: serde_json::json!({
+                        "transportAttempt": signal.transport_attempt,
+                        "providerRequestId": provider_request_id
+                    }),
+                    error_type: None,
+                    error_code: None,
+                    error_message: None,
+                }));
+            }
+        }
+    }
+}
+
 fn assistant_content(response: &ModelResponse) -> Vec<ContentBlock> {
     let mut content = Vec::new();
     if response.provider_opaque_blocks.is_empty() {
@@ -804,6 +1069,35 @@ fn tool_result_state(status: ObservationStatus) -> ToolResultState {
 
 fn new_runtime_id(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or(i64::MAX)
+}
+
+fn enum_value(value: &ModelErrorCode) -> String {
+    match value {
+        ModelErrorCode::Authentication => "authentication",
+        ModelErrorCode::PermissionDenied => "permission_denied",
+        ModelErrorCode::InvalidRequest => "invalid_request",
+        ModelErrorCode::ModelNotFound => "model_not_found",
+        ModelErrorCode::CapabilityUnsupported => "capability_unsupported",
+        ModelErrorCode::RateLimited => "rate_limited",
+        ModelErrorCode::QuotaExhausted => "quota_exhausted",
+        ModelErrorCode::Overloaded => "overloaded",
+        ModelErrorCode::Timeout => "timeout",
+        ModelErrorCode::Network => "network",
+        ModelErrorCode::ServerError => "server_error",
+        ModelErrorCode::ContentFiltered => "content_filtered",
+        ModelErrorCode::ProtocolError => "protocol_error",
+        ModelErrorCode::Cancelled => "cancelled",
+        ModelErrorCode::Unknown => "unknown",
+    }
+    .to_string()
 }
 
 fn observation_content(observation: &Observation) -> Vec<ContentBlock> {

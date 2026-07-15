@@ -48,6 +48,8 @@ pub struct NewMessage {
 pub struct SessionMessage {
     pub id: String,
     pub session_id: String,
+    /// Aggregate id of the Turn that recorded this message.
+    pub turn_id: String,
     pub role: Role,
     pub parts: Vec<ContentBlock>,
     pub seq: i64,

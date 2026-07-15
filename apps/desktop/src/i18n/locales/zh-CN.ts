@@ -58,6 +58,12 @@ export const zhCN = {
     providerRequired: '先在设置中配置并启用一个模型服务商，然后开始新的编码会话。',
     waiting: '正在等待响应',
   },
+  trace: {
+    title: '运行 Trace', openDetail: '查看本轮运行详情', close: '关闭 Trace', loading: '正在加载运行详情……',
+    unknownModel: '未知模型', duration: '耗时', retries: '重试', errors: '错误', timeline: '运行时间线',
+    toolRun: '工具：{{name}}',
+    kind: { turn: '本轮运行', step: 'Agent 步骤', model_attempt: '模型调用', transport_attempt: '网络请求', tool_run: '工具调用', approval: '审批等待', recovery: '恢复运行' },
+  },
   settings: {
     title: '设置',
     models: {

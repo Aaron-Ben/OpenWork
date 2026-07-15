@@ -7,6 +7,7 @@ members = [
   "crates/openwork-execution",
   "crates/openwork-providers",
   "crates/openwork-persistence",
+  "crates/openwork-observability",
   "crates/openwork-workspace",
   "apps/desktop/src-tauri",
 ]
@@ -24,6 +25,7 @@ openwork-capabilities = { path = "crates/openwork-capabilities" }
 openwork-execution = { path = "crates/openwork-execution" }
 openwork-providers = { path = "crates/openwork-providers" }
 openwork-persistence = { path = "crates/openwork-persistence" }
+openwork-observability = { path = "crates/openwork-observability" }
 openwork-workspace = { path = "crates/openwork-workspace" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }

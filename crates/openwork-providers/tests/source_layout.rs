@@ -128,6 +128,7 @@ fn provider_streaming_is_pull_based_without_sync_callback_bridge() {
     assert!(retry.contains("stream::try_unfold"));
     assert!(!src.join("gateway/client.rs").exists());
     assert!(!src.join("gateway/transport_signal.rs").exists());
+    assert!(retry.contains("options.observe_transport"));
 
     for entry in walk_rs_files(&src) {
         let source = std::fs::read_to_string(&entry).unwrap();
@@ -135,7 +136,6 @@ fn provider_streaming_is_pull_based_without_sync_callback_bridge() {
         assert!(!source.contains("sync_channel"));
         assert!(!source.contains("EventCallback"));
         assert!(!source.contains("model_stream_from_callback"));
-        assert!(!source.contains("ModelTransportSignal"));
     }
 }
 

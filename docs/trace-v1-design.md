@@ -1,7 +1,9 @@
 # OpenWork Trace V1 设计
 
-> 状态：实现中  
-> 范围：本地桌面端的单 Session、单 Turn 执行诊断  
+> 状态：已实现
+>
+> 范围：本地桌面端的单 Session、单 Turn 执行诊断
+>
 > 非目标：LangSmith 式团队可观测平台、Eval 平台或分布式追踪平台
 
 ## 1. 为什么现在需要 Trace
@@ -219,17 +221,16 @@ AI 回答下显示：
 右侧面板结构：
 
 ```text
-Header：状态、模型、总耗时、Token、重试、错误
-├── 左侧：Turn -> Step -> Model/Tool/Approval/Recovery
-└── 右侧：选中 Span 的语义详情
+Header：模型、总耗时、重试、错误
+└── Turn -> Step -> Model/Transport/Tool/Approval/Recovery 时间线
 ```
 
-V1 窄窗口可以改为上下布局。详情面板加载轻量 Span 列表；工具参数和 Observation 从现有 Turn Snapshot 关联，不在 Trace API 中重复返回。
+详情面板加载轻量 Span 列表，并以内联方式显示归一化错误。工具参数和 Observation 从现有 Turn Snapshot 关联，不在 Trace API 中重复返回。
 
 ### 9.3 导航
 
 - 点击 AI 回答下方摘要，打开对应 Turn；
-- 点击工具活动行，后续可以定位对应 Tool Span，本次至少保证 Trace 树内可选择；
+- 点击工具活动行并定位对应 Tool Span 属于后续增强；
 - 会话顶部 `...` 的 Session Trace 列表不属于首个实现切片，等单 Turn 详情稳定后添加。
 
 ## 10. 模块所有权

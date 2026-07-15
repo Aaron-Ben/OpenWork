@@ -10,8 +10,12 @@ openwork-execution = { workspace = true }
 openwork-protocol = { workspace = true }
 openwork-providers = { workspace = true }
 openwork-persistence = { workspace = true }
+openwork-observability = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }

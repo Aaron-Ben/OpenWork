@@ -4,7 +4,8 @@ mod agent;
 mod approval;
 
 pub use agent::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentPorts, ApprovalRecovery, RunResult,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentPorts, AgentTraceContext, ApprovalRecovery,
+    RunResult,
 };
 pub use approval::{
     ApprovalCommandError, ApprovalState, ApprovalWaitOutcome, TurnCommandHandle, TurnCommandInbox,

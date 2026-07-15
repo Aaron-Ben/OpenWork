@@ -14,7 +14,7 @@ export function applyEvent(
   const exists = messages.some((item) => item.id === requestId)
   const base: ChatItem[] = exists
     ? messages
-    : [...messages, { id: requestId, role: 'assistant', parts: [], isStreaming: true }]
+    : [...messages, { id: requestId, turnId: requestId, role: 'assistant', parts: [], isStreaming: true }]
 
   switch (payload.event) {
     case 'text_delta': {

@@ -162,6 +162,7 @@ impl SessionStore {
             .map(|(index, (event, payload))| SessionMessage {
                 id: payload.message_id,
                 session_id: payload.session_id,
+                turn_id: event.aggregate_id.clone(),
                 role: payload.role,
                 parts: payload.parts,
                 seq: index as i64 + 1,

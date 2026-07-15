@@ -27,6 +27,12 @@ export const enUS = {
     readyHelp: 'Start a new coding conversation. OpenWork is ready to help you build, debug, and understand your project.',
     providerRequired: 'Configure and enable a model provider in Settings before starting a coding conversation.', waiting: 'Waiting for response',
   },
+  trace: {
+    title: 'Run trace', openDetail: 'View run details', close: 'Close trace', loading: 'Loading run details…',
+    unknownModel: 'Unknown model', duration: 'Duration', retries: 'Retries', errors: 'Errors', timeline: 'Timeline',
+    toolRun: 'Tool: {{name}}',
+    kind: { turn: 'Turn', step: 'Agent step', model_attempt: 'Model call', transport_attempt: 'Network request', tool_run: 'Tool call', approval: 'Approval wait', recovery: 'Recovery' },
+  },
   settings: {
     title: 'Settings',
     models: {

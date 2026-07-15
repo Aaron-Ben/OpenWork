@@ -6,6 +6,7 @@ export type ApprovalPolicy = typeof DEFAULT_APPROVAL_POLICY
 /// 前端渲染单元:一条消息(user/assistant/tool)。`parts` 为有序 ContentBlock。
 export interface ChatItem {
   id: string
+  turnId?: string
   role: 'user' | 'assistant' | 'tool'
   parts: ContentBlock[]
   model?: string

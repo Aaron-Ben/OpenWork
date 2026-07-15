@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use futures_util::{StreamExt, stream};
 use openwork_protocol::model::{
-    ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest, ModelStream, RetryHint,
+    ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest, ModelStream,
+    ModelTransportSignalKind, RetryHint,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,18 +125,46 @@ impl RetryStreamState {
 
     async fn prepare_retry(&mut self, error: ModelError) -> Result<(), ModelError> {
         if self.attempt >= self.options.max_transport_attempts {
+            self.options.observe_transport(
+                self.attempt,
+                ModelTransportSignalKind::Failed {
+                    error: error.clone(),
+                    retry_delay_ms: None,
+                },
+            );
             return Err(error);
         }
         let RetryDecision::RetryAfter(delay) =
             self.policy
                 .decision(self.attempt, &error, self.semantic_output_emitted)
         else {
+            self.options.observe_transport(
+                self.attempt,
+                ModelTransportSignalKind::Failed {
+                    error: error.clone(),
+                    retry_delay_ms: None,
+                },
+            );
             return Err(error);
         };
         if tokio::time::Instant::now() + delay >= self.deadline() {
+            self.options.observe_transport(
+                self.attempt,
+                ModelTransportSignalKind::Failed {
+                    error: error.clone(),
+                    retry_delay_ms: None,
+                },
+            );
             return Err(error);
         }
 
+        self.options.observe_transport(
+            self.attempt,
+            ModelTransportSignalKind::Failed {
+                error,
+                retry_delay_ms: Some(delay.as_millis().min(u64::MAX as u128) as u64),
+            },
+        );
         self.current = None;
         tokio::time::sleep(delay).await;
         self.attempt += 1;
@@ -186,6 +215,9 @@ impl ModelPort for RetryingModelPort {
 
                 loop {
                     if state.current.is_none() {
+                        state
+                            .options
+                            .observe_transport(state.attempt, ModelTransportSignalKind::Started);
                         let result = tokio::time::timeout_at(
                             deadline,
                             state
@@ -218,6 +250,18 @@ impl ModelPort for RetryingModelPort {
                     match next {
                         Some(Ok(event)) => {
                             if matches!(event, ModelEvent::ResponseCompleted { .. }) {
+                                let provider_request_id = match &event {
+                                    ModelEvent::ResponseCompleted { response } => {
+                                        response.provider_request_id.clone()
+                                    }
+                                    _ => None,
+                                };
+                                state.options.observe_transport(
+                                    state.attempt,
+                                    ModelTransportSignalKind::Succeeded {
+                                        provider_request_id,
+                                    },
+                                );
                                 state.completed = true;
                                 state.current = None;
                             } else {

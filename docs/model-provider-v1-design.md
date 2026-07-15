@@ -320,7 +320,7 @@ pub enum ModelEvent {
 - Recorded Event sequence
 - UI `done/error`
 
-这些内容将在 M7 由 Core/App 的 Recorded Event 或 Telemetry 合同单独定义，Provider 不直接写数据库。当前不公开尚无消费者的 `ModelTransportSignal` 占位类型，避免把未接入的 Attempt 可观测性误描述为已实现能力。
+这些内容由 Core/App 的 Recorded Event 或 Trace 合同定义，Provider 不直接写数据库。当前 Retry Gateway 会通过 `ModelTransportObserver` 发出每次真实请求的 `ModelTransportSignal`，由 `openwork-core` 关联到 Model Attempt，并由 `openwork-observability` 以 best-effort 方式记录；它不是同步 Callback 桥接，也不参与业务控制流。
 
 ### 6.5 Model Response
 

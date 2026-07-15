@@ -134,6 +134,8 @@ async fn turn_message_events_replace_messages_table_and_replay_in_order() {
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, Role::User);
     assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[0].turn_id, turn_id);
+    assert_eq!(messages[1].turn_id, messages[0].turn_id);
     assert_eq!(messages[0].seq, 1);
     assert_eq!(messages[1].seq, 2);
 }

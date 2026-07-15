@@ -28,7 +28,7 @@ interface SessionStoreState {
   reload: (id: string) => Promise<void>
   clearSelection: () => void
 
-  pushUserMessage: (sessionId: string, text: string) => void
+  pushUserMessage: (sessionId: string, turnId: string, text: string) => void
   ensureStreamingItem: (sessionId: string, requestId: string, model?: string) => void
   applyStreamEvent: (sessionId: string, payload: TurnLiveEvent) => void
   finishStreaming: (sessionId: string, requestId: string) => void
@@ -45,7 +45,7 @@ function toChatItems(messages: SessionMessage[]): ChatItem[] {
         message.role === 'user' || message.role === 'assistant' || message.role === 'tool',
     )
     .map((message) => {
-      return { id: message.id, role: message.role, parts: message.parts }
+      return { id: message.id, turnId: message.turnId, role: message.role, parts: message.parts }
     })
 }
 
@@ -160,11 +160,12 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
 
   clearSelection: () => set({ activeSessionId: null }),
 
-  pushUserMessage: (sessionId, text) => {
+  pushUserMessage: (sessionId, turnId, text) => {
     set((state) => {
       const messages = state.messagesBySession[sessionId] ?? []
       const item: ChatItem = {
         id: `user-${crypto.randomUUID()}`,
+        turnId,
         role: 'user',
         parts: [{ type: 'text', text }],
       }
@@ -180,6 +181,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       if (messages.some((item) => item.id === requestId)) return state
       const item: ChatItem = {
         id: requestId,
+        turnId: requestId,
         role: 'assistant',
         parts: [],
         isStreaming: true,

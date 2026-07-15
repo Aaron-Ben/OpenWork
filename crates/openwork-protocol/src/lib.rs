@@ -4,4 +4,5 @@ pub mod domain;
 pub mod journal;
 pub mod model;
 pub mod provider;
+pub mod trace;
 pub mod turn;

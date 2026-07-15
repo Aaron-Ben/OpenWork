@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { AnimatePresence } from 'motion/react'
 
 import { sessionsApi } from '../api/sessions'
 import { ApprovalDialog } from '../components/chat/ApprovalDialog'
@@ -13,14 +14,18 @@ import {
 import { ToolActivityList } from '../components/chat/ToolActivityList'
 import { mergeToolMessages } from '../components/chat/toolActivity'
 import { UserMessage } from '../components/chat/UserMessage'
+import { TurnTracePanel } from '../components/trace/TurnTracePanel'
 import { useActiveProvider } from '../stores/providerStore'
 import { useSessionStore, useActiveSessionMessages } from '../stores/sessionStore'
 import { DEFAULT_APPROVAL_POLICY } from '../type/chat'
+import type { TurnTraceSummary } from '../type/trace'
 
 export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState('')
+  const [selectedTraceTurnId, setSelectedTraceTurnId] = useState<string | null>(null)
+  const [traceSummaries, setTraceSummaries] = useState<Record<string, TurnTraceSummary>>({})
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messages = useActiveSessionMessages()
   const displayMessages = useMemo(() => mergeToolMessages(messages), [messages])
@@ -40,13 +45,33 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id])
 
+  useEffect(() => {
+    setSelectedTraceTurnId(null)
+    if (!sessionId) {
+      setTraceSummaries({})
+      return
+    }
+    let current = true
+    void sessionsApi.traceSession(sessionId).then((summaries) => {
+      if (!current) return
+      setTraceSummaries(
+        Object.fromEntries(summaries.map((summary) => [summary.turnId, summary])),
+      )
+    }).catch(() => {
+      if (current) setTraceSummaries({})
+    })
+    return () => {
+      current = false
+    }
+  }, [sessionId, activeStream?.requestId])
+
   async function send() {
     const text = draft.trim()
     if (!text || isSending || !active || !model || !sessionId) return
     const requestId = crypto.randomUUID()
     setDraft('')
     // 乐观:立即显示用户消息 + 临时 assistant item + 标记 in-flight。
-    pushUserMessage(sessionId, text)
+    pushUserMessage(sessionId, requestId, text)
     ensureStreamingItem(sessionId, requestId, model)
     setActiveStream({ sessionId, requestId })
     try {
@@ -86,6 +111,8 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
                       parts={message.parts}
                       model={message.model}
                       isStreaming={message.isStreaming}
+                      traceSummary={message.turnId ? traceSummaries[message.turnId] : undefined}
+                      onOpenTrace={message.turnId ? () => setSelectedTraceTurnId(message.turnId!) : undefined}
                     />
                   )
 
@@ -102,6 +129,15 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
           )}
         </div>
         <ConversationNavigator turns={turns} scrollContainerRef={scrollContainerRef} />
+        <AnimatePresence>
+          {selectedTraceTurnId ? (
+            <TurnTracePanel
+              key={selectedTraceTurnId}
+              turnId={selectedTraceTurnId}
+              onClose={() => setSelectedTraceTurnId(null)}
+            />
+          ) : null}
+        </AnimatePresence>
       </div>
 
       <ChatInput

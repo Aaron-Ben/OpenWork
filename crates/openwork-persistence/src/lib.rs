@@ -10,7 +10,8 @@ pub use crypto::{API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError};
 pub use postgres::{
     DATABASE_INFRA_MIGRATIONS, DROP_LEGACY_SESSION_MIGRATIONS, DatabaseConfig, PROVIDER_MIGRATIONS,
     PostgresEventJournal, PostgresPersistence, PostgresPersistenceError,
-    PostgresProviderRepository, RECORDED_EVENT_MIGRATIONS,
+    PostgresProviderRepository, PostgresTraceRepository, RECORDED_EVENT_MIGRATIONS,
+    TRACE_SPAN_MIGRATIONS,
 };
 pub use session::{
     JournalTurnRecorder, NewMessage, PendingApprovalSnapshot, Session, SessionError, SessionInput,

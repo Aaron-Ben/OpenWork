@@ -1,5 +1,7 @@
 use openwork_persistence::SessionError;
-use openwork_protocol::{journal::EventJournalError, provider::ProviderRepositoryError};
+use openwork_protocol::{
+    journal::EventJournalError, provider::ProviderRepositoryError, trace::TraceRepositoryError,
+};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -113,6 +115,20 @@ impl From<EventJournalError> for ApplicationError {
             EventJournalError::Persistence { .. } => Self::new(
                 ApplicationErrorCode::DatabaseUnavailable,
                 "Event journal persistence is unavailable",
+            ),
+        }
+    }
+}
+
+impl From<TraceRepositoryError> for ApplicationError {
+    fn from(error: TraceRepositoryError) -> Self {
+        match error {
+            TraceRepositoryError::InvalidSpan { message } => {
+                Self::new(ApplicationErrorCode::InvalidRequest, message)
+            }
+            TraceRepositoryError::Persistence { .. } => Self::new(
+                ApplicationErrorCode::DatabaseUnavailable,
+                "Trace persistence is unavailable",
             ),
         }
     }

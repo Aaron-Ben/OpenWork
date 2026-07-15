@@ -26,6 +26,12 @@ export const zhTW = {
     readyHelp: '開始新的程式開發對話。OpenWork 已準備好協助你建置、除錯及梳理專案。',
     providerRequired: '請先在設定中配置並啟用模型供應商，再開始新的程式開發對話。', waiting: '正在等待回應',
   },
+  trace: {
+    title: '執行 Trace', openDetail: '查看本輪執行詳情', close: '關閉 Trace', loading: '正在載入執行詳情……',
+    unknownModel: '未知模型', duration: '耗時', retries: '重試', errors: '錯誤', timeline: '執行時間線',
+    toolRun: '工具：{{name}}',
+    kind: { turn: '本輪執行', step: 'Agent 步驟', model_attempt: '模型呼叫', transport_attempt: '網路請求', tool_run: '工具呼叫', approval: '審批等待', recovery: '恢復執行' },
+  },
   settings: {
     title: '設定',
     models: {

@@ -1,11 +1,15 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use openwork_capabilities::{CapabilityCatalog, CatalogError};
-use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent, AgentPorts, ApprovalRecovery};
+use openwork_core::{
+    Agent, AgentConfig, AgentError, AgentEvent, AgentPorts, AgentTraceContext, ApprovalRecovery,
+};
 use openwork_execution::{
     BuiltinActionInvoker, ExecutionContext, ExecutionService, PermissionProfile,
 };
+use openwork_observability::{TraceContext, TraceRuntime, TracingTurnRecorder};
 use openwork_persistence::{NewMessage, SessionError, SessionStore, TurnOutcome};
 use openwork_protocol::{
     approval::{ApprovalPolicy, ApprovalRequested, ResolveApproval},
@@ -13,6 +17,11 @@ use openwork_protocol::{
     domain::{ApprovalId, StepId, ToolRunId, TurnId},
     model::{ContentBlock, Message, Role},
     provider::{ProviderRepository, ProviderRepositoryError},
+    trace::{
+        TraceRecorderPort, TraceSignal, TraceSpanKind, TraceSpanStart, TraceSpanStatus,
+        TraceSpanUpdate,
+    },
+    turn::TurnRecorderPort,
 };
 use openwork_providers::ProviderFactory;
 use serde::{Deserialize, Serialize};
@@ -166,6 +175,7 @@ pub struct ChatRuntime {
     provider_factory: ProviderFactory,
     session_store: SessionStore,
     turn_supervisor: Arc<TurnSupervisor>,
+    trace: TraceRuntime,
 }
 
 impl ChatRuntime {
@@ -173,12 +183,14 @@ impl ChatRuntime {
         provider_repository: Arc<dyn ProviderRepository>,
         session_store: SessionStore,
         provider_factory: ProviderFactory,
+        trace: TraceRuntime,
     ) -> Self {
         Self {
             provider_repository,
             provider_factory,
             session_store,
             turn_supervisor: Arc::new(TurnSupervisor::default()),
+            trace,
         }
     }
 
@@ -215,6 +227,23 @@ impl ChatRuntime {
                 command.approval_id.to_string(),
             ));
         }
+        let pending_trace = pending.clone();
+        let trace_context = TraceContext {
+            trace_id: turn_id.to_string(),
+            session_id: snapshot.session_id.clone(),
+            turn_id: turn_id.to_string(),
+            provider_id: snapshot.provider_id.clone(),
+            model: snapshot.model.clone(),
+        };
+        self.start_turn_trace(
+            &trace_context,
+            snapshot.started_at.saturating_mul(1_000),
+            serde_json::json!({
+                "providerId": snapshot.provider_id,
+                "model": snapshot.model,
+                "recovered": true
+            }),
+        );
 
         let provider_config = self
             .provider_repository
@@ -251,18 +280,29 @@ impl ChatRuntime {
         let execution: Arc<dyn ExecutionPort> =
             Arc::new(ExecutionService::new(Arc::clone(&capabilities), invoker));
         let approval_commands = self.turn_supervisor.register(turn_id.clone())?;
-        let recorder = Arc::new(
+        let trace_port: Arc<dyn TraceRecorderPort> = Arc::new(self.trace.clone());
+        let durable_recorder: Arc<dyn TurnRecorderPort> = Arc::new(
             self.session_store
                 .turn_recorder(turn_id.as_str(), &snapshot.session_id),
         );
+        let recorder: Arc<dyn TurnRecorderPort> = Arc::new(TracingTurnRecorder::new(
+            durable_recorder,
+            Arc::clone(&trace_port),
+            trace_context.clone(),
+        ));
         let agent_config = AgentConfig::new(
             provider,
-            snapshot.model,
-            AgentPorts::new(capabilities, execution, recorder),
+            snapshot.model.clone(),
+            AgentPorts::new(capabilities, execution, recorder).with_trace(trace_port),
             turn_id.clone(),
             approval_commands,
             cancel,
-        );
+        )
+        .with_trace_context(AgentTraceContext {
+            trace_id: turn_id.to_string(),
+            session_id: snapshot.session_id.clone(),
+            provider_id: snapshot.provider_id.clone(),
+        });
         let mut agent = Agent::new(agent_config);
         let recovery = ApprovalRecovery {
             request: ApprovalRequested {
@@ -278,6 +318,36 @@ impl ChatRuntime {
             step_index: pending.step_index,
         };
         let session_id = snapshot.session_id;
+        let recovery_span_id = format!("{}:recovery:{}", turn_id, pending_trace.approval_id);
+        let recovery_started_at = now_unix_ms();
+        self.trace.record(TraceSignal::Start(TraceSpanStart {
+            trace_id: turn_id.to_string(),
+            span_id: recovery_span_id.clone(),
+            parent_span_id: Some(turn_id.to_string()),
+            span_kind: TraceSpanKind::Recovery,
+            span_name: "turn.recovery".to_string(),
+            status: TraceSpanStatus::Running,
+            session_id: session_id.clone(),
+            turn_id: turn_id.to_string(),
+            step_id: Some(pending_trace.step_id.clone()),
+            tool_run_id: Some(pending_trace.tool_run_id.clone()),
+            started_at_unix_ms: recovery_started_at,
+            attributes: serde_json::json!({
+                "reason": "pending_approval",
+                "approvalId": pending_trace.approval_id,
+                "stepIndex": pending_trace.step_index
+            }),
+        }));
+        self.trace.record(TraceSignal::Update(TraceSpanUpdate {
+            span_id: recovery_span_id,
+            status: TraceSpanStatus::Succeeded,
+            occurred_at_unix_ms: now_unix_ms(),
+            ended: true,
+            attributes: serde_json::json!({}),
+            error_type: None,
+            error_code: None,
+            error_message: None,
+        }));
         let event_turn_id = turn_id.to_string();
         let on_event = Arc::new(Mutex::new(on_event));
         let stream_on_event = Arc::clone(&on_event);
@@ -381,21 +451,36 @@ impl ChatRuntime {
             Arc::new(ExecutionService::new(Arc::clone(&capabilities), invoker));
         let turn_id = TurnId::new(request_id.clone());
         let approval_commands = self.turn_supervisor.register(turn_id.clone())?;
+        let trace_context = TraceContext {
+            trace_id: request_id.clone(),
+            session_id: session_id.clone(),
+            turn_id: request_id.clone(),
+            provider_id: request.provider_id.clone(),
+            model: request.model.clone(),
+        };
+        let trace_port: Arc<dyn TraceRecorderPort> = Arc::new(self.trace.clone());
+        let durable_recorder: Arc<dyn TurnRecorderPort> =
+            Arc::new(self.session_store.turn_recorder(&request_id, &session_id));
+        let tracing_recorder: Arc<dyn TurnRecorderPort> = Arc::new(TracingTurnRecorder::new(
+            durable_recorder,
+            Arc::clone(&trace_port),
+            trace_context.clone(),
+        ));
+        let approval_policy = request.approval_policy.unwrap_or_default();
         let mut agent_config = AgentConfig::new(
             provider,
-            request.model,
-            AgentPorts::new(
-                capabilities,
-                execution,
-                Arc::new(self.session_store.turn_recorder(&request_id, &session_id)),
-            ),
+            request.model.clone(),
+            AgentPorts::new(capabilities, execution, tracing_recorder).with_trace(trace_port),
             turn_id.clone(),
             approval_commands,
             cancel,
-        );
-        if let Some(approval_policy) = request.approval_policy {
-            agent_config.approval_policy = approval_policy;
-        }
+        )
+        .with_trace_context(AgentTraceContext {
+            trace_id: request_id.clone(),
+            session_id: session_id.clone(),
+            provider_id: request.provider_id.clone(),
+        });
+        agent_config.approval_policy = approval_policy;
 
         let mut agent = Agent::new(agent_config);
         if let Err(error) = self
@@ -413,6 +498,15 @@ impl ChatRuntime {
             let _ = self.turn_supervisor.remove(&turn_id);
             return Err(error.into());
         }
+        self.start_turn_trace(
+            &trace_context,
+            now_unix_ms(),
+            serde_json::json!({
+                "providerId": request.provider_id,
+                "model": request.model,
+                "approvalPolicy": approval_policy
+            }),
+        );
         let on_event = Arc::new(Mutex::new(on_event));
         let event_request_id = request_id.clone();
         let event_session_id = session_id.clone();
@@ -466,19 +560,39 @@ impl ChatRuntime {
             }
             Err(error) => {
                 let message = error.to_string();
-                self.session_store
-                    .finish_turn(
-                        &request_id,
-                        &session_id,
-                        Vec::new(),
-                        TurnOutcome::Failed {
-                            message: message.clone(),
-                        },
-                    )
-                    .await?;
+                self.finish_turn(
+                    &request_id,
+                    &session_id,
+                    TurnOutcome::Failed {
+                        message: message.clone(),
+                    },
+                )
+                .await?;
                 Err(ChatRuntimeError::Agent(error))
             }
         }
+    }
+
+    fn start_turn_trace(
+        &self,
+        context: &TraceContext,
+        started_at_unix_ms: i64,
+        attributes: serde_json::Value,
+    ) {
+        self.trace.record(TraceSignal::Start(TraceSpanStart {
+            trace_id: context.trace_id.clone(),
+            span_id: context.turn_id.clone(),
+            parent_span_id: None,
+            span_kind: TraceSpanKind::Turn,
+            span_name: "turn.run".to_string(),
+            status: TraceSpanStatus::Running,
+            session_id: context.session_id.clone(),
+            turn_id: context.turn_id.clone(),
+            step_id: None,
+            tool_run_id: None,
+            started_at_unix_ms,
+            attributes,
+        }));
     }
 
     async fn finish_turn(
@@ -487,10 +601,56 @@ impl ChatRuntime {
         session_id: &str,
         outcome: TurnOutcome,
     ) -> Result<(), SessionError> {
+        let (status, attributes, error_type, error_message) = match &outcome {
+            TurnOutcome::Completed => (
+                TraceSpanStatus::Succeeded,
+                serde_json::json!({"outcome": "completed"}),
+                None,
+                None,
+            ),
+            TurnOutcome::Cancelled => (
+                TraceSpanStatus::Cancelled,
+                serde_json::json!({"outcome": "cancelled"}),
+                None,
+                None,
+            ),
+            TurnOutcome::DoomLoop { repeated } => (
+                TraceSpanStatus::Failed,
+                serde_json::json!({"outcome": "doom_loop", "repeated": repeated}),
+                Some("doom_loop".to_string()),
+                Some(format!("repeated tool call: {repeated}")),
+            ),
+            TurnOutcome::Failed { message } => (
+                TraceSpanStatus::Failed,
+                serde_json::json!({"outcome": "failed"}),
+                Some("turn_failed".to_string()),
+                Some(message.clone()),
+            ),
+        };
         self.session_store
             .finish_turn(turn_id, session_id, Vec::new(), outcome)
-            .await
+            .await?;
+        self.trace.record(TraceSignal::Update(TraceSpanUpdate {
+            span_id: turn_id.to_string(),
+            status,
+            occurred_at_unix_ms: now_unix_ms(),
+            ended: true,
+            attributes,
+            error_type,
+            error_code: None,
+            error_message,
+        }));
+        self.trace.flush().await;
+        Ok(())
     }
+}
+
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or(i64::MAX)
 }
 
 fn emit_runtime_event(on_event: &Arc<Mutex<impl FnMut(TurnLiveEvent)>>, payload: TurnLiveEvent) {

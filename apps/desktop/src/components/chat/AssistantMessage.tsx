@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import type { ContentBlock } from '../../type/parts'
+import type { TurnTraceSummary } from '../../type/trace'
+import { TurnTraceSummaryButton } from '../trace/TurnTraceSummaryButton'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityList } from './ToolActivityList'
 
@@ -10,12 +12,16 @@ interface AssistantMessageProps {
   parts: ContentBlock[]
   isStreaming?: boolean
   model?: string
+  traceSummary?: TurnTraceSummary
+  onOpenTrace?: () => void
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
   parts,
   isStreaming = false,
   model,
+  traceSummary,
+  onOpenTrace,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const messageParts = parts.filter((part) => part.type !== 'tool_call' && part.type !== 'tool_result')
@@ -56,6 +62,9 @@ export const AssistantMessage = memo(function AssistantMessage({
           </div>
         ) : null}
         {toolParts.length > 0 ? <ToolActivityList parts={toolParts} /> : null}
+        {traceSummary && onOpenTrace ? (
+          <TurnTraceSummaryButton summary={traceSummary} onOpen={onOpenTrace} />
+        ) : null}
       </div>
     </div>
   )
