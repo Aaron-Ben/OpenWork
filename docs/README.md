@@ -28,6 +28,7 @@ Last reviewed: 2026-07-15
 
 - [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前可持久化 Turn 生命周期、Recorded/Live Event 边界、审批等待恢复、Replay 状态与崩溃窗口。
 - [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Session/Turn/Message、遗留表删除状态和未完成边界。
+- [trace-v1-design.md](trace-v1-design.md)：Trace V1 的诊断边界、Span 层级、持久化模型、前端范围和验收标准。
 
 ## 维护原则
 

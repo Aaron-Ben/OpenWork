@@ -10,7 +10,8 @@ use async_trait::async_trait;
 use futures_util::{Stream, StreamExt, stream};
 use openwork_protocol::model::{
     FinishReason, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent, ModelPort,
-    ModelRequest, ModelResponse, ModelStream, RetryHint,
+    ModelRequest, ModelResponse, ModelStream, ModelTransportObserver, ModelTransportSignal,
+    ModelTransportSignalKind, RetryHint,
 };
 use openwork_providers::{RetryDecision, RetryPolicy, RetryingModelPort};
 
@@ -126,6 +127,57 @@ async fn retrying_port_retries_transient_generate_failures() {
     assert!(
         matches!(completed, ModelEvent::ResponseCompleted { response } if response.text == "ok")
     );
+}
+
+#[derive(Default)]
+struct TransportSignalCollector {
+    signals: Mutex<Vec<ModelTransportSignal>>,
+}
+
+impl ModelTransportObserver for TransportSignalCollector {
+    fn observe(&self, signal: ModelTransportSignal) {
+        self.signals.lock().unwrap().push(signal);
+    }
+}
+
+#[tokio::test]
+async fn retrying_port_reports_each_real_transport_attempt() {
+    let collector = Arc::new(TransportSignalCollector::default());
+    let inner = Box::new(FlakyProvider {
+        attempts: AtomicUsize::new(0),
+    });
+    let policy = RetryPolicy::new(3, Duration::ZERO, Duration::ZERO).with_jitter(false);
+    let provider = RetryingModelPort::new(inner, policy);
+    let options = ModelCallOptions::new("model-attempt-1")
+        .with_transport_observer(collector.clone());
+
+    let mut stream = provider.invoke(request(), options).await.unwrap();
+    let _ = stream.next().await.unwrap().unwrap();
+
+    let signals = collector.signals.lock().unwrap();
+    assert_eq!(signals.len(), 6);
+    assert!(matches!(signals[0].kind, ModelTransportSignalKind::Started));
+    assert!(matches!(
+        signals[1].kind,
+        ModelTransportSignalKind::Failed {
+            retry_delay_ms: Some(0),
+            ..
+        }
+    ));
+    assert!(matches!(signals[2].kind, ModelTransportSignalKind::Started));
+    assert!(matches!(
+        signals[3].kind,
+        ModelTransportSignalKind::Failed {
+            retry_delay_ms: Some(0),
+            ..
+        }
+    ));
+    assert!(matches!(signals[4].kind, ModelTransportSignalKind::Started));
+    assert!(matches!(signals[5].kind, ModelTransportSignalKind::Succeeded { .. }));
+    assert!(signals
+        .iter()
+        .all(|signal| signal.model_attempt_id == "model-attempt-1"));
+    assert_eq!(signals[5].transport_attempt, 3);
 }
 
 struct InterruptedStreamProvider {
