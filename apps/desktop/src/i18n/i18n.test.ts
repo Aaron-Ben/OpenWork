@@ -22,6 +22,7 @@ describe('i18n', () => {
     expect(i18n.t('sidebar.newSession')).toBe('创建会话')
     expect(i18n.t('settings.models.title')).toBe('模型配置')
     expect(i18n.t('settings.appearance.system')).toBe('跟随系统')
+    expect(i18n.t('settings.trace.title')).toBe('运行追踪')
   })
 
   it('provides complete navigation labels in every supported language', () => {

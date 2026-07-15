@@ -61,3 +61,8 @@ export interface TurnTrace {
   summary: TurnTraceSummary
   spans: TraceSpan[]
 }
+
+export interface TraceListPage {
+  items: TurnTraceSummary[]
+  nextOffset: number | null
+}

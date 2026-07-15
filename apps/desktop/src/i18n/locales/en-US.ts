@@ -35,6 +35,17 @@ export const enUS = {
   },
   settings: {
     title: 'Settings',
+    trace: {
+      title: 'Run traces', description: 'Review recent run summaries across conversations and open a full timeline on demand.',
+      refresh: 'Refresh', search: 'Search run traces', searchPlaceholder: 'Search project, conversation, model, or Turn ID',
+      statusLabel: 'Run status', openDetail: 'View run details', loading: 'Loading…', loadMore: 'Load more',
+      empty: 'No matching run records.', unknownSession: 'Unknown conversation', unknownProject: 'Unknown project',
+      steps: '{{count}} steps', tools: '{{count}} tool calls', tokens: '{{count}} tokens', retryCount: '{{count}} retries', errorCount: '{{count}} errors',
+      status: {
+        all: 'All statuses', running: 'Running', waiting: 'Waiting', succeeded: 'Succeeded', failed: 'Failed',
+        cancelled: 'Cancelled', denied: 'Denied', outcome_unknown: 'Outcome unknown',
+      },
+    },
     models: {
       title: 'Model configuration', description: 'Add a model provider and activate a configuration to start a conversation.', providers: 'Model providers',
       addProvider: 'Add provider', empty: 'No model providers yet. Select “Add provider” to configure one.', active: 'Active',

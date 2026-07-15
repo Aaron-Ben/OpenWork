@@ -177,7 +177,10 @@ async fn service_pages_recent_turns_without_splitting_one_trace() {
     assert_eq!(first.items[0].turn_id, "turn-new");
     assert_eq!(first.next_offset, Some(1));
 
-    let second = service.list_recent(1, first.next_offset.unwrap()).await.unwrap();
+    let second = service
+        .list_recent(1, first.next_offset.unwrap())
+        .await
+        .unwrap();
     assert_eq!(second.items[0].turn_id, "turn-old");
     assert_eq!(second.next_offset, None);
 }

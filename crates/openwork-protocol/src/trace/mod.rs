@@ -154,4 +154,13 @@ pub trait TraceRepository: Send + Sync {
     async fn load_turn(&self, turn_id: &str) -> Result<Vec<TraceSpan>, TraceRepositoryError>;
 
     async fn load_session(&self, session_id: &str) -> Result<Vec<TraceSpan>, TraceRepositoryError>;
+
+    /// Loads complete traces for a page of recent root turn spans. Pagination
+    /// applies to turns rather than individual spans, so a trace is never split
+    /// across two pages.
+    async fn load_recent_turns(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<TraceSpan>, TraceRepositoryError>;
 }

@@ -35,6 +35,7 @@ pub fn run() {
             commands::session::session_rename,
             commands::trace::trace_session,
             commands::trace::trace_turn,
+            commands::trace::trace_list,
             commands::chat::chat_generate_stream,
             commands::chat::resolve_approval,
             commands::chat::chat_abort,

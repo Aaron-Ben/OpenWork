@@ -1,4 +1,4 @@
-use openwork_app::{OpenWorkApplication, TurnTrace, TurnTraceSummary};
+use openwork_app::{OpenWorkApplication, TraceListPage, TurnTrace, TurnTraceSummary};
 
 use crate::CommandError;
 
@@ -24,6 +24,20 @@ pub async fn trace_turn(
     application
         .traces()
         .load_turn(&turn_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+/// Pages complete recent Turn traces for the global Settings view.
+#[tauri::command]
+pub async fn trace_list(
+    application: tauri::State<'_, OpenWorkApplication>,
+    limit: u32,
+    offset: u32,
+) -> Result<TraceListPage, CommandError> {
+    application
+        .traces()
+        .list_recent(limit, offset)
         .await
         .map_err(CommandError::from)
 }

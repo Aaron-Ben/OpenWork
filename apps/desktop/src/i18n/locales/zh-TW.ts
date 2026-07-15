@@ -34,6 +34,17 @@ export const zhTW = {
   },
   settings: {
     title: '設定',
+    trace: {
+      title: '執行追蹤', description: '查看所有對話最近的執行摘要，並按需開啟完整時間線。',
+      refresh: '重新整理', search: '搜尋執行追蹤', searchPlaceholder: '搜尋專案、對話、模型或 Turn ID',
+      statusLabel: '執行狀態', openDetail: '查看執行詳情', loading: '正在載入……', loadMore: '載入更多',
+      empty: '沒有符合條件的執行記錄。', unknownSession: '未知對話', unknownProject: '未知專案',
+      steps: '{{count}} 個步驟', tools: '{{count}} 次工具呼叫', tokens: '{{count}} Tokens', retryCount: '{{count}} 次重試', errorCount: '{{count}} 個錯誤',
+      status: {
+        all: '全部狀態', running: '執行中', waiting: '等待中', succeeded: '已完成', failed: '失敗',
+        cancelled: '已取消', denied: '已拒絕', outcome_unknown: '結果未知',
+      },
+    },
     models: {
       title: '模型配置', description: '新增模型供應商並啟用一項配置，以開始對話。', providers: '模型供應商',
       addProvider: '新增供應商', empty: '尚未配置模型供應商。點選「新增供應商」開始配置。', active: '使用中',

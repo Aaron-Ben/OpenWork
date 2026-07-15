@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
+  Activity,
   ArrowLeft,
   Bot,
   Check,
@@ -143,6 +144,9 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           </SettingsNavItem>
           <SettingsNavItem active={view === 'settings-appearance'} icon={<Palette size={18} />} onClick={() => onNavigate('settings-appearance')}>
             {t('settings.appearance.title')}
+          </SettingsNavItem>
+          <SettingsNavItem active={view === 'settings-trace'} icon={<Activity size={18} />} onClick={() => onNavigate('settings-trace')}>
+            {t('settings.trace.title')}
           </SettingsNavItem>
         </nav>
       </motion.aside>

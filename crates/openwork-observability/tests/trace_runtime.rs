@@ -51,6 +51,14 @@ impl TraceRepository for MemoryTraceRepository {
             .cloned()
             .collect())
     }
+
+    async fn load_recent_turns(
+        &self,
+        _limit: u32,
+        _offset: u32,
+    ) -> Result<Vec<TraceSpan>, TraceRepositoryError> {
+        Ok(self.spans.lock().unwrap().values().cloned().collect())
+    }
 }
 
 #[tokio::test]

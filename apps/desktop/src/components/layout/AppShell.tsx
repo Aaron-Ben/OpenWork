@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ProviderSettings } from '../ProviderSettings'
 import { AppearanceSettings } from '../settings/AppearanceSettings'
+import { TraceSettings } from '../settings/TraceSettings'
 import { useChatStreamListener } from '../../hooks/useChatStreamListener'
 import { useSessionStore } from '../../stores/sessionStore'
 import { normalizeDirectoryPath, useProjectStore } from '../../stores/projectStore'
@@ -58,7 +59,9 @@ export function AppShell() {
               ? activeSessionTitle
               : view === 'settings-models'
                 ? t('settings.models.title')
-                : t('settings.appearance.title')
+                : view === 'settings-appearance'
+                  ? t('settings.appearance.title')
+                  : t('settings.trace.title')
           }
           sidebarExpanded={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen(true)}
@@ -70,10 +73,12 @@ export function AppShell() {
             <div className="h-full overflow-auto bg-paper">
               <ProviderSettings />
             </div>
-          ) : (
+          ) : view === 'settings-appearance' ? (
             <div className="h-full overflow-auto bg-paper">
               <AppearanceSettings />
             </div>
+          ) : (
+            <TraceSettings />
           )}
         </div>
       </section>

@@ -24,7 +24,9 @@ pub use provider_service::{
     ProviderTestResult,
 };
 pub use session_service::SessionApplicationService;
-pub use trace_service::{TraceApplicationService, TraceSpanView, TurnTrace, TurnTraceSummary};
+pub use trace_service::{
+    TraceApplicationService, TraceListPage, TraceSpanView, TurnTrace, TurnTraceSummary,
+};
 pub use turn_service::TurnApplicationService;
 pub use turn_supervisor::{TurnSupervisor, TurnSupervisorError};
 

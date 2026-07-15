@@ -2,11 +2,12 @@ use super::Migration;
 
 /// Best-effort diagnostic projection. Unlike `recorded_events`, rows are mutable
 /// because a running Span is completed with an UPSERT using the same span id.
-pub const TRACE_SPAN_MIGRATIONS: &[Migration] = &[Migration {
-    version: 202607150101,
-    name: "create_trace_spans",
-    statements: &[
-        r#"CREATE TABLE IF NOT EXISTS trace_spans (
+pub const TRACE_SPAN_MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 202607150101,
+        name: "create_trace_spans",
+        statements: &[
+            r#"CREATE TABLE IF NOT EXISTS trace_spans (
            span_id TEXT PRIMARY KEY,
            trace_id TEXT NOT NULL,
            parent_span_id TEXT,
@@ -45,8 +46,16 @@ pub const TRACE_SPAN_MIGRATIONS: &[Migration] = &[Migration {
            CONSTRAINT trace_spans_end_after_start
                CHECK (ended_at IS NULL OR ended_at >= started_at)
          )"#,
-        "CREATE INDEX IF NOT EXISTS idx_trace_spans_session_started ON trace_spans(session_id, started_at, span_id)",
-        "CREATE INDEX IF NOT EXISTS idx_trace_spans_turn_started ON trace_spans(turn_id, started_at, span_id)",
-        "CREATE INDEX IF NOT EXISTS idx_trace_spans_trace_parent ON trace_spans(trace_id, parent_span_id)",
-    ],
-}];
+            "CREATE INDEX IF NOT EXISTS idx_trace_spans_session_started ON trace_spans(session_id, started_at, span_id)",
+            "CREATE INDEX IF NOT EXISTS idx_trace_spans_turn_started ON trace_spans(turn_id, started_at, span_id)",
+            "CREATE INDEX IF NOT EXISTS idx_trace_spans_trace_parent ON trace_spans(trace_id, parent_span_id)",
+        ],
+    },
+    Migration {
+        version: 202607150102,
+        name: "index_recent_trace_turns",
+        statements: &[
+            "CREATE INDEX IF NOT EXISTS idx_trace_spans_kind_started ON trace_spans(span_kind, started_at DESC, turn_id)",
+        ],
+    },
+];

@@ -23,16 +23,22 @@ pub(crate) async fn run_migrations(
     .await?;
 
     for migration in migrations {
+        let mut transaction = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(migration.version)
+            .execute(&mut *transaction)
+            .await?;
+
         let exists: Option<i64> =
             sqlx::query_scalar("SELECT 1::BIGINT FROM schema_migrations WHERE version = $1")
                 .bind(migration.version)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *transaction)
                 .await?;
         if exists.is_some() {
+            transaction.rollback().await?;
             continue;
         }
 
-        let mut transaction = pool.begin().await?;
         for statement in migration.statements {
             sqlx::query(statement).execute(&mut *transaction).await?;
         }

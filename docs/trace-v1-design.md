@@ -2,7 +2,7 @@
 
 > 状态：已实现
 >
-> 范围：本地桌面端的单 Session、单 Turn 执行诊断
+> 范围：本地桌面端的全局 Turn 摘要检索、单 Session 摘要和单 Turn 执行诊断
 >
 > 非目标：LangSmith 式团队可观测平台、Eval 平台或分布式追踪平台
 
@@ -50,6 +50,10 @@ Trace 写入失败不能让 Agent Turn 失败。审批是否已批准、工具�
 ### 3.5 查看恢复链路
 
 作为用户，我希望应用重启并恢复待审批 Turn 后，Trace 仍属于原 Turn，并明确显示一次 Recovery。
+
+### 3.6 跨会话定位运行
+
+作为用户，我希望从“设置 → 运行追踪”查看所有会话最近的 Turn，按项目、会话、模型和状态筛选，再打开单 Turn 详情，而不必先找到原会话。
 
 ## 4. Trace 层级
 
@@ -129,7 +133,8 @@ V1 新增一张 `trace_spans` 表：
 - `(session_id, started_at)`：加载 Session 下的 Turn 摘要；
 - `(turn_id, started_at, span_id)`：加载一棵 Turn Trace；
 - `(trace_id, parent_span_id)`：构建父子树；
-- 失败 Span 的部分索引：后续出现全局失败查询需求时再添加。
+- `(span_kind, started_at)`：按根 Turn 时间加载全局摘要页；
+- 失败 Span 的部分索引：数据规模证明普通索引不足后再添加。
 
 Trace 使用 UPSERT：开始信号创建 `running` Span，结束信号以同一 `span_id` 更新终态。数据库中更早的 `started_at` 不能被恢复过程覆盖。
 
@@ -230,8 +235,13 @@ Header：模型、总耗时、重试、错误
 ### 9.3 导航
 
 - 点击 AI 回答下方摘要，打开对应 Turn；
+- 从“设置 → 运行追踪”进入跨会话列表；
+- 全局列表支持项目、会话、模型、Turn ID 关键字和运行状态筛选；
+- 点击全局列表项复用同一个 Turn 详情面板；
 - 点击工具活动行并定位对应 Tool Span 属于后续增强；
-- 会话顶部 `...` 的 Session Trace 列表不属于首个实现切片，等单 Turn 详情稳定后添加。
+- 会话顶部 `...` 的 Session Trace 列表暂不实现。
+
+全局查询以根 Turn 为分页单位，默认每页 50 条，服务端最大 100 条。Repository 先选择一页根 Turn，再加载这些 Turn 的全部子 Span，保证同一条 Trace 不跨页；设置页只保留摘要，完整 Span 在打开详情时按需加载。
 
 ## 10. 模块所有权
 
@@ -255,8 +265,8 @@ Trace 记录器必须是 Best effort。Core 和 Providers 不依赖 PostgreSQL�
 1. `trace_spans` migration 和 Repository；
 2. Turn、Step、Model Attempt、Tool Run、Approval、Recovery Span；
 3. Provider Gateway Transport Attempt/Retry 信号；
-4. Session 下 Trace 摘要查询和单 Turn Trace 查询；
-5. 会话内摘要和右侧详情面板；
+4. 全局、Session 下 Trace 摘要查询和单 Turn Trace 查询；
+5. 会话内摘要、设置页全局列表和右侧详情面板；
 6. Trace 在应用重启后仍可查询；
 7. 三种界面语言；
 8. Rust 单元/集成测试和前端组件测试。
@@ -268,7 +278,7 @@ Trace 记录器必须是 Best effort。Core 和 Providers 不依赖 PostgreSQL�
 - Dataset、Feedback、Annotation Queue 和 Eval；
 - 分布式 Trace；
 - OpenTelemetry 导出；
-- 全局 Trace 搜索；
+- 服务端全文检索和高级查询语法；
 - 完整 Prompt/Response 捕获。
 
 ## 12. 验收标准
@@ -283,3 +293,5 @@ Trace 记录器必须是 Best effort。Core 和 Providers 不依赖 PostgreSQL�
 8. 迁移可重复执行，旧数据库通过显式 migration 升级；
 9. Trace 中不存在 API Key、Authorization、完整 Prompt/Response；
 10. Rust 相关测试、前端测试、TypeScript 检查和生产构建通过。
+11. 设置页可跨会话查看最近 Trace，并按项目、会话、模型和状态筛选；
+12. 全局分页不会把同一 Turn 的子 Span 拆到不同页面。

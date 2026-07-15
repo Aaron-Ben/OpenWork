@@ -109,6 +109,43 @@ impl TraceRepository for PostgresTraceRepository {
     async fn load_session(&self, session_id: &str) -> Result<Vec<TraceSpan>, TraceRepositoryError> {
         load(&self.pool, "session_id", session_id).await
     }
+
+    async fn load_recent_turns(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<TraceSpan>, TraceRepositoryError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            r#"SELECT {SPAN_SELECT}
+               FROM trace_spans
+               WHERE turn_id IN (
+                 SELECT turn_id
+                 FROM trace_spans
+                 WHERE span_kind = 'turn'
+                 ORDER BY started_at DESC, turn_id
+                 LIMIT $1 OFFSET $2
+               )
+               ORDER BY (
+                 SELECT root.started_at
+                 FROM trace_spans AS root
+                 WHERE root.turn_id = trace_spans.turn_id
+                   AND root.span_kind = 'turn'
+                 LIMIT 1
+               ) DESC, started_at, span_id"#
+        );
+        sqlx::query_as::<_, TraceSpanRecord>(&sql)
+            .bind(i64::from(limit))
+            .bind(i64::from(offset))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence_error)?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect()
+    }
 }
 
 async fn load(

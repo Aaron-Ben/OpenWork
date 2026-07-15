@@ -2,8 +2,13 @@ use openwork_persistence::TRACE_SPAN_MIGRATIONS;
 
 #[test]
 fn trace_span_migration_is_a_diagnostic_projection_not_a_second_transcript() {
-    assert_eq!(TRACE_SPAN_MIGRATIONS.len(), 1);
-    let sql = TRACE_SPAN_MIGRATIONS[0].statements.join("\n");
+    assert_eq!(TRACE_SPAN_MIGRATIONS.len(), 2);
+    let sql = TRACE_SPAN_MIGRATIONS
+        .iter()
+        .flat_map(|migration| migration.statements)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
 
     assert!(sql.contains("CREATE TABLE IF NOT EXISTS trace_spans"));
     assert!(sql.contains("span_id TEXT PRIMARY KEY"));
@@ -21,6 +26,7 @@ fn trace_span_migration_is_a_diagnostic_projection_not_a_second_transcript() {
     assert!(sql.contains("jsonb_typeof(attributes_json) = 'object'"));
     assert!(sql.contains("idx_trace_spans_session_started"));
     assert!(sql.contains("idx_trace_spans_turn_started"));
+    assert!(sql.contains("idx_trace_spans_kind_started"));
 
     for forbidden in [
         "api_key",

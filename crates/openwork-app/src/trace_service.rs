@@ -30,6 +30,13 @@ pub struct TurnTraceSummary {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TraceListPage {
+    pub items: Vec<TurnTraceSummary>,
+    pub next_offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TurnTrace {
     pub summary: TurnTraceSummary,
     pub spans: Vec<TraceSpanView>,
@@ -89,6 +96,41 @@ impl TraceApplicationService {
         });
         Ok(summaries)
     }
+
+    pub async fn list_recent(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<TraceListPage, ApplicationError> {
+        let limit = limit.clamp(1, 100);
+        let requested = limit.saturating_add(1);
+        let mut summaries =
+            summarize_by_turn(self.repository.load_recent_turns(requested, offset).await?);
+        let has_more = summaries.len() > limit as usize;
+        summaries.truncate(limit as usize);
+        Ok(TraceListPage {
+            items: summaries,
+            next_offset: has_more.then(|| offset.saturating_add(limit)),
+        })
+    }
+}
+
+fn summarize_by_turn(spans: Vec<TraceSpan>) -> Vec<TurnTraceSummary> {
+    let mut by_turn = HashMap::<String, Vec<TraceSpan>>::new();
+    for span in spans {
+        by_turn.entry(span.turn_id.clone()).or_default().push(span);
+    }
+    let mut summaries = by_turn
+        .into_iter()
+        .map(|(turn_id, spans)| summarize(&turn_id, &spans))
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .started_at
+            .cmp(&left.started_at)
+            .then_with(|| left.turn_id.cmp(&right.turn_id))
+    });
+    summaries
 }
 
 fn summarize(turn_id: &str, spans: &[TraceSpan]) -> TurnTraceSummary {
