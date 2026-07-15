@@ -79,6 +79,7 @@ describe('Sidebar', () => {
     expect(markup).toContain('返回 OpenWork')
     expect(markup).toContain('模型配置')
     expect(markup).toContain('外观')
+    expect(markup).toContain('运行追踪')
     expect(markup).not.toContain('打开文件夹')
   })
 })

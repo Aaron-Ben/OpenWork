@@ -59,3 +59,73 @@ async fn trace_span_upsert_preserves_start_and_merges_diagnostic_attributes() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn recent_turn_query_pages_root_turns_and_keeps_their_children() {
+    let Some(config) = test_config(2) else {
+        return;
+    };
+    PostgresPersistence::migrate_database(config.clone())
+        .await
+        .unwrap();
+    let pool = connect_test_pool(&config).await.unwrap();
+    let repository = PostgresTraceRepository::new(pool.clone());
+    let suffix = Uuid::new_v4();
+    let session_id = format!("trace-page-session-{suffix}");
+
+    for (index, started_at) in [(1, 1_720_000_000_000), (2, 1_720_000_010_000)] {
+        let turn_id = format!("trace-page-turn-{suffix}-{index}");
+        repository
+            .upsert_span(TraceSpan {
+                trace_id: turn_id.clone(),
+                span_id: turn_id.clone(),
+                parent_span_id: None,
+                span_kind: TraceSpanKind::Turn,
+                span_name: "turn.run".to_string(),
+                status: TraceSpanStatus::Succeeded,
+                session_id: session_id.clone(),
+                turn_id: turn_id.clone(),
+                step_id: None,
+                tool_run_id: None,
+                started_at_unix_ms: started_at,
+                ended_at_unix_ms: Some(started_at + 1_000),
+                attributes: json!({"model": "glm-5.1"}),
+                error_type: None,
+                error_code: None,
+                error_message: None,
+            })
+            .await
+            .unwrap();
+        repository
+            .upsert_span(TraceSpan {
+                trace_id: turn_id.clone(),
+                span_id: format!("{turn_id}:step"),
+                parent_span_id: Some(turn_id.clone()),
+                span_kind: TraceSpanKind::Step,
+                span_name: "step.run".to_string(),
+                status: TraceSpanStatus::Succeeded,
+                session_id: session_id.clone(),
+                turn_id,
+                step_id: Some(format!("step-{index}")),
+                tool_run_id: None,
+                started_at_unix_ms: started_at + 100,
+                ended_at_unix_ms: Some(started_at + 900),
+                attributes: json!({"stepIndex": index}),
+                error_type: None,
+                error_code: None,
+                error_message: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    let page = repository.load_recent_turns(1, 0).await.unwrap();
+    assert_eq!(page.len(), 2);
+    assert!(page.iter().all(|span| span.turn_id.ends_with("-2")));
+
+    sqlx::query("DELETE FROM trace_spans WHERE session_id = $1")
+        .bind(session_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
