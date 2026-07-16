@@ -57,4 +57,13 @@ describe('ToolActivityList', () => {
     expect(markup).toContain('main.rs')
     expect(markup).not.toContain('rounded-lg border border-line bg-paper-hover')
   })
+
+  it('exposes a stable provider tool-call link into the matching trace span', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={parts} onOpenTrace={() => undefined} />,
+    )
+
+    expect(markup).toContain('data-open-tool-trace="call-bash"')
+    expect(markup).toContain('data-open-tool-trace="call-write"')
+  })
 })

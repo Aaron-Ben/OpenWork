@@ -25,7 +25,11 @@ pub use provider_service::{
 };
 pub use session_service::SessionApplicationService;
 pub use trace_service::{
-    TraceApplicationService, TraceListPage, TraceSpanView, TurnTrace, TurnTraceSummary,
+    TraceApplicationService, TraceApprovalDetail, TraceDataCompleteness, TraceDiagnosis,
+    TraceDiagnosisReason, TraceDiagnosisStatus, TraceListPage, TraceListQuery,
+    TraceModelAttemptDetail, TraceModelRequestSummary, TraceRecoveryDetail, TraceSpanDetail,
+    TraceSpanDetailView, TraceSpanView, TraceStepDetail, TraceTokenUsage, TraceToolRunDetail,
+    TraceTransportAttemptDetail, TraceTurnDetail, TurnTrace, TurnTraceSummary,
 };
 pub use turn_service::TurnApplicationService;
 pub use turn_supervisor::{TurnSupervisor, TurnSupervisorError};

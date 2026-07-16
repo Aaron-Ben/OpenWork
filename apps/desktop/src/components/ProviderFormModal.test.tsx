@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ProviderFormModal } from './ProviderFormModal'
+import { providerTestResultStyle, ProviderFormModal } from './ProviderFormModal'
 
 describe('ProviderFormModal layout', () => {
   it('uses a responsive two-column field grid without model hint copy', () => {
@@ -17,5 +17,14 @@ describe('ProviderFormModal layout', () => {
     expect(markup).not.toContain('协议')
     expect(markup).not.toContain('<select')
     expect(markup).toContain('sm:col-span-2')
+  })
+
+  it('uses theme-aware semantic colors for connectivity results', () => {
+    expect(providerTestResultStyle(true)).toContain('border-status-success-border')
+    expect(providerTestResultStyle(true)).toContain('bg-status-success-soft')
+    expect(providerTestResultStyle(true)).toContain('text-status-success-ink')
+    expect(providerTestResultStyle(false)).toContain('border-status-danger-border')
+    expect(providerTestResultStyle(false)).toContain('bg-status-danger-soft')
+    expect(providerTestResultStyle(false)).toContain('text-status-danger-ink')
   })
 })

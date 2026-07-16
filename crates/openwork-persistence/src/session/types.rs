@@ -50,6 +50,13 @@ pub struct SessionMessage {
     pub session_id: String,
     /// Aggregate id of the Turn that recorded this message.
     pub turn_id: String,
+    /// Stable Step identity is present for lifecycle-recorded Assistant and
+    /// Tool messages. User messages created with the Turn have no Step yet.
+    #[serde(default)]
+    pub step_id: Option<String>,
+    /// Stable ToolRun identity is present only for Tool messages.
+    #[serde(default)]
+    pub tool_run_id: Option<String>,
     pub role: Role,
     pub parts: Vec<ContentBlock>,
     pub seq: i64,

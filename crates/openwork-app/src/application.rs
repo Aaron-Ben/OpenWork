@@ -57,9 +57,9 @@ impl OpenWorkApplication {
 
         Ok(Self {
             providers: ProviderApplicationService::new(provider_repository, provider_factory),
-            sessions: SessionApplicationService::new(session_store),
+            sessions: SessionApplicationService::new(session_store.clone()),
             turns: TurnApplicationService::new(chat_runtime),
-            traces: TraceApplicationService::new(trace_repository),
+            traces: TraceApplicationService::with_session_store(trace_repository, session_store),
         })
     }
 

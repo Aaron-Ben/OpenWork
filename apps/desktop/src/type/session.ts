@@ -20,6 +20,8 @@ export interface SessionMessage {
   id: string
   sessionId: string
   turnId: string
+  stepId: string | null
+  toolRunId: string | null
   role: 'system' | 'user' | 'assistant' | 'tool'
   parts: ContentBlock[]
   seq: number

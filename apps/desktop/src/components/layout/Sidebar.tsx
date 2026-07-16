@@ -391,7 +391,7 @@ export function ProjectItem({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="right" className="min-w-48">
             <DropdownMenuItem
-              className="flex cursor-default items-center gap-2 px-3 py-2 text-sm text-rose-600 data-[highlighted]:bg-rose-50"
+              className="flex cursor-default items-center gap-2 px-3 py-2 text-sm text-status-danger-ink data-[highlighted]:bg-status-danger-soft"
               onSelect={onRemove}
             >
               <X size={15} />
@@ -461,7 +461,7 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
             }
           }}
         />
-        <Button type="submit" variant="ghost" size="icon" className="size-6 text-emerald-600" aria-label={t('common.confirm')}>
+        <Button type="submit" variant="ghost" size="icon" className="size-6 text-status-success" aria-label={t('common.confirm')}>
           <Check size={13} />
         </Button>
       </form>
@@ -470,13 +470,13 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
 
   if (mode === 'confirm-delete') {
     return (
-      <div className="flex items-center gap-1 rounded-lg bg-rose-50 px-2 py-2">
-        <span className="min-w-0 flex-1 truncate font-sans text-xs text-rose-700">{t('sidebar.deleteSessionPrompt')}</span>
+      <div className="flex items-center gap-1 rounded-lg bg-status-danger-soft px-2 py-2">
+        <span className="min-w-0 flex-1 truncate font-sans text-xs text-status-danger-ink">{t('sidebar.deleteSessionPrompt')}</span>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="size-6 text-rose-600"
+          className="size-6 text-status-danger-ink"
           aria-label={t('common.confirm')}
           onClick={() => {
             onDelete()
@@ -518,7 +518,7 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
         >
           <Pencil size={12} />
         </Button>
-        <Button type="button" variant="ghost" size="icon" className="size-6 hover:text-rose-500" aria-label={t('sidebar.deleteSession')} onClick={() => setMode('confirm-delete')}>
+        <Button type="button" variant="ghost" size="icon" className="size-6 hover:text-status-danger-ink" aria-label={t('sidebar.deleteSession')} onClick={() => setMode('confirm-delete')}>
           <Trash2 size={12} />
         </Button>
       </div>

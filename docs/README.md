@@ -1,12 +1,13 @@
 # OpenWork 文档索引
 
-Last reviewed: 2026-07-15
+Last reviewed: 2026-07-16
 
 ## 目标架构与路线
 
 - [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)：唯一的目标架构与建设顺序，定义 `openwork-core`、Protocol、Capabilities、Execution、Workspace、Persistence 等模块边界。
 - [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)：S2 Persistence 专题设计，冻结 `recorded_events`、Expected Version、事件边界、显式迁移和三旧 crate 的退出顺序。
 - [../plans/desktop-tauri-application-boundary-refactor.md](../plans/desktop-tauri-application-boundary-refactor.md)：S7 Desktop 收口专题设计，定义 Tauri Host、Application API、Command/Query/Subscription 和启动/退出边界。
+- [trace-bata-design.md](trace-bata-design.md)：Trace Bata Run/Event 升级专题设计，冻结三类 Run、Run Event、UUIDv7、Recorder 命令、PostgreSQL migration、Capture Health、Tree/Waterfall 和验收边界；当前标记为待实现。
 
 ## 当前实现参考
 
@@ -28,7 +29,6 @@ Last reviewed: 2026-07-15
 
 - [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前可持久化 Turn 生命周期、Recorded/Live Event 边界、审批等待恢复、Replay 状态与崩溃窗口。
 - [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Session/Turn/Message、遗留表删除状态和未完成边界。
-- [trace-v1-design.md](trace-v1-design.md)：Trace V1 的诊断边界、Span 层级、持久化模型、前端范围和验收标准。
 
 ## 维护原则
 

@@ -3,7 +3,14 @@ import { describe, expect, it } from 'vitest'
 
 import type { TraceSpan, TurnTraceSummary } from '../../type/trace'
 import { TurnTraceSummaryButton } from './TurnTraceSummaryButton'
-import { buildTraceTree, formatTraceSummary } from './traceViewModel'
+import {
+  buildTraceTree,
+  buildWaterfallTicks,
+  calculateWaterfallSegment,
+  filterVisibleTraceRows,
+  flattenTraceTree,
+  formatTraceSummary,
+} from './traceViewModel'
 
 const summary: TurnTraceSummary = {
   traceId: 'turn-1',
@@ -24,6 +31,13 @@ const summary: TurnTraceSummary = {
   outputTokens: 2_020,
   errorCount: 0,
   recovered: false,
+  sessionTitle: 'Trace upgrade',
+  workingDir: '/Volumes/Code/OpenWork',
+  inputPreview: 'upgrade trace',
+  diagnosis: {
+    status: 'healthy', reason: 'healthy', focusSpanId: 'turn-1', evidenceSpanIds: ['turn-1'],
+  },
+  dataCompleteness: 'complete',
 }
 
 const spans: TraceSpan[] = [
@@ -57,6 +71,40 @@ describe('Trace V1 view model', () => {
     expect(tree[0].span.spanId).toBe('turn-1')
     expect(tree[0].children[0].span.spanId).toBe('step-1')
     expect(tree[0].children[0].children[0].span.spanId).toBe('tool-1')
+    expect(flattenTraceTree(tree).map((node) => [node.span.spanId, node.depth])).toEqual([
+      ['turn-1', 0],
+      ['step-1', 1],
+      ['tool-1', 2],
+    ])
+  })
+
+  it('positions each span against the same turn clock for a proportional waterfall', () => {
+    const segment = calculateWaterfallSegment(spans[2], summary.startedAt, summary.durationMs)
+
+    expect(segment.leftPercent).toBeCloseTo(5.38, 1)
+    expect(segment.widthPercent).toBeCloseTo(10.75, 1)
+  })
+
+  it('builds LangSmith-style nice ticks and increases detail when zoomed', () => {
+    const fitted = buildWaterfallTicks(14_260, 1)
+    const zoomed = buildWaterfallTicks(14_260, 2)
+
+    expect(fitted.slice(0, 4).map((tick) => tick.valueMs)).toEqual([0, 1_000, 2_000, 3_000])
+    expect(fitted[fitted.length - 1]?.valueMs).toBe(14_000)
+    expect(fitted.every((tick) => tick.leftPercent >= 0 && tick.leftPercent <= 100)).toBe(true)
+    expect(zoomed.length).toBeGreaterThan(fitted.length)
+  })
+
+  it('hides every descendant of a collapsed tree node', () => {
+    const rows = flattenTraceTree(buildTraceTree(spans))
+
+    expect(filterVisibleTraceRows(rows, new Set(['step-1'])).map((node) => node.span.spanId)).toEqual([
+      'turn-1',
+      'step-1',
+    ])
+    expect(filterVisibleTraceRows(rows, new Set(['turn-1'])).map((node) => node.span.spanId)).toEqual([
+      'turn-1',
+    ])
   })
 
   it('formats the compact user-facing summary without exposing raw payloads', () => {

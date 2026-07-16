@@ -143,34 +143,26 @@ impl SessionStore {
                 id: session_id.to_string(),
             });
         }
-        let mut messages = self
-            .read_all_events()
-            .await?
-            .into_iter()
-            .filter(|event| {
-                event.aggregate_type == AggregateType::Turn && is_message_event(&event.event_type)
-            })
-            .map(|event| {
-                let payload: MessageRecordedPayload =
-                    serde_json::from_value(event.payload.clone())?;
-                Ok((event, payload))
-            })
-            .collect::<Result<Vec<_>, serde_json::Error>>()?
-            .into_iter()
-            .filter(|(_, payload)| payload.session_id == session_id)
-            .enumerate()
-            .map(|(index, (event, payload))| SessionMessage {
-                id: payload.message_id,
-                session_id: payload.session_id,
-                turn_id: event.aggregate_id.clone(),
-                role: payload.role,
-                parts: payload.parts,
-                seq: index as i64 + 1,
-                created_at: event.occurred_at_unix_ms / 1_000,
-            })
-            .collect::<Vec<_>>();
-        messages.sort_by_key(|message| message.seq);
-        Ok(messages)
+        project_messages(self.read_all_events().await?, Some(session_id))
+    }
+
+    /// Loads message projections across Sessions for a bounded local Trace
+    /// search join. Callers must still page Trace roots in the repository.
+    pub async fn load_all_messages(&self) -> Result<Vec<SessionMessage>, SessionError> {
+        project_messages(self.read_all_events().await?, None)
+    }
+
+    /// Loads only the durable messages owned by one Turn. This is the lazy
+    /// detail path and avoids scanning every Session message for one Span.
+    pub async fn load_turn_messages(
+        &self,
+        turn_id: &str,
+    ) -> Result<Vec<SessionMessage>, SessionError> {
+        let events = self
+            .journal
+            .load_aggregate(AggregateType::Turn, turn_id, 0)
+            .await?;
+        project_messages(events, None)
     }
 
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<Session, SessionError> {
@@ -384,6 +376,10 @@ struct MessageRecordedPayload {
     session_id: String,
     role: Role,
     parts: Vec<openwork_protocol::model::ContentBlock>,
+    #[serde(default)]
+    step_id: Option<String>,
+    #[serde(default)]
+    tool_run_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -474,7 +470,40 @@ fn message_payload(session_id: &str, message: NewMessage) -> MessageRecordedPayl
         session_id: session_id.to_string(),
         role: message.role,
         parts: message.parts,
+        step_id: None,
+        tool_run_id: None,
     }
+}
+
+fn project_messages(
+    mut events: Vec<RecordedEventV1>,
+    session_id: Option<&str>,
+) -> Result<Vec<SessionMessage>, SessionError> {
+    events.sort_by_key(|event| event.global_position);
+    let mut decoded = Vec::<(RecordedEventV1, MessageRecordedPayload)>::new();
+    for event in events.into_iter().filter(|event| {
+        event.aggregate_type == AggregateType::Turn && is_message_event(&event.event_type)
+    }) {
+        let payload: MessageRecordedPayload = serde_json::from_value(event.payload.clone())?;
+        if session_id.is_none_or(|id| payload.session_id == id) {
+            decoded.push((event, payload));
+        }
+    }
+    Ok(decoded
+        .into_iter()
+        .enumerate()
+        .map(|(index, (event, payload))| SessionMessage {
+            id: payload.message_id,
+            session_id: payload.session_id,
+            turn_id: event.aggregate_id,
+            step_id: payload.step_id,
+            tool_run_id: payload.tool_run_id,
+            role: payload.role,
+            parts: payload.parts,
+            seq: index as i64 + 1,
+            created_at: event.occurred_at_unix_ms / 1_000,
+        })
+        .collect())
 }
 
 fn message_event_type(role: Role) -> &'static str {

@@ -538,6 +538,17 @@ impl Agent {
             ))
         });
         if let Some(context) = &self.config.trace_context {
+            let request_summary = model_request_trace_summary(&req);
+            let mut attributes = serde_json::json!({
+                "providerId": context.provider_id,
+                "model": self.config.model,
+                "stepIndex": step_index
+            });
+            if let (Some(attributes), Some(summary)) =
+                (attributes.as_object_mut(), request_summary.as_object())
+            {
+                attributes.extend(summary.clone());
+            }
             self.config.trace.record(TraceSignal::Start(TraceSpanStart {
                 trace_id: context.trace_id.clone(),
                 span_id: model_attempt_id.clone(),
@@ -550,11 +561,7 @@ impl Agent {
                 step_id: Some(step_id.to_string()),
                 tool_run_id: None,
                 started_at_unix_ms: started_at,
-                attributes: serde_json::json!({
-                    "providerId": context.provider_id,
-                    "model": self.config.model,
-                    "stepIndex": step_index
-                }),
+                attributes,
             }));
         }
         let mut options = ModelCallOptions::new(model_attempt_id.clone());
@@ -1067,6 +1074,54 @@ fn tool_result_state(status: ObservationStatus) -> ToolResultState {
     }
 }
 
+/// Builds a bounded, content-free description of a model request. This is
+/// diagnostic shape metadata, not a copy of the Provider payload.
+fn model_request_trace_summary(request: &ModelRequest) -> serde_json::Value {
+    let message_text_chars = request
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .map(content_block_char_count)
+        .sum::<usize>();
+    let system_prompt_chars = request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .flat_map(|message| message.content.iter())
+        .map(content_block_char_count)
+        .sum::<usize>();
+    let tool_names = request
+        .tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<Vec<_>>();
+    let thinking_mode = request.thinking.map(|thinking| match thinking.mode {
+        openwork_protocol::model::ThinkingMode::Enabled => "enabled",
+        openwork_protocol::model::ThinkingMode::Disabled => "disabled",
+    });
+    serde_json::json!({
+        "requestSummaryVersion": "1",
+        "messageCount": request.messages.len(),
+        "messageTextChars": message_text_chars,
+        "systemPromptChars": system_prompt_chars,
+        "toolDefinitionCount": request.tools.len(),
+        "toolNames": tool_names,
+        "temperature": request.temperature,
+        "maxOutputTokens": request.max_output_tokens,
+        "thinkingMode": thinking_mode
+    })
+}
+
+fn content_block_char_count(block: &ContentBlock) -> usize {
+    match block {
+        ContentBlock::Text(block) => block.text.chars().count(),
+        ContentBlock::Thinking(block) => block.thinking.chars().count(),
+        ContentBlock::ToolCall(block) => block.input.chars().count(),
+        ContentBlock::ToolResult(block) => block.output.iter().map(content_block_char_count).sum(),
+        ContentBlock::Data(_) | ContentBlock::ProviderOpaque(_) => 0,
+    }
+}
+
 fn new_runtime_id(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
 }
@@ -1230,6 +1285,35 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
+
+    #[test]
+    fn model_request_trace_summary_counts_shape_without_copying_message_content() {
+        let request = ModelRequest {
+            model: "model-1".to_string(),
+            messages: vec![
+                Message::text(Role::System, "private system prompt"),
+                Message::text(Role::User, "run the tests"),
+            ],
+            temperature: Some(0.2),
+            max_output_tokens: Some(2_048),
+            thinking: None,
+            tools: vec![openwork_protocol::model::ToolDefinition {
+                name: "bash".to_string(),
+                description: "Run a command".to_string(),
+                parameters: json!({"type": "object"}),
+            }],
+        };
+
+        let summary = model_request_trace_summary(&request);
+
+        assert_eq!(summary["messageCount"], 2);
+        assert_eq!(summary["systemPromptChars"], 21);
+        assert_eq!(summary["toolDefinitionCount"], 1);
+        assert_eq!(summary["toolNames"], json!(["bash"]));
+        assert_eq!(summary["maxOutputTokens"], 2_048);
+        assert!(!summary.to_string().contains("private system prompt"));
+        assert!(!summary.to_string().contains("run the tests"));
+    }
 
     /// 按 `invoke` 调用顺序依次返回预设响应的假 provider。
     struct FakeProvider {

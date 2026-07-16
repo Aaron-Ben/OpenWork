@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 import {
+  Activity,
   Check,
   ChevronDown,
   ChevronRight,
@@ -31,6 +32,7 @@ export interface ToolActivity {
 
 interface ToolActivityListProps {
   parts: ContentBlock[]
+  onOpenTrace?: (providerToolCallId: string) => void
 }
 
 const TOOL_ICONS: Record<string, typeof Terminal> = {
@@ -82,7 +84,10 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
   })
 }
 
-export const ToolActivityList = memo(function ToolActivityList({ parts }: ToolActivityListProps) {
+export const ToolActivityList = memo(function ToolActivityList({
+  parts,
+  onOpenTrace,
+}: ToolActivityListProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(true)
   const activities = useMemo(() => collectToolActivities(parts), [parts])
@@ -123,7 +128,11 @@ export const ToolActivityList = memo(function ToolActivityList({ parts }: ToolAc
           >
             <div className="space-y-0.5 pt-0.5">
               {activities.map((activity) => (
-                <ToolActivityRow key={activity.id} activity={activity} />
+                <ToolActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  onOpenTrace={onOpenTrace}
+                />
               ))}
             </div>
           </motion.div>
@@ -133,7 +142,13 @@ export const ToolActivityList = memo(function ToolActivityList({ parts }: ToolAc
   )
 })
 
-function ToolActivityRow({ activity }: { activity: ToolActivity }) {
+function ToolActivityRow({
+  activity,
+  onOpenTrace,
+}: {
+  activity: ToolActivity
+  onOpenTrace?: (providerToolCallId: string) => void
+}) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const Icon = TOOL_ICONS[activity.name] ?? Wrench
@@ -142,26 +157,40 @@ function ToolActivityRow({ activity }: { activity: ToolActivity }) {
 
   return (
     <div data-tool-activity-row={activity.id} className="min-w-0">
-      <button
-        type="button"
-        aria-expanded={hasDetails ? expanded : undefined}
-        onClick={() => hasDetails && setExpanded((value) => !value)}
-        className="flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-paper-hover"
-      >
-        <Icon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
-        <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">
-          {activityLabel(activity, (key, options) => t(key, options))}
-        </span>
-        <ActivityStatus state={activity.state} />
-        {hasDetails ? (
-          <ChevronRight
-            size={14}
-            className={`shrink-0 text-ink-faint transition-transform duration-200 ${
-              expanded ? 'rotate-90' : ''
-            }`}
-          />
+      <div className="flex min-w-0 items-center rounded-md transition-colors hover:bg-paper-hover">
+        <button
+          type="button"
+          aria-expanded={hasDetails ? expanded : undefined}
+          onClick={() => hasDetails && setExpanded((value) => !value)}
+          className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left"
+        >
+          <Icon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
+          <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">
+            {activityLabel(activity, (key, options) => t(key, options))}
+          </span>
+          <ActivityStatus state={activity.state} />
+          {hasDetails ? (
+            <ChevronRight
+              size={14}
+              className={`shrink-0 text-ink-faint transition-transform duration-200 ${
+                expanded ? 'rotate-90' : ''
+              }`}
+            />
+          ) : null}
+        </button>
+        {onOpenTrace ? (
+          <button
+            type="button"
+            data-open-tool-trace={activity.id}
+            aria-label={t('trace.openToolSpan')}
+            title={t('trace.openToolSpan')}
+            onClick={() => onOpenTrace(activity.id)}
+            className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper hover:text-clay"
+          >
+            <Activity size={13} />
+          </button>
         ) : null}
-      </button>
+      </div>
 
       <AnimatePresence initial={false}>
         {hasDetails && expanded ? (
@@ -181,7 +210,7 @@ function ToolActivityRow({ activity }: { activity: ToolActivity }) {
                   </div>
                   <pre
                     className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-[11px] leading-relaxed ${
-                      detail.error ? 'bg-red-50 text-red-700' : 'bg-paper-hover text-ink-soft'
+                      detail.error ? 'bg-status-danger-soft text-status-danger-ink' : 'bg-paper-hover text-ink-soft'
                     }`}
                   >
                     {detail.value}
@@ -208,7 +237,7 @@ function ActivityStatus({ state }: { state: ActivityState }) {
   }
   if (state === 'error') {
     return (
-      <span className="inline-flex shrink-0 items-center text-red-500" title={t('tool.error')}>
+      <span className="inline-flex shrink-0 items-center text-status-danger" title={t('tool.error')}>
         <CircleAlert size={13} />
         <span className="sr-only">{t('tool.error')}</span>
       </span>
@@ -223,7 +252,7 @@ function ActivityStatus({ state }: { state: ActivityState }) {
     )
   }
   return (
-    <span className="inline-flex shrink-0 items-center text-emerald-600" title={t('tool.done')}>
+    <span className="inline-flex shrink-0 items-center text-status-success" title={t('tool.done')}>
       <Check size={13} />
       <span className="sr-only">{t('tool.done')}</span>
     </span>

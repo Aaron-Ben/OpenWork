@@ -195,6 +195,9 @@ async fn step_messages_and_pending_approval_replay_from_the_same_turn_stream() {
     let messages = store.load_messages(&session.id).await.unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[0].step_id, None);
+    assert_eq!(messages[1].step_id.as_deref(), Some("step-1"));
+    assert_eq!(messages[1].tool_run_id, None);
     let lifecycle = store
         .load_turn_lifecycle(&turn_id)
         .await

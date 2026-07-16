@@ -27,8 +27,8 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div className="grid min-h-full place-items-center bg-paper p-8">
-          <div className="max-w-2xl rounded-xl border border-rose-200 bg-paper p-6 shadow-sm">
-            <h2 className="mb-2 text-lg font-semibold text-rose-600">{i18n.t('errorBoundary.title')}</h2>
+          <div className="max-w-2xl rounded-xl border border-status-danger-border bg-paper p-6 shadow-sm">
+            <h2 className="mb-2 text-lg font-semibold text-status-danger-ink">{i18n.t('errorBoundary.title')}</h2>
             <p className="mb-4 text-sm text-ink-soft">
               {i18n.t('errorBoundary.description')}
             </p>

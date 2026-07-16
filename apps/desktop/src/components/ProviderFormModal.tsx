@@ -10,6 +10,12 @@ import { resolveErrorMessage as resolveMessage } from "../utils/commandError";
 const inputClass =
   "h-10 w-full rounded-lg border border-line-strong bg-paper px-3 text-sm text-ink outline-none focus:ring-3 focus:ring-clay/20";
 
+export function providerTestResultStyle(success: boolean): string {
+  return success
+    ? "border-status-success-border bg-status-success-soft text-status-success-ink"
+    : "border-status-danger-border bg-status-danger-soft text-status-danger-ink";
+}
+
 interface ProviderFormModalProps {
   open: boolean;
   mode: "create" | "edit";
@@ -266,12 +272,12 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
           </div>
 
           {testResult ? (
-            <div className={`rounded-lg border px-3 py-2 text-xs ${testResult.success ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+            <div className={`rounded-lg border px-3 py-2 text-xs ${providerTestResultStyle(testResult.success)}`}>
               {testResult.success ? t("settings.models.form.connectivityOk") : t("settings.models.form.failed", { message: testResult.message })}
             </div>
           ) : null}
 
-          {error ? <p className="m-0 text-xs text-rose-600">{error}</p> : null}
+          {error ? <p className="m-0 text-xs text-status-danger-ink">{error}</p> : null}
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-4">

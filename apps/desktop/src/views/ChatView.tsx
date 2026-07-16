@@ -24,7 +24,10 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState('')
-  const [selectedTraceTurnId, setSelectedTraceTurnId] = useState<string | null>(null)
+  const [selectedTrace, setSelectedTrace] = useState<{
+    turnId: string
+    providerToolCallId?: string
+  } | null>(null)
   const [traceSummaries, setTraceSummaries] = useState<Record<string, TurnTraceSummary>>({})
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messages = useActiveSessionMessages()
@@ -46,7 +49,7 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   }, [active?.id])
 
   useEffect(() => {
-    setSelectedTraceTurnId(null)
+    setSelectedTrace(null)
     if (!sessionId) {
       setTraceSummaries({})
       return
@@ -105,20 +108,34 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
                   message.role === 'user' ? (
                     <UserMessage parts={message.parts} />
                   ) : message.role === 'tool' ? (
-                    <ToolActivityList parts={message.parts} />
+                    <ToolActivityList
+                      parts={message.parts}
+                      onOpenTrace={message.turnId
+                        ? (providerToolCallId) => setSelectedTrace({
+                            turnId: message.turnId!,
+                            providerToolCallId,
+                          })
+                        : undefined}
+                    />
                   ) : (
                     <AssistantMessage
                       parts={message.parts}
                       model={message.model}
                       isStreaming={message.isStreaming}
                       traceSummary={message.turnId ? traceSummaries[message.turnId] : undefined}
-                      onOpenTrace={message.turnId ? () => setSelectedTraceTurnId(message.turnId!) : undefined}
+                      onOpenTrace={message.turnId
+                        ? (providerToolCallId) => setSelectedTrace({
+                            turnId: message.turnId!,
+                            providerToolCallId,
+                          })
+                        : undefined}
                     />
                   )
 
                 return (
                   <div
                     key={message.id}
+                    data-message-id={message.id}
                     data-turn-id={message.role === 'user' ? message.id : undefined}
                   >
                     {content}
@@ -130,11 +147,24 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
         </div>
         <ConversationNavigator turns={turns} scrollContainerRef={scrollContainerRef} />
         <AnimatePresence>
-          {selectedTraceTurnId ? (
+          {selectedTrace ? (
             <TurnTracePanel
-              key={selectedTraceTurnId}
-              turnId={selectedTraceTurnId}
-              onClose={() => setSelectedTraceTurnId(null)}
+              key={`${selectedTrace.turnId}:${selectedTrace.providerToolCallId ?? 'root'}`}
+              turnId={selectedTrace.turnId}
+              initialProviderToolCallId={selectedTrace.providerToolCallId}
+              onClose={() => setSelectedTrace(null)}
+              onRevealMessage={(messageId) => {
+                setSelectedTrace(null)
+                revealChatElement(scrollContainerRef.current, 'data-message-id', messageId)
+              }}
+              onRevealTool={(providerToolCallId) => {
+                setSelectedTrace(null)
+                revealChatElement(
+                  scrollContainerRef.current,
+                  'data-tool-activity-row',
+                  providerToolCallId,
+                )
+              }}
             />
           ) : null}
         </AnimatePresence>
@@ -154,6 +184,20 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
       />
     </div>
   )
+}
+
+function revealChatElement(
+  container: HTMLDivElement | null,
+  attribute: string,
+  value: string,
+) {
+  window.requestAnimationFrame(() => {
+    const element = Array.from(
+      container?.querySelectorAll<HTMLElement>(`[${attribute}]`) ?? [],
+    ).find((candidate) => candidate.getAttribute(attribute) === value)
+    element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element?.focus({ preventScroll: true })
+  })
 }
 
 function EmptySessionHero({ active, hasSession }: { active: boolean; hasSession: boolean }) {

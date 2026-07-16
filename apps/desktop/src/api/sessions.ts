@@ -7,7 +7,13 @@ import type {
   SessionLoadResult,
   SessionSummary,
 } from '../type/session'
-import type { TraceListPage, TurnTrace, TurnTraceSummary } from '../type/trace'
+import type {
+  TraceListPage,
+  TraceListQuery,
+  TraceSpanDetailView,
+  TurnTrace,
+  TurnTraceSummary,
+} from '../type/trace'
 
 // 会话与聊天(agent loop)的 Tauri invoke 封装。
 export const sessionsApi = {
@@ -19,8 +25,10 @@ export const sessionsApi = {
   traceSession: (sessionId: string): Promise<TurnTraceSummary[]> =>
     invoke('trace_session', { sessionId }),
   traceTurn: (turnId: string): Promise<TurnTrace> => invoke('trace_turn', { turnId }),
-  traceList: (limit: number, offset: number): Promise<TraceListPage> =>
-    invoke('trace_list', { limit, offset }),
+  traceSpanDetail: (turnId: string, spanId: string): Promise<TraceSpanDetailView> =>
+    invoke('trace_span_detail', { turnId, spanId }),
+  traceList: (input: TraceListQuery): Promise<TraceListPage> =>
+    invoke('trace_list', { input }),
   chatGenerateStream: (request: ChatGenerateStreamRequest): Promise<ChatGenerateResponse> =>
     invoke('chat_generate_stream', { request }),
   chatAbort: (requestId: string): Promise<boolean> => invoke('chat_abort', { requestId }),

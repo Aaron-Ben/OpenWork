@@ -94,11 +94,11 @@ export function ApprovalDialog() {
       case 'bash':
         return { icon: Terminal, label: 'Bash', color: 'text-clay' }
       case 'write':
-        return { icon: Pencil, label: 'Write', color: 'text-emerald-500' }
+        return { icon: Pencil, label: 'Write', color: 'text-status-success' }
       case 'read':
-        return { icon: FileText, label: 'Read', color: 'text-sky-500' }
+        return { icon: FileText, label: 'Read', color: 'text-ink-soft' }
       case 'list':
-        return { icon: FolderTree, label: 'List', color: 'text-sky-500' }
+        return { icon: FolderTree, label: 'List', color: 'text-ink-soft' }
       default:
         return { icon: ShieldAlert, label: current.toolName, color: 'text-ink-faint' }
     }
@@ -145,7 +145,7 @@ export function ApprovalDialog() {
         {showTerminal && (
           <div className="overflow-x-auto rounded-lg bg-ink px-3 py-2.5">
             <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-tight text-paper">
-              <span className="select-none text-emerald-400">$ </span>
+              <span className="select-none text-clay">$ </span>
               {details.primary}
             </pre>
           </div>
@@ -180,7 +180,7 @@ export function ApprovalDialog() {
           type="button"
           disabled={resolving}
           onClick={() => void resolve(false)}
-          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-paper px-3.5 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-status-danger-border bg-paper px-3.5 py-1.5 text-sm font-medium text-status-danger-ink transition hover:bg-status-danger-soft disabled:opacity-50"
         >
           <X size={14} />
           {t('tool.reject')}

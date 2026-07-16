@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useProviderStore } from "../stores/providerStore";
 import type { ProviderConfig, TestResult } from "../type/providers";
 import { resolveErrorMessage as resolveMessage } from "../utils/commandError";
-import { ProviderFormModal } from "./ProviderFormModal";
+import { providerTestResultStyle, ProviderFormModal } from "./ProviderFormModal";
 
 type TestState = Record<string, TestResult | "loading">;
 
@@ -76,7 +76,7 @@ export function ProviderSettings() {
           </button>
         </div>
 
-        {error ? <p className="mt-4 text-xs text-rose-600">{error}</p> : null}
+        {error ? <p className="mt-4 text-xs text-status-danger-ink">{error}</p> : null}
 
         {providers.length === 0 ? (
           <p className="mt-6 text-sm text-ink-faint">{t("settings.models.empty")}</p>
@@ -92,7 +92,7 @@ export function ProviderSettings() {
                       <div className="flex flex-wrap items-center gap-2">
                         <strong className="text-sm text-ink">{provider.name}</strong>
                         <span className="rounded-full bg-paper-hover px-2 py-0.5 text-xs text-ink-faint">{provider.kind}</span>
-                        {isActive ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">{t("settings.models.active")}</span> : null}
+                        {isActive ? <span className="rounded-full bg-status-success-soft px-2 py-0.5 text-xs text-status-success-ink">{t("settings.models.active")}</span> : null}
                       </div>
                       <p className="m-0 mt-1 break-words text-xs text-ink-faint">{provider.baseUrl}</p>
                       <p className="m-0 mt-0.5 text-xs text-ink-faint">
@@ -121,7 +121,7 @@ export function ProviderSettings() {
                     </div>
                   </div>
                   {testState && testState !== "loading" ? (
-                    <div className={`mt-3 rounded-md px-3 py-2 text-xs ${testState.success ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                    <div className={`mt-3 rounded-md border px-3 py-2 text-xs ${providerTestResultStyle(testState.success)}`}>
                       {testState.success ? (
                         <span className="flex items-center gap-1">
                           <Check size={13} /> {testState.message}

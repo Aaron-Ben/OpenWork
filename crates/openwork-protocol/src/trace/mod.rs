@@ -2,6 +2,8 @@
 //!
 //! Trace data is best-effort observability. It never replaces durable Recorded Events.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -124,6 +126,23 @@ pub enum TraceSignal {
     Update(TraceSpanUpdate),
 }
 
+/// Root-Turn filters applied by a Trace repository before pagination. Context
+/// search ids are supplied by the Application layer after joining Session and
+/// Message projections; they participate in the same OR group as `query`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TraceRootFilter {
+    pub session_ids: Option<Vec<String>>,
+    pub query: Option<String>,
+    pub search_session_ids: Vec<String>,
+    pub search_turn_ids: Vec<String>,
+    pub model: Option<String>,
+    pub status: Option<TraceSpanStatus>,
+    pub started_after_unix_ms: Option<i64>,
+    pub started_before_unix_ms: Option<i64>,
+    pub has_error: Option<bool>,
+    pub has_retry: Option<bool>,
+}
+
 /// Non-blocking signal boundary used by runtime code. Implementations must not
 /// let trace persistence failures change Agent control flow.
 pub trait TraceRecorderPort: Send + Sync {
@@ -163,4 +182,163 @@ pub trait TraceRepository: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<TraceSpan>, TraceRepositoryError>;
+
+    /// Production repositories should override this method so filtering is
+    /// performed by the data store. The fallback keeps in-memory adapters and
+    /// tests source-compatible while preserving filter-before-page semantics.
+    async fn load_recent_turns_filtered(
+        &self,
+        filter: &TraceRootFilter,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<TraceSpan>, TraceRepositoryError> {
+        let spans = self.load_recent_turns(u32::MAX, 0).await?;
+        Ok(filter_recent_turns(spans, filter, limit, offset))
+    }
+
+    /// Deletes whole terminal Turns whose latest Span ended before the cutoff.
+    /// The limit is measured in Turns; the return value is deleted Span rows.
+    /// Adapters without retention support may keep the default no-op.
+    async fn prune_ended_turns_before(
+        &self,
+        _ended_before_unix_ms: i64,
+        _turn_limit: u32,
+    ) -> Result<u64, TraceRepositoryError> {
+        Ok(0)
+    }
+}
+
+fn filter_recent_turns(
+    spans: Vec<TraceSpan>,
+    filter: &TraceRootFilter,
+    limit: u32,
+    offset: u32,
+) -> Vec<TraceSpan> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut by_turn = HashMap::<String, Vec<TraceSpan>>::new();
+    for span in spans {
+        by_turn.entry(span.turn_id.clone()).or_default().push(span);
+    }
+    let mut traces = by_turn
+        .into_values()
+        .filter(|trace| trace_matches(trace, filter))
+        .collect::<Vec<_>>();
+    traces.sort_by(|left, right| {
+        root_started_at(right)
+            .cmp(&root_started_at(left))
+            .then_with(|| root_turn_id(left).cmp(root_turn_id(right)))
+    });
+    traces
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .flatten()
+        .collect()
+}
+
+fn trace_matches(spans: &[TraceSpan], filter: &TraceRootFilter) -> bool {
+    let Some(root) = spans
+        .iter()
+        .find(|span| span.span_kind == TraceSpanKind::Turn)
+    else {
+        return false;
+    };
+    if let Some(session_ids) = &filter.session_ids
+        && !session_ids.iter().any(|id| id == &root.session_id)
+    {
+        return false;
+    }
+    if filter.status.is_some_and(|status| root.status != status) {
+        return false;
+    }
+    if filter
+        .started_after_unix_ms
+        .is_some_and(|after| root.started_at_unix_ms < after)
+        || filter
+            .started_before_unix_ms
+            .is_some_and(|before| root.started_at_unix_ms > before)
+    {
+        return false;
+    }
+    if let Some(model) = normalized(filter.model.as_deref()) {
+        let root_model = root
+            .attributes
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_lowercase);
+        if root_model.as_deref() != Some(model.as_str()) {
+            return false;
+        }
+    }
+    let has_error = spans
+        .iter()
+        .any(|span| span.status == TraceSpanStatus::Failed);
+    if filter
+        .has_error
+        .is_some_and(|expected| has_error != expected)
+    {
+        return false;
+    }
+    let model_attempts = spans
+        .iter()
+        .filter(|span| span.span_kind == TraceSpanKind::ModelAttempt)
+        .count();
+    let transport_attempts = spans
+        .iter()
+        .filter(|span| span.span_kind == TraceSpanKind::TransportAttempt)
+        .count();
+    let has_retry = transport_attempts > model_attempts;
+    if filter
+        .has_retry
+        .is_some_and(|expected| has_retry != expected)
+    {
+        return false;
+    }
+    if let Some(query) = normalized(filter.query.as_deref()) {
+        let root_match = [
+            root.turn_id.as_str(),
+            root.session_id.as_str(),
+            root.trace_id.as_str(),
+            root.attributes
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ]
+        .iter()
+        .any(|value| value.to_lowercase().contains(&query));
+        let context_match = filter
+            .search_session_ids
+            .iter()
+            .any(|id| id == &root.session_id)
+            || filter.search_turn_ids.iter().any(|id| id == &root.turn_id);
+        if !root_match && !context_match {
+            return false;
+        }
+    }
+    true
+}
+
+fn normalized(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase)
+}
+
+fn root_started_at(spans: &[TraceSpan]) -> i64 {
+    spans
+        .iter()
+        .find(|span| span.span_kind == TraceSpanKind::Turn)
+        .map(|span| span.started_at_unix_ms)
+        .unwrap_or(0)
+}
+
+fn root_turn_id(spans: &[TraceSpan]) -> &str {
+    spans
+        .iter()
+        .find(|span| span.span_kind == TraceSpanKind::Turn)
+        .map(|span| span.turn_id.as_str())
+        .unwrap_or_default()
 }

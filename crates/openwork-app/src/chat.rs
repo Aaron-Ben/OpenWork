@@ -577,8 +577,29 @@ impl ChatRuntime {
         &self,
         context: &TraceContext,
         started_at_unix_ms: i64,
-        attributes: serde_json::Value,
+        mut attributes: serde_json::Value,
     ) {
+        if !attributes.is_object() {
+            attributes = serde_json::json!({});
+        }
+        if let Some(attributes) = attributes.as_object_mut() {
+            attributes.insert(
+                "traceSchemaVersion".to_string(),
+                serde_json::Value::String("1.1".to_string()),
+            );
+            attributes.insert(
+                "instrumentationVersion".to_string(),
+                serde_json::Value::String("1.1".to_string()),
+            );
+            attributes.insert(
+                "appVersion".to_string(),
+                serde_json::Value::String(env!("CARGO_PKG_VERSION").to_string()),
+            );
+            attributes.insert(
+                "captureMode".to_string(),
+                serde_json::Value::String("metadata_only".to_string()),
+            );
+        }
         self.trace.record(TraceSignal::Start(TraceSpanStart {
             trace_id: context.trace_id.clone(),
             span_id: context.turn_id.clone(),

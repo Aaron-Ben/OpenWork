@@ -13,7 +13,7 @@ interface AssistantMessageProps {
   isStreaming?: boolean
   model?: string
   traceSummary?: TurnTraceSummary
-  onOpenTrace?: () => void
+  onOpenTrace?: (providerToolCallId?: string) => void
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -61,9 +61,14 @@ export const AssistantMessage = memo(function AssistantMessage({
             ) : null}
           </div>
         ) : null}
-        {toolParts.length > 0 ? <ToolActivityList parts={toolParts} /> : null}
+        {toolParts.length > 0 ? (
+          <ToolActivityList
+            parts={toolParts}
+            onOpenTrace={onOpenTrace ? (providerToolCallId) => onOpenTrace(providerToolCallId) : undefined}
+          />
+        ) : null}
         {traceSummary && onOpenTrace ? (
-          <TurnTraceSummaryButton summary={traceSummary} onOpen={onOpenTrace} />
+          <TurnTraceSummaryButton summary={traceSummary} onOpen={() => onOpenTrace()} />
         ) : null}
       </div>
     </div>
