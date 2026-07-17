@@ -11,9 +11,9 @@ import {
   X,
 } from 'lucide-react'
 
-import { providersApi } from '../../api/providers'
+import { runtimeApi } from '../../api/runtime'
 import { useApprovalStore } from '../../stores/approvalStore'
-import { useSessionStore } from '../../stores/sessionStore'
+import { useRuntimeSessionStore } from '../../stores/runtimeSessionStore'
 
 interface ToolDetails {
   primary: string
@@ -67,7 +67,7 @@ export function ApprovalDialog() {
   const { t } = useTranslation()
   const pending = useApprovalStore((state) => state.pending)
   const remove = useApprovalStore((state) => state.remove)
-  const activeSessionId = useSessionStore((state) => state.activeSessionId)
+  const activeSessionId = useRuntimeSessionStore((state) => state.activeSessionId)
   const [resolving, setResolving] = useState(false)
   const current = activeSessionId
     ? pending.find((item) => item.sessionId === activeSessionId) ?? null
@@ -77,7 +77,7 @@ export function ApprovalDialog() {
     if (!current || resolving) return
     setResolving(true)
     try {
-      await providersApi.resolveApproval(current.turnId, current.id, allow)
+      await runtimeApi.resolvePermission(current.sessionId, current.turnId, current.id, allow)
       remove(current.id)
     } catch {
       // Durable approval remains pending when routing or recovery fails. Keep

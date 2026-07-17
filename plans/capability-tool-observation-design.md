@@ -1,6 +1,8 @@
 # Capability、Tool 与 Observation V1 设计
 
-> Status: implemented V1 structure and current contract snapshot. Execution 风险出口与 Core/App 审批迁移已完成；Sandbox、Artifact 与 MCP Schema 兼容仍未完成。
+> 文档地位更新（2026-07-16）：本文保留为 Capability/Execution 当前合同和演进背景，不再定义本轮目标 crate 边界。新的 Tools 与 Workspace 所有权以 [`docs/redesign/01-project-structure.md`](../docs/redesign/01-project-structure.md) 为准。
+>
+> 历史快照状态：V1 structure 与当时合同已经实现；Execution 风险出口与 Core/App 审批迁移已完成，Sandbox、Artifact 与 MCP Schema 兼容当时仍未完成。
 > Last reviewed: 2026-07-15.
 > Parent blueprint: [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md).
 

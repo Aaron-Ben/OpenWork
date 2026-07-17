@@ -2,7 +2,9 @@
 
 Last reviewed: 2026-07-15
 
-> Status: implemented for Session/Turn/Step/ToolRun/Approval/Message persistence and pending-approval recovery. `outcome_unknown` reconciliation 与持久化查询表仍属于后续阶段。本文细化 [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) 的 S2 Persistence，不改变蓝图中的模块所有权。
+> 文档地位更新（2026-07-16）：本文记录 Event Journal 的既有实现过程与历史取舍，仅作为辅助资料。新的事件、投影与目标表结构以 [`docs/redesign/02-event-update-model.md`](../docs/redesign/02-event-update-model.md) 和 [`03-database-schema.md`](../docs/redesign/03-database-schema.md) 为准。
+>
+> 历史快照状态：Session/Turn/Step/ToolRun/Approval/Message 持久化与 pending-approval recovery 当时已经实现；`outcome_unknown` reconciliation 与持久化查询表当时仍属后续阶段。
 
 ## 1. 为什么要重构
 

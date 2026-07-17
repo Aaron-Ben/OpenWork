@@ -35,8 +35,8 @@ import {
   type OpenedProject,
   useProjectStore,
 } from '../../stores/projectStore'
-import { useSessionStore } from '../../stores/sessionStore'
-import type { SessionSummary } from '../../type/session'
+import { useRuntimeSessionStore } from '../../stores/runtimeSessionStore'
+import type { RuntimeSessionRecord } from '../../type/runtime'
 import type { AppView } from './types'
 
 interface SidebarProps {
@@ -48,12 +48,12 @@ interface SidebarProps {
 
 export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: SidebarProps) {
   const { t } = useTranslation()
-  const sessions = useSessionStore((state) => state.sessions)
-  const activeSessionId = useSessionStore((state) => state.activeSessionId)
-  const select = useSessionStore((state) => state.select)
-  const create = useSessionStore((state) => state.create)
-  const rename = useSessionStore((state) => state.rename)
-  const remove = useSessionStore((state) => state.remove)
+  const sessions = useRuntimeSessionStore((state) => state.sessions)
+  const activeSessionId = useRuntimeSessionStore((state) => state.activeSessionId)
+  const select = useRuntimeSessionStore((state) => state.select)
+  const create = useRuntimeSessionStore((state) => state.create)
+  const rename = useRuntimeSessionStore((state) => state.rename)
+  const remove = useRuntimeSessionStore((state) => state.remove)
   const projects = useProjectStore((state) => state.projects)
   const activeProjectPath = useProjectStore((state) => state.activeProjectPath)
   const projectsExpanded = useProjectStore((state) => state.projectsExpanded)
@@ -76,10 +76,10 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
     expandProject(project.path)
     onNavigate('chat')
     await create({
-      providerId: active.id,
-      model,
       title: t('sidebar.untitledSession'),
-      workingDir: project.path,
+      workingDirectory: project.path,
+      provider: active,
+      modelId: model,
     })
   }
 
@@ -237,7 +237,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
                       {projects.map((project) => {
                         const projectSessions = sessions.filter(
                           (session) =>
-                            normalizeDirectoryPath(session.workingDir ?? '') === project.path,
+                            normalizeDirectoryPath(session.workingDirectory) === project.path,
                         )
                         const projectActive = activeProjectPath === project.path
                         const projectExpanded =
@@ -419,7 +419,7 @@ export function ProjectItem({
 type ItemMode = 'view' | 'edit' | 'confirm-delete'
 
 interface SessionItemProps {
-  session: SessionSummary
+  session: RuntimeSessionRecord
   active: boolean
   onSelect: () => void
   onRename: (title: string) => void
@@ -429,12 +429,12 @@ interface SessionItemProps {
 function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionItemProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<ItemMode>('view')
-  const [draft, setDraft] = useState(session.title)
+  const [draft, setDraft] = useState(session.title ?? '')
 
   function commitRename() {
     const title = draft.trim()
     if (title && title !== session.title) onRename(title)
-    else setDraft(session.title)
+    else setDraft(session.title ?? '')
     setMode('view')
   }
 
@@ -456,7 +456,7 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
           onBlur={commitRename}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
-              setDraft(session.title)
+              setDraft(session.title ?? '')
               setMode('view')
             }
           }}
@@ -512,7 +512,7 @@ function SessionItem({ session, active, onSelect, onRename, onDelete }: SessionI
           className="size-6"
           aria-label={t('sidebar.renameSession')}
           onClick={() => {
-            setDraft(session.title)
+            setDraft(session.title ?? '')
             setMode('edit')
           }}
         >

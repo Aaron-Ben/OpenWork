@@ -40,6 +40,19 @@ pub fn run() {
             commands::chat::chat_generate_stream,
             commands::chat::resolve_approval,
             commands::chat::chat_abort,
+            commands::runtime::runtime_model_upsert,
+            commands::runtime::runtime_session_list,
+            commands::runtime::runtime_session_create,
+            commands::runtime::runtime_session_load,
+            commands::runtime::runtime_session_rename,
+            commands::runtime::runtime_session_delete,
+            commands::runtime::runtime_turn_start,
+            commands::runtime::runtime_turn_cancel,
+            commands::runtime::runtime_permission_resolve,
+            commands::runtime::runtime_session_snapshot,
+            commands::runtime::runtime_update_replay,
+            commands::runtime::runtime_trace_list,
+            commands::runtime::runtime_trace_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

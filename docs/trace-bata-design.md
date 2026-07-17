@@ -1,6 +1,8 @@
 # OpenWork Trace Bata Run/Event 升级设计
 
-> 状态：架构决策已确认，代码与数据库迁移待实现
+> 文档地位更新（2026-07-16）：本文是已被替代的历史方案，保留用于理解此前的 LangSmith-style Run/Event 取舍。新的 Trace 根、Span、Event、表结构和埋点规范以 [`redesign/04-trace-design.md`](redesign/04-trace-design.md) 为准。
+>
+> 历史快照状态：当时标记为“架构决策已确认，代码与数据库迁移待实现”；该目标现已失效
 >
 > 最后核对：2026-07-16
 >
@@ -8,7 +10,7 @@
 >
 > 数据边界：默认只捕获诊断元数据；不持久化原始 Token/SSE、完整 Provider Request/Response、System Prompt 或 Tool Schema
 
-本文是 OpenWork 唯一的 Trace 设计说明。它同时记录当前七类 Span 基线、已经确认的 Run/Event 目标模型、数据库迁移和验收边界，避免继续维护 Trace v1、v1.1 或其他并行设计稿。
+在该历史快照中，本文曾被视为 OpenWork 唯一的 Trace 设计说明，并记录当时的七类 Span 基线、Run/Event 目标模型、数据库迁移和验收边界；该权威性现已由顶部链接指向的新设计取代。
 
 文中使用以下状态标记：
 

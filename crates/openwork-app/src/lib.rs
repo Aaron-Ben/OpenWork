@@ -5,6 +5,7 @@ mod cancel;
 mod chat;
 mod error;
 mod provider_service;
+mod runtime_service;
 mod session_service;
 mod trace_service;
 mod turn_service;
@@ -16,6 +17,13 @@ pub use chat::{
 };
 pub use error::{ApplicationError, ApplicationErrorCode};
 pub use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent, RunResult};
+pub use openwork_core::{
+    LoadedSession as RuntimeLoadedSession, ModelInput as RuntimeModelInput,
+    SessionInput as RuntimeSessionInput, SessionRecord as RuntimeSessionRecord,
+    SessionSnapshot as RuntimeSessionSnapshot, SessionUpdate as RuntimeSessionUpdate,
+    SessionUpdateEnvelope as RuntimeSessionUpdateEnvelope, TraceSpanRecord as RuntimeTraceSpan,
+    TraceTurnSummary as RuntimeTraceSummary, TurnAccepted as RuntimeTurnAccepted,
+};
 pub use openwork_persistence::{Session, SessionInput, SessionLoadResult, SessionSummary};
 pub use openwork_protocol::approval::{ApprovalPolicy, ApprovalResolution, ResolveApproval};
 pub use openwork_protocol::provider::{ProviderInput, ProviderProfile};
@@ -23,6 +31,7 @@ pub use provider_service::{
     ProviderApplicationService, ProviderIndex, ProviderPreset, ProviderPresetModel,
     ProviderTestResult,
 };
+pub use runtime_service::RuntimeApplicationService;
 pub use session_service::SessionApplicationService;
 pub use trace_service::{
     TraceApplicationService, TraceApprovalDetail, TraceDataCompleteness, TraceDiagnosis,

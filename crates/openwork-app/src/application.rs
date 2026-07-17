@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use openwork_core::{
+    CredentialResolver, ModelCredential, OpenWorkCore, OpenWorkCoreError, PostgresStorage,
+};
 use openwork_observability::TraceRuntime;
 use openwork_persistence::{DatabaseConfig, PostgresPersistence, PostgresPersistenceError};
 use openwork_protocol::{provider::ProviderRepository, trace::TraceRepository};
@@ -7,8 +11,8 @@ use openwork_providers::ProviderFactory;
 use thiserror::Error;
 
 use crate::{
-    ChatRuntime, ProviderApplicationService, SessionApplicationService, TraceApplicationService,
-    TurnApplicationService,
+    ChatRuntime, ProviderApplicationService, RuntimeApplicationService, SessionApplicationService,
+    TraceApplicationService, TurnApplicationService,
 };
 
 #[derive(Debug, Clone)]
@@ -28,6 +32,8 @@ impl ApplicationConfig {
 pub enum ApplicationBootstrapError {
     #[error("persistence bootstrap failed: {0}")]
     Persistence(#[from] PostgresPersistenceError),
+    #[error("runtime core bootstrap failed: {0}")]
+    RuntimeCore(#[from] OpenWorkCoreError),
 }
 
 /// The single in-process application entry point owned by a host such as Tauri.
@@ -36,6 +42,7 @@ pub struct OpenWorkApplication {
     sessions: SessionApplicationService,
     turns: TurnApplicationService,
     traces: TraceApplicationService,
+    runtime: RuntimeApplicationService,
 }
 
 impl OpenWorkApplication {
@@ -43,6 +50,14 @@ impl OpenWorkApplication {
         let persistence = PostgresPersistence::connect(config.database).await?;
         let provider_repository: Arc<dyn ProviderRepository> =
             Arc::new(persistence.provider_repository());
+        let runtime_storage = Arc::new(PostgresStorage::from_pool(persistence.pool().clone()));
+        let credential_resolver: Arc<dyn CredentialResolver> =
+            Arc::new(ApplicationCredentialResolver {
+                providers: Arc::clone(&provider_repository),
+            });
+        let runtime =
+            OpenWorkCore::from_storage_with_credentials(runtime_storage, credential_resolver)
+                .await?;
         let session_store = persistence.session_store();
         let trace_repository: Arc<dyn TraceRepository> = Arc::new(persistence.trace_repository());
         let trace_runtime = TraceRuntime::new(Arc::clone(&trace_repository));
@@ -60,6 +75,7 @@ impl OpenWorkApplication {
             sessions: SessionApplicationService::new(session_store.clone()),
             turns: TurnApplicationService::new(chat_runtime),
             traces: TraceApplicationService::with_session_store(trace_repository, session_store),
+            runtime: RuntimeApplicationService::new(runtime),
         })
     }
 
@@ -77,5 +93,31 @@ impl OpenWorkApplication {
 
     pub fn traces(&self) -> &TraceApplicationService {
         &self.traces
+    }
+
+    pub fn runtime(&self) -> &RuntimeApplicationService {
+        &self.runtime
+    }
+}
+
+struct ApplicationCredentialResolver {
+    providers: Arc<dyn ProviderRepository>,
+}
+
+#[async_trait]
+impl CredentialResolver for ApplicationCredentialResolver {
+    async fn resolve(&self, reference: &str) -> Result<ModelCredential, String> {
+        if let Some(provider_id) = reference.strip_prefix("provider:") {
+            return self
+                .providers
+                .load_runtime(provider_id)
+                .await
+                .map_err(|_| "provider credential is unavailable".to_string())?
+                .map(|runtime| runtime.credential)
+                .ok_or_else(|| "provider credential is unavailable".to_string());
+        }
+        std::env::var(reference)
+            .map(ModelCredential::new)
+            .map_err(|_| "environment credential is unavailable".to_string())
     }
 }

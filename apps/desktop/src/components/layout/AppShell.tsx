@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { ProviderSettings } from '../ProviderSettings'
 import { AppearanceSettings } from '../settings/AppearanceSettings'
 import { TraceSettings } from '../settings/TraceSettings'
-import { useChatStreamListener } from '../../hooks/useChatStreamListener'
-import { useSessionStore } from '../../stores/sessionStore'
+import { useRuntimeSessionUpdates } from '../../hooks/useRuntimeSessionUpdates'
+import { useRuntimeSessionStore } from '../../stores/runtimeSessionStore'
 import { normalizeDirectoryPath, useProjectStore } from '../../stores/projectStore'
 import { ChatView } from '../../views/ChatView'
 import { MainHeader } from './MainHeader'
@@ -16,17 +16,17 @@ export function AppShell() {
   const { t } = useTranslation()
   const [view, setView] = useState<AppView>('chat')
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const activeSessionId = useSessionStore((state) => state.activeSessionId)
-  const sessions = useSessionStore((state) => state.sessions)
-  const selectSession = useSessionStore((state) => state.select)
-  const clearSessionSelection = useSessionStore((state) => state.clearSelection)
+  const activeSessionId = useRuntimeSessionStore((state) => state.activeSessionId)
+  const sessions = useRuntimeSessionStore((state) => state.sessions)
+  const selectSession = useRuntimeSessionStore((state) => state.select)
+  const clearSessionSelection = useRuntimeSessionStore((state) => state.clearSelection)
   const activeProjectPath = useProjectStore((state) => state.activeProjectPath)
-  const activeSessionTitle = useSessionStore(
+  const activeSessionTitle = useRuntimeSessionStore(
     (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.title ?? null,
   )
 
   // 全局单订阅 chat-stream-event(生命周期 = app)。
-  useChatStreamListener()
+  useRuntimeSessionUpdates()
 
   useEffect(() => {
     if (!activeProjectPath) {
@@ -35,10 +35,10 @@ export function AppShell() {
     }
     const normalizedProject = normalizeDirectoryPath(activeProjectPath)
     const selected = sessions.find((session) => session.id === activeSessionId)
-    if (selected && normalizeDirectoryPath(selected.workingDir ?? '') === normalizedProject) return
+    if (selected && normalizeDirectoryPath(selected.workingDirectory) === normalizedProject) return
 
     const first = sessions.find(
-      (session) => normalizeDirectoryPath(session.workingDir ?? '') === normalizedProject,
+      (session) => normalizeDirectoryPath(session.workingDirectory) === normalizedProject,
     )
     if (first) void selectSession(first.id)
     else if (activeSessionId) clearSessionSelection()

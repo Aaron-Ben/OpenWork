@@ -42,7 +42,20 @@ export interface ToolResultBlock {
   state: ToolResultState
 }
 
-export type ContentBlock = TextBlock | ThinkingBlock | DataBlock | ToolCallBlock | ToolResultBlock
+export interface ProviderOpaqueBlock {
+  type: 'provider_opaque'
+  driver: unknown
+  kind: string
+  payload: unknown
+}
+
+export type ContentBlock =
+  | TextBlock
+  | ThinkingBlock
+  | DataBlock
+  | ToolCallBlock
+  | ToolResultBlock
+  | ProviderOpaqueBlock
 
 /// 从 ContentBlock 序列里抽出所有文本(拼接),用于把 tool_result.output 转成可显示字符串。
 export function extractText(blocks: ContentBlock[]): string {

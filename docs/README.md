@@ -2,39 +2,54 @@
 
 Last reviewed: 2026-07-16
 
-## 目标架构与路线
+## 目标设计
 
-- [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)：唯一的目标架构与建设顺序，定义 `openwork-core`、Protocol、Capabilities、Execution、Workspace、Persistence 等模块边界。
-- [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)：S2 Persistence 专题设计，冻结 `recorded_events`、Expected Version、事件边界、显式迁移和三旧 crate 的退出顺序。
-- [../plans/desktop-tauri-application-boundary-refactor.md](../plans/desktop-tauri-application-boundary-refactor.md)：S7 Desktop 收口专题设计，定义 Tauri Host、Application API、Command/Query/Subscription 和启动/退出边界。
-- [trace-bata-design.md](trace-bata-design.md)：Trace Bata Run/Event 升级专题设计，冻结三类 Run、Run Event、UUIDv7、Recorder 命令、PostgreSQL migration、Capture Health、Tree/Waterfall 和验收边界；当前标记为待实现。
+本轮项目结构、数据模型、数据库和 Trace 的目标设计只以以下文档集为准：
+
+- [redesign/README.md](redesign/README.md)：范围、权威性和总览；
+- [redesign/01-project-structure.md](redesign/01-project-structure.md)：完整 Core Runtime、能力 crate 和单向依赖；
+- [redesign/02-event-update-model.md](redesign/02-event-update-model.md)：Session/Prompt/Model Call/Tool Call/Permission 与数据面；
+- [redesign/03-database-schema.md](redesign/03-database-schema.md)：简化后的 8 张目标 PostgreSQL 表；
+- [redesign/04-trace-design.md](redesign/04-trace-design.md)：Core 内单表 Prompt Trace、内嵌 Event 和埋点规则。
+
+这些文档是设计规格，不表示代码、Migration 或 Desktop 已经实施。
 
 ## 当前实现参考
 
-- [architecture-overview.md](architecture-overview.md)：当前整体架构、模块边界和核心数据流，不定义未来路线。
-- [agent-runtime-and-tool-flow.md](agent-runtime-and-tool-flow.md)：Agent loop、工具调用、runtime 事件、doom-loop 检测。
-- [local-postgres.md](local-postgres.md)：当前代码所需的本地 PostgreSQL 开发方式，不代表目标 Persistence 方案。
+以下文档用于理解仓库当前行为；当文档与源码不一致时，以源码为准：
 
-## 权限、审批与工具安全
+- [architecture-overview.md](architecture-overview.md)：当前整体架构与模块关系；
+- [agent-runtime-and-tool-flow.md](agent-runtime-and-tool-flow.md)：当前 Agent loop、工具和 doom-loop；
+- [desktop-streaming-flow.md](desktop-streaming-flow.md)：当前 Tauri Live Event 与前端累积；
+- [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前 Recorded/Live Event 与 Turn 生命周期；
+- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前 Journal、Session 重放与 Trace 基线；
+- [permissions-and-approvals.md](permissions-and-approvals.md)：当前权限和审批合同；
+- [model-provider-v1-design.md](model-provider-v1-design.md)：当前 Provider/Model 适配边界；
+- [local-postgres.md](local-postgres.md)：当前本地 PostgreSQL 使用方式。
 
-- [permissions-and-approvals.md](permissions-and-approvals.md)：权限数据模型、各工具权限、human-in-the-loop 审批流程、当前边界。
-- [../plans/capability-tool-observation-design.md](../plans/capability-tool-observation-design.md)：Capability 合同、Catalog、Action Handler、Execution 与 Observation 的当前专题设计。
+## 历史设计与过程资料
 
-## Provider 与流式协议
+以下文档保留作为背景和实现演进证据，不再约束本轮目标结构：
 
-- [model-provider-v1-design.md](model-provider-v1-design.md)：Model Port、厂商 Adapter、错误分类、流式重试闸门、Provider Repository 与 PostgreSQL 表结构。
-- [desktop-streaming-flow.md](desktop-streaming-flow.md)：Tauri stream event、前端状态累积、审批 UI、reload 策略。
+- [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)；
+- [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)；
+- [../plans/desktop-tauri-application-boundary-refactor.md](../plans/desktop-tauri-application-boundary-refactor.md)；
+- [../plans/capability-tool-observation-design.md](../plans/capability-tool-observation-design.md)；
+- [trace-bata-design.md](trace-bata-design.md)：已由新 Trace 设计替代。
 
-## 持久化与观测
+## 判断顺序
 
-- [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前可持久化 Turn 生命周期、Recorded/Live Event 边界、审批等待恢复、Replay 状态与崩溃窗口。
-- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Session/Turn/Message、遗留表删除状态和未完成边界。
+1. 源码与现有 Migration 回答“现在实际是什么”；
+2. `docs/redesign/` 回答“重构后的目标是什么”；
+3. 其他 `docs/` 与 `plans/` 回答“此前为什么这样设计或实现”；
+4. 旧文档不得覆盖新目标，也不能把目标设计描述成已实现。
 
 ## 维护原则
 
-- 未来架构、模块所有权和建设顺序只以 `openwork-core-architecture-blueprint.md` 为准。
-- 其余文档只描述当前代码或某个专题，不再各自维护第二套路线路径。
-- 文档应描述当前实现，不要把未实现能力写成已完成。
-- 如果修改 `ModelEvent`、`AgentEvent`、`ContentBlock` 或 PostgreSQL schema，需要同步更新相关文档。
-- 如果新增内置 Action，需要同步更新 Capability Catalog、Execution Handler、名称对齐测试、权限表和工具调用流程文档。
-- 如果修改根目录 README，需要同步检查 `README.md` 和 `README.en.md` 是否保持一致。
+- 修改当前实现后，同步更新对应的“当前实现参考”；
+- 修改目标边界时，只在 `docs/redesign/` 更新，避免再产生平行蓝图；
+- Core 是完整 Session Runtime；目标领域词汇统一使用 Prompt、Model Call、Tool Call 与 Permission；
+- Session State、Event、Update、Chat History、Signals 与 Trace 必须始终分别说明用途；
+- 数据库设计必须区分模型配置、运行快照、统计、UI 回放、模型上下文和 Trace；
+- 如果修改根目录 README，继续同步检查 `README.md` 和 `README.en.md`；
+- 本轮设计不引入 Memory、MCP、Skill、Plan、Compaction、Artifact、新工具或新 Worktree 能力。

@@ -2,7 +2,9 @@
 
 Last reviewed: 2026-07-15
 
-> Status: architecture direction and invariant baseline. 本文冻结 OpenWork 要解决的核心问题、模块所有权、依赖方向和关键不变量，但不冻结具体实现方案，也不把 S0-S8 固定为必须照序执行的项目排期。Plan、Tool、Skill、MCP、Context、Memory、Sandbox 等重要子系统进入实现前，必须分别完成专题设计，并以当时的代码、评测和项目目标决定是否采用蓝图中的参考路径。
+> 文档地位更新（2026-07-16）：本文保留为历史蓝图和当前实现的辅助资料，不再是本轮重构的目标架构。新的目标结构以 [`docs/redesign/`](../docs/redesign/README.md) 为准；本文出现的 Plan、Skill、MCP、Memory、Artifact 等设想不属于本轮范围。
+>
+> 历史快照状态：当时作为 architecture direction and invariant baseline。以下冻结说明只代表当时方案，不再覆盖新目标设计。
 
 ## 1. 结论
 

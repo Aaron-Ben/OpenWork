@@ -34,43 +34,27 @@ fn protocol_source_tree_matches_architecture_blueprint() {
 }
 
 #[test]
-fn tool_responsibilities_are_split_without_legacy_crate() {
+fn target_leaf_crates_own_models_and_tools_without_core_dependencies() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let crates = workspace.join("crates");
-    assert!(
-        crates.join("openwork-capabilities").is_dir(),
-        "capability catalog crate is missing"
-    );
-    assert!(
-        crates.join("openwork-execution").is_dir(),
-        "execution crate is missing"
-    );
-    assert!(
-        !crates.join("openwork-tools").exists(),
-        "legacy openwork-tools crate must be removed after the split"
-    );
-
-    let core_manifest = std::fs::read_to_string(crates.join("openwork-core/Cargo.toml")).unwrap();
-    assert!(!core_manifest.contains("openwork-tools"));
-    assert!(!core_manifest.contains("openwork-capabilities"));
-    assert!(!core_manifest.contains("openwork-execution"));
-
-    for legacy in ["openwork-agent", "openwork-runtime", "openwork-permissions"] {
+    for target in [
+        "openwork-models",
+        "openwork-tools",
+        "openwork-agent",
+        "openwork-chat-state",
+    ] {
         assert!(
-            !crates.join(legacy).exists(),
-            "legacy crate must be removed: {legacy}"
+            crates.join(target).is_dir(),
+            "target crate is missing: {target}"
         );
     }
 
-    let capabilities_manifest =
-        std::fs::read_to_string(crates.join("openwork-capabilities/Cargo.toml")).unwrap();
-    assert!(!capabilities_manifest.contains("openwork-execution"));
+    let models = std::fs::read_to_string(crates.join("openwork-models/Cargo.toml")).unwrap();
+    assert!(!models.contains("openwork-core"));
+    assert!(!models.contains("openwork-protocol"));
 
-    let execution_manifest =
-        std::fs::read_to_string(crates.join("openwork-execution/Cargo.toml")).unwrap();
-    let dependencies = execution_manifest
-        .split("[dev-dependencies]")
-        .next()
-        .unwrap_or(&execution_manifest);
-    assert!(!dependencies.contains("openwork-capabilities"));
+    let tools = std::fs::read_to_string(crates.join("openwork-tools/Cargo.toml")).unwrap();
+    assert!(tools.contains("openwork-models"));
+    assert!(!tools.contains("openwork-core"));
+    assert!(!tools.contains("openwork-protocol"));
 }

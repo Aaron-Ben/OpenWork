@@ -3,7 +3,6 @@ import { Sparkles, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence } from 'motion/react'
 
-import { sessionsApi } from '../api/sessions'
 import { ApprovalDialog } from '../components/chat/ApprovalDialog'
 import { AssistantMessage } from '../components/chat/AssistantMessage'
 import { ChatInput } from '../components/chat/ChatInput'
@@ -14,11 +13,12 @@ import {
 import { ToolActivityList } from '../components/chat/ToolActivityList'
 import { mergeToolMessages } from '../components/chat/toolActivity'
 import { UserMessage } from '../components/chat/UserMessage'
-import { TurnTracePanel } from '../components/trace/TurnTracePanel'
+import { RuntimeTracePanel } from '../components/trace/RuntimeTracePanel'
 import { useActiveProvider } from '../stores/providerStore'
-import { useSessionStore, useActiveSessionMessages } from '../stores/sessionStore'
-import { DEFAULT_APPROVAL_POLICY } from '../type/chat'
-import type { TurnTraceSummary } from '../type/trace'
+import {
+  useActiveRuntimeMessages,
+  useRuntimeSessionStore,
+} from '../stores/runtimeSessionStore'
 
 export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
@@ -28,19 +28,15 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
     turnId: string
     providerToolCallId?: string
   } | null>(null)
-  const [traceSummaries, setTraceSummaries] = useState<Record<string, TurnTraceSummary>>({})
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const messages = useActiveSessionMessages()
+  const messages = useActiveRuntimeMessages()
   const displayMessages = useMemo(() => mergeToolMessages(messages), [messages])
   const turns = useMemo(() => getConversationTurns(displayMessages), [displayMessages])
-  const pushUserMessage = useSessionStore((state) => state.pushUserMessage)
-  const ensureStreamingItem = useSessionStore((state) => state.ensureStreamingItem)
-  const finishStreaming = useSessionStore((state) => state.finishStreaming)
-  const setActiveStream = useSessionStore((state) => state.setActiveStream)
-  const cancelActiveStream = useSessionStore((state) => state.cancelActiveStream)
-  const activeStream = useSessionStore((state) => state.activeStream)
+  const startTurn = useRuntimeSessionStore((state) => state.startTurn)
+  const cancelActiveTurn = useRuntimeSessionStore((state) => state.cancelActiveTurn)
+  const activeTurn = useRuntimeSessionStore((state) => state.activeTurn)
   // 是否正在发送 = 当前 session 有 in-flight 流式请求。
-  const isSending = activeStream?.sessionId === sessionId
+  const isSending = activeTurn?.sessionId === sessionId
   const modelOptions = active?.models.filter((item) => item.enabled) ?? []
 
   useEffect(() => {
@@ -48,51 +44,13 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id])
 
-  useEffect(() => {
-    setSelectedTrace(null)
-    if (!sessionId) {
-      setTraceSummaries({})
-      return
-    }
-    let current = true
-    void sessionsApi.traceSession(sessionId).then((summaries) => {
-      if (!current) return
-      setTraceSummaries(
-        Object.fromEntries(summaries.map((summary) => [summary.turnId, summary])),
-      )
-    }).catch(() => {
-      if (current) setTraceSummaries({})
-    })
-    return () => {
-      current = false
-    }
-  }, [sessionId, activeStream?.requestId])
+  useEffect(() => setSelectedTrace(null), [sessionId])
 
   async function send() {
     const text = draft.trim()
-    if (!text || isSending || !active || !model || !sessionId) return
-    const requestId = crypto.randomUUID()
+    if (!text || isSending || !sessionId) return
     setDraft('')
-    // 乐观:立即显示用户消息 + 临时 assistant item + 标记 in-flight。
-    pushUserMessage(sessionId, requestId, text)
-    ensureStreamingItem(sessionId, requestId, model)
-    setActiveStream({ sessionId, requestId })
-    try {
-      await sessionsApi.chatGenerateStream({
-        requestId,
-        sessionId,
-        providerId: active.id,
-        model,
-        userText: text,
-        approvalPolicy: DEFAULT_APPROVAL_POLICY,
-      })
-    } catch {
-      // 错误文本由 listener 的 error event 累积到 store;这里仅兜底结束流式态。
-    } finally {
-      // cancelled/done 事件会清 activeStream;这里兜底(防事件丢失)。
-      setActiveStream(null)
-      finishStreaming(sessionId, requestId)
-    }
+    await startTurn(sessionId, text)
   }
 
   return (
@@ -122,7 +80,6 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
                       parts={message.parts}
                       model={message.model}
                       isStreaming={message.isStreaming}
-                      traceSummary={message.turnId ? traceSummaries[message.turnId] : undefined}
                       onOpenTrace={message.turnId
                         ? (providerToolCallId) => setSelectedTrace({
                             turnId: message.turnId!,
@@ -148,23 +105,11 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
         <ConversationNavigator turns={turns} scrollContainerRef={scrollContainerRef} />
         <AnimatePresence>
           {selectedTrace ? (
-            <TurnTracePanel
+            <RuntimeTracePanel
               key={`${selectedTrace.turnId}:${selectedTrace.providerToolCallId ?? 'root'}`}
               turnId={selectedTrace.turnId}
-              initialProviderToolCallId={selectedTrace.providerToolCallId}
+              initialProviderCallId={selectedTrace.providerToolCallId}
               onClose={() => setSelectedTrace(null)}
-              onRevealMessage={(messageId) => {
-                setSelectedTrace(null)
-                revealChatElement(scrollContainerRef.current, 'data-message-id', messageId)
-              }}
-              onRevealTool={(providerToolCallId) => {
-                setSelectedTrace(null)
-                revealChatElement(
-                  scrollContainerRef.current,
-                  'data-tool-activity-row',
-                  providerToolCallId,
-                )
-              }}
             />
           ) : null}
         </AnimatePresence>
@@ -176,28 +121,14 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
         modelOptions={modelOptions}
         value={draft}
         isSending={isSending}
-        disabled={!active || !sessionId}
+        disabled={!sessionId}
         onValueChange={setDraft}
         onModelChange={setModel}
         onSubmit={() => void send()}
-        onCancel={() => void cancelActiveStream()}
+        onCancel={() => void cancelActiveTurn()}
       />
     </div>
   )
-}
-
-function revealChatElement(
-  container: HTMLDivElement | null,
-  attribute: string,
-  value: string,
-) {
-  window.requestAnimationFrame(() => {
-    const element = Array.from(
-      container?.querySelectorAll<HTMLElement>(`[${attribute}]`) ?? [],
-    ).find((candidate) => candidate.getAttribute(attribute) === value)
-    element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    element?.focus({ preventScroll: true })
-  })
 }
 
 function EmptySessionHero({ active, hasSession }: { active: boolean; hasSession: boolean }) {

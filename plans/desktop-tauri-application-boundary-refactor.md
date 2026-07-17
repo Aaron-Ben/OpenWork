@@ -1,6 +1,8 @@
 # Desktop Tauri 与 Application API 边界重构设计
 
-> Status: Phase A/B implemented; Phase C proposed. 当前/目标状态以各阶段标记为准。
+> 文档地位更新（2026-07-16）：本文保留为 Desktop/Application 边界的历史实施记录，不再定义本轮目标分层。新的 Host、App 与 Runtime 所有权以 [`docs/redesign/01-project-structure.md`](../docs/redesign/01-project-structure.md) 为准。
+>
+> 历史快照状态：Phase A/B 当时已经实现，Phase C 当时仍是提案。
 > Last reviewed: 2026-07-14.
 > Parent blueprint: [OpenWork Core 架构蓝图](./openwork-core-architecture-blueprint.md) S7。
 

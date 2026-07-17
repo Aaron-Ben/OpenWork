@@ -1,5 +1,9 @@
 [workspace]
 members = [
+  "crates/openwork-agent",
+  "crates/openwork-chat-state",
+  "crates/openwork-models",
+  "crates/openwork-tools",
   "crates/openwork-protocol",
   "crates/openwork-core",
   "crates/openwork-app",
@@ -18,6 +22,10 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+openwork-agent = { path = "crates/openwork-agent" }
+openwork-chat-state = { path = "crates/openwork-chat-state" }
+openwork-models = { path = "crates/openwork-models" }
+openwork-tools = { path = "crates/openwork-tools" }
 openwork-protocol = { path = "crates/openwork-protocol" }
 openwork-core = { path = "crates/openwork-core" }
 openwork-app = { path = "crates/openwork-app" }
