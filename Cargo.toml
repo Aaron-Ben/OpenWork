@@ -4,10 +4,8 @@ members = [
   "crates/openwork-chat-state",
   "crates/openwork-models",
   "crates/openwork-tools",
-  "crates/openwork-protocol",
   "crates/openwork-core",
   "crates/openwork-app",
-  "crates/openwork-persistence",
   "apps/desktop/src-tauri",
 ]
 resolver = "2"
@@ -21,10 +19,8 @@ openwork-agent = { path = "crates/openwork-agent" }
 openwork-chat-state = { path = "crates/openwork-chat-state" }
 openwork-models = { path = "crates/openwork-models" }
 openwork-tools = { path = "crates/openwork-tools" }
-openwork-protocol = { path = "crates/openwork-protocol" }
 openwork-core = { path = "crates/openwork-core" }
 openwork-app = { path = "crates/openwork-app" }
-openwork-persistence = { path = "crates/openwork-persistence" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }
 base64 = "0.22"

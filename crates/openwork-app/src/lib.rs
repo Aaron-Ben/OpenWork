@@ -14,7 +14,7 @@ pub use openwork_core::{
     SessionUpdateEnvelope as RuntimeSessionUpdateEnvelope, TraceSpanRecord as RuntimeTraceSpan,
     TraceTurnSummary as RuntimeTraceSummary, TurnAccepted as RuntimeTurnAccepted,
 };
-pub use openwork_protocol::provider::{ProviderInput, ProviderProfile};
+pub use openwork_models::provider::{ProviderInput, ProviderProfile};
 pub use provider_service::{
     ProviderApplicationService, ProviderIndex, ProviderPreset, ProviderPresetModel,
     ProviderTestResult,

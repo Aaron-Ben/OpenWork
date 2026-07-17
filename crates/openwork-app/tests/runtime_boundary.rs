@@ -16,3 +16,24 @@ fn desktop_exposes_runtime_commands_without_legacy_chat_commands() {
     assert!(!desktop.contains("chat_generate_stream"));
     assert!(!desktop.contains("resolve_approval"));
 }
+
+#[test]
+fn workspace_has_no_protocol_or_persistence_compatibility_crates() {
+    let workspace_manifest = include_str!("../../../Cargo.toml");
+    let app_manifest = include_str!("../Cargo.toml");
+    for removed in ["openwork-protocol", "openwork-persistence"] {
+        assert!(!workspace_manifest.contains(removed));
+        assert!(!app_manifest.contains(removed));
+    }
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(
+        !workspace
+            .join("crates/openwork-protocol/Cargo.toml")
+            .exists()
+    );
+    assert!(
+        !workspace
+            .join("crates/openwork-persistence/Cargo.toml")
+            .exists()
+    );
+}

@@ -1,0 +1,99 @@
+use std::sync::Arc;
+
+use openwork_core::{ApiKeyCipher, PostgresProviderRepository, PostgresStorage};
+use openwork_models::provider::{
+    ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderRepository,
+    ProviderRepositoryError,
+};
+use uuid::Uuid;
+
+fn unique(prefix: &str) -> String {
+    format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+#[tokio::test]
+async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
+    let storage = PostgresStorage::connect(Some(&database_url)).await.unwrap();
+    storage.migrate().await.unwrap();
+    let repository =
+        PostgresProviderRepository::new(storage.pool().clone(), ApiKeyCipher::from_key([37; 32]));
+    sqlx::query(
+        "DELETE FROM models_v2 WHERE credential_ref IN (
+            SELECT 'provider:' || provider_id
+            FROM provider_credentials_v2
+            WHERE display_name LIKE 'provider-core-test-%'
+        )",
+    )
+    .execute(storage.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "DELETE FROM provider_credentials_v2
+         WHERE display_name LIKE 'provider-core-test-%' AND active = FALSE",
+    )
+    .execute(storage.pool())
+    .await
+    .unwrap();
+    let original_active = repository.active_id().await.unwrap();
+    let provider_name = unique("provider-core-test");
+    let input = ProviderInput {
+        name: provider_name.clone(),
+        base_url: "https://example.invalid/v1".to_string(),
+        api_key: "test-secret-never-logged".to_string(),
+        kind: ProviderKind::Deepseek,
+        models: vec![
+            ProviderModel {
+                model_id: "model-a".to_string(),
+                display_name: Some("Model A".to_string()),
+                model_tier: ModelTier::Lite,
+                enabled: true,
+            },
+            ProviderModel {
+                model_id: "model-b".to_string(),
+                display_name: None,
+                model_tier: ModelTier::Pro,
+                enabled: false,
+            },
+        ],
+        enabled: true,
+        extra_body: None,
+    };
+
+    let created = repository.create(input).await.unwrap();
+    assert_eq!(created.name, provider_name);
+    assert_eq!(created.models.len(), 2);
+    assert_eq!(repository.active_id().await.unwrap(), original_active);
+
+    let runtime = repository.load_runtime(&created.id).await.unwrap().unwrap();
+    assert_eq!(runtime.credential.expose(), "test-secret-never-logged");
+    assert_eq!(runtime.profile, created);
+
+    repository.activate(&created.id).await.unwrap();
+    assert!(matches!(
+        repository.delete(&created.id).await,
+        Err(ProviderRepositoryError::CannotDeleteActive { .. })
+    ));
+    repository.clear_active().await.unwrap();
+    repository.delete(&created.id).await.unwrap();
+    if let Some(original_active) = original_active {
+        repository.activate(&original_active).await.unwrap();
+    }
+    assert!(repository.get_profile(&created.id).await.unwrap().is_none());
+
+    let remaining_models: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM models_v2 WHERE credential_ref = $1")
+            .bind(format!("provider:{}", created.id))
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining_models, 0);
+}
+
+#[test]
+fn api_key_cipher_debug_output_is_always_redacted() {
+    let cipher = Arc::new(ApiKeyCipher::from_key([11; 32]));
+    assert_eq!(format!("{cipher:?}"), "ApiKeyCipher([REDACTED])");
+}

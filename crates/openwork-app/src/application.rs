@@ -2,32 +2,33 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openwork_core::{
-    CredentialResolver, ModelCredential, OpenWorkCore, OpenWorkCoreError, PostgresStorage,
+    ApiKeyCipherError, CredentialResolver, ModelCredential, OpenWorkCore, OpenWorkCoreError,
+    PostgresProviderRepository, PostgresStorage, StorageError,
 };
-use openwork_models::ProviderFactory;
-use openwork_persistence::{DatabaseConfig, PostgresPersistence, PostgresPersistenceError};
-use openwork_protocol::provider::ProviderRepository;
+use openwork_models::{ProviderFactory, provider::ProviderRepository};
 use thiserror::Error;
 
 use crate::{ProviderApplicationService, RuntimeApplicationService};
 
 #[derive(Debug, Clone)]
 pub struct ApplicationConfig {
-    database: DatabaseConfig,
+    database_url: Option<String>,
 }
 
 impl ApplicationConfig {
     pub fn from_env_or_local() -> Self {
         Self {
-            database: DatabaseConfig::from_env_or_local(),
+            database_url: std::env::var("DATABASE_URL").ok(),
         }
     }
 }
 
 #[derive(Debug, Error)]
 pub enum ApplicationBootstrapError {
-    #[error("persistence bootstrap failed: {0}")]
-    Persistence(#[from] PostgresPersistenceError),
+    #[error("database bootstrap failed: {0}")]
+    Storage(#[from] StorageError),
+    #[error("provider credential bootstrap failed: {0}")]
+    Credential(#[from] ApiKeyCipherError),
     #[error("runtime core bootstrap failed: {0}")]
     RuntimeCore(#[from] OpenWorkCoreError),
 }
@@ -40,10 +41,11 @@ pub struct OpenWorkApplication {
 
 impl OpenWorkApplication {
     pub async fn bootstrap(config: ApplicationConfig) -> Result<Self, ApplicationBootstrapError> {
-        let persistence = PostgresPersistence::connect(config.database).await?;
-        let provider_repository: Arc<dyn ProviderRepository> =
-            Arc::new(persistence.provider_repository());
-        let runtime_storage = Arc::new(PostgresStorage::from_pool(persistence.pool().clone()));
+        let runtime_storage =
+            Arc::new(PostgresStorage::connect(config.database_url.as_deref()).await?);
+        let provider_repository: Arc<dyn ProviderRepository> = Arc::new(
+            PostgresProviderRepository::from_env(runtime_storage.pool().clone())?,
+        );
         let credential_resolver: Arc<dyn CredentialResolver> =
             Arc::new(ApplicationCredentialResolver {
                 providers: Arc::clone(&provider_repository),

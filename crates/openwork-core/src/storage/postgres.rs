@@ -13,8 +13,13 @@ use crate::session::{
 };
 
 use super::migrations::{
-    LEGACY_SHORT_MIGRATION_VERSION, MIGRATION_CHECKSUM, MIGRATION_NAME, MIGRATION_VERSION,
-    STATEMENTS,
+    LEGACY_SHORT_MIGRATION_VERSION, LEGACY_TABLE_ARCHIVE_CHECKSUM, LEGACY_TABLE_ARCHIVE_NAME,
+    LEGACY_TABLE_ARCHIVE_STATEMENTS, LEGACY_TABLE_ARCHIVE_VERSION, MIGRATION_CHECKSUM,
+    MIGRATION_NAME, MIGRATION_VERSION, PROVIDER_BACKFILL_CHECKSUM, PROVIDER_BACKFILL_NAME,
+    PROVIDER_BACKFILL_STATEMENTS, PROVIDER_BACKFILL_VERSION, PROVIDER_MODEL_FLAGS_CHECKSUM,
+    PROVIDER_MODEL_FLAGS_NAME, PROVIDER_MODEL_FLAGS_STATEMENTS, PROVIDER_MODEL_FLAGS_VERSION,
+    PROVIDER_SCHEMA_CHECKSUM, PROVIDER_SCHEMA_NAME, PROVIDER_SCHEMA_STATEMENTS,
+    PROVIDER_SCHEMA_VERSION, STATEMENTS,
 };
 
 const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
@@ -236,6 +241,7 @@ impl PostgresStorage {
                     .await?;
             }
             transaction.commit().await?;
+            self.migrate_followup_schema().await?;
             return Ok(());
         }
 
@@ -249,6 +255,84 @@ impl PostgresStorage {
             .execute(&mut *transaction)
             .await?;
         transaction.commit().await?;
+        self.migrate_followup_schema().await?;
+        Ok(())
+    }
+
+    async fn migrate_followup_schema(&self) -> Result<(), StorageError> {
+        for (version, name, checksum, statements) in [
+            (
+                PROVIDER_SCHEMA_VERSION,
+                PROVIDER_SCHEMA_NAME,
+                PROVIDER_SCHEMA_CHECKSUM,
+                PROVIDER_SCHEMA_STATEMENTS,
+            ),
+            (
+                PROVIDER_BACKFILL_VERSION,
+                PROVIDER_BACKFILL_NAME,
+                PROVIDER_BACKFILL_CHECKSUM,
+                PROVIDER_BACKFILL_STATEMENTS,
+            ),
+            (
+                PROVIDER_MODEL_FLAGS_VERSION,
+                PROVIDER_MODEL_FLAGS_NAME,
+                PROVIDER_MODEL_FLAGS_CHECKSUM,
+                PROVIDER_MODEL_FLAGS_STATEMENTS,
+            ),
+            (
+                LEGACY_TABLE_ARCHIVE_VERSION,
+                LEGACY_TABLE_ARCHIVE_NAME,
+                LEGACY_TABLE_ARCHIVE_CHECKSUM,
+                LEGACY_TABLE_ARCHIVE_STATEMENTS,
+            ),
+        ] {
+            let mut transaction = self.pool.begin().await?;
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(version)
+                .execute(&mut *transaction)
+                .await?;
+            let applied: Option<(String, Option<String>)> =
+                sqlx::query_as("SELECT name, checksum FROM schema_migrations WHERE version = $1")
+                    .bind(version)
+                    .fetch_optional(&mut *transaction)
+                    .await?;
+            if let Some((actual_name, actual_checksum)) = applied {
+                if actual_name != name
+                    || actual_checksum
+                        .as_deref()
+                        .is_some_and(|value| value != checksum)
+                {
+                    return Err(StorageError::MigrationDrift {
+                        version,
+                        expected_name: name,
+                        expected_checksum: checksum,
+                        actual_name,
+                        actual_checksum,
+                    });
+                }
+                if actual_checksum.is_none() {
+                    sqlx::query("UPDATE schema_migrations SET checksum = $2 WHERE version = $1")
+                        .bind(version)
+                        .bind(checksum)
+                        .execute(&mut *transaction)
+                        .await?;
+                }
+                transaction.commit().await?;
+                continue;
+            }
+            for statement in statements {
+                sqlx::query(statement).execute(&mut *transaction).await?;
+            }
+            sqlx::query(
+                "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)",
+            )
+            .bind(version)
+            .bind(name)
+            .bind(checksum)
+            .execute(&mut *transaction)
+            .await?;
+            transaction.commit().await?;
+        }
         Ok(())
     }
 

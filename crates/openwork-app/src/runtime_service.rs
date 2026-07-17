@@ -4,7 +4,7 @@ use openwork_core::{
     SessionUpdateEnvelope, ToolCallId, TraceSpanRecord, TraceTurnSummary, TurnAccepted,
     session::TurnId,
 };
-use openwork_protocol::model::ContentBlock;
+use openwork_models::model::ContentBlock;
 use tokio::sync::broadcast;
 
 use crate::{ApplicationError, ApplicationErrorCode};

@@ -1,18 +1,19 @@
 # OpenWork V1 目标数据库 Schema
 
-> 状态：V2 过渡 Schema 已实施。为避免破坏现存数据，业务表暂使用 `models_v2`、`sessions_v2`、`turns_v2`、`messages_v2`、`trace_spans_v2`；完成兼容迁移后再切换最终表名。
+> 状态：V2 Schema 与 Provider 回填已实施。业务表使用 `provider_credentials_v2`、`models_v2`、`sessions_v2`、`turns_v2`、`messages_v2`、`trace_spans_v2`；旧表已重命名为 `legacy_*`，仅保留作回退。
 >
 > 边界：保存模型配置、Session、Turn、完整 Message 和诊断 Trace；不保存可恢复的运行时 Checkpoint。
 >
-> 本文无 `_v2` 后缀的 SQL 表示最终逻辑名称；当前 Migration 已以 `_v2` 物理表名执行。旧 Provider 表仅用于凭证兼容读取，旧 `recorded_events`/`trace_spans` 不再参与新运行链。
+> 本文无 `_v2` 后缀的 SQL 表示逻辑名称；当前 Migration 已以 `_v2` 物理表名执行。`legacy_providers/legacy_provider_models/legacy_recorded_events/legacy_trace_spans` 不参与生产运行链。
 
 ## 1. 结论
 
-V1 收敛为 6 张表：
+V1 收敛为 7 张表：
 
 | 表 | 职责 | 是否业务真相 |
 | --- | --- | --- |
 | `schema_migrations` | Migration 版本与校验 | 基础设施 |
+| `provider_credentials` | Provider 元数据、激活状态与加密凭证 | 是，敏感数据 |
 | `models` | 可选择的模型端点与凭证引用 | 是 |
 | `sessions` | Session 元数据 | 是 |
 | `turns` | 一次用户运行的状态和汇总 | 是 |
@@ -22,6 +23,9 @@ V1 收敛为 6 张表：
 关系：
 
 ```text
+Provider Credential
+  └── Model.credential_ref
+
 Model
   ├── Session.default_model_id
   └── Turn.model_id
@@ -36,8 +40,7 @@ Session
 V1 不建立：
 
 ```text
-providers
-provider_models
+明文凭证
 recorded_events
 event_streams
 steps
@@ -49,7 +52,7 @@ projection_checkpoints
 trace_span_events
 ```
 
-“6 张表”是当前功能边界，不是永久架构不变量。以后只有出现独立一致性、查询或保留周期要求时才新增表。
+“7 张表”是当前功能边界，不是永久架构不变量。Provider Credential 单独成表，是为了避免把加密密文复制到每个 Model 行，并保持凭证轮换的原子性。
 
 ## 2. 为什么不用 Event Journal
 
@@ -95,7 +98,44 @@ CREATE TABLE schema_migrations (
 - checksum 不一致时启动失败；
 - 数据回填与 Schema 变更使用不同版本，便于重试和审计。
 
-## 5. models
+## 5. provider_credentials
+
+一行保存一个 Provider 的公开元数据、激活状态和加密 API Key。密文使用 `provider_id` 作为 AAD；Repository 不返回密文字段，只能返回公开 Profile 或在模型调用边界解密后的零化凭证类型。
+
+```sql
+CREATE TABLE provider_credentials (
+    provider_id        TEXT PRIMARY KEY,
+    display_name       TEXT NOT NULL,
+    provider_kind      TEXT NOT NULL,
+    base_url           TEXT NOT NULL,
+    api_key_encrypted  TEXT NOT NULL,
+    enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+    active             BOOLEAN NOT NULL DEFAULT FALSE,
+    config             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT provider_credentials_id_not_blank
+        CHECK (btrim(provider_id) <> ''),
+    CONSTRAINT provider_credentials_name_not_blank
+        CHECK (btrim(display_name) <> ''),
+    CONSTRAINT provider_credentials_kind_valid
+        CHECK (provider_kind IN ('openai', 'anthropic', 'deepseek', 'kimi', 'qwen', 'glm')),
+    CONSTRAINT provider_credentials_base_url_not_blank
+        CHECK (btrim(base_url) <> ''),
+    CONSTRAINT provider_credentials_secret_not_blank
+        CHECK (btrim(api_key_encrypted) <> ''),
+    CONSTRAINT provider_credentials_config_is_object
+        CHECK (jsonb_typeof(config) = 'object')
+);
+
+CREATE UNIQUE INDEX uq_provider_credentials_one_active
+    ON provider_credentials(active) WHERE active = TRUE;
+```
+
+旧 `providers.api_key_encrypted` 回填时原样复制，不能先解密再加密。这样迁移不需要 Secret 出现在进程日志、SQL 参数或临时文件中。
+
+## 6. models
 
 一行表示一个可直接选择的模型端点。V1 不把 Provider 与 Provider Model 拆成两个管理 Aggregate。
 
@@ -140,7 +180,7 @@ CREATE INDEX idx_models_enabled_name
     ON models(enabled, display_name);
 ```
 
-`credential_ref` 指向 Core 使用的凭证存储，不在该表保存明文 Secret。当前加密 API Key 的迁移必须通过凭证服务完成；不能把旧 ciphertext 当作新的普通配置字段。
+`credential_ref` 使用 `provider:<provider_id>` 指向 Core 的 `provider_credentials`。Model 表不保存明文或密文 Secret。
 
 `config` 只保存低频 Provider 选项，例如额外 Header 名称或兼容方言。禁止保存：
 
@@ -149,7 +189,7 @@ CREATE INDEX idx_models_enabled_name
 - Session 或 Turn 状态；
 - 可由固定代码默认值表达的杂项字段。
 
-## 6. sessions
+## 7. sessions
 
 ```sql
 CREATE TABLE sessions (
@@ -184,7 +224,7 @@ CREATE INDEX idx_sessions_default_model
 
 Session 不保存 `runtime_state`、Pending Permission 或当前 Tool Call。活动状态由 `SessionActor` 拥有。
 
-## 7. turns
+## 8. turns
 
 一个 Turn 是一次输入触发的完整 Agent Loop。它可以包含多次 Model Call 和 Tool Call。
 
@@ -261,7 +301,7 @@ CREATE UNIQUE INDEX uq_turns_one_running_per_session
 
 `model_id` 可因模型配置删除而变为 `NULL`，`resolved_model_name` 仍保留实际调用身份。一次 Turn 内若未来允许切换模型，应在对应 Model Call Span 上记录真实模型；Turn 字段表示开始时解析出的默认模型。
 
-## 8. messages
+## 9. messages
 
 `messages` 保存完整模型消息，不保存 Token Delta。
 
@@ -340,7 +380,7 @@ CREATE UNIQUE INDEX uq_messages_tool_result
 - 流式草稿只在完整响应结束后生成 Message；
 - Provider Opaque Block 可以保存，但必须由 `openwork-models` 版本化并限制大小。
 
-## 9. trace_spans
+## 10. trace_spans
 
 Turn 行本身是 Trace Root，`trace_spans` 只保存 Model Call 与 Tool Call。
 
@@ -455,7 +495,7 @@ Repository 还必须校验：
 - `provider_request_id` 表示最终一次或 Provider 公开的请求 ID，而不是尝试明细；
 - `attributes` 不保存原始 Prompt 内容、完整 Tool Input/Output 或凭证。
 
-## 10. 写入顺序和事务
+## 11. 写入顺序和事务
 
 ### 10.1 开始 Turn
 
@@ -500,7 +540,7 @@ Repository 还必须校验：
 
 最终回答本身读取最后一条 Assistant Message，不在 `turns` 重复存一份。
 
-## 11. 启动修正
+## 12. 启动修正
 
 Core 完成 Migration 后、接受新 Turn 前执行：
 
@@ -530,7 +570,7 @@ WHERE status = 'running';
 
 这只是状态与 Conversation 完整性收口，不调度恢复任务，也不读取 Trace 判断工具是否执行过。
 
-## 12. 常用读取
+## 13. 常用读取
 
 Session 列表：
 
@@ -562,9 +602,9 @@ WHERE turn_id = $1
 ORDER BY sequence;
 ```
 
-## 13. 从当前 Schema 迁移
+## 14. 从当前 Schema 迁移
 
-当前主要表为：
+重构前的主要表为：
 
 ```text
 providers
@@ -578,8 +618,8 @@ schema_migrations
 
 | 当前数据 | 目标 |
 | --- | --- |
-| `providers + provider_models` | 每个可选模型生成一行 `models` |
-| Provider 加密 Secret | 迁入凭证存储，表中只放 `credential_ref` |
+| `providers` | 原 ID、公开字段、激活状态和加密 Secret 回填到 `provider_credentials_v2` |
+| `provider_models` | 每个可选模型生成一行 `models_v2`，凭证只保存引用 |
 | Session Journal Event | 回放后生成 `sessions` |
 | `turn_started` | 生成 `turns` |
 | User/Assistant/Tool Message Event | 按原顺序生成 `messages` |
@@ -588,18 +628,21 @@ schema_migrations
 | Approval Event | 不建立目标行；必要信息仅保留在历史导出 |
 | 当前多种 Trace Span | 只迁移可可靠关联的 Model/Tool Span |
 
-有现存数据时使用版本化物理表：
+本轮实际使用版本化物理表：
 
-1. 建立 `models_v2/sessions_v2/turns_v2/messages_v2/trace_spans_v2`；
-2. 从 Journal 只读回放并回填；
-3. 对比 Session 数、Turn 数、Message 顺序和 Tool Result 配对；
-4. 新 Runtime 在维护窗口切换到 V2；
-5. 旧表改名为 `legacy_*`，V2 改为最终名称；
-6. 至少保留一个发布周期后再单独删除 Legacy 表。
+1. `202607180101` 建立 Runtime V2 五张关系表；
+2. `202607180102` 独立建立 `provider_credentials_v2`；
+3. `202607180103` 原样复制旧 Provider 密文，并将旧 Model 投影到 `models_v2`；
+4. `202607180104` 独立补齐旧 Model 自身的启用标志；
+5. 对比 Provider 数、Model 数、Provider ID、激活状态和 ciphertext；
+6. App 切换到 Core Provider Repository 后删除 `openwork-protocol`、`openwork-persistence`；
+7. `202607180105` 将旧表归档为 `legacy_*`，新代码无法再按旧表名访问；至少保留一个约定周期后再执行独立 DROP Migration。
+
+旧对话 Journal 已按本轮开发环境授权清空，因此没有伪造 Session/Message 历史回填；新的 Session 数据从 V2 Runtime 启用后开始写入。
 
 如果确认开发数据库可丢弃，可以执行 Fresh Schema，但必须由操作者显式选择，Migration 不得自动删除未知数据。
 
-## 14. Schema 验收清单
+## 15. Schema 验收清单
 
 - 每个 Turn 在 Session 内 sequence 唯一；
 - 每个 Message 在 Session 内 sequence 唯一；

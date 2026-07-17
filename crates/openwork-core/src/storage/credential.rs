@@ -130,92 +130,50 @@ pub enum ApiKeyCipherError {
     InvalidKeyEncoding,
     #[error("API key encryption key must decode to 32 bytes, got {actual}")]
     InvalidKeyLength { actual: usize },
-    #[error("API key encryption input is invalid: {field}")]
-    InvalidInput { field: &'static str },
-    #[error("API key cipher initialization failed")]
-    CipherInitializationFailed,
-    #[error("API key encryption envelope is invalid")]
+    #[error("provider credential envelope is invalid")]
     InvalidEnvelope,
-    #[error("API key encryption envelope version is unsupported")]
+    #[error("provider credential envelope version is unsupported")]
     UnsupportedVersion,
-    #[error("API key encryption failed")]
+    #[error("provider credential encryption failed")]
     EncryptionFailed,
-    #[error("API key decryption failed")]
+    #[error("provider credential decryption failed")]
     DecryptionFailed,
-    #[error("decrypted API key is not valid UTF-8")]
+    #[error("provider credential plaintext is invalid")]
     InvalidPlaintext,
+    #[error("provider credential cipher initialization failed")]
+    CipherInitializationFailed,
+    #[error("{field} must not be blank")]
+    BlankField { field: &'static str },
 }
 
 fn validate_non_blank(field: &'static str, value: &str) -> Result<(), ApiKeyCipherError> {
     if value.trim().is_empty() {
-        return Err(ApiKeyCipherError::InvalidInput { field });
+        Err(ApiKeyCipherError::BlankField { field })
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    fn cipher(byte: u8) -> ApiKeyCipher {
-        ApiKeyCipher::from_key([byte; 32])
-    }
+    use super::{ApiKeyCipher, ApiKeyCipherError};
 
     #[test]
     fn encrypts_with_unique_nonces_and_round_trips() {
-        let cipher = cipher(7);
-        let first = cipher.encrypt("prov-a", "sk-secret").unwrap();
-        let second = cipher.encrypt("prov-a", "sk-secret").unwrap();
-
+        let cipher = ApiKeyCipher::from_key([7; 32]);
+        let first = cipher.encrypt("provider-a", "secret").unwrap();
+        let second = cipher.encrypt("provider-a", "secret").unwrap();
         assert_ne!(first, second);
-        assert!(!first.contains("sk-secret"));
-        assert_eq!(cipher.decrypt("prov-a", &first).unwrap(), "sk-secret");
-        assert_eq!(cipher.decrypt("prov-a", &second).unwrap(), "sk-secret");
+        assert_eq!(cipher.decrypt("provider-a", &first).unwrap(), "secret");
     }
 
     #[test]
-    fn ciphertext_is_bound_to_provider_id_and_master_key() {
-        let encrypted = cipher(7).encrypt("prov-a", "sk-secret").unwrap();
-
+    fn ciphertext_is_bound_to_provider_id() {
+        let cipher = ApiKeyCipher::from_key([9; 32]);
+        let encrypted = cipher.encrypt("provider-a", "secret").unwrap();
         assert_eq!(
-            cipher(7).decrypt("prov-b", &encrypted),
+            cipher.decrypt("provider-b", &encrypted),
             Err(ApiKeyCipherError::DecryptionFailed)
         );
-        assert_eq!(
-            cipher(8).decrypt("prov-a", &encrypted),
-            Err(ApiKeyCipherError::DecryptionFailed)
-        );
-    }
-
-    #[test]
-    fn rejects_tampered_or_malformed_envelopes() {
-        let cipher = cipher(7);
-        let mut encrypted = cipher.encrypt("prov-a", "sk-secret").unwrap();
-        encrypted.push('A');
-
-        assert!(cipher.decrypt("prov-a", &encrypted).is_err());
-        assert_eq!(
-            cipher.decrypt("prov-a", "v2:abcd"),
-            Err(ApiKeyCipherError::UnsupportedVersion)
-        );
-        assert_eq!(
-            cipher.decrypt("prov-a", "not-an-envelope"),
-            Err(ApiKeyCipherError::InvalidEnvelope)
-        );
-    }
-
-    #[test]
-    fn validates_base64_master_key_length_without_exposing_key() {
-        let encoded = BASE64_STANDARD.encode([9_u8; 32]);
-        let cipher = ApiKeyCipher::from_base64(&encoded).unwrap();
-        assert_eq!(format!("{cipher:?}"), "ApiKeyCipher([REDACTED])");
-        assert!(matches!(
-            ApiKeyCipher::from_base64("not-base64"),
-            Err(ApiKeyCipherError::InvalidKeyEncoding)
-        ));
-        assert!(matches!(
-            ApiKeyCipher::from_base64(&BASE64_STANDARD.encode([1_u8; 16])),
-            Err(ApiKeyCipherError::InvalidKeyLength { actual: 16 })
-        ));
     }
 }

@@ -18,6 +18,7 @@ pub use session::{
     TurnAccepted, TurnId as RuntimeTurnId, TurnOutcome,
 };
 pub use storage::{
-    ModelInput, ModelRecord, PostgresStorage, PostgresTraceRecorder, SessionInput, SessionRecord,
-    StorageError, StoredMessageRecord, TraceSpanRecord, TraceTurnSummary,
+    API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError, ModelInput, ModelRecord,
+    PostgresProviderRepository, PostgresStorage, PostgresTraceRecorder, SessionInput,
+    SessionRecord, StorageError, StoredMessageRecord, TraceSpanRecord, TraceTurnSummary,
 };

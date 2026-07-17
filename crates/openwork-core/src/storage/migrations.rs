@@ -3,6 +3,26 @@ pub(crate) const MIGRATION_VERSION: i64 = 202_607_180_101;
 pub(crate) const MIGRATION_NAME: &str = "create_runtime_v2_schema";
 pub(crate) const MIGRATION_CHECKSUM: &str = "sha256:runtime-v2-schema-20260718-01";
 
+pub(crate) const PROVIDER_SCHEMA_VERSION: i64 = 202_607_180_102;
+pub(crate) const PROVIDER_SCHEMA_NAME: &str = "create_provider_credentials_v2";
+pub(crate) const PROVIDER_SCHEMA_CHECKSUM: &str =
+    "sha256:provider-credentials-v2-schema-20260718-01";
+
+pub(crate) const PROVIDER_BACKFILL_VERSION: i64 = 202_607_180_103;
+pub(crate) const PROVIDER_BACKFILL_NAME: &str = "backfill_provider_registry_v2";
+pub(crate) const PROVIDER_BACKFILL_CHECKSUM: &str =
+    "sha256:provider-registry-v2-backfill-20260718-01";
+
+pub(crate) const PROVIDER_MODEL_FLAGS_VERSION: i64 = 202_607_180_104;
+pub(crate) const PROVIDER_MODEL_FLAGS_NAME: &str = "backfill_provider_model_flags_v2";
+pub(crate) const PROVIDER_MODEL_FLAGS_CHECKSUM: &str =
+    "sha256:provider-model-flags-v2-backfill-20260718-01";
+
+pub(crate) const LEGACY_TABLE_ARCHIVE_VERSION: i64 = 202_607_180_105;
+pub(crate) const LEGACY_TABLE_ARCHIVE_NAME: &str = "archive_legacy_runtime_tables";
+pub(crate) const LEGACY_TABLE_ARCHIVE_CHECKSUM: &str =
+    "sha256:archive-legacy-runtime-tables-20260718-01";
+
 pub(crate) const STATEMENTS: &[&str] = &[
     r#"
     CREATE TABLE IF NOT EXISTS models_v2 (
@@ -191,3 +211,165 @@ pub(crate) const STATEMENTS: &[&str] = &[
         ON trace_spans_v2(turn_id, sequence)
     "#,
 ];
+
+pub(crate) const PROVIDER_SCHEMA_STATEMENTS: &[&str] = &[
+    r#"
+    CREATE TABLE IF NOT EXISTS provider_credentials_v2 (
+        provider_id        TEXT PRIMARY KEY,
+        display_name       TEXT NOT NULL,
+        provider_kind      TEXT NOT NULL,
+        base_url           TEXT NOT NULL,
+        api_key_encrypted  TEXT NOT NULL,
+        enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+        active             BOOLEAN NOT NULL DEFAULT FALSE,
+        config             JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT provider_credentials_v2_id_not_blank
+            CHECK (btrim(provider_id) <> ''),
+        CONSTRAINT provider_credentials_v2_name_not_blank
+            CHECK (btrim(display_name) <> ''),
+        CONSTRAINT provider_credentials_v2_kind_valid
+            CHECK (provider_kind IN ('openai', 'anthropic', 'deepseek', 'kimi', 'qwen', 'glm')),
+        CONSTRAINT provider_credentials_v2_base_url_not_blank
+            CHECK (btrim(base_url) <> ''),
+        CONSTRAINT provider_credentials_v2_secret_not_blank
+            CHECK (btrim(api_key_encrypted) <> ''),
+        CONSTRAINT provider_credentials_v2_config_is_object
+            CHECK (jsonb_typeof(config) = 'object')
+    )
+    "#,
+    r#"
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_credentials_v2_one_active
+        ON provider_credentials_v2(active) WHERE active = TRUE
+    "#,
+];
+
+pub(crate) const PROVIDER_BACKFILL_STATEMENTS: &[&str] = &[r#"
+    DO $$
+    BEGIN
+        IF to_regclass('public.providers') IS NULL
+           OR to_regclass('public.provider_models') IS NULL THEN
+            RETURN;
+        END IF;
+
+        INSERT INTO provider_credentials_v2 (
+            provider_id, display_name, provider_kind, base_url,
+            api_key_encrypted, enabled, active, config, created_at, updated_at
+        )
+        SELECT
+            id,
+            name,
+            CASE driver_code
+                WHEN 'openai_responses' THEN 'openai'
+                WHEN 'anthropic_messages' THEN 'anthropic'
+                WHEN 'openai_chat_deepseek' THEN 'deepseek'
+                WHEN 'openai_chat_kimi' THEN 'kimi'
+                WHEN 'openai_chat_qwen' THEN 'qwen'
+                WHEN 'openai_chat_glm' THEN 'glm'
+            END,
+            base_url,
+            api_key_encrypted,
+            enabled,
+            active,
+            jsonb_build_object(
+                'extraBody', COALESCE(adapter_options_json, '{}'::jsonb),
+                'legacySource', 'providers'
+            ),
+            created_at AT TIME ZONE 'Asia/Shanghai',
+            updated_at AT TIME ZONE 'Asia/Shanghai'
+        FROM providers
+        WHERE NOT is_deleted
+          AND driver_code IN (
+              'openai_responses', 'anthropic_messages', 'openai_chat_deepseek',
+              'openai_chat_kimi', 'openai_chat_qwen', 'openai_chat_glm'
+          )
+        ON CONFLICT (provider_id) DO NOTHING;
+
+        INSERT INTO models_v2 (
+            id, display_name, provider_kind, model_name, base_url,
+            credential_ref, enabled, config, created_at, updated_at
+        )
+        SELECT
+            'model:' || p.id || ':' || pm.model_id,
+            COALESCE(NULLIF(pm.display_name, ''), pm.model_id),
+            CASE p.driver_code
+                WHEN 'openai_responses' THEN 'openai'
+                WHEN 'anthropic_messages' THEN 'anthropic'
+                WHEN 'openai_chat_deepseek' THEN 'deepseek'
+                WHEN 'openai_chat_kimi' THEN 'kimi'
+                WHEN 'openai_chat_qwen' THEN 'qwen'
+                WHEN 'openai_chat_glm' THEN 'glm'
+            END,
+            pm.model_id,
+            p.base_url,
+            'provider:' || p.id,
+            p.enabled AND pm.enabled,
+            jsonb_build_object(
+                'providerId', p.id,
+                'modelTier', pm.model_tier,
+                'position', pm.position,
+                'displayNameProvided', pm.display_name IS NOT NULL,
+                'extraBody', COALESCE(p.adapter_options_json, '{}'::jsonb),
+                'legacySource', 'provider_models'
+            ),
+            pm.created_at AT TIME ZONE 'Asia/Shanghai',
+            pm.updated_at AT TIME ZONE 'Asia/Shanghai'
+        FROM provider_models pm
+        JOIN providers p ON p.id = pm.provider_id
+        WHERE NOT p.is_deleted
+          AND NOT pm.is_deleted
+          AND p.driver_code IN (
+              'openai_responses', 'anthropic_messages', 'openai_chat_deepseek',
+              'openai_chat_kimi', 'openai_chat_qwen', 'openai_chat_glm'
+          )
+        ON CONFLICT (id) DO NOTHING;
+    END $$
+"#];
+
+pub(crate) const PROVIDER_MODEL_FLAGS_STATEMENTS: &[&str] = &[r#"
+    DO $$
+    BEGIN
+        IF to_regclass('public.providers') IS NULL
+           OR to_regclass('public.provider_models') IS NULL THEN
+            RETURN;
+        END IF;
+
+        UPDATE models_v2 model
+        SET config = jsonb_set(
+                model.config,
+                '{modelEnabled}',
+                to_jsonb(provider_model.enabled),
+                TRUE
+            ),
+            updated_at = now()
+        FROM provider_models provider_model
+        JOIN providers provider ON provider.id = provider_model.provider_id
+        WHERE model.id = 'model:' || provider.id || ':' || provider_model.model_id
+          AND NOT provider.is_deleted
+          AND NOT provider_model.is_deleted
+          AND model.credential_ref = 'provider:' || provider.id;
+    END $$
+"#];
+
+pub(crate) const LEGACY_TABLE_ARCHIVE_STATEMENTS: &[&str] = &[r#"
+    DO $$
+    BEGIN
+        IF to_regclass('public.provider_models') IS NOT NULL
+           AND to_regclass('public.legacy_provider_models') IS NULL THEN
+            ALTER TABLE provider_models RENAME TO legacy_provider_models;
+        END IF;
+        IF to_regclass('public.providers') IS NOT NULL
+           AND to_regclass('public.legacy_providers') IS NULL THEN
+            ALTER TABLE providers RENAME TO legacy_providers;
+        END IF;
+        IF to_regclass('public.recorded_events') IS NOT NULL
+           AND to_regclass('public.legacy_recorded_events') IS NULL THEN
+            ALTER TABLE recorded_events RENAME TO legacy_recorded_events;
+        END IF;
+        IF to_regclass('public.trace_spans') IS NOT NULL
+           AND to_regclass('public.legacy_trace_spans') IS NULL THEN
+            ALTER TABLE trace_spans RENAME TO legacy_trace_spans;
+        END IF;
+    END $$
+"#];

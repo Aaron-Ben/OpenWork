@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use openwork_models::ProviderFactory;
-use openwork_protocol::provider::{
-    ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderProfile, ProviderRepository,
-    ProviderRepositoryError, ProviderRuntimeConfig,
+use openwork_models::{
+    ProviderFactory,
+    provider::{
+        ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderProfile, ProviderRepository,
+        ProviderRepositoryError, ProviderRuntimeConfig,
+    },
 };
 use serde::Serialize;
 

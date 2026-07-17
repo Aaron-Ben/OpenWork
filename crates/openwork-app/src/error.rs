@@ -1,4 +1,4 @@
-use openwork_protocol::provider::ProviderRepositoryError;
+use openwork_models::provider::ProviderRepositoryError;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -72,7 +72,7 @@ impl From<ProviderRepositoryError> for ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::{ApplicationError, ApplicationErrorCode};
-    use openwork_protocol::provider::ProviderRepositoryError;
+    use openwork_models::provider::ProviderRepositoryError;
 
     #[test]
     fn repository_details_are_mapped_to_a_safe_stable_error() {

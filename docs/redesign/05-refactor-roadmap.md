@@ -1,12 +1,12 @@
 # OpenWork 重构实施路线
 
-> 状态：Phase 1-6 的 V1 垂直链路已实施，Phase 7 已删除无调用方的 Legacy 执行 crate；Provider 凭证兼容层与旧表删除仍待独立迁移。
+> 状态：Phase 1-7 的代码迁移已完成；Provider 凭证和模型已回填到 Core V2 Storage，旧数据库表已归档为 `legacy_*`。最终 DROP 仍遵循独立 Migration 和保留周期。
 >
 > 原则：每一阶段都必须可编译、可测试、可回退；先建立新的唯一运行链，再删除旧链。
 
 ## 1. 目标与顺序
 
-当前实施结果：`SessionActor -> Model -> Tool/Permission -> Model` 已成为唯一执行链，Desktop 已切换 Runtime Command/Update/Snapshot/Trace API；新数据写入 V2 关系表。为保证旧 Provider API Key 仍可解密，`openwork-app`、`openwork-protocol`、`openwork-persistence` 暂不删除。
+当前实施结果：`SessionActor -> Model -> Tool/Permission -> Model` 已成为唯一执行链，Desktop 已切换 Runtime Command/Update/Snapshot/Trace API；新数据和 Provider 加密凭证均写入 Core V2 Storage，`openwork-protocol`、`openwork-persistence` 已删除。
 
 这次重构同时涉及：
 
@@ -444,7 +444,7 @@ Trace raw input/output 页面
 - 新建 Session、发送 Turn、工具权限、取消、历史加载、Trace 页面全链可用；
 - 重启后遗留 Turn 显示为 interrupted；
 - 重启不会自动重新执行工具；
-- Tauri crate 只依赖 `openwork-core`，不直接依赖叶子能力或 SQLx。
+- Tauri crate 只依赖薄 `openwork-app` Host 边界；`openwork-app` 只依赖 `openwork-core`/`openwork-models`，不直接依赖 SQLx。
 - 每个 Session 有独立 Runtime View，切换 Session 不丢失后台更新；
 - Event 重复可去重、Sequence 缺口触发 Snapshot，Reducer 不执行 I/O；
 - Rust Host Contract 与生成的 TypeScript Binding 无 Drift；
@@ -454,15 +454,14 @@ Trace raw input/output 页面
 
 只有前述 Gate 全部通过后才删除：
 
-### 代码
+### 代码（已完成）
 
 ```text
-openwork-app
 openwork-protocol
 openwork-persistence
 ```
 
-`openwork-capabilities`、`openwork-execution`、`openwork-providers`、`openwork-observability`、`openwork-workspace` 已在 V1 清理提交中删除；前三个保留 crate 只有在凭证迁移和 Desktop composition root 收敛后才能删除。
+`openwork-capabilities`、`openwork-execution`、`openwork-providers`、`openwork-observability`、`openwork-workspace` 也已删除。`openwork-app` 保留为薄 Desktop composition root，不拥有运行循环或持久化实现。
 
 ### 类型/机制
 
@@ -520,7 +519,7 @@ pnpm --dir apps/desktop build
 
 ```sh
 rg -n 'StepId|ToolRunId|ApprovalId|ApprovalRecovery|TurnRecorderPort|JournalTurnRecorder' crates apps
-rg -n 'openwork-app|openwork-protocol|openwork-persistence|openwork-observability|openwork-workspace' Cargo.toml crates apps
+rg -n 'openwork-protocol|openwork-persistence|openwork-observability|openwork-workspace' Cargo.toml crates apps
 rg -n 'recorded_events|replay_turn_lifecycle' crates apps
 rg -n 'TurnLiveEvent|TurnLifecycle|StepLifecycle|ToolRunLifecycle|ApprovalRecovery' apps/desktop/src
 rg -n 'chat-stream-event|chat_generate_stream|approvalStore|activeStream' apps/desktop/src apps/desktop/src-tauri/src
