@@ -1,6 +1,6 @@
 # OpenWork Runtime 重构设计
 
-> 状态：目标设计，尚未实施。
+> 状态：V1 主运行链已于 `refactor/runtime-v1` 落地；旧 Provider 凭证存储仍保留兼容读取，旧表尚未删除。
 >
 > 源码基线：`grok-build` 与 OpenWork 当前工作区，最后核对于 2026-07-18。
 >
@@ -8,7 +8,7 @@
 
 ## 1. 这次重构解决什么
 
-当前 OpenWork 已经有模型流、工具执行、审批、Journal、Trace 和部分恢复代码，但同一条运行链被拆散在：
+重构前的 OpenWork 已经有模型流、工具执行、审批、Journal、Trace 和部分恢复代码，但同一条运行链被拆散在：
 
 - `openwork-app::chat`：装配 Provider、Persistence、Trace、Supervisor 和 Core Agent；
 - `openwork-core::agent`：Model → Tool → Model 循环，同时写 Step/ToolRun/Approval 事件和 Trace；
@@ -51,7 +51,7 @@
 ## 3. 核心决策
 
 1. `openwork-core` 对应 `xai-grok-shell` 的产品运行时角色，而不是一个狭义状态机库。
-2. 当前 `openwork-app` 合并进 `openwork-core`；不新增 `openwork-shell`。
+2. `openwork-app` 的旧执行编排合并进 `openwork-core`；目前仅保留 Provider 凭证管理和 Desktop composition root，不新增 `openwork-shell`。
 3. `SessionActor` 是每个活动 Session 的唯一运行时 Owner。
 4. `openwork-agent` 只拥有 Agent Definition、System Prompt、Tool Set 和静态策略。
 5. `openwork-chat-state` 是模型 Conversation 的唯一写入者。

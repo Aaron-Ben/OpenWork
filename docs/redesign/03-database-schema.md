@@ -1,10 +1,10 @@
 # OpenWork V1 目标数据库 Schema
 
-> 状态：目标逻辑 Schema，尚未实施。
+> 状态：V2 过渡 Schema 已实施。为避免破坏现存数据，业务表暂使用 `models_v2`、`sessions_v2`、`turns_v2`、`messages_v2`、`trace_spans_v2`；完成兼容迁移后再切换最终表名。
 >
 > 边界：保存模型配置、Session、Turn、完整 Message 和诊断 Trace；不保存可恢复的运行时 Checkpoint。
 >
-> SQL 用于约束设计和 Migration 实现，不代表已对数据库执行。
+> 本文无 `_v2` 后缀的 SQL 表示最终逻辑名称；当前 Migration 已以 `_v2` 物理表名执行。旧 Provider 表仅用于凭证兼容读取，旧 `recorded_events`/`trace_spans` 不再参与新运行链。
 
 ## 1. 结论
 

@@ -10,6 +10,7 @@ import type { ProviderModel } from '../../type/providers'
 interface ChatInputProps {
   model: string
   modelOptions: ProviderModel[]
+  modelSelectionLocked?: boolean
   value: string
   isSending: boolean
   disabled?: boolean
@@ -23,6 +24,7 @@ interface ChatInputProps {
 export function ChatInput({
   model,
   modelOptions,
+  modelSelectionLocked = false,
   value,
   isSending,
   disabled = false,
@@ -104,7 +106,7 @@ export function ChatInput({
           <Select
             value={model}
             onValueChange={onModelChange}
-            disabled={disabled || isSending || modelOptions.length === 0}
+            disabled={disabled || modelSelectionLocked || isSending || modelOptions.length === 0}
           >
             <SelectTrigger className="w-[clamp(110px,28vw,260px)]" aria-label={t('chat.selectModel')}>
               <SelectValue placeholder={t('chat.noModel')}>

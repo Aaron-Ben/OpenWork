@@ -14,7 +14,7 @@ import { ToolActivityList } from '../components/chat/ToolActivityList'
 import { mergeToolMessages } from '../components/chat/toolActivity'
 import { UserMessage } from '../components/chat/UserMessage'
 import { RuntimeTracePanel } from '../components/trace/RuntimeTracePanel'
-import { useActiveProvider } from '../stores/providerStore'
+import { useActiveProvider, useProviderStore } from '../stores/providerStore'
 import {
   useActiveRuntimeMessages,
   useRuntimeSessionStore,
@@ -23,7 +23,6 @@ import {
 export function ChatView({ sessionId }: { sessionId: string | null }) {
   const active = useActiveProvider()
   const [draft, setDraft] = useState('')
-  const [model, setModel] = useState('')
   const [selectedTrace, setSelectedTrace] = useState<{
     turnId: string
     providerToolCallId?: string
@@ -35,14 +34,29 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
   const startTurn = useRuntimeSessionStore((state) => state.startTurn)
   const cancelActiveTurn = useRuntimeSessionStore((state) => state.cancelActiveTurn)
   const activeTurn = useRuntimeSessionStore((state) => state.activeTurn)
+  const session = useRuntimeSessionStore((state) =>
+    state.sessions.find((item) => item.id === sessionId),
+  )
+  const providers = useProviderStore((state) => state.providers)
   // 是否正在发送 = 当前 session 有 in-flight 流式请求。
   const isSending = activeTurn?.sessionId === sessionId
-  const modelOptions = active?.models.filter((item) => item.enabled) ?? []
-
-  useEffect(() => {
-    setModel(active?.models.find((item) => item.enabled)?.modelId ?? '')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id])
+  const sessionModel = useMemo(() => {
+    if (!session?.defaultModelId) return null
+    for (const provider of providers) {
+      const model = provider.models.find(
+        (item) => `model:${provider.id}:${item.modelId}` === session.defaultModelId,
+      )
+      if (model) return model
+    }
+    return {
+      modelId: session.defaultModelId,
+      displayName: session.defaultModelId,
+      modelTier: 'plus' as const,
+      enabled: true,
+    }
+  }, [providers, session?.defaultModelId])
+  const modelOptions = sessionModel ? [sessionModel] : []
+  const model = sessionModel?.modelId ?? ''
 
   useEffect(() => setSelectedTrace(null), [sessionId])
 
@@ -119,11 +133,12 @@ export function ChatView({ sessionId }: { sessionId: string | null }) {
         topContent={<ApprovalDialog />}
         model={model}
         modelOptions={modelOptions}
+        modelSelectionLocked
         value={draft}
         isSending={isSending}
         disabled={!sessionId}
         onValueChange={setDraft}
-        onModelChange={setModel}
+        onModelChange={() => undefined}
         onSubmit={() => void send()}
         onCancel={() => void cancelActiveTurn()}
       />

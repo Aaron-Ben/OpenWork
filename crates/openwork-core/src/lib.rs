@@ -1,19 +1,9 @@
 //! Durable Turn control loop and state machines.
 
-mod agent;
-mod approval;
 mod core;
 pub mod session;
 pub mod storage;
 
-pub use agent::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentPorts, AgentTraceContext, ApprovalRecovery,
-    RunResult,
-};
-pub use approval::{
-    ApprovalCommandError, ApprovalState, ApprovalWaitOutcome, TurnCommandHandle, TurnCommandInbox,
-    turn_command_channel,
-};
 pub use core::{
     CredentialResolver, EnvironmentCredentialResolver, LoadedSession, OpenWorkCore,
     OpenWorkCoreConfig, OpenWorkCoreError,

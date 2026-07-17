@@ -1,22 +1,12 @@
-//! Application commands, supervisors, and composition root.
+//! Application composition root and host-facing runtime services.
 
 mod application;
-mod cancel;
-mod chat;
 mod error;
 mod provider_service;
 mod runtime_service;
-mod session_service;
-mod trace_service;
-mod turn_service;
-mod turn_supervisor;
 
 pub use application::{ApplicationBootstrapError, ApplicationConfig, OpenWorkApplication};
-pub use chat::{
-    ChatGenerateRequest, ChatGenerateResponse, ChatRuntimeError, TurnLiveEvent, TurnLiveEventKind,
-};
 pub use error::{ApplicationError, ApplicationErrorCode};
-pub use openwork_core::{Agent, AgentConfig, AgentError, AgentEvent, RunResult};
 pub use openwork_core::{
     LoadedSession as RuntimeLoadedSession, ModelInput as RuntimeModelInput,
     SessionInput as RuntimeSessionInput, SessionRecord as RuntimeSessionRecord,
@@ -24,24 +14,9 @@ pub use openwork_core::{
     SessionUpdateEnvelope as RuntimeSessionUpdateEnvelope, TraceSpanRecord as RuntimeTraceSpan,
     TraceTurnSummary as RuntimeTraceSummary, TurnAccepted as RuntimeTurnAccepted,
 };
-pub use openwork_persistence::{Session, SessionInput, SessionLoadResult, SessionSummary};
-pub use openwork_protocol::approval::{ApprovalPolicy, ApprovalResolution, ResolveApproval};
 pub use openwork_protocol::provider::{ProviderInput, ProviderProfile};
 pub use provider_service::{
     ProviderApplicationService, ProviderIndex, ProviderPreset, ProviderPresetModel,
     ProviderTestResult,
 };
 pub use runtime_service::RuntimeApplicationService;
-pub use session_service::SessionApplicationService;
-pub use trace_service::{
-    TraceApplicationService, TraceApprovalDetail, TraceDataCompleteness, TraceDiagnosis,
-    TraceDiagnosisReason, TraceDiagnosisStatus, TraceListPage, TraceListQuery,
-    TraceModelAttemptDetail, TraceModelRequestSummary, TraceRecoveryDetail, TraceSpanDetail,
-    TraceSpanDetailView, TraceSpanView, TraceStepDetail, TraceTokenUsage, TraceToolRunDetail,
-    TraceTransportAttemptDetail, TraceTurnDetail, TurnTrace, TurnTraceSummary,
-};
-pub use turn_service::TurnApplicationService;
-pub use turn_supervisor::{TurnSupervisor, TurnSupervisorError};
-
-pub(crate) use cancel::RequestCancelRegistry;
-pub(crate) use chat::ChatRuntime;

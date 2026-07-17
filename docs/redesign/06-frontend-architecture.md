@@ -1,6 +1,6 @@
 # OpenWork Desktop 前端重构设计
 
-> 状态：目标设计，尚未实施。
+> 状态：V1 已实施。Desktop 已使用 Runtime Session Store、Update Sequence、Snapshot/Replay 和 V2 Trace；模型选择按 Session 固定模型只读展示。
 >
 > 范围：`apps/desktop/src` React 前端与 `apps/desktop/src-tauri` Host Bridge。
 >

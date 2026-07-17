@@ -1,6 +1,6 @@
 # Session Runtime、Agent Loop 与数据流
 
-> 状态：目标设计，尚未实施。
+> 状态：已实施。SessionActor 已拥有 Turn 主循环、Live Update、Snapshot 与 Sequence Replay；V1 仍不恢复进程退出前未完成的 Turn。
 >
 > V1 边界：完成 Model → Tool → Model 主循环、完整会话历史、Live Update 与 Trace；不恢复进程退出前未完成的 Turn。
 

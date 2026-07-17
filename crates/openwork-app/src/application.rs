@@ -4,16 +4,12 @@ use async_trait::async_trait;
 use openwork_core::{
     CredentialResolver, ModelCredential, OpenWorkCore, OpenWorkCoreError, PostgresStorage,
 };
-use openwork_observability::TraceRuntime;
+use openwork_models::ProviderFactory;
 use openwork_persistence::{DatabaseConfig, PostgresPersistence, PostgresPersistenceError};
-use openwork_protocol::{provider::ProviderRepository, trace::TraceRepository};
-use openwork_providers::ProviderFactory;
+use openwork_protocol::provider::ProviderRepository;
 use thiserror::Error;
 
-use crate::{
-    ChatRuntime, ProviderApplicationService, RuntimeApplicationService, SessionApplicationService,
-    TraceApplicationService, TurnApplicationService,
-};
+use crate::{ProviderApplicationService, RuntimeApplicationService};
 
 #[derive(Debug, Clone)]
 pub struct ApplicationConfig {
@@ -39,9 +35,6 @@ pub enum ApplicationBootstrapError {
 /// The single in-process application entry point owned by a host such as Tauri.
 pub struct OpenWorkApplication {
     providers: ProviderApplicationService,
-    sessions: SessionApplicationService,
-    turns: TurnApplicationService,
-    traces: TraceApplicationService,
     runtime: RuntimeApplicationService,
 }
 
@@ -58,41 +51,16 @@ impl OpenWorkApplication {
         let runtime =
             OpenWorkCore::from_storage_with_credentials(runtime_storage, credential_resolver)
                 .await?;
-        let session_store = persistence.session_store();
-        let trace_repository: Arc<dyn TraceRepository> = Arc::new(persistence.trace_repository());
-        let trace_runtime = TraceRuntime::new(Arc::clone(&trace_repository));
         let provider_factory = ProviderFactory::default();
-
-        let chat_runtime = ChatRuntime::new(
-            Arc::clone(&provider_repository),
-            session_store.clone(),
-            provider_factory.clone(),
-            trace_runtime,
-        );
 
         Ok(Self {
             providers: ProviderApplicationService::new(provider_repository, provider_factory),
-            sessions: SessionApplicationService::new(session_store.clone()),
-            turns: TurnApplicationService::new(chat_runtime),
-            traces: TraceApplicationService::with_session_store(trace_repository, session_store),
             runtime: RuntimeApplicationService::new(runtime),
         })
     }
 
     pub fn providers(&self) -> &ProviderApplicationService {
         &self.providers
-    }
-
-    pub fn sessions(&self) -> &SessionApplicationService {
-        &self.sessions
-    }
-
-    pub fn turns(&self) -> &TurnApplicationService {
-        &self.turns
-    }
-
-    pub fn traces(&self) -> &TraceApplicationService {
-        &self.traces
     }
 
     pub fn runtime(&self) -> &RuntimeApplicationService {

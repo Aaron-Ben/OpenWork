@@ -1,12 +1,12 @@
 # OpenWork 目标项目结构
 
-> 状态：目标设计，尚未实施。
+> 状态：核心 crate 边界与唯一运行链已实施；`openwork-app`、`openwork-protocol`、`openwork-persistence` 暂作兼容边界保留。
 >
 > 参考原则：以 `grok-build` 的实际源码所有权为依据，但按 OpenWork 当前能力缩小规模。
 
-## 1. 当前结构为什么难维护
+## 1. 重构前结构为什么难维护
 
-当前 Workspace 有 9 个 Rust library crate：
+重构前 Workspace 有 9 个 Rust library crate：
 
 ```text
 openwork-protocol

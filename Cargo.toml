@@ -7,12 +7,7 @@ members = [
   "crates/openwork-protocol",
   "crates/openwork-core",
   "crates/openwork-app",
-  "crates/openwork-capabilities",
-  "crates/openwork-execution",
-  "crates/openwork-providers",
   "crates/openwork-persistence",
-  "crates/openwork-observability",
-  "crates/openwork-workspace",
   "apps/desktop/src-tauri",
 ]
 resolver = "2"
@@ -29,12 +24,7 @@ openwork-tools = { path = "crates/openwork-tools" }
 openwork-protocol = { path = "crates/openwork-protocol" }
 openwork-core = { path = "crates/openwork-core" }
 openwork-app = { path = "crates/openwork-app" }
-openwork-capabilities = { path = "crates/openwork-capabilities" }
-openwork-execution = { path = "crates/openwork-execution" }
-openwork-providers = { path = "crates/openwork-providers" }
 openwork-persistence = { path = "crates/openwork-persistence" }
-openwork-observability = { path = "crates/openwork-observability" }
-openwork-workspace = { path = "crates/openwork-workspace" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }
 base64 = "0.22"

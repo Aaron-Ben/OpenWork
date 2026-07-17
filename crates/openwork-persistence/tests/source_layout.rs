@@ -1,80 +1,67 @@
 use std::path::Path;
 
 #[test]
-fn persistence_source_tree_matches_model_provider_design() {
+fn persistence_is_only_a_provider_credential_compatibility_boundary_for_the_app() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let crate_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
     for path in [
-        "bin/openwork-migrate.rs",
         "crypto/mod.rs",
         "crypto/api_key.rs",
-        "session/mod.rs",
-        "session/store.rs",
-        "session/types.rs",
+        "postgres/database.rs",
+        "postgres/persistence.rs",
+        "postgres/provider_registry/mod.rs",
+        "postgres/provider_registry/record.rs",
+        "postgres/provider_registry/repository.rs",
     ] {
         assert!(
             crate_src.join(path).is_file(),
-            "missing persistence source file: {path}"
-        );
-    }
-    let src = crate_src.join("postgres");
-    for path in [
-        "database.rs",
-        "persistence.rs",
-        "migrations/mod.rs",
-        "migrations/runner.rs",
-        "migrations/drop_legacy_sessions.rs",
-        "migrations/recorded_events.rs",
-        "migrations/schema_infrastructure.rs",
-        "event_journal/mod.rs",
-        "event_journal/record.rs",
-        "event_journal/repository.rs",
-        "migrations/provider_registry.rs",
-        "provider_registry/mod.rs",
-        "provider_registry/record.rs",
-        "provider_registry/repository.rs",
-    ] {
-        assert!(
-            src.join(path).is_file(),
-            "missing persistence source file: {path}"
-        );
-    }
-    for legacy in [
-        "provider_migrations.rs",
-        "provider_records.rs",
-        "provider_repository.rs",
-    ] {
-        assert!(
-            !src.join(legacy).exists(),
-            "legacy postgres module remains: {legacy}"
+            "missing provider credential compatibility source: {path}"
         );
     }
 
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let application =
         std::fs::read_to_string(workspace.join("crates/openwork-app/src/application.rs"))
             .expect("application composition root must be readable");
-    assert!(application.contains("persistence.session_store()"));
-    assert!(application.contains("PostgresPersistence::connect"));
+    assert!(application.contains("persistence.provider_repository()"));
+    assert!(application.contains("PostgresStorage::from_pool"));
+    assert!(!application.contains("persistence.session_store()"));
+    assert!(!application.contains("event_journal"));
+    assert!(!application.contains("trace_repository"));
 
     let desktop = std::fs::read_to_string(workspace.join("apps/desktop/src-tauri/src/lib.rs"))
         .expect("desktop host must be readable");
     assert!(!desktop.contains("PostgresPersistence"));
     assert!(!desktop.contains("SessionStore"));
 
-    let chat = std::fs::read_to_string(workspace.join("crates/openwork-app/src/chat.rs"))
-        .expect("chat runtime must be readable");
-    assert!(!chat.contains("append_llm_event"));
-    assert!(!chat.contains("tokio::spawn"));
-    assert!(chat.contains("start_turn"));
-    assert!(chat.contains("finish_turn"));
-
-    assert!(!workspace.join("crates/openwork-session").exists());
-    assert!(!workspace.join("crates/openwork-db-macros").exists());
-    assert!(!workspace.join("crates/openwork-database").exists());
+    for removed in [
+        "openwork-capabilities",
+        "openwork-execution",
+        "openwork-observability",
+        "openwork-providers",
+        "openwork-workspace",
+    ] {
+        assert!(
+            !workspace
+                .join("crates")
+                .join(removed)
+                .join("Cargo.toml")
+                .exists(),
+            "removed legacy crate still exists: {removed}"
+        );
+    }
 
     let workspace_manifest = std::fs::read_to_string(workspace.join("Cargo.toml")).unwrap();
-    let persistence_manifest =
-        std::fs::read_to_string(workspace.join("crates/openwork-persistence/Cargo.toml")).unwrap();
-    assert!(!workspace_manifest.contains("openwork-database"));
-    assert!(!persistence_manifest.contains("openwork-database"));
+    for removed in [
+        "openwork-capabilities",
+        "openwork-execution",
+        "openwork-observability",
+        "openwork-providers",
+        "openwork-workspace",
+    ] {
+        assert!(
+            !workspace_manifest.contains(removed),
+            "workspace still references removed crate: {removed}"
+        );
+    }
 }

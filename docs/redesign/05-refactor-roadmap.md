@@ -1,10 +1,12 @@
 # OpenWork 重构实施路线
 
-> 状态：实施计划，尚未执行。
+> 状态：Phase 1-6 的 V1 垂直链路已实施，Phase 7 已删除无调用方的 Legacy 执行 crate；Provider 凭证兼容层与旧表删除仍待独立迁移。
 >
 > 原则：每一阶段都必须可编译、可测试、可回退；先建立新的唯一运行链，再删除旧链。
 
 ## 1. 目标与顺序
+
+当前实施结果：`SessionActor -> Model -> Tool/Permission -> Model` 已成为唯一执行链，Desktop 已切换 Runtime Command/Update/Snapshot/Trace API；新数据写入 V2 关系表。为保证旧 Provider API Key 仍可解密，`openwork-app`、`openwork-protocol`、`openwork-persistence` 暂不删除。
 
 这次重构同时涉及：
 
@@ -457,17 +459,14 @@ Trace raw input/output 页面
 ```text
 openwork-app
 openwork-protocol
-openwork-capabilities
-openwork-execution
-openwork-providers
 openwork-persistence
-openwork-observability
 ```
+
+`openwork-capabilities`、`openwork-execution`、`openwork-providers`、`openwork-observability`、`openwork-workspace` 已在 V1 清理提交中删除；前三个保留 crate 只有在凭证迁移和 Desktop composition root 收敛后才能删除。
 
 ### 类型/机制
 
 ```text
-TurnId（目标运行 API 中）
 StepId
 ToolRunId
 ApprovalId

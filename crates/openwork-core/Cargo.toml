@@ -8,7 +8,6 @@ openwork-agent = { workspace = true }
 openwork-chat-state = { workspace = true }
 openwork-models = { workspace = true }
 openwork-tools = { workspace = true }
-openwork-protocol = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 serde = { workspace = true }
