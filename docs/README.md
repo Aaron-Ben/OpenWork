@@ -1,55 +1,36 @@
 # OpenWork 文档索引
 
-Last reviewed: 2026-07-16
+Last reviewed: 2026-07-18
 
-## 目标设计
+## 当前权威文档
 
-本轮项目结构、数据模型、数据库和 Trace 的目标设计只以以下文档集为准：
+重构后的项目结构、运行时、数据库、Trace 和 Desktop 只以以下文档为准：
 
-- [redesign/README.md](redesign/README.md)：范围、权威性和总览；
-- [redesign/01-project-structure.md](redesign/01-project-structure.md)：完整 Core Runtime、能力 crate 和单向依赖；
-- [redesign/02-event-update-model.md](redesign/02-event-update-model.md)：Session/Prompt/Model Call/Tool Call/Permission 与数据面；
-- [redesign/03-database-schema.md](redesign/03-database-schema.md)：简化后的 8 张目标 PostgreSQL 表；
-- [redesign/04-trace-design.md](redesign/04-trace-design.md)：Core 内单表 Prompt Trace、内嵌 Event 和埋点规则。
+- [redesign/README.md](redesign/README.md)：范围、实施状态、明确非目标和已知暂缓项；
+- [redesign/01-project-structure.md](redesign/01-project-structure.md)：五个 Rust crate、模块职责和依赖方向；
+- [redesign/02-event-update-model.md](redesign/02-event-update-model.md)：Session、Turn、Model Call、Tool Call、Permission 和 Live Update；
+- [redesign/03-database-schema.md](redesign/03-database-schema.md)：SQLx 干净基线与六张业务表；
+- [redesign/04-trace-design.md](redesign/04-trace-design.md)：Turn 下的 Model Call/Tool Call Trace 与降级边界；
+- [redesign/05-refactor-roadmap.md](redesign/05-refactor-roadmap.md)：迁移结果、验收 Gate 和未关闭项；
+- [redesign/06-frontend-architecture.md](redesign/06-frontend-architecture.md)：Tauri/React 边界、Runtime Store、Trace 页面与暂缓的 Host Contract 生成。
 
-这些文档是设计规格，不表示代码、Migration 或 Desktop 已经实施。
+本地数据库启动、迁移、检查和重建见 [local-postgres.md](local-postgres.md)。
 
-## 当前实现参考
+## 当前实施边界
 
-以下文档用于理解仓库当前行为；当文档与源码不一致时，以源码为准：
+- `openwork-core` 是唯一 Session Runtime 和组合入口；
+- 一次用户输入对应一个 Turn，工具结果由同一 Agent Loop 送入下一次 Model Call；
+- PostgreSQL 使用 SQLx migration，不保留 Event Journal、旧表回填或 `legacy_*` 路径；
+- 未完成 Turn 在启动时标记为 `interrupted`，不自动恢复或重放工具；
+- Trace 是 best-effort 诊断数据，不参与业务推进；
+- Desktop 通过 Tauri Command/Event 使用 Core，不复制后端状态机。
 
-- [architecture-overview.md](architecture-overview.md)：当前整体架构与模块关系；
-- [agent-runtime-and-tool-flow.md](agent-runtime-and-tool-flow.md)：当前 Agent loop、工具和 doom-loop；
-- [desktop-streaming-flow.md](desktop-streaming-flow.md)：当前 Tauri Live Event 与前端累积；
-- [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前 Recorded/Live Event 与 Turn 生命周期；
-- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前 Journal、Session 重放与 Trace 基线；
-- [permissions-and-approvals.md](permissions-and-approvals.md)：当前权限和审批合同；
-- [model-provider-v1-design.md](model-provider-v1-design.md)：当前 Provider/Model 适配边界；
-- [local-postgres.md](local-postgres.md)：当前本地 PostgreSQL 使用方式。
-
-## 历史设计与过程资料
-
-以下文档保留作为背景和实现演进证据，不再约束本轮目标结构：
-
-- [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)；
-- [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)；
-- [../plans/desktop-tauri-application-boundary-refactor.md](../plans/desktop-tauri-application-boundary-refactor.md)；
-- [../plans/capability-tool-observation-design.md](../plans/capability-tool-observation-design.md)；
-- [trace-bata-design.md](trace-bata-design.md)：已由新 Trace 设计替代。
-
-## 判断顺序
-
-1. 源码与现有 Migration 回答“现在实际是什么”；
-2. `docs/redesign/` 回答“重构后的目标是什么”；
-3. 其他 `docs/` 与 `plans/` 回答“此前为什么这样设计或实现”；
-4. 旧文档不得覆盖新目标，也不能把目标设计描述成已实现。
+已知暂缓项只有两组：Rust → TypeScript Host Contract/Drift Check，以及 Trace 关闭入口/完整降级验收。它们保留在 `docs/redesign/` 的完成标准中，但当前不实施。
 
 ## 维护原则
 
-- 修改当前实现后，同步更新对应的“当前实现参考”；
-- 修改目标边界时，只在 `docs/redesign/` 更新，避免再产生平行蓝图；
-- Core 是完整 Session Runtime；目标领域词汇统一使用 Prompt、Model Call、Tool Call 与 Permission；
-- Session State、Event、Update、Chat History、Signals 与 Trace 必须始终分别说明用途；
-- 数据库设计必须区分模型配置、运行快照、统计、UI 回放、模型上下文和 Trace；
-- 如果修改根目录 README，继续同步检查 `README.md` 和 `README.en.md`；
-- 本轮设计不引入 Memory、MCP、Skill、Plan、Compaction、Artifact、新工具或新 Worktree 能力。
+- 源码和 SQLx migration 回答“当前实际是什么”；
+- `docs/redesign/` 同时记录目标、已实施结果和明确暂缓项，不再建立平行蓝图；
+- 领域词汇统一使用 Session、Turn、Model Call、Tool Call、Permission、Message、Update 和 Trace；
+- 修改根目录 README 时同步检查 `README.md` 与 `README.en.md`；
+- 本轮不引入跨进程 Turn 恢复、Event Journal、Memory、MCP、Skill、Plan、Compaction、Artifact、Git/Diff 或 Worktree 能力。

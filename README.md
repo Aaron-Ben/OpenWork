@@ -4,7 +4,7 @@
   <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
 </p>
 
-OpenWork 是一个以 Rust 实现的本地 Agent 工作台实验项目。当前代码已经具备多厂商模型调用、工具循环、审批和 PostgreSQL 持久化；目标架构是可恢复、可验证的 Durable Agent Harness。
+OpenWork 是一个以 Rust 实现的本地 Agent 工作台实验项目。当前代码具备多厂商模型调用、Session 级 Agent Loop、工具权限、PostgreSQL 持久化、Trace 和 Tauri Desktop。
 
 English version: [README.en.md](README.en.md)
 
@@ -18,17 +18,21 @@ English version: [README.en.md](README.en.md)
 - 厂商无关的 `ModelRequest`、`ModelResponse`、`ModelEvent`、`ModelError` 与 `ModelPort`
 - 可区分限流与额度耗尽的错误映射，以及流式输出感知的 Transport Retry
 - Agent 多步工具调用、审批、取消和 doom-loop 检测
-- PostgreSQL Provider Repository 与 Provider Model 配置持久化
-- append-only Event Journal、Journal-backed Session/Turn/Message 与显式 migration
+- `SessionActor` 持有 Model → Tool/Permission → Model 的唯一执行链
+- Chat State Actor 串行维护模型 Conversation
+- PostgreSQL 中的 Provider、Model、Session、Turn、Message 与 Trace 直接持久化
+- SQLx 单一 migration 基线与独立迁移命令
 - PostgreSQL Provider API Key 加密存储
-- Tauri + React + TypeScript 桌面端
+- per-session Runtime Store、进程级 Event Bridge 和设置内运行记录
 
 还没有完成：
 
-- Durable Turn 的完整 Journal 写入、崩溃恢复和幂等 Projection
+- Rust → TypeScript Host Contract 生成与 Drift Check（当前保持手写 Bridge DTO）
+- Trace 关闭入口，以及 Queue/数据库失败不影响 Turn 的完整降级验收
 - 操作系统级 Sandbox 与可靠副作用对账
-- Context 压缩、Plan、Memory、MCP 与 Skill 的目标实现
 - 自动化 live provider smoke test
+
+跨进程恢复未完成 Turn、Event Journal、Checkpoint、Memory、MCP、Plan、Skill、Git/Diff 和 Worktree 不属于当前 V1 范围。
 
 ## 目录结构
 
@@ -43,7 +47,9 @@ OpenWork/
     openwork-models/         # Model contracts, provider adapters and transport
     openwork-tools/          # Tool catalog, permissions and built-in execution
   docs/
-    model-provider-v1-design.md
+    README.md                 # 文档索引
+    local-postgres.md         # 本地 PostgreSQL 与 SQLx migration
+    redesign/                 # 当前权威架构与重构状态
 ```
 
 ## Rust 模块
@@ -52,7 +58,7 @@ OpenWork/
 
 - `OpenWorkCore` 是唯一进程内入口，拥有 Provider Repository、凭证解析和 Session Registry
 - `SessionActor` 负责 Model → Tool/Permission → Model 循环、取消和终态
-- PostgreSQL V2 表保存 Provider、Model、Session、Turn、Message 与 Trace
+- PostgreSQL SQLx 基线保存 Provider、Model、Session、Turn、Message 与 Trace
 - Tauri 直接管理一个 `OpenWorkCore` State，只做 Command/Event 与安全错误映射
 
 `openwork-models`
@@ -112,12 +118,13 @@ pnpm install
 > 桌面端命令必须在 `apps/desktop` 目录下执行。项目根目录只有 `Cargo.toml`（Rust workspace），没有 `package.json`，在根目录运行 `pnpm tauri dev` 会报 `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`。
 
 ```bash
-cargo run -p openwork-persistence --bin openwork-migrate
+docker compose up -d postgres
+cargo run -p openwork-core --bin openwork-migrate
 cd apps/desktop
 pnpm tauri dev
 ```
 
-Migration 必须在仓库根目录显式执行；Desktop 启动只检查 schema，不会自动建表。
+`OpenWorkCore::bootstrap` 会应用待执行 migration；独立迁移命令用于部署和数据库诊断。
 
 ## 构建桌面客户端
 
@@ -138,7 +145,7 @@ cargo fmt
 
 ## API Key
 
-桌面端仍把用户填写的 API Key 保存到 PostgreSQL，但 `providers` 表只保存 `api_key_encrypted` 密文。`openwork-persistence` 使用 AES-256-GCM 加密，随机 Nonce 随版本化 envelope 一起保存，并使用 Provider ID 作为认证附加数据。
+桌面端把用户填写的 API Key 加密后保存到 PostgreSQL `provider_credentials.api_key_encrypted`。`openwork-core` 的凭证存储使用 AES-256-GCM、随机 Nonce 和版本化 envelope，并使用 Provider ID 作为认证附加数据。
 
 主密钥必须通过 `OPENWORK_API_KEY_ENCRYPTION_KEY` 提供，值为标准 Base64 编码的 32 字节随机数据，不能写入数据库或提交到 Git：
 
@@ -172,14 +179,13 @@ DASHSCOPE_API_KEY=...
 ## 设计文档
 
 - [文档索引](docs/README.md)
-- [OpenWork Core 架构蓝图](plans/openwork-core-architecture-blueprint.md)
-- [Model Provider V1 设计](docs/model-provider-v1-design.md)
+- [Runtime 重构设计](docs/redesign/README.md)
+- [本地 PostgreSQL 与 SQLx Migration](docs/local-postgres.md)
 
 ## 下一步
 
 建议优先推进：
 
-1. 建立 Golden Case 与最小 Eval 骨架。
-2. 明确 Protocol Foundation，以及 Plan、Capability、Retry、Approval 的运行语义。
-3. 建立可回放的 Persistence 与 Capabilities/Execution 合同。
-4. 将当前 Agent loop 迁入可恢复、可验证的 `openwork-core` Durable Turn。
+1. 补齐取消、doom loop、Trace 降级和启动中断语义的自动化验收。
+2. 决定何时恢复 Rust → TypeScript Host Contract 生成工作。
+3. 为 Trace 增加可关闭配置与完整降级测试，或正式调整完成标准。

@@ -1,12 +1,12 @@
 # OpenWork 重构实施路线
 
-> 状态：Phase 1-7 的代码迁移已完成；当前无生产数据，数据库已切换为 SQLx 单一干净基线，不再保留旧表回填或 `legacy_*` 过渡路径。
+> 状态：Phase 1-7 的主体代码迁移已完成；当前无生产数据，数据库已切换为 SQLx 单一干净基线。Host Contract 生成和 Trace 关闭/降级验收暂缓实施，因此整轮重构尚未满足全部完成定义。
 >
 > 原则：每一阶段都必须可编译、可测试、可回退；先建立新的唯一运行链，再删除旧链。
 
 ## 1. 目标与顺序
 
-当前实施结果：`SessionActor -> Model -> Tool/Permission -> Model` 已成为唯一执行链，Desktop 已切换 Runtime Command/Update/Snapshot/Trace API；新数据和 Provider 加密凭证均写入 Core V2 Storage，`openwork-protocol`、`openwork-persistence` 已删除。
+当前实施结果：`SessionActor -> Model -> Tool/Permission -> Model` 已成为唯一执行链，Desktop 已切换 Runtime Command/Update/Snapshot/Trace API；新数据和 Provider 加密凭证均写入 `openwork-core` 的 SQLx Storage，`openwork-protocol`、`openwork-persistence` 已删除。
 
 这次重构同时涉及：
 
@@ -340,29 +340,16 @@ mark_running_turns_interrupted(...)
 - Turn 完成更新失败时返回 Persistence Error；
 - Trace 写失败不回滚业务写入。
 
-### 7.4 数据回填
+### 7.4 干净基线
 
-从旧 Journal 只读回放到 V2，生成核对报告：
-
-```text
-session_count
-turn_count
-message_count_by_role
-tool_call/tool_result_pair_count
-orphan_message_count
-non_terminal_turn_count
-trace_span_count_by_kind
-```
-
-无法可靠映射的数据记录到 Migration Report，不凭猜测生成恢复状态。
+当前没有生产数据，不执行旧 Journal 回填，也不保留 `legacy_*` 过渡表。数据库直接从 `crates/openwork-core/migrations/202607180001_initial_schema.sql` 建立，并由 SQLx `_sqlx_migrations` 记录版本和校验和。
 
 ### Gate
 
-- 新旧 Session 列表数量和关键元数据一致；
-- 每个 Session 的 Message 顺序抽样/全量校验；
-- Tool Result Provider Call ID 无重复；
+- 数据库只包含目标业务表和 `_sqlx_migrations`；
+- Session、Turn、Message 与 Tool Result 约束测试通过；
 - 启动修正只改状态，不调度任务；
-- V2 写路径稳定后才能切读路径。
+- 后续 Schema 变化只能追加新的 SQLx migration。
 
 ## 8. Phase 5：简化 Trace
 
@@ -392,7 +379,7 @@ Desktop 的 Tauri State 只持有：
 Arc<OpenWorkCore>
 ```
 
-迁移按 [06-frontend-architecture.md](06-frontend-architecture.md) 的 F0-F6 执行，不能只在旧 DTO 外改名。Tauri Bridge 先定义 Rust Host Contract，再由它生成 TypeScript 类型。
+迁移按 [06-frontend-architecture.md](06-frontend-architecture.md) 的 F0-F6 执行，不能只在旧 DTO 外改名。F0、F2-F5 已完成；Rust Host Contract 生成与兼容层删除暂缓，当前继续由 `bridge/compat.ts` 承担手写边界。
 
 Tauri Command 改为短生命周期调用：
 
@@ -437,7 +424,7 @@ approvalStore
 Trace raw input/output 页面
 ```
 
-兼容字段只能暂存在 `src/bridge/compat.ts`，不得继续进入 Feature Store 或页面。前端完成迁移后删除整个兼容层。
+兼容字段只能暂存在 `src/bridge/compat.ts`，不得继续进入 Feature Store 或页面。当前决定保持该边界；后续只有在生成式 Host Contract 落地后才能删除兼容层。
 
 ### Gate
 
@@ -447,7 +434,7 @@ Trace raw input/output 页面
 - Tauri crate 直接管理唯一 `OpenWorkCore` State；不直接依赖 SQLx、Repository 实现或 Tool Executor。
 - 每个 Session 有独立 Runtime View，切换 Session 不丢失后台更新；
 - Event 重复可去重、Sequence 缺口触发 Snapshot，Reducer 不执行 I/O；
-- Rust Host Contract 与生成的 TypeScript Binding 无 Drift；
+- Rust Host Contract 与生成的 TypeScript Binding 无 Drift（暂缓，当前仍为手写 Bridge DTO）；
 - `pnpm --dir apps/desktop test` 与 `pnpm --dir apps/desktop build` 通过。
 
 ## 10. Phase 7：删除 Legacy
@@ -477,24 +464,9 @@ recorded_events write path
 legacy Trace span kinds
 ```
 
-### 数据库
+### 数据库（已完成）
 
-旧表先改名并只读：
-
-```text
-legacy_providers
-legacy_provider_models
-legacy_recorded_events
-legacy_trace_spans
-```
-
-删除必须是后续独立 Migration，并要求：
-
-- 已完成备份；
-- V2 运行至少一个约定发布周期；
-- 回填报告归档；
-- 没有旧版本应用仍会连接该数据库；
-- 操作者明确确认。
+当前处于无生产数据阶段，开发数据库已显式重建为 SQLx 单一基线，不保留旧表、回填逻辑或 `legacy_*` 兼容路径。以后任何 Schema 变化都必须追加新的 SQLx migration。
 
 ## 11. 最终验证
 
@@ -554,6 +526,8 @@ rg -n "invoke\(|listen\(" apps/desktop/src --glob '!bridge/**'
 9. 打开 Trace，核对 Model/Tool 数量与采集完整度；
 10. 关闭 Trace 存储重复运行，业务结果不变。
 
+其中第 10 项及 Trace Queue/数据库失败场景暂缓；第 8 项已有 Storage 状态测试，但仍需完整启动级验收才能关闭该 Gate。
+
 ## 12. 完成定义
 
 只有同时满足以下条件，重构才算完成：
@@ -567,3 +541,5 @@ rg -n "invoke\(|listen\(" apps/desktop/src --glob '!bridge/**'
 - Desktop 不再装配运行时内部依赖；
 - Legacy crate、类型、Journal 写路径和旧 Trace 节点已删除；
 - 文档中的命名、SQL 与实际代码一致。
+
+当前未满足的完成项只有两组：Rust → TypeScript Host Contract/Drift Check，以及 Trace 关闭入口/降级验收。它们必须在后续独立改动中完成，或通过新的架构决策正式移出完成定义。

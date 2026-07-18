@@ -1,6 +1,6 @@
 # OpenWork Desktop 前端重构设计
 
-> 状态：前端主体与进程级 Event Bridge 已按 V1 重构，生成式 Host Contract 尚未收口。Desktop 已使用 per-session Runtime Store、Update Sequence、Snapshot/Replay 和 V2 Trace；模型选择由 Session 创建时固定。
+> 状态：前端主体与进程级 Event Bridge 已按 V1 重构。Desktop 已使用 per-session Runtime Store、Update Sequence、Snapshot/Replay 和 Turn Trace；生成式 Host Contract 暂缓，当前保持 `bridge/compat.ts` 手写边界。模型选择由 Session 创建时固定。
 >
 > 范围：`apps/desktop/src` React 前端与 `apps/desktop/src-tauri` Host Bridge。
 >
@@ -11,14 +11,14 @@
 | 阶段 | 状态 | 当前结果 |
 | --- | --- | --- |
 | F0 行为冻结 | 已完成 | Vitest 覆盖 Runtime、Session 切换、Permission、Model 与 Trace 关键行为；前端测试和构建通过 |
-| F1 生成 Host Contract | 待完成 | Tauri 调用已集中到 `src/bridge`，但目标 DTO 仍经 `bridge/compat.ts` 手工适配，尚未由 Rust 生成 |
+| F1 生成 Host Contract | 暂缓 | Tauri 调用已集中到 `src/bridge`，但目标 DTO 仍经 `bridge/compat.ts` 手工适配；本轮决定保持现状，不引入生成链 |
 | F2 Runtime Store | 已完成 | `runtimeReducer` 为纯函数；Runtime View 按 Session 隔离并处理重复、缺口与 Snapshot Replace |
 | F3 Event Bridge | 已完成 | Core 使用全局 Update Bus；Rust Host 在进程启动时订阅一次并转发 `openwork://session-update`，React 只建立一个 listener |
 | F4 Chat/Permission | 已完成 | canonical Message 与流式 Draft 分离；全局 `activeStream`、`approvalStore` 已删除 |
 | F5 Model/Trace/Sidebar | 已完成 | Model 配置、设置内运行记录页、Turn Trace Drawer 和 Project/Session 子组件已切换到 Feature 边界 |
-| F6 删除兼容层 | 部分完成 | 前端 Legacy Runtime/API、`provider_activate` 和 Host 每 Turn 临时事件转发已删除；生成契约仍待后续阶段完成 |
+| F6 删除兼容层 | 部分完成/暂缓 | 前端 Legacy Runtime/API、`provider_activate` 和 Host 每 Turn 临时事件转发已删除；`compat.ts` 保留到生成契约重新立项 |
 
-因此，本轮“前端重构完成”指 React 侧状态所有权、页面边界、交互路径和进程级事件桥已经收口；F1 生成契约及对应 F6 兼容层删除仍未完成。
+因此，本轮“前端主体重构完成”只表示 React 侧状态所有权、页面边界、交互路径和进程级事件桥已经收口；F1 生成契约及对应 F6 兼容层删除仍未完成，且当前明确暂缓。
 
 ## 1. 结论
 
@@ -913,12 +913,14 @@ V1 优先做：
 - 记录现有 Tauri Command/Event Contract；
 - `pnpm test` 与 `pnpm build` 通过。
 
-### Phase F1：生成 Host Contract
+### Phase F1：生成 Host Contract（暂缓）
 
 - 定义目标 Rust DTO；
 - 生成 `bridge/generated.ts`；
 - 新增 Contract Drift Check；
 - 旧 Type 暂时通过 Compat Adapter 转换。
+
+当前决策是保持 `bridge/compat.ts`，不引入 Rust → TypeScript 或 Schema 中间生成链。该阶段重新启动前，禁止继续扩大手写 DTO 的分布范围。
 
 ### Phase F2：Runtime Store 与纯 Reducer
 

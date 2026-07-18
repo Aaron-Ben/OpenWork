@@ -1,10 +1,10 @@
 # OpenWork Runtime 重构设计
 
-> 状态：V1 主运行链与 crate 收敛已于 `refactor/runtime-v1` 落地；Provider 凭证和模型已回填到 V2 表，旧表已归档为 `legacy_*` 仅供数据库回退。
+> 状态：V1 主运行链、crate 收敛与 SQLx 干净数据库基线已于 `refactor/runtime-v1` 落地。Rust → TypeScript Host Contract 生成，以及 Trace 关闭/降级验收暂缓实施，当前状态见第 9 节。
 >
 > 源码基线：`grok-build` 与 OpenWork 当前工作区，最后核对于 2026-07-18。
 >
-> 本目录是本轮重构的唯一目标文档；其他 `docs/` 与 `plans/` 只作为历史资料。
+> 本目录是本轮重构的唯一架构文档；`docs/local-postgres.md` 只说明本地数据库操作，不另建平行蓝图。
 
 ## 1. 这次重构解决什么
 
@@ -164,3 +164,12 @@ workspace trust subsystem
 - Trace 关闭或写入失败时，Agent Loop 行为完全不变；
 - 进程重启不会重复执行未确认的工具副作用；
 - `cargo test` 能覆盖无工具、单工具、多工具、工具失败、权限拒绝、取消、doom loop 和 Trace 降级。
+
+## 9. 已知暂缓项
+
+以下两项仍属于目标完成标准，但本轮决定保持当前实现，不继续扩展：
+
+1. **Rust → TypeScript Host Contract 尚未生成。** Tauri Command/Event 已集中到 `apps/desktop/src/bridge`，但跨边界 DTO 仍由 `bridge/compat.ts` 手工维护。暂不引入 `ts-rs`、JSON Schema 或其他生成链；兼容类型只能留在 Bridge 边界，不能继续向 Feature Store 或页面扩散。
+2. **Trace 的关闭与降级闭环尚未完成。** 当前 PostgreSQL Trace Recorder 已采用有界队列和 best-effort 写入，写失败不作为业务状态来源；但 `OpenWorkCoreConfig` 尚无关闭 Trace 的配置入口，也缺少 Queue 满、数据库不可用和 Flush 超时不改变 Turn 结果的完整自动化验收。
+
+这两项不改变当前唯一运行链、数据库事实源或“不恢复未完成 Turn”的 V1 决策。后续若重新启动其中任一项，必须作为独立改动实现并补齐对应测试；在此之前文档不得把整轮重构标记为完全完成。

@@ -1,8 +1,14 @@
 # OpenWork V1 Trace 设计
 
-> 状态：已实施。Trace 通过有界队列旁路写入 `trace_spans`，查询按 Turn 返回 Model Call 与 Tool Call Span。
+> 状态：主路径已实施。Trace 通过有界队列旁路写入 `trace_spans`，查询按 Turn 返回 Model Call 与 Tool Call Span；Trace 关闭入口与完整降级验收暂缓实施。
 >
 > 结论：Trace 是 `openwork-core` 的 best-effort 内部能力；Turn 行是根，只保存 Model Call 和 Tool Call Span。
+
+### 2026-07-18 暂缓项
+
+- `OpenWorkCoreConfig` 当前没有关闭 Trace 的配置，生产启动固定创建 PostgreSQL Trace Recorder；`NoopTraceRecorder` 只用于内部运行时/测试装配。
+- Recorder 已通过有界队列、`try_send` 和错误计数隔离写入失败，但 Queue 满、数据库不可用和 Flush 超时不改变 Turn 结果的验收矩阵尚未补齐。
+- 本轮保持现状。若后续增加 Trace 开关，应通过 Recorder 注入切换 Noop/PostgreSQL 实现，不得在 Agent Loop 内增加 Trace 分支。
 
 ## 1. Trace 解决什么
 

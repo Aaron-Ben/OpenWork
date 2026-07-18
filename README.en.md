@@ -4,7 +4,7 @@
   <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
 </p>
 
-OpenWork is a local agent workbench experiment implemented in Rust. The current code supports multi-provider model calls, an agent tool loop, approvals, and PostgreSQL persistence; the target architecture is a recoverable and verifiable Durable Agent Harness.
+OpenWork is a local agent workbench experiment implemented in Rust. The current code supports multi-provider model calls, a session-owned agent loop, tool permissions, PostgreSQL persistence, Trace, and a Tauri desktop client.
 
 中文版本: [README.md](README.md)
 
@@ -18,17 +18,21 @@ The current foundation includes:
 - Vendor-neutral `ModelRequest`, `ModelResponse`, `ModelEvent`, `ModelError`, and `ModelPort`
 - Error mapping that separates rate limits from exhausted quota, plus stream-aware transport retry
 - Multi-step agent tool calls, approvals, cancellation, and doom-loop detection
-- PostgreSQL provider repository and provider-model configuration persistence
-- Append-only Event Journal, Journal-backed threads/turns/messages, and explicit migrations
+- A single `SessionActor` path for Model → Tool/Permission → Model execution
+- A Chat State actor that serializes model Conversation changes
+- Direct PostgreSQL persistence for providers, models, sessions, turns, messages, and traces
+- A single SQLx migration baseline and standalone migration command
 - Encrypted PostgreSQL storage for provider API keys
-- Tauri + React + TypeScript desktop client
+- Per-session runtime views, one process-level event bridge, and runtime records under Settings
 
 Not yet complete:
 
-- Complete Durable Turn journal writes, crash recovery, and idempotent projections
+- Generated Rust → TypeScript Host Contracts and a drift check; the bridge DTOs remain handwritten for now
+- A production Trace disable path and complete queue/database degradation verification
 - OS-level sandboxing and reliable side-effect reconciliation
-- Target implementations for context compaction, planning, memory, MCP, and skills
 - Automated live-provider smoke tests
+
+Cross-process resumption of unfinished turns, an Event Journal, checkpoints, memory, MCP, planning, skills, Git/Diff, and worktrees are outside the current V1 scope.
 
 ## Structure
 
@@ -43,7 +47,9 @@ OpenWork/
     openwork-models/         # Model contracts, provider adapters, and transport
     openwork-tools/          # Tool catalog, permissions, and built-in execution
   docs/
-    model-provider-v1-design.md
+    README.md                 # Documentation index
+    local-postgres.md         # Local PostgreSQL and SQLx migrations
+    redesign/                 # Authoritative architecture and refactor status
 ```
 
 ## Rust Crates
@@ -52,7 +58,7 @@ OpenWork/
 
 - `OpenWorkCore` is the single in-process entry point for providers, credentials, and sessions
 - `SessionActor` owns the Model → Tool/Permission → Model loop, cancellation, and outcomes
-- PostgreSQL V2 tables persist providers, models, sessions, turns, messages, and traces
+- The PostgreSQL SQLx baseline persists providers, models, sessions, turns, messages, and traces
 - Tauri manages one `OpenWorkCore` state and only adapts commands, events, and safe errors
 
 `openwork-models`
@@ -112,12 +118,13 @@ pnpm install
 > Desktop commands must run inside `apps/desktop`. The repository root only has `Cargo.toml` for the Rust workspace and does not have `package.json`, so running `pnpm tauri dev` from the root fails with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`.
 
 ```bash
-cargo run -p openwork-persistence --bin openwork-migrate
+docker compose up -d postgres
+cargo run -p openwork-core --bin openwork-migrate
 cd apps/desktop
 pnpm tauri dev
 ```
 
-Run the migration command explicitly from the repository root. Desktop startup only checks the schema and never creates tables automatically.
+`OpenWorkCore::bootstrap` applies pending migrations. The standalone command remains useful for provisioning and database diagnostics.
 
 ## Build Desktop App
 
@@ -138,7 +145,7 @@ cargo fmt
 
 ## API Keys
 
-The desktop still stores user-entered API keys in PostgreSQL, but the `providers` table only stores the `api_key_encrypted` ciphertext. `openwork-persistence` uses AES-256-GCM with a random nonce in a versioned envelope and binds the ciphertext to the provider ID as authenticated associated data.
+The desktop encrypts user-entered API keys into PostgreSQL `provider_credentials.api_key_encrypted`. Credential storage in `openwork-core` uses AES-256-GCM with a random nonce in a versioned envelope and binds the ciphertext to the provider ID as authenticated associated data.
 
 The master key must be supplied through `OPENWORK_API_KEY_ENCRYPTION_KEY` as standard Base64 encoding of 32 random bytes. It must not be stored in PostgreSQL or committed to Git:
 
@@ -172,14 +179,13 @@ Do not commit real secrets.
 ## Design Docs
 
 - [Documentation index](docs/README.md)
-- [OpenWork Core architecture blueprint](plans/openwork-core-architecture-blueprint.md)
-- [Model Provider V1 design](docs/model-provider-v1-design.md)
+- [Runtime redesign](docs/redesign/README.md)
+- [Local PostgreSQL and SQLx migrations](docs/local-postgres.md)
 
 ## Next Steps
 
 Recommended near-term work:
 
-1. Establish the Golden Case and a minimal eval harness.
-2. Define the Protocol Foundation and the runtime semantics for planning, capabilities, retries, and approvals.
-3. Build replayable persistence and the Capabilities/Execution contracts.
-4. Move the current agent loop into recoverable and verifiable `openwork-core` durable turns.
+1. Complete automated coverage for cancellation, doom loops, Trace degradation, and startup interruption semantics.
+2. Decide when to resume generated Rust → TypeScript Host Contracts.
+3. Add a production Trace disable path and degradation tests, or formally revise the completion criteria.
