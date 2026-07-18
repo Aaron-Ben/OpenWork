@@ -53,10 +53,7 @@ async fn stored_deepseek_v4_flash_completes_a_real_turn() {
     .unwrap();
 
     let run_result: Result<TurnOutcome, String> = async {
-        let mut updates = core
-            .subscribe_updates(&session_id)
-            .await
-            .map_err(|error| error.to_string())?;
+        let mut updates = core.subscribe_updates();
         core.start_turn(
             &session_id,
             ClientRequestId::new(unique("request-deepseek-stored-live")),

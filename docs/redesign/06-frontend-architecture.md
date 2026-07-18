@@ -1,10 +1,24 @@
 # OpenWork Desktop 前端重构设计
 
-> 状态：V1 已实施。Desktop 已使用 Runtime Session Store、Update Sequence、Snapshot/Replay 和 V2 Trace；模型选择按 Session 固定模型只读展示。
+> 状态：前端主体与进程级 Event Bridge 已按 V1 重构，生成式 Host Contract 尚未收口。Desktop 已使用 per-session Runtime Store、Update Sequence、Snapshot/Replay 和 V2 Trace；模型选择由 Session 创建时固定。
 >
 > 范围：`apps/desktop/src` React 前端与 `apps/desktop/src-tauri` Host Bridge。
 >
 > 原则：前端是 Core Session Runtime 的协议客户端，不复制 Runtime 状态机，也不根据 Trace 推进 Turn。
+
+### 2026-07-18 实施状态
+
+| 阶段 | 状态 | 当前结果 |
+| --- | --- | --- |
+| F0 行为冻结 | 已完成 | Vitest 覆盖 Runtime、Session 切换、Permission、Model 与 Trace 关键行为；前端测试和构建通过 |
+| F1 生成 Host Contract | 待完成 | Tauri 调用已集中到 `src/bridge`，但目标 DTO 仍经 `bridge/compat.ts` 手工适配，尚未由 Rust 生成 |
+| F2 Runtime Store | 已完成 | `runtimeReducer` 为纯函数；Runtime View 按 Session 隔离并处理重复、缺口与 Snapshot Replace |
+| F3 Event Bridge | 已完成 | Core 使用全局 Update Bus；Rust Host 在进程启动时订阅一次并转发 `openwork://session-update`，React 只建立一个 listener |
+| F4 Chat/Permission | 已完成 | canonical Message 与流式 Draft 分离；全局 `activeStream`、`approvalStore` 已删除 |
+| F5 Model/Trace/Sidebar | 已完成 | Model 配置、顶级运行记录页、Turn Trace Drawer 和 Project/Session 子组件已切换到 Feature 边界 |
+| F6 删除兼容层 | 部分完成 | 前端 Legacy Runtime/API、`provider_activate` 和 Host 每 Turn 临时事件转发已删除；生成契约仍待后续阶段完成 |
+
+因此，本轮“前端重构完成”指 React 侧状态所有权、页面边界、交互路径和进程级事件桥已经收口；F1 生成契约及对应 F6 兼容层删除仍未完成。
 
 ## 1. 结论
 
@@ -40,9 +54,9 @@ TurnTrace
 6. Trace 是独立查询页面，不进入 Chat reducer；
 7. TypeScript DTO 从 Rust Host Contract 生成，禁止继续手写两套镜像类型。
 
-## 2. 当前前端结构与问题
+## 2. 重构前基线结构与问题
 
-### 2.1 当前目录事实
+### 2.1 重构前目录事实
 
 技术栈：
 

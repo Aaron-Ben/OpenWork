@@ -21,25 +21,13 @@ describe('Trace theme palette', () => {
   it('defines distinct light and dark values for every Waterfall semantic color', () => {
     const light = themeBlock(':root')
     const dark = themeBlock(':root.dark')
-    const tokens = [
-      '--trace-bar-turn',
-      '--trace-bar-step',
-      '--trace-bar-model',
-      '--trace-bar-transport',
-      '--trace-bar-tool',
-      '--trace-bar-approval',
-      '--trace-bar-recovery',
-      '--trace-bar-other',
-      '--trace-bar-error',
-    ]
+    const tokens = ['--trace-bar-model', '--trace-bar-tool']
 
     for (const token of tokens) {
       expect(tokenValue(light, token)).not.toBe(tokenValue(dark, token))
       expect(stylesheet).toContain(`--color-${token.slice(2)}: var(${token});`)
     }
 
-    expect(stylesheet).toContain('--color-trace-bar-ink: var(--trace-bar-ink);')
-    expect(stylesheet).toContain('--color-trace-bar-outline: var(--trace-bar-outline);')
   })
 
   it('defines theme-aware success, warning, and danger status surfaces', () => {

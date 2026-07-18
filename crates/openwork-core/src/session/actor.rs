@@ -42,11 +42,32 @@ pub struct SessionHandle {
 
 impl SessionHandle {
     pub fn spawn(config: SessionRuntimeConfig) -> Self {
+        Self::spawn_inner(config, None)
+    }
+
+    pub fn spawn_with_global_updates(
+        config: SessionRuntimeConfig,
+        global_update_tx: broadcast::Sender<SessionUpdateEnvelope>,
+    ) -> Self {
+        Self::spawn_inner(config, Some(global_update_tx))
+    }
+
+    fn spawn_inner(
+        config: SessionRuntimeConfig,
+        global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
+    ) -> Self {
         let session_id = config.session_id.clone();
         let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
         let (runner_tx, runner_rx) = mpsc::channel(RUNNER_EVENT_BUFFER);
         let (update_tx, _) = broadcast::channel(UPDATE_BROADCAST_CAPACITY);
-        let actor = SessionActor::new(config, command_rx, runner_tx, runner_rx, update_tx.clone());
+        let actor = SessionActor::new(
+            config,
+            command_rx,
+            runner_tx,
+            runner_rx,
+            update_tx.clone(),
+            global_update_tx,
+        );
         tokio::spawn(actor.run());
         Self {
             session_id,
@@ -185,6 +206,7 @@ struct SessionActor {
     runner_tx: mpsc::Sender<RunnerEvent>,
     runner_rx: mpsc::Receiver<RunnerEvent>,
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
+    global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
     update_buffer: VecDeque<SessionUpdateEnvelope>,
     next_update_sequence: u64,
     snapshot: SessionSnapshot,
@@ -199,6 +221,7 @@ impl SessionActor {
         runner_tx: mpsc::Sender<RunnerEvent>,
         runner_rx: mpsc::Receiver<RunnerEvent>,
         update_tx: broadcast::Sender<SessionUpdateEnvelope>,
+        global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
     ) -> Self {
         Self {
             snapshot: SessionSnapshot {
@@ -220,6 +243,7 @@ impl SessionActor {
             runner_tx,
             runner_rx,
             update_tx,
+            global_update_tx,
             update_buffer: VecDeque::with_capacity(UPDATE_BUFFER),
             next_update_sequence: 1,
             active_turn: None,
@@ -531,7 +555,10 @@ impl SessionActor {
             self.update_buffer.pop_front();
         }
         self.update_buffer.push_back(envelope.clone());
-        let _ = self.update_tx.send(envelope);
+        let _ = self.update_tx.send(envelope.clone());
+        if let Some(global_update_tx) = &self.global_update_tx {
+            let _ = global_update_tx.send(envelope);
+        }
     }
 }
 

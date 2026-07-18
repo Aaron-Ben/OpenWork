@@ -50,7 +50,7 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
     .await
     .unwrap();
 
-    let mut updates = core.subscribe_updates(&session_id).await.unwrap();
+    let mut updates = core.subscribe_updates();
     let accepted = core
         .start_turn(
             &session_id,

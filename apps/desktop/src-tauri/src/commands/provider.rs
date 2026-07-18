@@ -46,16 +46,6 @@ pub async fn provider_delete(
 }
 
 #[tauri::command]
-pub async fn provider_activate(
-    core: tauri::State<'_, OpenWorkCore>,
-    id: String,
-) -> Result<(), CommandError> {
-    core.activate_provider(&id)
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
 pub async fn provider_test(
     core: tauri::State<'_, OpenWorkCore>,
     id: Option<String>,

@@ -192,7 +192,7 @@ impl ProviderRepository for PostgresProviderRepository {
         &self,
         input: ProviderInput,
     ) -> Result<ProviderProfile, ProviderRepositoryError> {
-        validate_input(&input)?;
+        validate_input(&input, true)?;
         let normalized_models = normalize_models(&input.models);
         let provider_id = format!("prov-{}", Uuid::new_v4().simple());
         let encrypted = self
@@ -239,19 +239,32 @@ impl ProviderRepository for PostgresProviderRepository {
         id: &str,
         input: ProviderInput,
     ) -> Result<ProviderProfile, ProviderRepositoryError> {
-        validate_input(&input)?;
+        let mut input = input;
+        if input.extra_body.is_none() {
+            let record = self
+                .credential_record(id)
+                .await?
+                .ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
+            input.extra_body = extra_body(&record.config);
+        }
+        validate_input(&input, false)?;
         let normalized_models = normalize_models(&input.models);
-        let encrypted = self
-            .api_key_cipher
-            .encrypt(id, &input.api_key)
-            .map_err(|error| credential_error("encrypt", error))?;
+        let encrypted = if input.api_key.trim().is_empty() {
+            None
+        } else {
+            Some(
+                self.api_key_cipher
+                    .encrypt(id, &input.api_key)
+                    .map_err(|error| credential_error("encrypt", error))?,
+            )
+        };
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let result = sqlx::query(
             "UPDATE provider_credentials_v2 SET
                 display_name = $2,
                 provider_kind = $3,
                 base_url = $4,
-                api_key_encrypted = $5,
+                api_key_encrypted = COALESCE($5, api_key_encrypted),
                 enabled = $6,
                 config = $7,
                 updated_at = now()
@@ -286,11 +299,7 @@ impl ProviderRepository for PostgresProviderRepository {
         .fetch_optional(&mut *transaction)
         .await
         .map_err(persistence_error)?;
-        let active =
-            active.ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
-        if active {
-            return Err(ProviderRepositoryError::CannotDeleteActive { id: id.to_string() });
-        }
+        active.ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
         sqlx::query("DELETE FROM models_v2 WHERE credential_ref = $1")
             .bind(credential_ref(id))
             .execute(&mut *transaction)
@@ -469,15 +478,20 @@ fn normalize_models(models: &[ProviderModel]) -> Vec<ProviderModel> {
         .collect()
 }
 
-fn validate_input(input: &ProviderInput) -> Result<(), ProviderRepositoryError> {
+fn validate_input(
+    input: &ProviderInput,
+    require_api_key: bool,
+) -> Result<(), ProviderRepositoryError> {
     for (field, value) in [
         ("name", input.name.as_str()),
         ("baseUrl", input.base_url.as_str()),
-        ("apiKey", input.api_key.as_str()),
     ] {
         if value.trim().is_empty() {
             return Err(ProviderRepositoryError::InvalidInput { field });
         }
+    }
+    if require_api_key && input.api_key.trim().is_empty() {
+        return Err(ProviderRepositoryError::InvalidInput { field: "apiKey" });
     }
     if input
         .models

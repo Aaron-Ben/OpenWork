@@ -143,6 +143,7 @@ impl SessionStorage for RecordingStorage {
 struct RuntimeFixture {
     handle: SessionHandle,
     updates: broadcast::Receiver<SessionUpdateEnvelope>,
+    global_updates: broadcast::Receiver<SessionUpdateEnvelope>,
     model: Arc<ModelState>,
     tools: Arc<ToolState>,
     storage: Arc<RecordingStorage>,
@@ -174,30 +175,50 @@ fn runtime(
         events: Mutex::new(Vec::new()),
         fail_assistant,
     });
-    let handle = SessionHandle::spawn(SessionRuntimeConfig {
-        session_id: SessionId::new("session-test"),
-        resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
-        agent,
-        chat: chat.clone(),
-        model: Arc::new(FakeModel {
-            state: Arc::clone(&model),
-        }),
-        tools: catalog,
-        tool_executor: Arc::new(FakeToolExecutor {
-            state: Arc::clone(&tools),
-        }),
-        storage: storage.clone(),
-        trace: Arc::new(NoopTraceRecorder),
-    });
+    let (global_update_tx, global_updates) = broadcast::channel(512);
+    let handle = SessionHandle::spawn_with_global_updates(
+        SessionRuntimeConfig {
+            session_id: SessionId::new("session-test"),
+            resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
+            agent,
+            chat: chat.clone(),
+            model: Arc::new(FakeModel {
+                state: Arc::clone(&model),
+            }),
+            tools: catalog,
+            tool_executor: Arc::new(FakeToolExecutor {
+                state: Arc::clone(&tools),
+            }),
+            storage: storage.clone(),
+            trace: Arc::new(NoopTraceRecorder),
+        },
+        global_update_tx,
+    );
     let updates = handle.subscribe_updates();
     RuntimeFixture {
         handle,
         updates,
+        global_updates,
         model,
         tools,
         storage,
         chat,
     }
+}
+
+#[tokio::test]
+async fn session_actor_forwards_updates_to_the_core_global_bus() {
+    let mut fixture = runtime(
+        vec![response("done", Vec::new())],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+
+    start(&fixture).await;
+    let outcome = wait_for_terminal(&mut fixture.global_updates).await;
+
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 }
 
 fn response(text: &str, tool_calls: Vec<ToolCallBlock>) -> ModelResponse {

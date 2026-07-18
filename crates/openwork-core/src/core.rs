@@ -28,6 +28,8 @@ use crate::storage::{
     TraceSpanRecord, TraceTurnSummary,
 };
 
+const CORE_UPDATE_BROADCAST_CAPACITY: usize = 4096;
+
 #[derive(Debug, Clone)]
 pub struct OpenWorkCoreConfig {
     pub database_url: Option<String>,
@@ -126,6 +128,7 @@ pub struct OpenWorkCore {
     trace: Arc<PostgresTraceRecorder>,
     credentials: Arc<dyn CredentialResolver>,
     providers: Option<Arc<dyn ProviderRepository>>,
+    update_tx: broadcast::Sender<SessionUpdateEnvelope>,
     sessions: RwLock<HashMap<SessionId, SessionHandle>>,
     session_creation: Mutex<()>,
 }
@@ -169,6 +172,7 @@ impl OpenWorkCore {
                 .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?,
         );
         let trace = Arc::new(PostgresTraceRecorder::spawn(storage.pool().clone()));
+        let (update_tx, _) = broadcast::channel(CORE_UPDATE_BROADCAST_CAPACITY);
         Ok(Self {
             storage,
             provider_factory: ProviderFactory::default(),
@@ -176,6 +180,7 @@ impl OpenWorkCore {
             trace,
             credentials,
             providers,
+            update_tx,
             sessions: RwLock::new(HashMap::new()),
             session_creation: Mutex::new(()),
         })
@@ -214,10 +219,6 @@ impl OpenWorkCore {
 
     pub async fn delete_provider(&self, id: &str) -> Result<(), OpenWorkCoreError> {
         Ok(self.provider_repository()?.delete(id).await?)
-    }
-
-    pub async fn activate_provider(&self, id: &str) -> Result<(), OpenWorkCoreError> {
-        Ok(self.provider_repository()?.activate(id).await?)
     }
 
     pub async fn test_provider(
@@ -347,11 +348,8 @@ impl OpenWorkCore {
         Ok(())
     }
 
-    pub async fn subscribe_updates(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<broadcast::Receiver<SessionUpdateEnvelope>, OpenWorkCoreError> {
-        Ok(self.session_handle(session_id).await?.subscribe_updates())
+    pub fn subscribe_updates(&self) -> broadcast::Receiver<SessionUpdateEnvelope> {
+        self.update_tx.subscribe()
     }
 
     pub async fn get_session_snapshot(
@@ -442,21 +440,24 @@ impl OpenWorkCore {
             CancellationToken::new(),
         )));
 
-        Ok(SessionHandle::spawn(SessionRuntimeConfig {
-            session_id: session_id.clone(),
-            resolved_model: ResolvedModel::new(
-                Some(model.id),
-                model.provider_kind,
-                model.model_name,
-            ),
-            agent,
-            chat,
-            model: model_port,
-            tools: Arc::clone(&self.tools),
-            tool_executor,
-            storage: self.storage.clone(),
-            trace: self.trace.clone(),
-        }))
+        Ok(SessionHandle::spawn_with_global_updates(
+            SessionRuntimeConfig {
+                session_id: session_id.clone(),
+                resolved_model: ResolvedModel::new(
+                    Some(model.id),
+                    model.provider_kind,
+                    model.model_name,
+                ),
+                agent,
+                chat,
+                model: model_port,
+                tools: Arc::clone(&self.tools),
+                tool_executor,
+                storage: self.storage.clone(),
+                trace: self.trace.clone(),
+            },
+            self.update_tx.clone(),
+        ))
     }
 }
 

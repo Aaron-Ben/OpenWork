@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod event_bridge;
 
 use openwork_core::{OpenWorkCore, OpenWorkCoreConfig};
 use tauri::Manager;
@@ -17,6 +18,10 @@ pub fn run() {
             let core = tauri::async_runtime::block_on(OpenWorkCore::bootstrap(
                 OpenWorkCoreConfig::from_env_or_local(),
             ))?;
+            event_bridge::spawn_session_update_bridge(
+                app.handle().clone(),
+                core.subscribe_updates(),
+            );
             app.manage(core);
             Ok(())
         })
@@ -26,7 +31,6 @@ pub fn run() {
             commands::provider::provider_create,
             commands::provider::provider_update,
             commands::provider::provider_delete,
-            commands::provider::provider_activate,
             commands::provider::provider_test,
             commands::runtime::runtime_session_list,
             commands::runtime::runtime_session_create,

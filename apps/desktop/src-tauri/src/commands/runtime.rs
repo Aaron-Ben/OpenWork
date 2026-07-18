@@ -1,10 +1,9 @@
 use openwork_core::{
     session::TurnId, ClientRequestId, LoadedSession, OpenWorkCore, PermissionDecision, SessionId,
-    SessionInput, SessionRecord, SessionSnapshot, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
+    SessionInput, SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId,
     TraceSpanRecord, TraceTurnSummary, TurnAccepted,
 };
 use openwork_models::model::ContentBlock;
-use tauri::Emitter;
 
 use crate::CommandError;
 
@@ -58,42 +57,19 @@ pub async fn runtime_session_delete(
 
 #[tauri::command]
 pub async fn runtime_turn_start(
-    app: tauri::AppHandle,
     core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     client_request_id: String,
     text: String,
 ) -> Result<TurnAccepted, CommandError> {
     let session_id = SessionId::new(session_id);
-    let mut updates = core
-        .subscribe_updates(&session_id)
-        .await
-        .map_err(CommandError::from)?;
-    let accepted = core
-        .start_turn(
-            &session_id,
-            ClientRequestId::new(client_request_id),
-            vec![ContentBlock::text(text)],
-        )
-        .await
-        .map_err(CommandError::from)?;
-    let turn_id = accepted.turn_id.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            match updates.recv().await {
-                Ok(payload) if payload.turn_id == turn_id => {
-                    let terminal = matches!(&payload.update, SessionUpdate::TurnFinished { .. });
-                    let _ = app.emit("session-update", payload);
-                    if terminal {
-                        break;
-                    }
-                }
-                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-    Ok(accepted)
+    core.start_turn(
+        &session_id,
+        ClientRequestId::new(client_request_id),
+        vec![ContentBlock::text(text)],
+    )
+    .await
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]

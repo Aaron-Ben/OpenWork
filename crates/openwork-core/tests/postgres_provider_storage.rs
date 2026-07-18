@@ -3,7 +3,6 @@ use std::sync::Arc;
 use openwork_core::{ApiKeyCipher, PostgresProviderRepository, PostgresStorage};
 use openwork_models::provider::{
     ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderRepository,
-    ProviderRepositoryError,
 };
 use uuid::Uuid;
 
@@ -59,10 +58,15 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
             },
         ],
         enabled: true,
-        extra_body: None,
+        extra_body: Some(
+            serde_json::json!({ "reasoning_effort": "high" })
+                .as_object()
+                .unwrap()
+                .clone(),
+        ),
     };
 
-    let created = repository.create(input).await.unwrap();
+    let created = repository.create(input.clone()).await.unwrap();
     assert_eq!(created.name, provider_name);
     assert_eq!(created.models.len(), 2);
     assert_eq!(repository.active_id().await.unwrap(), original_active);
@@ -70,13 +74,46 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
     let runtime = repository.load_runtime(&created.id).await.unwrap().unwrap();
     assert_eq!(runtime.credential.expose(), "test-secret-never-logged");
     assert_eq!(runtime.profile, created);
+    assert_eq!(
+        runtime
+            .adapter_options
+            .as_ref()
+            .and_then(|options| options.get("reasoning_effort"))
+            .and_then(serde_json::Value::as_str),
+        Some("high")
+    );
+
+    let updated = repository
+        .update(
+            &created.id,
+            ProviderInput {
+                name: provider_name.clone(),
+                api_key: String::new(),
+                models: vec![ProviderModel {
+                    model_id: "model-c".to_string(),
+                    display_name: Some("Model C".to_string()),
+                    model_tier: ModelTier::Plus,
+                    enabled: true,
+                }],
+                ..input
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.models.len(), 1);
+    assert_eq!(updated.models[0].model_id, "model-c");
+    let runtime = repository.load_runtime(&created.id).await.unwrap().unwrap();
+    assert_eq!(runtime.credential.expose(), "test-secret-never-logged");
+    assert_eq!(
+        runtime
+            .adapter_options
+            .as_ref()
+            .and_then(|options| options.get("reasoning_effort"))
+            .and_then(serde_json::Value::as_str),
+        Some("high")
+    );
 
     repository.activate(&created.id).await.unwrap();
-    assert!(matches!(
-        repository.delete(&created.id).await,
-        Err(ProviderRepositoryError::CannotDeleteActive { .. })
-    ));
-    repository.clear_active().await.unwrap();
     repository.delete(&created.id).await.unwrap();
     if let Some(original_active) = original_active {
         repository.activate(&original_active).await.unwrap();
