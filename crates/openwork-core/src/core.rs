@@ -194,7 +194,6 @@ impl OpenWorkCore {
         let providers = self.provider_repository()?;
         Ok(ProviderIndex {
             providers: providers.list_profiles().await?,
-            active_id: providers.active_id().await?,
         })
     }
 

@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-15
 
-> Status: current implementation snapshot. 本文描述当前代码已经实现并验证的行为，不把目标蓝图或后续计划写成现状。当前可恢复范围仅包括停在 `approval_requested`、尚未开始工具副作用的 Turn；它不是完整的任意断点续跑，也不承诺工具调用 Exactly Once。
+> Status: historical Event Journal design. 当前 Runtime V2 不恢复未完成 Turn；本文仅保留旧恢复方案背景，不应作为当前代码说明。
 
 ## 1. 结论
 

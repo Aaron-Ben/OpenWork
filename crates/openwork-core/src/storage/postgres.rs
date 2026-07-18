@@ -12,19 +12,9 @@ use crate::session::{
     ClientRequestId, ResolvedModel, SessionId, SessionStorage, TurnId, TurnOutcome,
 };
 
-use super::migrations::{
-    LEGACY_SHORT_MIGRATION_VERSION, LEGACY_TABLE_ARCHIVE_CHECKSUM, LEGACY_TABLE_ARCHIVE_NAME,
-    LEGACY_TABLE_ARCHIVE_STATEMENTS, LEGACY_TABLE_ARCHIVE_VERSION, MIGRATION_CHECKSUM,
-    MIGRATION_NAME, MIGRATION_VERSION, PROVIDER_BACKFILL_CHECKSUM, PROVIDER_BACKFILL_NAME,
-    PROVIDER_BACKFILL_STATEMENTS, PROVIDER_BACKFILL_VERSION, PROVIDER_MODEL_FLAGS_CHECKSUM,
-    PROVIDER_MODEL_FLAGS_NAME, PROVIDER_MODEL_FLAGS_STATEMENTS, PROVIDER_MODEL_FLAGS_VERSION,
-    PROVIDER_MODEL_METADATA_REPAIR_CHECKSUM, PROVIDER_MODEL_METADATA_REPAIR_NAME,
-    PROVIDER_MODEL_METADATA_REPAIR_STATEMENTS, PROVIDER_MODEL_METADATA_REPAIR_VERSION,
-    PROVIDER_SCHEMA_CHECKSUM, PROVIDER_SCHEMA_NAME, PROVIDER_SCHEMA_STATEMENTS,
-    PROVIDER_SCHEMA_VERSION, STATEMENTS,
-};
-
 const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
+
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,16 +130,8 @@ pub enum StorageError {
     SessionNotFound(String),
     #[error("turn not found: {0}")]
     TurnNotFound(String),
-    #[error(
-        "migration {version} drifted: expected name/checksum {expected_name}/{expected_checksum}, found {actual_name}/{actual_checksum:?}"
-    )]
-    MigrationDrift {
-        version: i64,
-        expected_name: &'static str,
-        expected_checksum: &'static str,
-        actual_name: String,
-        actual_checksum: Option<String>,
-    },
+    #[error("migration error: {0}")]
+    Migration(#[from] sqlx::migrate::MigrateError),
 }
 
 #[derive(Debug, Clone)]
@@ -183,164 +165,7 @@ impl PostgresStorage {
     }
 
     pub async fn migrate(&self) -> Result<(), StorageError> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS schema_migrations (
-               version BIGINT PRIMARY KEY,
-               name TEXT NOT NULL,
-               applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-             )",
-        )
-        .execute(&self.pool)
-        .await?;
-        sqlx::query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT")
-            .execute(&self.pool)
-            .await?;
-
-        let mut transaction = self.pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(MIGRATION_VERSION)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query(
-            "UPDATE schema_migrations
-             SET version = $1
-             WHERE version = $2 AND name = $3 AND checksum = $4
-               AND NOT EXISTS (
-                   SELECT 1 FROM schema_migrations current WHERE current.version = $1
-               )",
-        )
-        .bind(MIGRATION_VERSION)
-        .bind(LEGACY_SHORT_MIGRATION_VERSION)
-        .bind(MIGRATION_NAME)
-        .bind(MIGRATION_CHECKSUM)
-        .execute(&mut *transaction)
-        .await?;
-        let applied: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT name, checksum FROM schema_migrations WHERE version = $1")
-                .bind(MIGRATION_VERSION)
-                .fetch_optional(&mut *transaction)
-                .await?;
-
-        if let Some((name, checksum)) = applied {
-            if name != MIGRATION_NAME
-                || checksum
-                    .as_deref()
-                    .is_some_and(|value| value != MIGRATION_CHECKSUM)
-            {
-                return Err(StorageError::MigrationDrift {
-                    version: MIGRATION_VERSION,
-                    expected_name: MIGRATION_NAME,
-                    expected_checksum: MIGRATION_CHECKSUM,
-                    actual_name: name,
-                    actual_checksum: checksum,
-                });
-            }
-            if checksum.is_none() {
-                sqlx::query("UPDATE schema_migrations SET checksum = $2 WHERE version = $1")
-                    .bind(MIGRATION_VERSION)
-                    .bind(MIGRATION_CHECKSUM)
-                    .execute(&mut *transaction)
-                    .await?;
-            }
-            transaction.commit().await?;
-            self.migrate_followup_schema().await?;
-            return Ok(());
-        }
-
-        for statement in STATEMENTS {
-            sqlx::query(statement).execute(&mut *transaction).await?;
-        }
-        sqlx::query("INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)")
-            .bind(MIGRATION_VERSION)
-            .bind(MIGRATION_NAME)
-            .bind(MIGRATION_CHECKSUM)
-            .execute(&mut *transaction)
-            .await?;
-        transaction.commit().await?;
-        self.migrate_followup_schema().await?;
-        Ok(())
-    }
-
-    async fn migrate_followup_schema(&self) -> Result<(), StorageError> {
-        for (version, name, checksum, statements) in [
-            (
-                PROVIDER_SCHEMA_VERSION,
-                PROVIDER_SCHEMA_NAME,
-                PROVIDER_SCHEMA_CHECKSUM,
-                PROVIDER_SCHEMA_STATEMENTS,
-            ),
-            (
-                PROVIDER_BACKFILL_VERSION,
-                PROVIDER_BACKFILL_NAME,
-                PROVIDER_BACKFILL_CHECKSUM,
-                PROVIDER_BACKFILL_STATEMENTS,
-            ),
-            (
-                PROVIDER_MODEL_FLAGS_VERSION,
-                PROVIDER_MODEL_FLAGS_NAME,
-                PROVIDER_MODEL_FLAGS_CHECKSUM,
-                PROVIDER_MODEL_FLAGS_STATEMENTS,
-            ),
-            (
-                LEGACY_TABLE_ARCHIVE_VERSION,
-                LEGACY_TABLE_ARCHIVE_NAME,
-                LEGACY_TABLE_ARCHIVE_CHECKSUM,
-                LEGACY_TABLE_ARCHIVE_STATEMENTS,
-            ),
-            (
-                PROVIDER_MODEL_METADATA_REPAIR_VERSION,
-                PROVIDER_MODEL_METADATA_REPAIR_NAME,
-                PROVIDER_MODEL_METADATA_REPAIR_CHECKSUM,
-                PROVIDER_MODEL_METADATA_REPAIR_STATEMENTS,
-            ),
-        ] {
-            let mut transaction = self.pool.begin().await?;
-            sqlx::query("SELECT pg_advisory_xact_lock($1)")
-                .bind(version)
-                .execute(&mut *transaction)
-                .await?;
-            let applied: Option<(String, Option<String>)> =
-                sqlx::query_as("SELECT name, checksum FROM schema_migrations WHERE version = $1")
-                    .bind(version)
-                    .fetch_optional(&mut *transaction)
-                    .await?;
-            if let Some((actual_name, actual_checksum)) = applied {
-                if actual_name != name
-                    || actual_checksum
-                        .as_deref()
-                        .is_some_and(|value| value != checksum)
-                {
-                    return Err(StorageError::MigrationDrift {
-                        version,
-                        expected_name: name,
-                        expected_checksum: checksum,
-                        actual_name,
-                        actual_checksum,
-                    });
-                }
-                if actual_checksum.is_none() {
-                    sqlx::query("UPDATE schema_migrations SET checksum = $2 WHERE version = $1")
-                        .bind(version)
-                        .bind(checksum)
-                        .execute(&mut *transaction)
-                        .await?;
-                }
-                transaction.commit().await?;
-                continue;
-            }
-            for statement in statements {
-                sqlx::query(statement).execute(&mut *transaction).await?;
-            }
-            sqlx::query(
-                "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)",
-            )
-            .bind(version)
-            .bind(name)
-            .bind(checksum)
-            .execute(&mut *transaction)
-            .await?;
-            transaction.commit().await?;
-        }
+        MIGRATOR.run(&self.pool).await?;
         Ok(())
     }
 

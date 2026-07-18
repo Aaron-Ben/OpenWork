@@ -40,7 +40,6 @@ impl ProviderTestResult {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderIndex {
     pub providers: Vec<openwork_models::provider::ProviderProfile>,
-    pub active_id: Option<String>,
 }
 
 pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[

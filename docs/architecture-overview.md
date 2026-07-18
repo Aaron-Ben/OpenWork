@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-15
 
-> Status: current implementation snapshot. 目标架构和下一阶段顺序只见 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md)。
+> Status: historical pre-refactor snapshot. 当前 crate 与运行时边界见 [重构后的目标模块结构](redesign/01-target-module-structure.md)，前端见 [前端架构重构](redesign/06-frontend-architecture.md)。本文包含已删除 crate，仅保留旧架构背景。
 
 ## 1. 项目定位
 

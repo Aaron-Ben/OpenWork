@@ -1,6 +1,6 @@
 # OpenWork 重构实施路线
 
-> 状态：Phase 1-7 的代码迁移已完成；Provider 凭证和模型已回填到 Core V2 Storage，旧数据库表已归档为 `legacy_*`。最终 DROP 仍遵循独立 Migration 和保留周期。
+> 状态：Phase 1-7 的代码迁移已完成；当前无生产数据，数据库已切换为 SQLx 单一干净基线，不再保留旧表回填或 `legacy_*` 过渡路径。
 >
 > 原则：每一阶段都必须可编译、可测试、可回退；先建立新的唯一运行链，再删除旧链。
 
@@ -313,7 +313,7 @@ messages_v2
 trace_spans_v2
 ```
 
-`schema_migrations` 沿用现有基础设施，但 Migration 内容不可覆盖旧版本。
+迁移历史由 SQLx `_sqlx_migrations` 管理；已执行的 migration 文件不可修改，后续变化只能追加新版本。
 
 ### 7.2 Core Storage API
 

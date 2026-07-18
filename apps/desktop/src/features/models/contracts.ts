@@ -48,7 +48,6 @@ export interface ProviderPreset {
 
 export interface ProviderIndex {
   providers: ProviderConfig[]
-  activeId: string | null
 }
 
 export interface TestResult {

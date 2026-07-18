@@ -89,9 +89,9 @@ impl From<OpenWorkCoreError> for CommandError {
                     "Runtime persistence is unavailable",
                 )
             }
-            OpenWorkCoreError::Storage(StorageError::MigrationDrift { .. }) => Self::new(
+            OpenWorkCoreError::Storage(StorageError::Migration(_)) => Self::new(
                 CommandErrorCode::SchemaNotReady,
-                "Runtime database migration checksum does not match",
+                "Runtime database migration failed",
             ),
             OpenWorkCoreError::Storage(StorageError::Serialization(_)) => Self::new(
                 CommandErrorCode::InternalError,
@@ -101,12 +101,6 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::ProviderNotFound,
                 format!("Provider not found: {id}"),
             ),
-            OpenWorkCoreError::Provider(ProviderRepositoryError::CannotDeleteActive { id }) => {
-                Self::new(
-                    CommandErrorCode::OperationConflict,
-                    format!("Cannot delete the active provider: {id}"),
-                )
-            }
             OpenWorkCoreError::Provider(ProviderRepositoryError::InvalidInput { field }) => {
                 Self::new(
                     CommandErrorCode::InvalidRequest,

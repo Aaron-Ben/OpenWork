@@ -1,10 +1,10 @@
 # OpenWork V1 目标数据库 Schema
 
-> 状态：V2 Schema 与 Provider 回填已实施。业务表使用 `provider_credentials_v2`、`models_v2`、`sessions_v2`、`turns_v2`、`messages_v2`、`trace_spans_v2`；旧表已重命名为 `legacy_*`，仅保留作回退。
+> 状态：SQLx 单一干净基线已实施。业务表使用 `provider_credentials_v2`、`models_v2`、`sessions_v2`、`turns_v2`、`messages_v2`、`trace_spans_v2`；当前没有生产数据，因此不再保留旧表回填和 `legacy_*` 兼容路径。
 >
 > 边界：保存模型配置、Session、Turn、完整 Message 和诊断 Trace；不保存可恢复的运行时 Checkpoint。
 >
-> 本文无 `_v2` 后缀的 SQL 表示逻辑名称；当前 Migration 已以 `_v2` 物理表名执行。`legacy_providers/legacy_provider_models/legacy_recorded_events/legacy_trace_spans` 不参与生产运行链。
+> 本文无 `_v2` 后缀的 SQL 表示逻辑名称；当前物理结构由 `crates/openwork-core/migrations/202607180001_initial_schema.sql` 创建。
 
 ## 1. 结论
 
@@ -12,8 +12,8 @@ V1 收敛为 7 张表：
 
 | 表 | 职责 | 是否业务真相 |
 | --- | --- | --- |
-| `schema_migrations` | Migration 版本与校验 | 基础设施 |
-| `provider_credentials` | Provider 元数据、激活状态与加密凭证 | 是，敏感数据 |
+| `_sqlx_migrations` | SQLx Migration 版本、校验和与执行状态 | 基础设施 |
+| `provider_credentials` | Provider 元数据与加密凭证 | 是，敏感数据 |
 | `models` | 可选择的模型端点与凭证引用 | 是 |
 | `sessions` | Session 元数据 | 是 |
 | `turns` | 一次用户运行的状态和汇总 | 是 |
@@ -76,31 +76,28 @@ trace_span_events
 - Repository 更新业务字段时必须同时更新 `updated_at`；
 - Turn/Message/Span 的顺序由所属 SessionActor 分配，并由唯一约束兜底。
 
-## 4. schema_migrations
+## 4. _sqlx_migrations
 
 ```sql
-CREATE TABLE schema_migrations (
+CREATE TABLE _sqlx_migrations (
     version         BIGINT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    checksum        TEXT NOT NULL,
-    applied_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    CONSTRAINT schema_migrations_name_not_blank
-        CHECK (btrim(name) <> ''),
-    CONSTRAINT schema_migrations_checksum_not_blank
-        CHECK (btrim(checksum) <> '')
+    description     TEXT NOT NULL,
+    installed_on    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    success         BOOLEAN NOT NULL,
+    checksum        BYTEA NOT NULL,
+    execution_time  BIGINT NOT NULL
 );
 ```
 
 规则：
 
-- 已执行 Migration 不修改内容；
-- checksum 不一致时启动失败；
+- 该表由 SQLx 创建和维护，业务代码不得直接写入；
+- 已执行 Migration 不修改内容，checksum 不一致时迁移失败；
 - 数据回填与 Schema 变更使用不同版本，便于重试和审计。
 
 ## 5. provider_credentials
 
-一行保存一个 Provider 的公开元数据、激活状态和加密 API Key。密文使用 `provider_id` 作为 AAD；Repository 不返回密文字段，只能返回公开 Profile 或在模型调用边界解密后的零化凭证类型。
+一行保存一个 Provider 的公开元数据和加密 API Key。密文使用 `provider_id` 作为 AAD；Repository 不返回密文字段，只能返回公开 Profile 或在模型调用边界解密后的零化凭证类型。模型由 Session 显式选择，不维护全局 Active Provider。
 
 ```sql
 CREATE TABLE provider_credentials (
@@ -110,7 +107,6 @@ CREATE TABLE provider_credentials (
     base_url           TEXT NOT NULL,
     api_key_encrypted  TEXT NOT NULL,
     enabled            BOOLEAN NOT NULL DEFAULT TRUE,
-    active             BOOLEAN NOT NULL DEFAULT FALSE,
     config             JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -129,11 +125,7 @@ CREATE TABLE provider_credentials (
         CHECK (jsonb_typeof(config) = 'object')
 );
 
-CREATE UNIQUE INDEX uq_provider_credentials_one_active
-    ON provider_credentials(active) WHERE active = TRUE;
 ```
-
-旧 `providers.api_key_encrypted` 回填时原样复制，不能先解密再加密。这样迁移不需要 Secret 出现在进程日志、SQL 参数或临时文件中。
 
 ## 6. models
 
@@ -602,45 +594,19 @@ WHERE turn_id = $1
 ORDER BY sequence;
 ```
 
-## 14. 从当前 Schema 迁移
+## 14. 开发数据库基线切换
 
-重构前的主要表为：
+当前没有生产数据，因此不再把旧 Journal、Provider Registry 或 `schema_migrations` 接入新历史。开发数据库显式删除 volume 后，从 SQLx 基线重新创建：
 
-```text
-providers
-provider_models
-recorded_events
-trace_spans
-schema_migrations
+```bash
+docker compose down -v
+docker compose up -d postgres
+cargo run -p openwork-core --bin openwork-migrate
 ```
 
-迁移不是简单改名：
+基线版本为 `202607180001_initial_schema.sql`。它只创建当前六张业务表，不创建、回填或归档任何旧表。未来每次结构或数据变化都追加新的 SQLx migration；已经执行的文件保持不可变。
 
-| 当前数据 | 目标 |
-| --- | --- |
-| `providers` | 原 ID、公开字段、激活状态和加密 Secret 回填到 `provider_credentials_v2` |
-| `provider_models` | 每个可选模型生成一行 `models_v2`，凭证只保存引用 |
-| Session Journal Event | 回放后生成 `sessions` |
-| `turn_started` | 生成 `turns` |
-| User/Assistant/Tool Message Event | 按原顺序生成 `messages` |
-| Step Event | 仅用于回填 `model_call_count`，不保留 Step |
-| ToolRun Event | 仅用于回填 `tool_call_count` 和历史 Message |
-| Approval Event | 不建立目标行；必要信息仅保留在历史导出 |
-| 当前多种 Trace Span | 只迁移可可靠关联的 Model/Tool Span |
-
-本轮实际使用版本化物理表：
-
-1. `202607180101` 建立 Runtime V2 五张关系表；
-2. `202607180102` 独立建立 `provider_credentials_v2`；
-3. `202607180103` 原样复制旧 Provider 密文，并将旧 Model 投影到 `models_v2`；
-4. `202607180104` 独立补齐旧 Model 自身的启用标志；
-5. 对比 Provider 数、Model 数、Provider ID、激活状态和 ciphertext；
-6. App 切换到 Core Provider Repository 后删除 `openwork-protocol`、`openwork-persistence`；
-7. `202607180105` 将旧表归档为 `legacy_*`，新代码无法再按旧表名访问；至少保留一个约定周期后再执行独立 DROP Migration。
-
-旧对话 Journal 已按本轮开发环境授权清空，因此没有伪造 Session/Message 历史回填；新的 Session 数据从 V2 Runtime 启用后开始写入。
-
-如果确认开发数据库可丢弃，可以执行 Fresh Schema，但必须由操作者显式选择，Migration 不得自动删除未知数据。
+删除 volume 会清除 Session、Trace、模型设置和加密后的 Provider API Key，必须由开发者显式执行，应用启动不得自动删除未知数据。
 
 ## 15. Schema 验收清单
 

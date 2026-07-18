@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-15
 
-> Status: current implementation snapshot. 字段、事件目录和设计决策见 [Event Journal 与会话持久化重构设计](../plans/event-journal-persistence-refactor.md)。
+> Status: historical pre-Runtime-V2 snapshot. 当前实现已删除 Event Journal 路径；数据库事实源见 [V1 目标数据库 Schema](redesign/03-database-schema.md)。本文仅保留旧设计背景，不应作为当前代码说明。
 
 ## 1. 当前数据库有五张表
 

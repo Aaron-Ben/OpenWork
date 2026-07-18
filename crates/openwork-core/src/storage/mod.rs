@@ -1,5 +1,4 @@
 mod credential;
-mod migrations;
 mod postgres;
 mod provider;
 mod trace;

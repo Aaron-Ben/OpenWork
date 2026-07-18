@@ -7,8 +7,6 @@ use super::{ProviderInput, ProviderProfile, ProviderRuntimeConfig};
 pub enum ProviderRepositoryError {
     #[error("provider not found: {id}")]
     NotFound { id: String },
-    #[error("cannot delete the active provider: {id}")]
-    CannotDeleteActive { id: String },
     #[error("provider field is invalid: {field}")]
     InvalidInput { field: &'static str },
     #[error("provider credential encryption failed during {operation}: {message}")]
@@ -31,7 +29,6 @@ pub trait ProviderRepository: Send + Sync {
         &self,
         id: &str,
     ) -> Result<Option<ProviderRuntimeConfig>, ProviderRepositoryError>;
-    async fn active_id(&self) -> Result<Option<String>, ProviderRepositoryError>;
     async fn create(
         &self,
         input: ProviderInput,
@@ -42,6 +39,4 @@ pub trait ProviderRepository: Send + Sync {
         input: ProviderInput,
     ) -> Result<ProviderProfile, ProviderRepositoryError>;
     async fn delete(&self, id: &str) -> Result<(), ProviderRepositoryError>;
-    async fn activate(&self, id: &str) -> Result<(), ProviderRepositoryError>;
-    async fn clear_active(&self) -> Result<(), ProviderRepositoryError>;
 }

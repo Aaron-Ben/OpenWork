@@ -29,6 +29,29 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     storage.migrate().await.unwrap();
     storage.migrate().await.unwrap();
 
+    let sqlx_migrations: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations')::text")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+    let legacy_migrations: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.schema_migrations')::text")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+    assert_eq!(sqlx_migrations.as_deref(), Some("_sqlx_migrations"));
+    assert_eq!(legacy_migrations, None);
+    let applied_migrations: Vec<(i64, String, bool)> = sqlx::query_as(
+        "SELECT version, description, success FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(storage.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        applied_migrations,
+        vec![(202_607_180_001, "initial schema".to_string(), true)]
+    );
+
     let model_id = unique("model-test");
     storage
         .upsert_model(&ModelInput {

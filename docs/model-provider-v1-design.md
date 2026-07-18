@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-14
 
-> Status: core contract and primary provider paths implemented; infrastructure consolidation and full model-specific coverage remain. 本文是模型厂商集成的专题设计，受 [OpenWork Core 架构蓝图](../plans/openwork-core-architecture-blueprint.md) 约束。当前代码已完成 streaming-first Port、结构化错误、SSE framing/背压/取消、API Key 落库加密、Secret/Profile 查询隔离、共享 HTTP Transport 生命周期、OpenAI Responses/Anthropic Tool 流式主链、Anthropic opaque thinking 往返、主要 Dialect 精确错误码和 Retry-After 解析。全库唯一 PostgreSQL composition root、有序 output block、模型级 Thinking 参数和 M7 Attempt Projection 仍未完成。
+> Status: historical provider design from before the Runtime V2 crate consolidation. 当前数据库与 Provider 持久化边界见 [V1 目标数据库 Schema](redesign/03-database-schema.md)；本文中的已删除 crate 和旧 migration 路径只保留作设计背景。
 
 ### 2026-07-11 implementation checkpoint
 

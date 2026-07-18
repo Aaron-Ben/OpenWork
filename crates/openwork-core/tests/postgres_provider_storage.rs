@@ -31,12 +31,11 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
     .unwrap();
     sqlx::query(
         "DELETE FROM provider_credentials_v2
-         WHERE display_name LIKE 'provider-core-test-%' AND active = FALSE",
+         WHERE display_name LIKE 'provider-core-test-%'",
     )
     .execute(storage.pool())
     .await
     .unwrap();
-    let original_active = repository.active_id().await.unwrap();
     let provider_name = unique("provider-core-test");
     let input = ProviderInput {
         name: provider_name.clone(),
@@ -69,7 +68,6 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
     let created = repository.create(input.clone()).await.unwrap();
     assert_eq!(created.name, provider_name);
     assert_eq!(created.models.len(), 2);
-    assert_eq!(repository.active_id().await.unwrap(), original_active);
 
     let runtime = repository.load_runtime(&created.id).await.unwrap().unwrap();
     assert_eq!(runtime.credential.expose(), "test-secret-never-logged");
@@ -113,11 +111,7 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
         Some("high")
     );
 
-    repository.activate(&created.id).await.unwrap();
     repository.delete(&created.id).await.unwrap();
-    if let Some(original_active) = original_active {
-        repository.activate(&original_active).await.unwrap();
-    }
     assert!(repository.get_profile(&created.id).await.unwrap().is_none());
 
     let remaining_models: i64 =

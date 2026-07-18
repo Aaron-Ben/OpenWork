@@ -181,13 +181,6 @@ impl ProviderRepository for PostgresProviderRepository {
         }
     }
 
-    async fn active_id(&self) -> Result<Option<String>, ProviderRepositoryError> {
-        sqlx::query_scalar("SELECT provider_id FROM provider_credentials_v2 WHERE active = TRUE")
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(persistence_error)
-    }
-
     async fn create(
         &self,
         input: ProviderInput,
@@ -200,21 +193,11 @@ impl ProviderRepository for PostgresProviderRepository {
             .encrypt(&provider_id, &input.api_key)
             .map_err(|error| credential_error("encrypt", error))?;
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-        sqlx::query("LOCK TABLE provider_credentials_v2 IN SHARE ROW EXCLUSIVE MODE")
-            .execute(&mut *transaction)
-            .await
-            .map_err(persistence_error)?;
-        let has_active: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM provider_credentials_v2 WHERE active = TRUE)",
-        )
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(persistence_error)?;
         sqlx::query(
             "INSERT INTO provider_credentials_v2 (
                 provider_id, display_name, provider_kind, base_url,
-                api_key_encrypted, enabled, active, config
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                api_key_encrypted, enabled, config
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&provider_id)
         .bind(input.name.trim())
@@ -222,7 +205,6 @@ impl ProviderRepository for PostgresProviderRepository {
         .bind(input.base_url.trim())
         .bind(encrypted)
         .bind(input.enabled)
-        .bind(!has_active)
         .bind(provider_config(input.extra_body.as_ref()))
         .execute(&mut *transaction)
         .await
@@ -292,14 +274,14 @@ impl ProviderRepository for PostgresProviderRepository {
 
     async fn delete(&self, id: &str) -> Result<(), ProviderRepositoryError> {
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-        let active: Option<bool> = sqlx::query_scalar(
-            "SELECT active FROM provider_credentials_v2 WHERE provider_id = $1 FOR UPDATE",
+        let provider_id: Option<String> = sqlx::query_scalar(
+            "SELECT provider_id FROM provider_credentials_v2 WHERE provider_id = $1 FOR UPDATE",
         )
         .bind(id)
         .fetch_optional(&mut *transaction)
         .await
         .map_err(persistence_error)?;
-        active.ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
+        provider_id.ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
         sqlx::query("DELETE FROM models_v2 WHERE credential_ref = $1")
             .bind(credential_ref(id))
             .execute(&mut *transaction)
@@ -311,47 +293,6 @@ impl ProviderRepository for PostgresProviderRepository {
             .await
             .map_err(persistence_error)?;
         transaction.commit().await.map_err(persistence_error)?;
-        Ok(())
-    }
-
-    async fn activate(&self, id: &str) -> Result<(), ProviderRepositoryError> {
-        let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-        sqlx::query("LOCK TABLE provider_credentials_v2 IN SHARE ROW EXCLUSIVE MODE")
-            .execute(&mut *transaction)
-            .await
-            .map_err(persistence_error)?;
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM provider_credentials_v2 WHERE provider_id = $1)",
-        )
-        .bind(id)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(persistence_error)?;
-        if !exists {
-            return Err(ProviderRepositoryError::NotFound { id: id.to_string() });
-        }
-        sqlx::query("UPDATE provider_credentials_v2 SET active = FALSE WHERE active = TRUE")
-            .execute(&mut *transaction)
-            .await
-            .map_err(persistence_error)?;
-        sqlx::query(
-            "UPDATE provider_credentials_v2 SET active = TRUE, updated_at = now() WHERE provider_id = $1",
-        )
-        .bind(id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(persistence_error)?;
-        transaction.commit().await.map_err(persistence_error)?;
-        Ok(())
-    }
-
-    async fn clear_active(&self) -> Result<(), ProviderRepositoryError> {
-        sqlx::query(
-            "UPDATE provider_credentials_v2 SET active = FALSE, updated_at = now() WHERE active = TRUE",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(persistence_error)?;
         Ok(())
     }
 }
