@@ -301,16 +301,16 @@ SessionActor 分配 `SessionUpdate.sequence`，建立：
 
 ## 7. Phase 4：切换直接持久化
 
-### 7.1 建立 V2 表
+### 7.1 建立直接持久化表
 
-按 [03-database-schema.md](03-database-schema.md) 创建版本化物理表：
+按 [03-database-schema.md](03-database-schema.md) 创建物理表：
 
 ```text
-models_v2
-sessions_v2
-turns_v2
-messages_v2
-trace_spans_v2
+models
+sessions
+turns
+messages
+trace_spans
 ```
 
 迁移历史由 SQLx `_sqlx_migrations` 管理；已执行的 migration 文件不可修改，后续变化只能追加新版本。

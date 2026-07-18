@@ -64,9 +64,8 @@ impl PostgresProviderRepository {
         &self,
         provider_id: &str,
     ) -> Result<Option<ProviderCredentialRecord>, ProviderRepositoryError> {
-        let sql = format!(
-            "SELECT {PROVIDER_COLUMNS} FROM provider_credentials_v2 WHERE provider_id = $1"
-        );
+        let sql =
+            format!("SELECT {PROVIDER_COLUMNS} FROM provider_credentials WHERE provider_id = $1");
         sqlx::query_as(&sql)
             .bind(provider_id)
             .fetch_optional(&self.pool)
@@ -81,7 +80,7 @@ impl PostgresProviderRepository {
         let credential_ref = credential_ref(provider_id);
         let rows = sqlx::query_as::<_, ProviderModelRecord>(
             "SELECT model_name, display_name, enabled, config
-             FROM models_v2
+             FROM models
              WHERE credential_ref = $1
              ORDER BY
                  CASE WHEN jsonb_typeof(config->'position') = 'number'
@@ -101,7 +100,7 @@ impl PostgresProviderRepository {
         let rows = sqlx::query_as::<_, ProviderOwnedModelRecord>(
             "SELECT substring(credential_ref FROM 10) AS provider_id,
                     model_name, display_name, enabled, config
-             FROM models_v2
+             FROM models
              WHERE credential_ref LIKE 'provider:%'
              ORDER BY credential_ref,
                  CASE WHEN jsonb_typeof(config->'position') = 'number'
@@ -132,7 +131,7 @@ impl PostgresProviderRepository {
 impl ProviderRepository for PostgresProviderRepository {
     async fn list_profiles(&self) -> Result<Vec<ProviderProfile>, ProviderRepositoryError> {
         let sql = format!(
-            "SELECT {PROVIDER_COLUMNS} FROM provider_credentials_v2 ORDER BY created_at, provider_id"
+            "SELECT {PROVIDER_COLUMNS} FROM provider_credentials ORDER BY created_at, provider_id"
         );
         let records = sqlx::query_as::<_, ProviderCredentialRecord>(&sql)
             .fetch_all(&self.pool)
@@ -194,7 +193,7 @@ impl ProviderRepository for PostgresProviderRepository {
             .map_err(|error| credential_error("encrypt", error))?;
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         sqlx::query(
-            "INSERT INTO provider_credentials_v2 (
+            "INSERT INTO provider_credentials (
                 provider_id, display_name, provider_kind, base_url,
                 api_key_encrypted, enabled, config
              ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -242,7 +241,7 @@ impl ProviderRepository for PostgresProviderRepository {
         };
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let result = sqlx::query(
-            "UPDATE provider_credentials_v2 SET
+            "UPDATE provider_credentials SET
                 display_name = $2,
                 provider_kind = $3,
                 base_url = $4,
@@ -275,19 +274,19 @@ impl ProviderRepository for PostgresProviderRepository {
     async fn delete(&self, id: &str) -> Result<(), ProviderRepositoryError> {
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let provider_id: Option<String> = sqlx::query_scalar(
-            "SELECT provider_id FROM provider_credentials_v2 WHERE provider_id = $1 FOR UPDATE",
+            "SELECT provider_id FROM provider_credentials WHERE provider_id = $1 FOR UPDATE",
         )
         .bind(id)
         .fetch_optional(&mut *transaction)
         .await
         .map_err(persistence_error)?;
         provider_id.ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
-        sqlx::query("DELETE FROM models_v2 WHERE credential_ref = $1")
+        sqlx::query("DELETE FROM models WHERE credential_ref = $1")
             .bind(credential_ref(id))
             .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;
-        sqlx::query("DELETE FROM provider_credentials_v2 WHERE provider_id = $1")
+        sqlx::query("DELETE FROM provider_credentials WHERE provider_id = $1")
             .bind(id)
             .execute(&mut *transaction)
             .await
@@ -322,7 +321,7 @@ async fn replace_models(
             "extraBody": provider.extra_body.clone().unwrap_or_default(),
         });
         sqlx::query(
-            "INSERT INTO models_v2 (
+            "INSERT INTO models (
                 id, display_name, provider_kind, model_name, base_url,
                 credential_ref, enabled, config
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -349,7 +348,7 @@ async fn replace_models(
         .map_err(persistence_error)?;
     }
     sqlx::query(
-        "DELETE FROM models_v2
+        "DELETE FROM models
          WHERE credential_ref = $1 AND NOT (id = ANY($2))",
     )
     .bind(&reference)
@@ -462,9 +461,7 @@ fn parse_provider_kind(value: &str) -> Result<ProviderKind, ProviderRepositoryEr
         "kimi" => Ok(ProviderKind::Kimi),
         "qwen" => Ok(ProviderKind::Qwen),
         "glm" => Ok(ProviderKind::Glm),
-        _ => Err(invalid_stored_value(
-            "provider_credentials_v2.provider_kind",
-        )),
+        _ => Err(invalid_stored_value("provider_credentials.provider_kind")),
     }
 }
 
@@ -473,7 +470,7 @@ fn parse_model_tier(value: &str) -> Result<ModelTier, ProviderRepositoryError> {
         "lite" => Ok(ModelTier::Lite),
         "plus" => Ok(ModelTier::Plus),
         "pro" => Ok(ModelTier::Pro),
-        _ => Err(invalid_stored_value("models_v2.config.modelTier")),
+        _ => Err(invalid_stored_value("models.config.modelTier")),
     }
 }
 

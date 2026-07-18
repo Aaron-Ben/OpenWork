@@ -94,7 +94,7 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
     assert!(!core.get_trace(&accepted.turn_id).await.unwrap().is_empty());
 
     core.delete_session(&session_id).await.unwrap();
-    sqlx::query("DELETE FROM models_v2 WHERE id = $1")
+    sqlx::query("DELETE FROM models WHERE id = $1")
         .bind(model_id)
         .execute(storage.pool())
         .await

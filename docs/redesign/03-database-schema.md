@@ -1,10 +1,10 @@
 # OpenWork V1 目标数据库 Schema
 
-> 状态：SQLx 单一干净基线已实施。业务表使用 `provider_credentials_v2`、`models_v2`、`sessions_v2`、`turns_v2`、`messages_v2`、`trace_spans_v2`；当前没有生产数据，因此不再保留旧表回填和 `legacy_*` 兼容路径。
+> 状态：SQLx 单一干净基线已实施。业务表使用 `provider_credentials`、`models`、`sessions`、`turns`、`messages`、`trace_spans`；当前没有生产数据，因此不再保留旧表回填和 `legacy_*` 兼容路径。
 >
 > 边界：保存模型配置、Session、Turn、完整 Message 和诊断 Trace；不保存可恢复的运行时 Checkpoint。
 >
-> 本文无 `_v2` 后缀的 SQL 表示逻辑名称；当前物理结构由 `crates/openwork-core/migrations/202607180001_initial_schema.sql` 创建。
+> 本文 SQL 使用的名称就是当前物理表名；结构由 `crates/openwork-core/migrations/202607180001_initial_schema.sql` 创建。
 
 ## 1. 结论
 

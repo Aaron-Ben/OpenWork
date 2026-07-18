@@ -41,6 +41,26 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             .unwrap();
     assert_eq!(sqlx_migrations.as_deref(), Some("_sqlx_migrations"));
     assert_eq!(legacy_migrations, None);
+    let business_tables: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename
+         FROM pg_tables
+         WHERE schemaname = 'public' AND tablename <> '_sqlx_migrations'
+         ORDER BY tablename",
+    )
+    .fetch_all(storage.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        business_tables,
+        vec![
+            "messages",
+            "models",
+            "provider_credentials",
+            "sessions",
+            "trace_spans",
+            "turns",
+        ]
+    );
     let applied_migrations: Vec<(i64, String, bool)> = sqlx::query_as(
         "SELECT version, description, success FROM _sqlx_migrations ORDER BY version",
     )
@@ -164,7 +184,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     let summary: (String, i32, i32, Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(
         "SELECT status, model_call_count, tool_call_count,
                 input_tokens, output_tokens, cached_input_tokens
-         FROM turns_v2 WHERE id = $1",
+         FROM turns WHERE id = $1",
     )
     .bind(turn_id.as_str())
     .fetch_one(storage.pool())
@@ -219,7 +239,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     assert_eq!(flush.write_failures, 0);
     let trace_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT kind, status, parent_span_id
-         FROM trace_spans_v2 WHERE turn_id = $1 ORDER BY sequence",
+         FROM trace_spans WHERE turn_id = $1 ORDER BY sequence",
     )
     .bind(turn_id.as_str())
     .fetch_all(storage.pool())
@@ -249,20 +269,19 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .await
         .unwrap();
     assert_eq!(storage.mark_running_interrupted().await.unwrap(), 1);
-    let interrupted_status: String =
-        sqlx::query_scalar("SELECT status FROM turns_v2 WHERE id = $1")
-            .bind(interrupted_turn_id.as_str())
-            .fetch_one(storage.pool())
-            .await
-            .unwrap();
+    let interrupted_status: String = sqlx::query_scalar("SELECT status FROM turns WHERE id = $1")
+        .bind(interrupted_turn_id.as_str())
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
     assert_eq!(interrupted_status, "interrupted");
 
-    sqlx::query("DELETE FROM sessions_v2 WHERE id = $1")
+    sqlx::query("DELETE FROM sessions WHERE id = $1")
         .bind(session_id.as_str())
         .execute(storage.pool())
         .await
         .unwrap();
-    sqlx::query("DELETE FROM models_v2 WHERE id = $1")
+    sqlx::query("DELETE FROM models WHERE id = $1")
         .bind(&model_id)
         .execute(storage.pool())
         .await

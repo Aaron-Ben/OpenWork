@@ -21,12 +21,12 @@ The clean baseline creates:
 | Table | Purpose |
 | --- | --- |
 | `_sqlx_migrations` | SQLx migration version, checksum, status, and execution time |
-| `provider_credentials_v2` | Provider metadata and encrypted API keys |
-| `models_v2` | Selectable model endpoints and provider credential references |
-| `sessions_v2` | Session metadata |
-| `turns_v2` | Turn lifecycle and token/tool summaries |
-| `messages_v2` | Complete model conversation messages |
-| `trace_spans_v2` | Best-effort Model Call and Tool Call diagnostics |
+| `provider_credentials` | Provider metadata and encrypted API keys |
+| `models` | Selectable model endpoints and provider credential references |
+| `sessions` | Session metadata |
+| `turns` | Turn lifecycle and token/tool summaries |
+| `messages` | Complete model conversation messages |
+| `trace_spans` | Best-effort Model Call and Tool Call diagnostics |
 
 There is no legacy schema backfill in this baseline. It is intended for the current pre-production stage where the development database can be rebuilt.
 

@@ -20,9 +20,9 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
     let repository =
         PostgresProviderRepository::new(storage.pool().clone(), ApiKeyCipher::from_key([37; 32]));
     sqlx::query(
-        "DELETE FROM models_v2 WHERE credential_ref IN (
+        "DELETE FROM models WHERE credential_ref IN (
             SELECT 'provider:' || provider_id
-            FROM provider_credentials_v2
+            FROM provider_credentials
             WHERE display_name LIKE 'provider-core-test-%'
         )",
     )
@@ -30,7 +30,7 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
     .await
     .unwrap();
     sqlx::query(
-        "DELETE FROM provider_credentials_v2
+        "DELETE FROM provider_credentials
          WHERE display_name LIKE 'provider-core-test-%'",
     )
     .execute(storage.pool())
@@ -115,7 +115,7 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
     assert!(repository.get_profile(&created.id).await.unwrap().is_none());
 
     let remaining_models: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM models_v2 WHERE credential_ref = $1")
+        sqlx::query_scalar("SELECT count(*) FROM models WHERE credential_ref = $1")
             .bind(format!("provider:{}", created.id))
             .fetch_one(storage.pool())
             .await

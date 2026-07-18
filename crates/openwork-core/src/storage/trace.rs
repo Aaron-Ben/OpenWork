@@ -151,7 +151,7 @@ async fn write_model_started(
     started: &ModelCallStarted,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO trace_spans_v2 (
+        "INSERT INTO trace_spans (
              id, turn_id, sequence, kind, name, status, model_id,
              resolved_model_name, started_at
          ) VALUES ($1, $2, $3, 'model_call', 'model.call', 'running', $4, $5, $6)
@@ -174,7 +174,7 @@ async fn write_model_finished(
 ) -> Result<(), sqlx::Error> {
     let usage = finished.usage;
     sqlx::query(
-        "INSERT INTO trace_spans_v2 (
+        "INSERT INTO trace_spans (
              id, turn_id, sequence, kind, name, status, model_id,
              resolved_model_name, provider_request_id, attempt_count,
              input_tokens, output_tokens, cached_input_tokens,
@@ -219,7 +219,7 @@ async fn write_tool_started(
     started: &ToolCallStarted,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO trace_spans_v2 (
+        "INSERT INTO trace_spans (
              id, turn_id, parent_span_id, sequence, kind, name, status,
              provider_call_id, requested_tool_name, started_at
          ) VALUES ($1, $2, $3, $4, 'tool_call', 'tool.call', 'running', $5, $6, $7)
@@ -242,7 +242,7 @@ async fn write_tool_finished(
     finished: &ToolCallFinished,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO trace_spans_v2 (
+        "INSERT INTO trace_spans (
              id, turn_id, parent_span_id, sequence, kind, name, status,
              provider_call_id, requested_tool_name, resolved_tool_name,
              permission_wait_ms, started_at, ended_at, error_code, error_message

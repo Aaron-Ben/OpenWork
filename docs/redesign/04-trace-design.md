@@ -1,6 +1,6 @@
 # OpenWork V1 Trace 设计
 
-> 状态：已实施。Trace 通过有界队列旁路写入 `trace_spans_v2`，查询按 Turn 返回 Model Call 与 Tool Call Span。
+> 状态：已实施。Trace 通过有界队列旁路写入 `trace_spans`，查询按 Turn 返回 Model Call 与 Tool Call Span。
 >
 > 结论：Trace 是 `openwork-core` 的 best-effort 内部能力；Turn 行是根，只保存 Model Call 和 Tool Call Span。
 

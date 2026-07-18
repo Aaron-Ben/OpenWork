@@ -172,7 +172,7 @@ impl PostgresStorage {
     pub async fn upsert_model(&self, input: &ModelInput) -> Result<(), StorageError> {
         validate_model(input)?;
         sqlx::query(
-            "INSERT INTO models_v2 (
+            "INSERT INTO models (
                  id, display_name, provider_kind, model_name, base_url,
                  credential_ref, enabled, config
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -203,7 +203,7 @@ impl PostgresStorage {
         let model = sqlx::query_as::<_, ModelRecord>(
             "SELECT id, display_name, provider_kind, model_name, base_url,
                     credential_ref, enabled, config
-             FROM models_v2 WHERE id = $1",
+             FROM models WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -217,7 +217,7 @@ impl PostgresStorage {
     ) -> Result<SessionRecord, StorageError> {
         validate_session(input)?;
         sqlx::query(
-            "INSERT INTO sessions_v2 (id, title, working_directory, default_model_id)
+            "INSERT INTO sessions (id, title, working_directory, default_model_id)
              VALUES ($1, $2, $3, $4)",
         )
         .bind(input.id.as_str())
@@ -262,7 +262,7 @@ impl PostgresStorage {
             ));
         }
         let result =
-            sqlx::query("UPDATE sessions_v2 SET title = $2, updated_at = now() WHERE id = $1")
+            sqlx::query("UPDATE sessions SET title = $2, updated_at = now() WHERE id = $1")
                 .bind(session_id.as_str())
                 .bind(title.trim())
                 .execute(&self.pool)
@@ -276,7 +276,7 @@ impl PostgresStorage {
     }
 
     pub async fn delete_session(&self, session_id: &SessionId) -> Result<(), StorageError> {
-        let result = sqlx::query("DELETE FROM sessions_v2 WHERE id = $1")
+        let result = sqlx::query("DELETE FROM sessions WHERE id = $1")
             .bind(session_id.as_str())
             .execute(&self.pool)
             .await?;
@@ -292,7 +292,7 @@ impl PostgresStorage {
     ) -> Result<Vec<Message>, StorageError> {
         let rows: Vec<(String, Value)> = sqlx::query_as(
             "SELECT role, content
-             FROM messages_v2
+             FROM messages
              WHERE session_id = $1
              ORDER BY sequence",
         )
@@ -315,7 +315,7 @@ impl PostgresStorage {
     ) -> Result<Vec<StoredMessageRecord>, StorageError> {
         let rows: Vec<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
             "SELECT id, turn_id, sequence, role, content, created_at::TEXT
-             FROM messages_v2
+             FROM messages
              WHERE session_id = $1
              ORDER BY sequence",
         )
@@ -339,7 +339,7 @@ impl PostgresStorage {
     pub async fn mark_running_interrupted(&self) -> Result<u64, StorageError> {
         let mut transaction = self.pool.begin().await?;
         sqlx::query(
-            "UPDATE trace_spans_v2
+            "UPDATE trace_spans
              SET status = 'outcome_unknown', ended_at = now(),
                  error_code = COALESCE(error_code, 'process_restart'),
                  error_message = COALESCE(error_message, 'process restarted before span completed')
@@ -348,7 +348,7 @@ impl PostgresStorage {
         .execute(&mut *transaction)
         .await?;
         let result = sqlx::query(
-            "UPDATE turns_v2
+            "UPDATE turns
              SET status = 'interrupted', ended_at = now(), updated_at = now(),
                  error_code = COALESCE(error_code, 'process_restart'),
                  error_message = COALESCE(error_message, 'process restarted before turn completed')
@@ -377,8 +377,8 @@ impl PostgresStorage {
                     turns.tool_call_count, COUNT(spans.id)::BIGINT AS span_count,
                     turns.started_at::TEXT AS started_at,
                     turns.ended_at::TEXT AS ended_at
-             FROM turns_v2 turns
-             LEFT JOIN trace_spans_v2 spans ON spans.turn_id = turns.id
+             FROM turns turns
+             LEFT JOIN trace_spans spans ON spans.turn_id = turns.id
              WHERE ($1::TEXT IS NULL OR turns.session_id = $1)
              GROUP BY turns.id
              ORDER BY turns.started_at DESC, turns.id
@@ -399,7 +399,7 @@ impl PostgresStorage {
                     attempt_count, input_tokens, output_tokens, cached_input_tokens,
                     permission_wait_ms, started_at::TEXT AS started_at,
                     ended_at::TEXT AS ended_at, error_code, error_message, attributes
-             FROM trace_spans_v2
+             FROM trace_spans
              WHERE turn_id = $1
              ORDER BY sequence, id",
         )
@@ -413,7 +413,7 @@ impl PostgresStorage {
 const SESSION_COLUMNS: &str = "SELECT id, title, working_directory, default_model_id, status,
             created_at::TEXT AS created_at, updated_at::TEXT AS updated_at,
             last_turn_at::TEXT AS last_turn_at
-     FROM sessions_v2";
+     FROM sessions";
 
 #[async_trait]
 impl SessionStorage for PostgresStorage {
@@ -436,7 +436,7 @@ impl SessionStorage for PostgresStorage {
         model_call_index: u32,
     ) -> Result<(), String> {
         let result = sqlx::query(
-            "UPDATE turns_v2
+            "UPDATE turns
              SET model_call_count = GREATEST(model_call_count, $2), updated_at = now()
              WHERE id = $1 AND status = 'running'",
         )
@@ -495,7 +495,7 @@ impl PostgresStorage {
         lock_session(&mut transaction, session_id).await?;
         let turn_sequence = next_turn_sequence(&mut transaction, session_id).await?;
         sqlx::query(
-            "INSERT INTO turns_v2 (
+            "INSERT INTO turns (
                  id, session_id, client_request_id, sequence, model_id,
                  resolved_provider_kind, resolved_model_name, status
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')",
@@ -519,12 +519,10 @@ impl PostgresStorage {
             None,
         )
         .await?;
-        sqlx::query(
-            "UPDATE sessions_v2 SET updated_at = now(), last_turn_at = now() WHERE id = $1",
-        )
-        .bind(session_id.as_str())
-        .execute(&mut *transaction)
-        .await?;
+        sqlx::query("UPDATE sessions SET updated_at = now(), last_turn_at = now() WHERE id = $1")
+            .bind(session_id.as_str())
+            .execute(&mut *transaction)
+            .await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -566,7 +564,7 @@ impl PostgresStorage {
         )
         .await?;
         sqlx::query(
-            "UPDATE turns_v2 SET
+            "UPDATE turns SET
                  tool_call_count = tool_call_count + $2,
                  input_tokens = CASE WHEN $3::BIGINT IS NULL THEN input_tokens
                      ELSE COALESCE(input_tokens, 0) + $3 END,
@@ -640,7 +638,7 @@ impl PostgresStorage {
             TurnOutcome::Cancelled => ("cancelled", None, None),
         };
         let result = sqlx::query(
-            "UPDATE turns_v2
+            "UPDATE turns
              SET status = $2, error_code = $3, error_message = $4,
                  ended_at = now(), updated_at = now()
              WHERE id = $1 AND status = 'running'",
@@ -663,7 +661,7 @@ async fn lock_session(
     session_id: &SessionId,
 ) -> Result<(), StorageError> {
     let exists: Option<String> =
-        sqlx::query_scalar("SELECT id FROM sessions_v2 WHERE id = $1 FOR UPDATE")
+        sqlx::query_scalar("SELECT id FROM sessions WHERE id = $1 FOR UPDATE")
             .bind(session_id.as_str())
             .fetch_optional(&mut **transaction)
             .await?;
@@ -678,7 +676,7 @@ async fn lock_turn(
     turn_id: &TurnId,
 ) -> Result<SessionId, StorageError> {
     let session_id: Option<String> =
-        sqlx::query_scalar("SELECT session_id FROM turns_v2 WHERE id = $1 FOR UPDATE")
+        sqlx::query_scalar("SELECT session_id FROM turns WHERE id = $1 FOR UPDATE")
             .bind(turn_id.as_str())
             .fetch_optional(&mut **transaction)
             .await?;
@@ -692,7 +690,7 @@ async fn next_turn_sequence(
     session_id: &SessionId,
 ) -> Result<i64, StorageError> {
     let sequence: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns_v2 WHERE session_id = $1",
+        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM turns WHERE session_id = $1",
     )
     .bind(session_id.as_str())
     .fetch_one(&mut **transaction)
@@ -710,14 +708,14 @@ async fn insert_message(
     tool_name: Option<&str>,
 ) -> Result<(), StorageError> {
     let sequence: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages_v2 WHERE session_id = $1",
+        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE session_id = $1",
     )
     .bind(session_id.as_str())
     .fetch_one(&mut **transaction)
     .await?;
     let message_id = format!("msg-{}", Uuid::new_v4().simple());
     sqlx::query(
-        "INSERT INTO messages_v2 (
+        "INSERT INTO messages (
              id, session_id, turn_id, sequence, role, content, provider_call_id, tool_name
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
