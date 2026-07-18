@@ -15,7 +15,7 @@
 | F2 Runtime Store | 已完成 | `runtimeReducer` 为纯函数；Runtime View 按 Session 隔离并处理重复、缺口与 Snapshot Replace |
 | F3 Event Bridge | 已完成 | Core 使用全局 Update Bus；Rust Host 在进程启动时订阅一次并转发 `openwork://session-update`，React 只建立一个 listener |
 | F4 Chat/Permission | 已完成 | canonical Message 与流式 Draft 分离；全局 `activeStream`、`approvalStore` 已删除 |
-| F5 Model/Trace/Sidebar | 已完成 | Model 配置、顶级运行记录页、Turn Trace Drawer 和 Project/Session 子组件已切换到 Feature 边界 |
+| F5 Model/Trace/Sidebar | 已完成 | Model 配置、设置内运行记录页、Turn Trace Drawer 和 Project/Session 子组件已切换到 Feature 边界 |
 | F6 删除兼容层 | 部分完成 | 前端 Legacy Runtime/API、`provider_activate` 和 Host 每 Turn 临时事件转发已删除；生成契约仍待后续阶段完成 |
 
 因此，本轮“前端重构完成”指 React 侧状态所有权、页面边界、交互路径和进程级事件桥已经收口；F1 生成契约及对应 F6 兼容层删除仍未完成。

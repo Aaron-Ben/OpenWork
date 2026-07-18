@@ -32,7 +32,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
     )
   }
 
-  if (view.startsWith('settings-')) {
+  if (view.startsWith('settings-') || view === 'traces') {
     return (
       <motion.aside
         data-motion-sidebar="true"
@@ -52,6 +52,14 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           <div className="px-3 pb-2 font-sans text-xs font-medium text-ink-faint">{t('settings.title')}</div>
           <SettingsNavItem active={view === 'settings-models'} icon={<Bot size={18} />} onClick={() => onNavigate('settings-models')}>
             {t('settings.models.title')}
+          </SettingsNavItem>
+          <SettingsNavItem
+            active={view === 'traces'}
+            activity
+            icon={<Activity size={18} />}
+            onClick={() => onNavigate('traces')}
+          >
+            {t('activity.navigation')}
           </SettingsNavItem>
           <SettingsNavItem active={view === 'settings-appearance'} icon={<Palette size={18} />} onClick={() => onNavigate('settings-appearance')}>
             {t('settings.appearance.title')}
@@ -87,18 +95,6 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
         <Button
           type="button"
           variant="ghost"
-          data-activity-navigation="true"
-          className={`h-10 w-full justify-start rounded-xl px-3 ${view === 'traces' ? 'bg-paper text-ink shadow-sm' : ''}`}
-          aria-label={t('activity.navigation')}
-          title={t('activity.navigation')}
-          onClick={() => onNavigate('traces')}
-        >
-          <Activity size={19} className="shrink-0" />
-          <span>{t('activity.navigation')}</span>
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
           className="h-10 w-full justify-start rounded-xl px-3"
           aria-label={t('sidebar.settings')}
           title={t('sidebar.settings')}
@@ -125,14 +121,21 @@ function SidebarHeader({ title, onCollapse }: { title: string; onCollapse: () =>
   )
 }
 
-function SettingsNavItem({ active, icon, children, onClick }: {
+function SettingsNavItem({ active, activity = false, icon, children, onClick }: {
   active: boolean
+  activity?: boolean
   icon: React.ReactNode
   children: React.ReactNode
   onClick: () => void
 }) {
   return (
-    <Button type="button" variant="ghost" className={`mb-1 h-10 w-full justify-start rounded-xl px-3 ${active ? 'bg-paper text-ink shadow-sm' : ''}`} onClick={onClick}>
+    <Button
+      type="button"
+      variant="ghost"
+      data-activity-navigation={activity || undefined}
+      className={`mb-1 h-10 w-full justify-start rounded-xl px-3 ${active ? 'bg-paper text-ink shadow-sm' : ''}`}
+      onClick={onClick}
+    >
       {icon}{children}
     </Button>
   )
