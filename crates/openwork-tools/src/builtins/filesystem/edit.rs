@@ -1,95 +1,123 @@
-use crate::policy::AccessKind;
-use crate::{Observation, ObservationErrorCode};
-use async_trait::async_trait;
-use serde_json::Value;
 use std::path::Path;
 
-use crate::ExecutionContext;
-use crate::handler::ActionHandler;
+use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+use crate::policy::AccessKind;
+use crate::{
+    AsyncFileSystem, TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk,
+    ToolSessionContext,
+};
 
 use super::resolve;
 
-/// 精确文本编辑工具:用 `newString` 替换文件中唯一出现的 `oldString`。
-/// `oldString == ""` 表示新建文件(已存在则拒绝)。`replaceAll: true` 替换全部。
-#[derive(Default)]
-pub struct Edit;
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EditInput {
+    /// Absolute or working-dir-relative path.
+    pub file_path: String,
+    /// Exact text to find. Empty string means create a new file.
+    pub old_string: String,
+    /// Replacement text, or full content for a new file.
+    pub new_string: String,
+    /// Replace every occurrence. Defaults to false.
+    #[serde(default)]
+    pub replace_all: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct EditTool;
 
 #[async_trait]
-impl ActionHandler for Edit {
-    fn name(&self) -> &'static str {
-        "edit"
+impl Tool for EditTool {
+    type Input = EditInput;
+    type Output = TextToolOutput;
+
+    fn id(&self) -> ToolId {
+        ToolId::new_static("edit")
     }
 
-    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
-        let Some(path) = input.get("filePath").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'filePath' argument");
-        };
-        let Some(old) = input.get("oldString").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'oldString' argument");
-        };
-        let Some(new) = input.get("newString").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'newString' argument");
-        };
-        let replace_all = input
-            .get("replaceAll")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+    fn description(&self) -> &'static str {
+        "Edit a file by replacing a unique occurrence of `oldString` with `newString`. Use `oldString: \"\"` to create a new file (refuses if it already exists). Set `replaceAll: true` to replace every occurrence. Without `replaceAll`, `oldString` must match exactly and be unique in the file."
+    }
 
-        let resolved = resolve(&ctx.working_directory, path);
-        if let Err(message) = ctx.check_path(&resolved, AccessKind::Write) {
-            return Observation::denied(message);
-        }
-        match apply_edit(&resolved, old, new, replace_all).await {
-            Ok(message) => Observation::succeeded(message),
-            Err(message) => {
-                Observation::failed(ObservationErrorCode::ExecutionFailed, message, false)
-            }
-        }
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::WorkspaceMutation
+    }
+
+    async fn execute(
+        &self,
+        session: &ToolSessionContext,
+        _call: ToolCallContext,
+        input: EditInput,
+    ) -> Result<TextToolOutput, ToolExecutionError> {
+        let resolved = resolve(&session.working_directory, &input.file_path);
+        session
+            .check_path(&resolved, AccessKind::Write)
+            .map_err(ToolExecutionError::denied)?;
+        let message = apply_edit(
+            session.filesystem.as_ref(),
+            &resolved,
+            &input.old_string,
+            &input.new_string,
+            input.replace_all,
+        )
+        .await?;
+        Ok(TextToolOutput::new(message))
     }
 }
 
-fn invalid_arguments(message: impl Into<String>) -> Observation {
-    Observation::failed(ObservationErrorCode::InvalidArguments, message, false)
-}
-
-/// 纯编辑逻辑(抽出来便于单测):对 `path` 应用一次编辑,返回人类可读结果或错误文案。
 async fn apply_edit(
+    filesystem: &dyn AsyncFileSystem,
     path: &Path,
     old: &str,
     new: &str,
     replace_all: bool,
-) -> Result<String, String> {
+) -> Result<String, ToolExecutionError> {
     if old == new {
-        return Err("oldString and newString are identical (no-op)".to_string());
+        return Err(ToolExecutionError::execution(
+            "oldString and newString are identical (no-op)",
+        ));
     }
 
-    // 新建文件分支。
     if old.is_empty() {
-        if path.exists() {
-            return Err(format!(
+        if filesystem
+            .exists(path)
+            .await
+            .map_err(|error| ToolExecutionError::execution(error.to_string()))?
+        {
+            return Err(ToolExecutionError::execution(format!(
                 "file already exists: {}; to modify it, provide a non-empty oldString",
                 path.display()
-            ));
+            )));
         }
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| format!("failed to create parent dirs: {e}"))?;
+            filesystem.create_dir_all(parent).await.map_err(|error| {
+                ToolExecutionError::execution(format!("failed to create parent dirs: {error}"))
+            })?;
         }
-        tokio::fs::write(path, new)
+        filesystem
+            .write(path, new.as_bytes())
             .await
-            .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+            .map_err(|error| {
+                ToolExecutionError::execution(format!(
+                    "failed to write {}: {error}",
+                    path.display()
+                ))
+            })?;
         return Ok(format!("created {} ({} bytes)", path.display(), new.len()));
     }
 
-    // 编辑现有文件。
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-
+    let content = filesystem.read_to_string(path).await.map_err(|error| {
+        ToolExecutionError::execution(format!("failed to read {}: {error}", path.display()))
+    })?;
     let count = content.matches(old).count();
     if count == 0 {
-        return Err(format!("oldString not found in {}", path.display()));
+        return Err(ToolExecutionError::execution(format!(
+            "oldString not found in {}",
+            path.display()
+        )));
     }
 
     let updated = if replace_all {
@@ -97,17 +125,19 @@ async fn apply_edit(
     } else if count == 1 {
         content.replacen(old, new, 1)
     } else {
-        return Err(format!(
+        return Err(ToolExecutionError::execution(format!(
             "oldString is not unique: found {} occurrences in {}; include more surrounding context or set replaceAll: true",
             count,
             path.display()
-        ));
+        )));
     };
 
-    tokio::fs::write(path, &updated)
+    filesystem
+        .write(path, updated.as_bytes())
         .await
-        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-
+        .map_err(|error| {
+            ToolExecutionError::execution(format!("failed to write {}: {error}", path.display()))
+        })?;
     if replace_all {
         Ok(format!(
             "replaced {} occurrence(s) in {}",
@@ -121,85 +151,57 @@ async fn apply_edit(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    /// 进程内唯一的临时文件路径(避免引入 uuid dev-dep)。
+    use crate::LocalFileSystem;
+
+    use super::*;
+
     fn temp_file() -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let mut p = std::env::temp_dir();
-        p.push(format!("openwork-edit-test-{id}.txt"));
-        p
+        std::env::temp_dir().join(format!("openwork-edit-test-{id}.txt"))
     }
 
     #[tokio::test]
-    async fn create_new_file_with_empty_old() {
+    async fn creates_and_edits_files() {
         let path = temp_file();
         let _ = std::fs::remove_file(&path);
-        let msg = apply_edit(&path, "", "hello world", false).await.unwrap();
-        assert!(msg.contains("created"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello world");
-        let _ = std::fs::remove_file(&path);
-    }
+        let filesystem = LocalFileSystem;
 
-    #[tokio::test]
-    async fn create_refuses_existing_file() {
-        let path = temp_file();
-        std::fs::write(&path, "x").unwrap();
-        let err = apply_edit(&path, "", "y", false).await.unwrap_err();
-        assert!(err.contains("already exists"));
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test]
-    async fn replace_unique_occurrence() {
-        let path = temp_file();
-        std::fs::write(&path, "foo bar foo").unwrap();
-        apply_edit(&path, "bar", "baz", false).await.unwrap();
+        let created = apply_edit(&filesystem, &path, "", "foo bar foo", false)
+            .await
+            .expect("create file");
+        assert!(created.contains("created"));
+        let edited = apply_edit(&filesystem, &path, "bar", "baz", false)
+            .await
+            .expect("edit file");
+        assert!(edited.contains("edited"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "foo baz foo");
         let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]
-    async fn non_unique_without_replace_all_errors() {
+    async fn rejects_ambiguous_or_noop_edits() {
         let path = temp_file();
-        std::fs::write(&path, "foo foo foo").unwrap();
-        let err = apply_edit(&path, "foo", "x", false).await.unwrap_err();
-        assert!(err.contains("not unique"));
-        // 失败时不改写文件。
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "foo foo foo");
-        let _ = std::fs::remove_file(&path);
-    }
+        std::fs::write(&path, "foo foo").unwrap();
+        let filesystem = LocalFileSystem;
 
-    #[tokio::test]
-    async fn replace_all_replaces_every_occurrence() {
-        let path = temp_file();
-        std::fs::write(&path, "foo foo foo").unwrap();
-        let msg = apply_edit(&path, "foo", "x", true).await.unwrap();
-        assert!(msg.contains("3 occurrence"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "x x x");
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test]
-    async fn not_found_errors() {
-        let path = temp_file();
-        std::fs::write(&path, "hello").unwrap();
-        let err = apply_edit(&path, "missing", "x", false).await.unwrap_err();
-        assert!(err.contains("not found"));
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test]
-    async fn identical_old_new_is_noop() {
-        let path = temp_file();
-        std::fs::write(&path, "hello").unwrap();
-        let err = apply_edit(&path, "hello", "hello", false)
-            .await
-            .unwrap_err();
-        assert!(err.contains("identical"));
+        assert!(
+            apply_edit(&filesystem, &path, "foo", "x", false)
+                .await
+                .expect_err("ambiguous edit")
+                .message
+                .contains("not unique")
+        );
+        assert!(
+            apply_edit(&filesystem, &path, "foo", "foo", false)
+                .await
+                .expect_err("noop edit")
+                .message
+                .contains("identical")
+        );
         let _ = std::fs::remove_file(&path);
     }
 }

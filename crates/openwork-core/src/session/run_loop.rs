@@ -9,8 +9,9 @@ use openwork_models::model::{
     Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
-    PolicyDecision, ToolCatalog, ToolErrorCode, ToolExecutor, ToolInvocation, ToolResult,
-    ToolResultContent, ToolResultStatus, ToolValidationError,
+    FinalizedToolset, PolicyDecision, ToolCallContext as RuntimeToolCallContext,
+    ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation, ToolResult, ToolResultContent,
+    ToolResultStatus, ToolValidationError,
 };
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
@@ -33,8 +34,7 @@ pub(super) struct TurnRunRequest {
     pub agent: Agent,
     pub chat: ChatStateHandle,
     pub model: Arc<dyn ModelPort>,
-    pub tools: Arc<ToolCatalog>,
-    pub tool_executor: Arc<dyn ToolExecutor>,
+    pub tools: Arc<FinalizedToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
@@ -243,7 +243,7 @@ impl TurnRunner {
             .build_request(
                 &self.request.resolved_model.model_name,
                 self.request.agent.system_prompt(),
-                self.request.agent.tool_definitions().to_vec(),
+                self.request.tools.definitions().to_vec(),
             )
             .await?;
         let options =
@@ -346,7 +346,7 @@ impl TurnRunner {
 
         let invocation = ToolInvocation::new(&call.name, input.clone());
         let resolved_tool_name = match self.request.tools.validate(&invocation) {
-            Ok(definition) => definition.name.clone(),
+            Ok(definition) => definition.id.to_string(),
             Err(error) => {
                 let code = match error {
                     ToolValidationError::UnknownTool(_) => ToolErrorCode::ToolNotFound,
@@ -467,10 +467,11 @@ impl TurnRunner {
             }
         }
 
-        let result = tokio::select! {
-            _ = self.request.cancel.cancelled() => ToolResult::cancelled("turn cancelled before tool completed"),
-            result = self.request.tool_executor.invoke(invocation) => result,
-        };
+        let call_context = RuntimeToolCallContext::new(
+            RuntimeToolCallId::new(tool_call_id.to_string()),
+            self.request.cancel.child_token(),
+        );
+        let result = self.request.tools.call(call_context, invocation).await;
         let cancelled = result.status == ToolResultStatus::Cancelled;
         self.finish_tool_trace(
             &tool_trace,
@@ -711,7 +712,6 @@ fn tool_error_code(code: ToolErrorCode) -> &'static str {
     match code {
         ToolErrorCode::ToolNotFound => "tool_not_found",
         ToolErrorCode::InvalidArguments => "invalid_arguments",
-        ToolErrorCode::HandlerNotFound => "handler_not_found",
         ToolErrorCode::PermissionDenied => "permission_denied",
         ToolErrorCode::Cancelled => "cancelled",
         ToolErrorCode::Timeout => "timeout",

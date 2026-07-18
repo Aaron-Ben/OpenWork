@@ -1,104 +1,77 @@
-use crate::policy::{AccessKind, NetworkMode};
-use crate::{Observation, ObservationErrorCode};
-use async_trait::async_trait;
-use serde_json::Value;
-use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::ExecutionContext;
-use crate::handler::ActionHandler;
+use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+use crate::builtins::truncate_output;
+use crate::policy::{AccessKind, NetworkMode};
+use crate::{
+    ProcessRequest, TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk,
+    ToolSessionContext,
+};
 
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
 
-#[derive(Default)]
-pub struct Bash;
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BashInput {
+    /// Shell command to execute.
+    pub command: String,
+    /// Timeout in milliseconds. Defaults to 30000 and is capped at 120000.
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct BashTool;
 
 #[async_trait]
-impl ActionHandler for Bash {
-    fn name(&self) -> &'static str {
-        "bash"
+impl Tool for BashTool {
+    type Input = BashInput;
+    type Output = TextToolOutput;
+
+    fn id(&self) -> ToolId {
+        ToolId::new_static("bash")
     }
 
-    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
-        let Some(command) = input.get("command").and_then(Value::as_str) else {
-            return Observation::failed(
-                ObservationErrorCode::InvalidArguments,
-                "missing or invalid 'command' argument",
-                false,
-            );
-        };
-        if let Err(message) = ctx.check_path(&ctx.working_directory, AccessKind::Read) {
-            return Observation::denied(message);
-        }
-        let timeout_ms = input
-            .get("timeoutMs")
-            .and_then(Value::as_u64)
-            .unwrap_or(DEFAULT_TIMEOUT_MS)
-            .clamp(1, MAX_TIMEOUT_MS);
-        // 审批由编排层(agent loop)统一处理:能进入到这里即已获批准。
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(&ctx.working_directory)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .env_clear();
-        for key in ["PATH", "HOME", "SHELL", "LANG", "LC_ALL", "TMPDIR"] {
-            if let Some(value) = std::env::var_os(key) {
-                cmd.env(key, value);
-            }
-        }
-        if ctx.permissions.network == NetworkMode::Restricted {
-            cmd.env("OPENWORK_NETWORK_RESTRICTED", "1");
-        }
+    fn description(&self) -> &'static str {
+        "Run a shell command via `sh -c` in the working directory. Returns combined stdout/stderr and the exit code. Subject to approval."
+    }
 
-        let started = Instant::now();
-        let child = match cmd.spawn() {
-            Ok(child) => child,
-            Err(err) => {
-                return Observation::failed(
-                    ObservationErrorCode::ExecutionFailed,
-                    format!("failed to spawn command: {err}"),
-                    false,
-                );
-            }
-        };
-        let wait_task = tokio::spawn(async move { child.wait_with_output().await });
-        let abort_wait = wait_task.abort_handle();
-        let output = tokio::select! {
-            biased;
-            _ = ctx.cancel.cancelled() => {
-                abort_wait.abort();
-                return Observation::cancelled("command cancelled");
-            }
-            _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
-                abort_wait.abort();
-                return Observation::failed(
-                    ObservationErrorCode::Timeout,
-                    format!("command timed out after {timeout_ms} ms"),
-                    false,
-                );
-            }
-            result = wait_task => match result {
-                Ok(Ok(output)) => output,
-                Ok(Err(err)) => return Observation::failed(
-                    ObservationErrorCode::ExecutionFailed,
-                    format!("failed to wait for command: {err}"),
-                    false,
-                ),
-                Err(err) => return Observation::failed(
-                    ObservationErrorCode::ExecutionFailed,
-                    format!("command task failed: {err}"),
-                    false,
-                ),
-            }
-        };
-        let elapsed_ms = started.elapsed().as_millis();
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::ProcessExecution
+    }
 
+    async fn execute(
+        &self,
+        session: &ToolSessionContext,
+        call: ToolCallContext,
+        input: BashInput,
+    ) -> Result<TextToolOutput, ToolExecutionError> {
+        session
+            .check_path(&session.working_directory, AccessKind::Read)
+            .map_err(ToolExecutionError::denied)?;
+        let mut environment = session.environment.as_ref().clone();
+        if session.permissions.network == NetworkMode::Restricted {
+            environment.insert("OPENWORK_NETWORK_RESTRICTED".to_string(), "1".to_string());
+        }
+        let timeout_ms = input.timeout_ms.clamp(1, MAX_TIMEOUT_MS);
+        let output = session
+            .process_backend
+            .run(
+                ProcessRequest {
+                    program: "sh".to_string(),
+                    arguments: vec!["-c".to_string(), input.command],
+                    working_directory: session.working_directory.clone(),
+                    environment,
+                    timeout: Duration::from_millis(timeout_ms),
+                },
+                &call,
+            )
+            .await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let mut combined = String::new();
@@ -112,14 +85,21 @@ impl ActionHandler for Bash {
             combined.push_str("[stderr]\n");
             combined.push_str(&stderr);
         }
-        let mut combined = crate::builtins::truncate_output(combined, MAX_OUTPUT_BYTES);
-        let status = output.status.code().unwrap_or(-1);
-        combined.push_str(&format!("\n[exit {status}; duration {elapsed_ms} ms]"));
+        let mut combined = truncate_output(combined, MAX_OUTPUT_BYTES);
+        combined.push_str(&format!(
+            "\n[exit {}; duration {} ms]",
+            output.exit_code,
+            output.elapsed.as_millis()
+        ));
 
-        if output.status.success() {
-            Observation::succeeded(combined)
+        if output.exit_code == 0 {
+            Ok(TextToolOutput::new(combined))
         } else {
-            Observation::failed(ObservationErrorCode::ExecutionFailed, combined, false)
+            Err(ToolExecutionError::execution(combined))
         }
     }
+}
+
+fn default_timeout_ms() -> u64 {
+    DEFAULT_TIMEOUT_MS
 }

@@ -11,11 +11,10 @@ use openwork_models::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
 };
-use openwork_tools::{BuiltinToolExecutor, PermissionProfile, ToolCatalog, ToolContext};
+use openwork_tools::{PermissionProfile, ToolSessionContext, builtin_registry};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast};
-use tokio_util::sync::CancellationToken;
 
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
@@ -124,7 +123,6 @@ pub enum OpenWorkCoreError {
 pub struct OpenWorkCore {
     storage: Arc<PostgresStorage>,
     provider_factory: ProviderFactory,
-    tools: Arc<ToolCatalog>,
     trace: Arc<PostgresTraceRecorder>,
     credentials: Arc<dyn CredentialResolver>,
     providers: Option<Arc<dyn ProviderRepository>>,
@@ -167,16 +165,11 @@ impl OpenWorkCore {
     ) -> Result<Self, OpenWorkCoreError> {
         storage.migrate().await?;
         storage.mark_running_interrupted().await?;
-        let tools = Arc::new(
-            ToolCatalog::builtin()
-                .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?,
-        );
         let trace = Arc::new(PostgresTraceRecorder::spawn(storage.pool().clone()));
         let (update_tx, _) = broadcast::channel(CORE_UPDATE_BROADCAST_CAPACITY);
         Ok(Self {
             storage,
             provider_factory: ProviderFactory::default(),
-            tools,
             trace,
             credentials,
             providers,
@@ -427,17 +420,21 @@ impl OpenWorkCore {
         let runtime = provider_runtime(&model, self.credentials.as_ref()).await?;
         let model_port = Arc::from(self.provider_factory.build(&runtime));
         let agent = AgentBuilder::new(AgentDefinition::default())
-            .build(&self.tools)
+            .build()
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let conversation = self.storage.load_messages(session_id).await?;
         let chat = ChatStateHandle::spawn(conversation)
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let tool_executor = Arc::new(BuiltinToolExecutor::new(ToolContext::new(
-            working_directory.clone(),
-            PermissionProfile::workspace_write(working_directory),
-            CancellationToken::new(),
-        )));
+        let tools = builtin_registry()
+            .finalize(
+                agent.toolset_config(),
+                ToolSessionContext::local(
+                    working_directory.clone(),
+                    PermissionProfile::workspace_write(working_directory),
+                ),
+            )
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
 
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
@@ -450,8 +447,7 @@ impl OpenWorkCore {
                 agent,
                 chat,
                 model: model_port,
-                tools: Arc::clone(&self.tools),
-                tool_executor,
+                tools: Arc::new(tools),
                 storage: self.storage.clone(),
                 trace: self.trace.clone(),
             },

@@ -75,7 +75,7 @@ OpenWork/
 `openwork-tools`
 
 - Owns tool definitions, schemas, permission policy, working-directory context, and built-in filesystem/process execution
-- It does not yet provide an OS-level sandbox; permission decisions cannot bypass `ToolContext` path/process constraints
+- It does not yet provide an OS-level sandbox; permission decisions cannot bypass `ToolSessionContext` path/process constraints
 - The user always selects `providerId + model` explicitly; there is no automatic model selection or cross-model fallback
 
 ## Desktop App

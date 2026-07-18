@@ -1,3 +1,3 @@
 mod bash;
 
-pub(crate) use bash::Bash;
+pub(crate) use bash::BashTool;

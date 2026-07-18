@@ -75,7 +75,7 @@ OpenWork/
 `openwork-tools`
 
 - 持有工具定义、Schema、权限策略、工作目录上下文和内置文件/进程执行
-- 当前不包含操作系统级 sandbox；Permission 不能绕过 `ToolContext` 的路径/进程约束
+- 当前不包含操作系统级 sandbox；Permission 不能绕过 `ToolSessionContext` 的路径/进程约束
 - 模型始终由用户显式选择 `providerId + model`；不提供自动选模或跨模型 Fallback
 
 ## 桌面端

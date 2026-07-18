@@ -121,7 +121,7 @@ openwork-capabilities/*
 openwork-execution/*
 ```
 
-形成：
+第一轮 crate 收敛已经形成：
 
 ```text
 ToolDefinition
@@ -132,15 +132,27 @@ ToolResult
 ToolExecutor
 ```
 
+这些类型是 crate 合并后的过渡结果，不是最终注入边界。本轮已按 [07-tool-runtime-design.md](07-tool-runtime-design.md) 在 `openwork-tools` 内收敛为：
+
+```text
+Tool / DynTool / ToolAdapter
+ToolRegistryBuilder
+ToolsetConfig
+ToolSessionContext
+ToolCallContext
+FinalizedToolset
+```
+
 同时把当前 `openwork-execution` 中真正需要的执行能力合入：
 
-- `working_directory`、Permission Profile、Cancellation Token；
+- Session 级 `working_directory`、Permission Profile、文件系统和进程后端；
+- Call 级 Cancellation Token 与 Tool Call ID；
 - 安全路径解析与读写根边界；
 - 文件读取、写入、编辑、搜索；
 - 进程/终端执行；
 - Tool 风险信息与执行期强制策略。
 
-Tool Executor 直接使用 `ToolContext`，不能依赖 Core。Core 负责 `Allow/Ask/Deny` 编排和等待用户；Tools 负责不可绕过的路径/进程安全检查。
+`FinalizedToolset` 不能依赖 Core。Core 负责 `Allow/Ask/Deny` 编排和等待用户，并为每次调用传入 `ToolCallContext`；Tools 负责不可绕过的路径/进程安全检查。模型 Definitions 与实际 Dispatch 必须来自同一个 finalized snapshot。
 
 ### 4.3 删除 openwork-workspace
 

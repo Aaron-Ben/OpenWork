@@ -172,12 +172,14 @@ OpenWork/
     └── openwork-tools/
     │   └── src/
     │       ├── lib.rs
-    │       ├── catalog.rs
-    │       ├── definition.rs
-    │       ├── context.rs                # working_directory/permission/cancel
+    │       ├── tool.rs                   # Tool/DynTool/Adapter 与 typed output
+    │       ├── definition.rs             # ToolId、Definition 与风险
+    │       ├── context.rs                # Session/Call 两级上下文
+    │       ├── backend.rs                # 文件系统与进程后端
+    │       ├── registry.rs               # Registry、Toolset 与 FinalizedToolset
     │       ├── invocation.rs
     │       ├── result.rs
-    │       ├── policy.rs                 # 路径边界与 Permission Profile
+    │       ├── policy/                   # 路径边界与 Permission Profile
     │       └── builtins/
     │           ├── filesystem/
     │           └── process/
@@ -276,27 +278,26 @@ Models 不知道 Session、Turn、Trace 表或 Desktop。
 
 ### 5.5 openwork-tools
 
-合并当前 capability 的模型表面与 execution 的工具分发：
+合并当前 capability 的模型表面与 execution 的工具分发，并在单一 crate 内建立四层工具运行时；详细设计见 [07-tool-runtime-design.md](07-tool-runtime-design.md)：
 
-- Tool Definition/Schema；
-- Tool Catalog 和名称解析；
-- 输入反序列化与校验；
-- Tool Invocation；
-- Tool Result；
-- `ToolContext`：工作目录、Permission Profile 和 Cancellation Token；
+- Tool 契约：稳定 ID、Definition/Schema、风险、typed input/output 与执行逻辑；
+- Tool Set：Agent 从已注册工具中选择真实 executable subset；
+- `ToolSessionContext`：工作目录、Permission Profile、文件系统、进程后端和环境；
+- `ToolCallContext`：每次调用独立的 call ID、Cancellation Token 和 deadline；
+- `FinalizedToolset`：模型 Definitions 与 Dispatch 使用同一个不可变快照；
 - 安全路径解析和读写根边界；
 - 文件读写与进程/终端内置工具；
 - 内置工具的业务适配和执行期强制校验。
 
-Core 拥有 Tool Call 生命周期和用户授权等待；Tools 提供工具风险信息，并在执行时强制应用路径/进程策略。`Allow` 不能绕过 `ToolContext` 的安全边界。
+Core 拥有 Tool Call 生命周期和用户授权等待；Tools 提供工具风险信息，并在执行时强制应用路径/进程策略。`Allow` 不能绕过 `ToolSessionContext` 的安全边界。
 
 ### 5.6 V1 不设 openwork-workspace
 
-工作目录仍然存在，但只是 Session 创建时确定并传给 `ToolContext` 的路径值，不是独立领域对象或服务。
+工作目录仍然存在，但只是 Session 创建时确定并传给 `ToolSessionContext` 的路径值，不是独立领域对象或服务。
 
 当前 `openwork-workspace` 只服务 Git Worktree Snapshot、文件差异和回滚。V1 不实现 Git Status/Diff、Snapshot/Revert 或 Workspace Trust，因此删除该 crate。以后只有在出现多个消费者共享的 Git、Sandbox 或 Checkpoint 能力时，才重新评估是否拆出独立 crate。
 
-`openwork-tools` 根据 Tool Definition、输入和 `ToolContext` 提供风险/策略结果；`SessionActor` 处理 `Allow`、`Ask`、`Deny`，并托管用户交互等待。
+`openwork-tools` 根据 Tool Definition、输入和 `ToolSessionContext` 提供风险/策略结果；`SessionActor` 处理 `Allow`、`Ask`、`Deny`，并为每次执行构造 `ToolCallContext`。
 
 ## 6. 当前到目标的文件映射
 
@@ -325,8 +326,7 @@ struct SessionActor {
     agent: Agent,
     chat: ChatStateHandle,
     model: Box<dyn Model>,
-    tools: ToolCatalog,
-    tool_context: ToolContext,
+    tools: Arc<FinalizedToolset>,
     storage: SessionStorage,
     trace: TraceRecorder,
     active_turn: Option<ActiveTurn>,

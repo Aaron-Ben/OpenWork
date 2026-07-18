@@ -1,26 +1,31 @@
 //! Tool definitions, validation, permission policy, and built-in execution.
 
+mod backend;
 mod builtins;
-mod catalog;
 mod context;
 mod definition;
-mod executor;
-mod handler;
 mod invocation;
 pub mod policy;
+mod registry;
 mod result;
-mod schema;
+mod tool;
 
-pub use catalog::{CatalogError, ToolCatalog, ToolValidationError};
-pub use context::ToolContext;
-pub use definition::{ToolDefinition, ToolRisk};
-pub use executor::{BuiltinToolExecutor, ToolExecutor};
+pub use backend::{
+    AsyncFileSystem, FileSystemEntry, LocalFileSystem, ProcessBackend, ProcessOutput,
+    ProcessRequest, TokioProcessBackend,
+};
+pub use builtins::builtin_registry;
+pub use context::{ToolCallContext, ToolCallId, ToolSessionContext};
+pub use definition::{ToolDefinition, ToolId, ToolRisk};
 pub use invocation::ToolInvocation;
 pub use policy::{
     AccessKind, FileSystemMode, FileSystemPermissions, NetworkMode, PermissionMode,
     PermissionProfile, PolicyDecision,
 };
-pub use result::{ToolError, ToolErrorCode, ToolResult, ToolResultContent, ToolResultStatus};
-
-pub(crate) use context::ToolContext as ExecutionContext;
-pub(crate) use result::{ToolErrorCode as ObservationErrorCode, ToolResult as Observation};
+pub use registry::{
+    FinalizedToolset, ToolRegistryBuilder, ToolRegistryError, ToolValidationError, ToolsetConfig,
+};
+pub use result::{
+    ToolError, ToolErrorCode, ToolExecutionError, ToolResult, ToolResultContent, ToolResultStatus,
+};
+pub use tool::{TextToolOutput, Tool, ToolOutput};

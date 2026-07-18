@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +22,6 @@ pub enum ToolResultContent {
 pub enum ToolErrorCode {
     ToolNotFound,
     InvalidArguments,
-    HandlerNotFound,
     PermissionDenied,
     Cancelled,
     Timeout,
@@ -41,6 +41,85 @@ pub struct ToolResult {
     pub status: ToolResultStatus,
     pub content: Vec<ToolResultContent>,
     pub error: Option<ToolError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("{message}")]
+pub struct ToolExecutionError {
+    pub status: ToolResultStatus,
+    pub code: ToolErrorCode,
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl ToolExecutionError {
+    pub fn invalid_arguments(message: impl Into<String>) -> Self {
+        Self::new(
+            ToolResultStatus::Failed,
+            ToolErrorCode::InvalidArguments,
+            message,
+            false,
+        )
+    }
+
+    pub fn denied(message: impl Into<String>) -> Self {
+        Self::new(
+            ToolResultStatus::Denied,
+            ToolErrorCode::PermissionDenied,
+            message,
+            false,
+        )
+    }
+
+    pub fn cancelled(message: impl Into<String>) -> Self {
+        Self::new(
+            ToolResultStatus::Cancelled,
+            ToolErrorCode::Cancelled,
+            message,
+            false,
+        )
+    }
+
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self::new(
+            ToolResultStatus::Failed,
+            ToolErrorCode::Timeout,
+            message,
+            false,
+        )
+    }
+
+    pub fn execution(message: impl Into<String>) -> Self {
+        Self::new(
+            ToolResultStatus::Failed,
+            ToolErrorCode::ExecutionFailed,
+            message,
+            false,
+        )
+    }
+
+    pub fn outcome_unknown(message: impl Into<String>) -> Self {
+        Self::new(
+            ToolResultStatus::OutcomeUnknown,
+            ToolErrorCode::OutcomeUnknown,
+            message,
+            false,
+        )
+    }
+
+    fn new(
+        status: ToolResultStatus,
+        code: ToolErrorCode,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            status,
+            code,
+            message: message.into(),
+            retryable,
+        }
+    }
 }
 
 impl ToolResult {
@@ -81,6 +160,10 @@ impl ToolResult {
             message,
             false,
         )
+    }
+
+    pub fn from_execution_error(error: ToolExecutionError) -> Self {
+        Self::terminal(error.status, error.code, error.message, error.retryable)
     }
 
     pub fn is_error(&self) -> bool {

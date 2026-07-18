@@ -14,7 +14,10 @@ use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, Role, TokenUsage, ToolCallBlock, ToolCallState,
 };
-use openwork_tools::{PermissionMode, ToolCatalog, ToolExecutor, ToolInvocation, ToolResult};
+use openwork_tools::{
+    PermissionMode, PermissionProfile, Tool, ToolCallContext, ToolExecutionError, ToolId,
+    ToolInvocation, ToolRegistryBuilder, ToolResult, ToolRisk, ToolSessionContext,
+};
 use tokio::sync::broadcast;
 
 #[derive(Default)]
@@ -62,20 +65,52 @@ struct ToolState {
     results: Mutex<VecDeque<ToolResult>>,
 }
 
-struct FakeToolExecutor {
+struct FakeTool {
+    id: ToolId,
+    risk: ToolRisk,
     state: Arc<ToolState>,
 }
 
 #[async_trait]
-impl ToolExecutor for FakeToolExecutor {
-    async fn invoke(&self, invocation: ToolInvocation) -> ToolResult {
-        self.state.invocations.lock().unwrap().push(invocation);
+impl Tool for FakeTool {
+    type Input = serde_json::Value;
+    type Output = ToolResult;
+
+    fn id(&self) -> ToolId {
+        self.id.clone()
+    }
+
+    fn description(&self) -> &'static str {
+        "Fake tool used by the session runtime integration tests."
+    }
+
+    fn risk(&self) -> ToolRisk {
+        self.risk
+    }
+
+    async fn execute(
+        &self,
+        _session: &ToolSessionContext,
+        call: ToolCallContext,
+        input: serde_json::Value,
+    ) -> Result<ToolResult, ToolExecutionError> {
+        let wait_for_cancel = input["waitForCancel"] == true;
         self.state
+            .invocations
+            .lock()
+            .unwrap()
+            .push(ToolInvocation::new(self.id.to_string(), input));
+        if wait_for_cancel {
+            call.cancel.cancelled().await;
+            return Ok(ToolResult::cancelled("fake tool cancelled"));
+        }
+        Ok(self
+            .state
             .results
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| ToolResult::succeeded("tool ok"))
+            .unwrap_or_else(|| ToolResult::succeeded("tool ok")))
     }
 }
 
@@ -156,12 +191,9 @@ fn runtime(
     permission_mode: PermissionMode,
     fail_assistant: bool,
 ) -> RuntimeFixture {
-    let catalog = Arc::new(ToolCatalog::builtin().expect("catalog"));
     let mut definition = AgentDefinition::default();
     definition.policy.permission_mode = permission_mode;
-    let agent = AgentBuilder::new(definition)
-        .build(&catalog)
-        .expect("agent");
+    let agent = AgentBuilder::new(definition).build().expect("agent");
     let chat = ChatStateHandle::spawn(Vec::new()).expect("chat");
     let model = Arc::new(ModelState {
         responses: Mutex::new(responses.into()),
@@ -175,6 +207,32 @@ fn runtime(
         events: Mutex::new(Vec::new()),
         fail_assistant,
     });
+    let registry = AgentDefinition::default().tool_names.into_iter().fold(
+        ToolRegistryBuilder::new(),
+        |registry, name| {
+            let risk = if name == "bash" {
+                ToolRisk::ProcessExecution
+            } else if matches!(name.as_str(), "write" | "edit") {
+                ToolRisk::WorkspaceMutation
+            } else {
+                ToolRisk::ReadOnly
+            };
+            registry.register(FakeTool {
+                id: ToolId::new(name),
+                risk,
+                state: Arc::clone(&tools),
+            })
+        },
+    );
+    let toolset = registry
+        .finalize(
+            agent.toolset_config(),
+            ToolSessionContext::local(
+                std::env::temp_dir(),
+                PermissionProfile::danger_full_access(),
+            ),
+        )
+        .expect("toolset");
     let (global_update_tx, global_updates) = broadcast::channel(512);
     let handle = SessionHandle::spawn_with_global_updates(
         SessionRuntimeConfig {
@@ -185,10 +243,7 @@ fn runtime(
             model: Arc::new(FakeModel {
                 state: Arc::clone(&model),
             }),
-            tools: catalog,
-            tool_executor: Arc::new(FakeToolExecutor {
-                state: Arc::clone(&tools),
-            }),
+            tools: Arc::new(toolset),
             storage: storage.clone(),
             trace: Arc::new(NoopTraceRecorder),
         },
@@ -291,6 +346,19 @@ async fn wait_for_permission(
     .expect("permission timed out")
 }
 
+async fn wait_for_tool_start(updates: &mut broadcast::Receiver<SessionUpdateEnvelope>) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = updates.recv().await.expect("session update");
+            if matches!(event.update, SessionUpdate::ToolCallStarted { .. }) {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("tool start timed out");
+}
+
 #[tokio::test]
 async fn no_tool_turn_completes_after_one_model_call() {
     let mut fixture = runtime(
@@ -354,6 +422,33 @@ async fn tool_result_is_in_the_next_model_request() {
             "finish_turn"
         ]
     );
+}
+
+#[tokio::test]
+async fn cancelling_a_turn_cancels_the_active_tool_call() {
+    let mut fixture = runtime(
+        vec![response(
+            "",
+            vec![tool_call("call-1", "read", r#"{"waitForCancel":true}"#)],
+        )],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+    let turn_id = start(&fixture).await;
+    wait_for_tool_start(&mut fixture.updates).await;
+    assert!(
+        fixture
+            .handle
+            .cancel_turn(turn_id)
+            .await
+            .expect("cancel turn")
+    );
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Cancelled
+    ));
 }
 
 #[tokio::test]

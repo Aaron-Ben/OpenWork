@@ -1,54 +1,80 @@
-use crate::policy::AccessKind;
-use crate::{Observation, ObservationErrorCode};
 use async_trait::async_trait;
-use serde_json::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::ExecutionContext;
-use crate::handler::ActionHandler;
+use crate::policy::AccessKind;
+use crate::{
+    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+};
 
 use super::resolve;
 
-#[derive(Default)]
-pub struct List;
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListInput {
+    /// Directory path; defaults to the working directory.
+    #[serde(default = "default_path")]
+    pub path: String,
+}
+
+#[derive(Debug, Default)]
+pub struct ListTool;
 
 #[async_trait]
-impl ActionHandler for List {
-    fn name(&self) -> &'static str {
-        "list"
+impl Tool for ListTool {
+    type Input = ListInput;
+    type Output = TextToolOutput;
+
+    fn id(&self) -> ToolId {
+        ToolId::new_static("list")
     }
 
-    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
-        let path = input.get("path").and_then(Value::as_str).unwrap_or(".");
-        let resolved = resolve(&ctx.working_directory, path);
-        if let Err(message) = ctx.check_path(&resolved, AccessKind::Read) {
-            return Observation::denied(message);
-        }
-        let mut entries = match tokio::fs::read_dir(&resolved).await {
-            Ok(rd) => rd,
-            Err(err) => {
-                return Observation::failed(
-                    ObservationErrorCode::ExecutionFailed,
-                    format!("failed to list {}: {err}", resolved.display()),
-                    false,
-                );
-            }
-        };
-        let mut names = Vec::new();
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let suffix = entry
-                .file_type()
-                .await
-                .ok()
-                .map(|t| if t.is_dir() { "/" } else { "" })
-                .unwrap_or("");
-            names.push(format!("{name}{suffix}"));
-        }
-        names.sort();
-        if names.is_empty() {
-            Observation::succeeded(format!("{} is empty", resolved.display()))
-        } else {
-            Observation::succeeded(names.join("\n"))
-        }
+    fn description(&self) -> &'static str {
+        "List entries in a directory. Directories are suffixed with '/'. Defaults to the working directory."
     }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::ReadOnly
+    }
+
+    async fn execute(
+        &self,
+        session: &ToolSessionContext,
+        _call: ToolCallContext,
+        input: ListInput,
+    ) -> Result<TextToolOutput, ToolExecutionError> {
+        let resolved = resolve(&session.working_directory, &input.path);
+        session
+            .check_path(&resolved, AccessKind::Read)
+            .map_err(ToolExecutionError::denied)?;
+        let mut names = session
+            .filesystem
+            .read_dir(&resolved)
+            .await
+            .map_err(|error| {
+                ToolExecutionError::execution(format!(
+                    "failed to list {}: {error}",
+                    resolved.display()
+                ))
+            })?
+            .into_iter()
+            .map(|entry| {
+                if entry.is_directory {
+                    format!("{}/", entry.name)
+                } else {
+                    entry.name
+                }
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+        let output = if names.is_empty() {
+            format!("{} is empty", resolved.display())
+        } else {
+            names.join("\n")
+        };
+        Ok(TextToolOutput::new(output))
+    }
+}
+
+fn default_path() -> String {
+    ".".to_string()
 }

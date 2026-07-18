@@ -1,99 +1,104 @@
-use crate::policy::AccessKind;
-use crate::{Observation, ObservationErrorCode};
 use async_trait::async_trait;
 use globset::{Glob as GlobPattern, GlobSet};
-use ignore::WalkBuilder;
-use serde_json::Value;
-use std::path::Path;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::ExecutionContext;
 use crate::builtins::truncate_output;
-use crate::handler::ActionHandler;
+use crate::policy::AccessKind;
+use crate::{
+    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+};
 
 use super::resolve;
 
 const MAX_RESULTS: usize = 2000;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 
-/// 按文件名模式查找文件(尊重 .gitignore)。用 `spawn_blocking` 避免阻塞 tokio。
-#[derive(Default)]
-pub struct Glob;
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GlobInput {
+    /// Glob pattern, for example `**/*.rs` or `src/**/*.ts`.
+    pub pattern: String,
+    /// Directory to search; defaults to the working directory.
+    #[serde(default = "default_path")]
+    pub path: String,
+}
+
+#[derive(Debug, Default)]
+pub struct GlobTool;
 
 #[async_trait]
-impl ActionHandler for Glob {
-    fn name(&self) -> &'static str {
-        "glob"
+impl Tool for GlobTool {
+    type Input = GlobInput;
+    type Output = TextToolOutput;
+
+    fn id(&self) -> ToolId {
+        ToolId::new_static("glob")
     }
 
-    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
-        let Some(pattern) = input.get("pattern").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'pattern' argument");
-        };
-        let path = input.get("path").and_then(Value::as_str).unwrap_or(".");
+    fn description(&self) -> &'static str {
+        "Find files by name pattern (e.g. \"**/*.rs\"). Respects .gitignore. Returns matching file paths, one per line."
+    }
 
-        let glob = match GlobPattern::new(pattern) {
-            Ok(g) => g,
-            Err(err) => return invalid_arguments(format!("invalid glob: {err}")),
-        };
-        let set = match GlobSet::builder().add(glob).build() {
-            Ok(s) => s,
-            Err(err) => return invalid_arguments(format!("invalid glob: {err}")),
-        };
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::ReadOnly
+    }
 
-        let root = resolve(&ctx.working_directory, path);
-        if let Err(message) = ctx.check_path(&root, AccessKind::Read) {
-            return Observation::denied(message);
+    async fn execute(
+        &self,
+        session: &ToolSessionContext,
+        _call: ToolCallContext,
+        input: GlobInput,
+    ) -> Result<TextToolOutput, ToolExecutionError> {
+        let glob = GlobPattern::new(&input.pattern).map_err(|error| {
+            ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
+        })?;
+        let set = GlobSet::builder().add(glob).build().map_err(|error| {
+            ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
+        })?;
+        let root = resolve(&session.working_directory, &input.path);
+        session
+            .check_path(&root, AccessKind::Read)
+            .map_err(ToolExecutionError::denied)?;
+        if !session
+            .filesystem
+            .exists(&root)
+            .await
+            .map_err(|error| ToolExecutionError::execution(error.to_string()))?
+        {
+            return Ok(TextToolOutput::new(format!(
+                "path not found: {}",
+                root.display()
+            )));
         }
-        let result = tokio::task::spawn_blocking(move || run_glob(&root, &set)).await;
-
-        match result {
-            Ok(output) => {
-                let truncated = truncate_output(output, MAX_OUTPUT_BYTES);
-                Observation::succeeded(truncated)
-            }
-            Err(err) => Observation::failed(
-                ObservationErrorCode::ExecutionFailed,
-                format!("glob task failed: {err}"),
-                false,
-            ),
-        }
+        let files = session
+            .filesystem
+            .walk_files(&root)
+            .await
+            .map_err(|error| ToolExecutionError::execution(format!("glob failed: {error}")))?;
+        let mut matches = files
+            .into_iter()
+            .filter(|path| set.is_match(path))
+            .take(MAX_RESULTS)
+            .map(|path| {
+                path.strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        matches.sort();
+        let output = if matches.is_empty() {
+            "no files matched\n".to_string()
+        } else {
+            format!("{}\n", matches.join("\n"))
+        };
+        Ok(TextToolOutput::new(truncate_output(
+            output,
+            MAX_OUTPUT_BYTES,
+        )))
     }
 }
 
-fn invalid_arguments(message: impl Into<String>) -> Observation {
-    Observation::failed(ObservationErrorCode::InvalidArguments, message, false)
-}
-
-fn run_glob(root: &Path, set: &GlobSet) -> String {
-    if !root.exists() {
-        return format!("path not found: {}", root.display());
-    }
-    let walker = WalkBuilder::new(root)
-        .hidden(true)
-        .git_ignore(true)
-        .git_exclude(true)
-        .build();
-
-    let mut out = String::new();
-    let mut count = 0usize;
-    for entry in walker.flatten() {
-        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            continue;
-        }
-        let path = entry.path();
-        if set.is_match(path) {
-            let rel = path.strip_prefix(root).unwrap_or(path);
-            out.push_str(&format!("{}\n", rel.display()));
-            count += 1;
-            if count >= MAX_RESULTS {
-                break;
-            }
-        }
-    }
-
-    if out.is_empty() {
-        "no files matched\n".to_string()
-    } else {
-        out
-    }
+fn default_path() -> String {
+    ".".to_string()
 }

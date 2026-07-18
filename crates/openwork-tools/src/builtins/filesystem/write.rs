@@ -1,53 +1,75 @@
-use crate::policy::AccessKind;
-use crate::{Observation, ObservationErrorCode};
 use async_trait::async_trait;
-use serde_json::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::ExecutionContext;
-use crate::handler::ActionHandler;
+use crate::policy::AccessKind;
+use crate::{
+    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+};
 
 use super::resolve;
 
-#[derive(Default)]
-pub struct Write;
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WriteInput {
+    /// Absolute or working-dir-relative path.
+    pub path: String,
+    /// Full file content to write.
+    pub content: String,
+}
+
+#[derive(Debug, Default)]
+pub struct WriteTool;
 
 #[async_trait]
-impl ActionHandler for Write {
-    fn name(&self) -> &'static str {
-        "write"
+impl Tool for WriteTool {
+    type Input = WriteInput;
+    type Output = TextToolOutput;
+
+    fn id(&self) -> ToolId {
+        ToolId::new_static("write")
     }
 
-    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
-        let Some(path) = input.get("path").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'path' argument");
-        };
-        let Some(content) = input.get("content").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'content' argument");
-        };
-        let resolved = resolve(&ctx.working_directory, path);
-        if let Err(message) = ctx.check_path(&resolved, AccessKind::Write) {
-            return Observation::denied(message);
-        }
-        if let Some(parent) = resolved.parent()
-            && let Err(err) = tokio::fs::create_dir_all(parent).await
-        {
-            return execution_failed(format!("failed to create parent dirs: {err}"));
-        }
-        match tokio::fs::write(&resolved, content).await {
-            Ok(_) => Observation::succeeded(format!(
-                "wrote {} bytes to {}",
-                content.len(),
-                resolved.display()
-            )),
-            Err(err) => execution_failed(format!("failed to write {}: {err}", resolved.display())),
-        }
+    fn description(&self) -> &'static str {
+        "Write text content to a file. Creates the file (and parent directories) if missing; overwrites if it exists."
     }
-}
 
-fn invalid_arguments(message: impl Into<String>) -> Observation {
-    Observation::failed(ObservationErrorCode::InvalidArguments, message, false)
-}
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::WorkspaceMutation
+    }
 
-fn execution_failed(message: impl Into<String>) -> Observation {
-    Observation::failed(ObservationErrorCode::ExecutionFailed, message, false)
+    async fn execute(
+        &self,
+        session: &ToolSessionContext,
+        _call: ToolCallContext,
+        input: WriteInput,
+    ) -> Result<TextToolOutput, ToolExecutionError> {
+        let resolved = resolve(&session.working_directory, &input.path);
+        session
+            .check_path(&resolved, AccessKind::Write)
+            .map_err(ToolExecutionError::denied)?;
+        if let Some(parent) = resolved.parent() {
+            session
+                .filesystem
+                .create_dir_all(parent)
+                .await
+                .map_err(|error| {
+                    ToolExecutionError::execution(format!("failed to create parent dirs: {error}"))
+                })?;
+        }
+        session
+            .filesystem
+            .write(&resolved, input.content.as_bytes())
+            .await
+            .map_err(|error| {
+                ToolExecutionError::execution(format!(
+                    "failed to write {}: {error}",
+                    resolved.display()
+                ))
+            })?;
+        Ok(TextToolOutput::new(format!(
+            "wrote {} bytes to {}",
+            input.content.len(),
+            resolved.display()
+        )))
+    }
 }

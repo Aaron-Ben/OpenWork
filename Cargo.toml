@@ -35,5 +35,7 @@ zeroize = { version = "1.9", features = ["derive"] }
 futures-util = "0.3"
 globset = "0.4"
 ignore = "0.4"
+libc = "0.2"
 regex = "1"
+schemars = "1"
 tokio-util = { version = "0.7", features = ["rt"] }

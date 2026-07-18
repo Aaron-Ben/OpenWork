@@ -1,156 +1,174 @@
-use crate::policy::AccessKind;
-use crate::{Observation, ObservationErrorCode};
 use async_trait::async_trait;
 use globset::Glob as GlobSpec;
-use ignore::WalkBuilder;
 use regex::Regex;
-use serde_json::Value;
-use std::path::Path;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use crate::ExecutionContext;
 use crate::builtins::truncate_output;
-use crate::handler::ActionHandler;
+use crate::policy::AccessKind;
+use crate::{
+    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+};
 
 use super::resolve;
 
 const DEFAULT_MAX_RESULTS: usize = 200;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 
-/// 正则搜索文件内容(ripgrep 风格,尊重 .gitignore)。用 `spawn_blocking` 避免阻塞 tokio。
-#[derive(Default)]
-pub struct Grep;
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(inline)]
+pub enum GrepOutputMode {
+    #[default]
+    Content,
+    FilesWithMatches,
+    Count,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepInput {
+    /// Regular expression to search for.
+    pub pattern: String,
+    /// Directory or file to search; defaults to the working directory.
+    #[serde(default = "default_path")]
+    pub path: String,
+    /// Optional glob to filter files, for example `*.rs`.
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// Output shape; defaults to `content`.
+    #[serde(default)]
+    pub output_mode: GrepOutputMode,
+    /// Maximum number of results; defaults to 200.
+    #[serde(default = "default_max_results")]
+    pub max_results: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct GrepTool;
 
 #[async_trait]
-impl ActionHandler for Grep {
-    fn name(&self) -> &'static str {
-        "grep"
+impl Tool for GrepTool {
+    type Input = GrepInput;
+    type Output = TextToolOutput;
+
+    fn id(&self) -> ToolId {
+        ToolId::new_static("grep")
     }
 
-    async fn invoke(&self, input: Value, ctx: &ExecutionContext) -> Observation {
-        let Some(pattern) = input.get("pattern").and_then(Value::as_str) else {
-            return invalid_arguments("missing or invalid 'pattern' argument");
-        };
-        let path = input.get("path").and_then(Value::as_str).unwrap_or(".");
-        let glob_filter = input.get("glob").and_then(Value::as_str);
-        let output_mode = input
-            .get("outputMode")
-            .and_then(Value::as_str)
-            .unwrap_or("content");
-        let max_results = input
-            .get("maxResults")
-            .and_then(Value::as_u64)
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_MAX_RESULTS);
-
-        let regex = match Regex::new(pattern) {
-            Ok(r) => r,
-            Err(err) => return invalid_arguments(format!("invalid regex: {err}")),
-        };
-        let matcher = match glob_filter {
-            Some(g) => match GlobSpec::new(g) {
-                Ok(gb) => Some(gb.compile_matcher()),
-                Err(err) => return invalid_arguments(format!("invalid glob: {err}")),
-            },
-            None => None,
-        };
-
-        let root = resolve(&ctx.working_directory, path);
-        if let Err(message) = ctx.check_path(&root, AccessKind::Read) {
-            return Observation::denied(message);
-        }
-        let mode = output_mode.to_string();
-
-        let result = tokio::task::spawn_blocking(move || {
-            run_grep(&root, &regex, matcher.as_ref(), &mode, max_results)
-        })
-        .await;
-
-        match result {
-            Ok(output) => {
-                let truncated = truncate_output(output, MAX_OUTPUT_BYTES);
-                Observation::succeeded(truncated)
-            }
-            Err(err) => Observation::failed(
-                ObservationErrorCode::ExecutionFailed,
-                format!("grep task failed: {err}"),
-                false,
-            ),
-        }
+    fn description(&self) -> &'static str {
+        "Search file contents with a regular expression (ripgrep-like; respects .gitignore). Returns `path:line:content` by default, just file paths in `files_with_matches` mode, or `path:count` in `count` mode. Use `glob` to filter file types (e.g. \"*.rs\")."
     }
-}
 
-fn invalid_arguments(message: impl Into<String>) -> Observation {
-    Observation::failed(ObservationErrorCode::InvalidArguments, message, false)
-}
-
-fn run_grep(
-    root: &Path,
-    regex: &Regex,
-    matcher: Option<&globset::GlobMatcher>,
-    mode: &str,
-    max_results: usize,
-) -> String {
-    if !root.exists() {
-        return format!("path not found: {}", root.display());
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::ReadOnly
     }
-    let walker = WalkBuilder::new(root)
-        .hidden(true)
-        .git_ignore(true)
-        .git_exclude(true)
-        .build();
 
-    let mut out = String::new();
-    let mut hits = 0usize;
-
-    for entry in walker.flatten() {
-        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            continue;
-        }
-        let path = entry.path();
-        if let Some(m) = matcher
-            && !m.is_match(path)
+    async fn execute(
+        &self,
+        session: &ToolSessionContext,
+        call: ToolCallContext,
+        input: GrepInput,
+    ) -> Result<TextToolOutput, ToolExecutionError> {
+        let regex = Regex::new(&input.pattern).map_err(|error| {
+            ToolExecutionError::invalid_arguments(format!("invalid regex: {error}"))
+        })?;
+        let matcher = input
+            .glob
+            .as_deref()
+            .map(GlobSpec::new)
+            .transpose()
+            .map_err(|error| {
+                ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
+            })?
+            .map(|glob| glob.compile_matcher());
+        let root = resolve(&session.working_directory, &input.path);
+        session
+            .check_path(&root, AccessKind::Read)
+            .map_err(ToolExecutionError::denied)?;
+        if !session
+            .filesystem
+            .exists(&root)
+            .await
+            .map_err(|error| ToolExecutionError::execution(error.to_string()))?
         {
-            continue;
+            return Ok(TextToolOutput::new(format!(
+                "path not found: {}",
+                root.display()
+            )));
         }
-        let Ok(content) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let rel = path.strip_prefix(root).unwrap_or(path);
+        let files = session
+            .filesystem
+            .walk_files(&root)
+            .await
+            .map_err(|error| ToolExecutionError::execution(format!("grep failed: {error}")))?;
+        let mut output = String::new();
+        let mut hits = 0usize;
 
-        match mode {
-            "files_with_matches" => {
-                if content.lines().any(|line| regex.is_match(line)) {
-                    out.push_str(&format!("{}\n", rel.display()));
-                    hits += 1;
-                }
+        for path in files {
+            if call.cancel.is_cancelled() {
+                return Err(ToolExecutionError::cancelled("grep cancelled"));
             }
-            "count" => {
-                let c = content.lines().filter(|line| regex.is_match(line)).count();
-                if c > 0 {
-                    out.push_str(&format!("{}:{}\n", rel.display(), c));
-                    hits += 1;
-                }
+            if matcher
+                .as_ref()
+                .is_some_and(|matcher| !matcher.is_match(&path))
+            {
+                continue;
             }
-            _ => {
-                for (i, line) in content.lines().enumerate() {
-                    if regex.is_match(line) {
-                        out.push_str(&format!("{}:{}:{}\n", rel.display(), i + 1, line));
+            let Ok(content) = session.filesystem.read_to_string(&path).await else {
+                continue;
+            };
+            let relative = path.strip_prefix(&root).unwrap_or(&path);
+            match input.output_mode {
+                GrepOutputMode::FilesWithMatches => {
+                    if content.lines().any(|line| regex.is_match(line)) {
+                        output.push_str(&format!("{}\n", relative.display()));
                         hits += 1;
-                        if hits >= max_results {
-                            break;
+                    }
+                }
+                GrepOutputMode::Count => {
+                    let count = content.lines().filter(|line| regex.is_match(line)).count();
+                    if count > 0 {
+                        output.push_str(&format!("{}:{}\n", relative.display(), count));
+                        hits += 1;
+                    }
+                }
+                GrepOutputMode::Content => {
+                    for (index, line) in content.lines().enumerate() {
+                        if regex.is_match(line) {
+                            output.push_str(&format!(
+                                "{}:{}:{}\n",
+                                relative.display(),
+                                index + 1,
+                                line
+                            ));
+                            hits += 1;
+                            if hits >= input.max_results {
+                                break;
+                            }
                         }
                     }
                 }
             }
+            if hits >= input.max_results {
+                break;
+            }
         }
-        if hits >= max_results {
-            break;
-        }
-    }
 
-    if out.is_empty() {
-        format!("no matches for /{}/", regex.as_str())
-    } else {
-        out
+        if output.is_empty() {
+            output = format!("no matches for /{}/", regex.as_str());
+        }
+        Ok(TextToolOutput::new(truncate_output(
+            output,
+            MAX_OUTPUT_BYTES,
+        )))
     }
+}
+
+fn default_path() -> String {
+    ".".to_string()
+}
+
+fn default_max_results() -> usize {
+    DEFAULT_MAX_RESULTS
 }

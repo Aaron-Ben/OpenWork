@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
 use openwork_models::model::{ContentBlock, ModelPort};
-use openwork_tools::{ToolCatalog, ToolExecutor};
+use openwork_tools::FinalizedToolset;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -27,8 +27,7 @@ pub struct SessionRuntimeConfig {
     pub agent: Agent,
     pub chat: ChatStateHandle,
     pub model: Arc<dyn ModelPort>,
-    pub tools: Arc<ToolCatalog>,
-    pub tool_executor: Arc<dyn ToolExecutor>,
+    pub tools: Arc<FinalizedToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub trace: Arc<dyn TraceRecorder>,
 }
@@ -198,8 +197,7 @@ struct SessionActor {
     agent: Agent,
     chat: ChatStateHandle,
     model: Arc<dyn ModelPort>,
-    tools: Arc<ToolCatalog>,
-    tool_executor: Arc<dyn ToolExecutor>,
+    tools: Arc<FinalizedToolset>,
     storage: Arc<dyn SessionStorage>,
     trace: Arc<dyn TraceRecorder>,
     command_rx: mpsc::Receiver<SessionCommand>,
@@ -236,7 +234,6 @@ impl SessionActor {
             chat: config.chat,
             model: config.model,
             tools: config.tools,
-            tool_executor: config.tool_executor,
             storage: config.storage,
             trace: config.trace,
             command_rx,
@@ -375,7 +372,6 @@ impl SessionActor {
             chat: self.chat.clone(),
             model: Arc::clone(&self.model),
             tools: Arc::clone(&self.tools),
-            tool_executor: Arc::clone(&self.tool_executor),
             storage: Arc::clone(&self.storage),
             trace: Arc::clone(&self.trace),
             cancel,

@@ -120,6 +120,7 @@ openwork-observability  -> openwork-core::trace
 4. [04-trace-design.md](04-trace-design.md)：Turn 下的 Model Call/Tool Call 诊断 Trace。
 5. [05-refactor-roadmap.md](05-refactor-roadmap.md)：分阶段迁移顺序、验收门槛和旧代码删除条件。
 6. [06-frontend-architecture.md](06-frontend-architecture.md)：React/Tauri 边界、Host Contract、per-session Runtime Store 和页面拆分。
+7. [07-tool-runtime-design.md](07-tool-runtime-design.md)：工具契约、Tool Set、Session/Call Context 与 `FinalizedToolset` 的四层分层设计。
 
 ## 7. V1 明确不做什么
 
