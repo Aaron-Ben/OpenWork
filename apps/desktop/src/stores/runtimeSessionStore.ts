@@ -145,17 +145,6 @@ export const useRuntimeSessionStore = create<RuntimeSessionStoreState>((set, get
   create: async ({ title, workingDirectory, provider, modelId }) => {
     const id = modelRecordId(provider.id, modelId)
     try {
-      await runtimeApi.upsertModel({
-        id,
-        displayName: provider.models.find((model) => model.modelId === modelId)?.displayName
-          ?? modelId,
-        providerKind: provider.kind,
-        modelName: modelId,
-        baseUrl: provider.baseUrl,
-        credentialRef: `provider:${provider.id}`,
-        enabled: true,
-        config: {},
-      })
       const session = await runtimeApi.createSession({
         id: sessionId(),
         title,

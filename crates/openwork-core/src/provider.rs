@@ -1,15 +1,5 @@
-use std::sync::Arc;
-
-use openwork_models::{
-    ProviderFactory,
-    provider::{
-        ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderProfile, ProviderRepository,
-        ProviderRepositoryError, ProviderRuntimeConfig,
-    },
-};
+use openwork_models::provider::{ModelTier, ProviderKind};
 use serde::Serialize;
-
-use crate::ApplicationError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,14 +27,23 @@ pub struct ProviderTestResult {
     pub message: String,
 }
 
+impl ProviderTestResult {
+    pub(crate) fn failed(message: String) -> Self {
+        Self {
+            success: false,
+            message,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderIndex {
-    pub providers: Vec<ProviderProfile>,
+    pub providers: Vec<openwork_models::provider::ProviderProfile>,
     pub active_id: Option<String>,
 }
 
-const BUILTIN_PRESETS: &[ProviderPreset] = &[
+pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
     ProviderPreset {
         id: "openai",
         name: "OpenAI",
@@ -118,102 +117,6 @@ const BUILTIN_PRESETS: &[ProviderPreset] = &[
         api_key_url: "https://open.bigmodel.cn/usercenter/apikeys",
     },
 ];
-
-pub struct ProviderApplicationService {
-    repository: Arc<dyn ProviderRepository>,
-    factory: ProviderFactory,
-}
-
-impl ProviderApplicationService {
-    pub(crate) fn new(repository: Arc<dyn ProviderRepository>, factory: ProviderFactory) -> Self {
-        Self {
-            repository,
-            factory,
-        }
-    }
-
-    pub async fn list(&self) -> Result<ProviderIndex, ApplicationError> {
-        let providers = self.repository.list_profiles().await?;
-        let active_id = self.repository.active_id().await?;
-        Ok(ProviderIndex {
-            providers,
-            active_id,
-        })
-    }
-
-    pub fn presets(&self) -> Vec<ProviderPreset> {
-        BUILTIN_PRESETS.to_vec()
-    }
-
-    pub async fn create(&self, input: ProviderInput) -> Result<ProviderProfile, ApplicationError> {
-        Ok(self.repository.create(input).await?)
-    }
-
-    pub async fn update(
-        &self,
-        id: &str,
-        input: ProviderInput,
-    ) -> Result<ProviderProfile, ApplicationError> {
-        Ok(self.repository.update(id, input).await?)
-    }
-
-    pub async fn delete(&self, id: &str) -> Result<(), ApplicationError> {
-        Ok(self.repository.delete(id).await?)
-    }
-
-    pub async fn activate(&self, id: &str) -> Result<(), ApplicationError> {
-        Ok(self.repository.activate(id).await?)
-    }
-
-    pub async fn test(
-        &self,
-        id: Option<String>,
-        input: Option<ProviderInput>,
-        model: &str,
-    ) -> Result<ProviderTestResult, ApplicationError> {
-        let config = if let Some(id) = id {
-            self.repository
-                .load_runtime(&id)
-                .await?
-                .ok_or(ProviderRepositoryError::NotFound { id })?
-        } else if let Some(input) = input {
-            ProviderRuntimeConfig {
-                profile: ProviderProfile {
-                    id: "draft".to_string(),
-                    name: input.name,
-                    base_url: input.base_url,
-                    kind: input.kind,
-                    models: input.models,
-                    enabled: input.enabled,
-                },
-                credential: ApiCredential::new(input.api_key),
-                adapter_options: input.extra_body,
-            }
-        } else {
-            return Err(ApplicationError::new(
-                crate::ApplicationErrorCode::InvalidRequest,
-                "Either provider id or draft input is required",
-            ));
-        };
-
-        match self.factory.test(&config, model).await {
-            Ok(()) => Ok(ProviderTestResult {
-                success: true,
-                message: "Connectivity OK".to_string(),
-            }),
-            Err(error) => Ok(ProviderTestResult::failed(error.to_string())),
-        }
-    }
-}
-
-impl ProviderTestResult {
-    fn failed(message: String) -> Self {
-        Self {
-            success: false,
-            message,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

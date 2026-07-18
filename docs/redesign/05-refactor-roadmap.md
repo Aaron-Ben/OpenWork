@@ -52,7 +52,7 @@
 ### 工作
 
 - 为当前 `openwork-core::Agent` 补齐黑盒测试；
-- 为 `openwork-app::ChatRuntime` 建立最小集成 Harness；
+- 为 `OpenWorkCore` 与 Tauri Command 边界建立最小集成 Harness；
 - 固定 Provider 流事件到最终 Message 的转换；
 - 固定当前 Tool Input/Observation 序列化；
 - 固定 Session 列表、加载和 Message 顺序；
@@ -81,9 +81,9 @@ Journal 写入失败时不继续副作用
 
 ```sh
 cargo test -p openwork-core
-cargo test -p openwork-app
-cargo test -p openwork-providers
-cargo test -p openwork-persistence
+cargo test -p openwork-models
+cargo test -p openwork-tools
+cargo test -p openwork-desktop
 ```
 
 测试失败但确认是已有问题时，测试应使用明确名称和注释隔离；不能把失败行为当作目标契约。
@@ -444,7 +444,7 @@ Trace raw input/output 页面
 - 新建 Session、发送 Turn、工具权限、取消、历史加载、Trace 页面全链可用；
 - 重启后遗留 Turn 显示为 interrupted；
 - 重启不会自动重新执行工具；
-- Tauri crate 只依赖薄 `openwork-app` Host 边界；`openwork-app` 只依赖 `openwork-core`/`openwork-models`，不直接依赖 SQLx。
+- Tauri crate 直接管理唯一 `OpenWorkCore` State；不直接依赖 SQLx、Repository 实现或 Tool Executor。
 - 每个 Session 有独立 Runtime View，切换 Session 不丢失后台更新；
 - Event 重复可去重、Sequence 缺口触发 Snapshot，Reducer 不执行 I/O；
 - Rust Host Contract 与生成的 TypeScript Binding 无 Drift；
@@ -461,7 +461,7 @@ openwork-protocol
 openwork-persistence
 ```
 
-`openwork-capabilities`、`openwork-execution`、`openwork-providers`、`openwork-observability`、`openwork-workspace` 也已删除。`openwork-app` 保留为薄 Desktop composition root，不拥有运行循环或持久化实现。
+`openwork-capabilities`、`openwork-execution`、`openwork-providers`、`openwork-observability`、`openwork-workspace`、`openwork-app` 也已删除。Provider/Runtime 入口由 `OpenWorkCore` 统一拥有，Tauri 仅保留 Host Command/Event 与安全错误映射。
 
 ### 类型/机制
 

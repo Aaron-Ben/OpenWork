@@ -1,16 +1,5 @@
 import type { ContentBlock } from './parts'
 
-export interface RuntimeModelInput {
-  id: string
-  displayName: string
-  providerKind: string
-  modelName: string
-  baseUrl: string
-  credentialRef: string | null
-  enabled: boolean
-  config: Record<string, unknown>
-}
-
 export interface RuntimeSessionInput {
   id: string
   title?: string | null

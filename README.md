@@ -37,64 +37,39 @@ OpenWork/
   apps/
     desktop/                 # Tauri + React desktop app
   crates/
-    openwork-protocol/       # Stable model/capability/approval/journal contracts
-    openwork-core/           # Turn control loop and approval state ownership
-    openwork-app/            # Application API, supervisor, composition
-    openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
-    openwork-persistence/    # PostgreSQL repositories, Journal and migrations
-    openwork-capabilities/   # Tool declarations and capability discovery
-    openwork-execution/      # Schema validation and built-in action handlers
-    openwork-workspace/      # Project workspace, Git and file boundary primitives
+    openwork-core/           # Core facade, Session Actor, PostgreSQL storage and Trace
+    openwork-agent/          # Agent definition and system prompt
+    openwork-chat-state/     # Conversation single-writer actor
+    openwork-models/         # Model contracts, provider adapters and transport
+    openwork-tools/          # Tool catalog, permissions and built-in execution
   docs/
     model-provider-v1-design.md
 ```
 
 ## Rust 模块
 
-`openwork-protocol`
+`openwork-core`
 
-- 定义 `ModelRequest`、`ModelResponse`、`ModelEvent`
-- 定义 `Message` 和 `ContentBlock`
-- 定义 `CapabilitySpec`、`ActionRequest`、`Observation`
-- 定义 Recorded Event、Expected Version 与 `EventJournal`
-- 定义 `ModelPort`、`ProviderRepository`、`CapabilityResolverPort`、`ExecutionPort`
+- `OpenWorkCore` 是唯一进程内入口，拥有 Provider Repository、凭证解析和 Session Registry
+- `SessionActor` 负责 Model → Tool/Permission → Model 循环、取消和终态
+- PostgreSQL V2 表保存 Provider、Model、Session、Turn、Message 与 Trace
+- Tauri 直接管理一个 `OpenWorkCore` State，只做 Command/Event 与安全错误映射
 
-`openwork-providers`
+`openwork-models`
 
-- `OpenAiProvider`
-- `AnthropicProvider`
-- `KimiProvider`
-- `DeepSeekProvider`
-- `QwenProvider`
-- `GlmProvider`
-- 统一厂商错误分类与 `RetryingModelPort`
+- 定义 `Message`、`ContentBlock`、`ModelPort` 和流事件
+- 实现 OpenAI、Anthropic、DeepSeek、Kimi、Qwen、GLM Adapter
+- 统一 HTTP/SSE Transport、厂商错误分类和重试
 
-`openwork-persistence`
+`openwork-agent` / `openwork-chat-state`
 
-- `PostgresProviderRepository`
-- `PostgresEventJournal`
-- `providers` / `provider_models` migration
-- `recorded_events` append-only migration 与显式 migrator
-- 基于 Session/Turn 事件的 Session/Message 创建、回放、改名和删除
-- Provider 与 Models 的事务写入
-- 使用 AES-256-GCM 加密 Provider API Key 后写入 PostgreSQL
+- Agent crate 只定义 Agent、System Prompt 和静态工具集合
+- Chat State Actor 串行修改 Conversation，为模型请求提供一致快照
 
-`openwork-capabilities`
+`openwork-tools`
 
-- 持有内置 Action 的名称、描述、参数 Schema 和声明侧风险提示
-- 通过 `CapabilityCatalog` 实现能力发现，不执行文件或进程 IO
-
-`openwork-execution`
-
-- 按 `actions/filesystem` 与 `actions/process` 组织真实 Handler
-- 负责参数校验、路径权限、取消、超时、输出截断和 `Observation` 归一化
-- 当前不包含操作系统级 sandbox；`risk_hint` 已参与审批原因，但不能替代参数级最终风险判断
-
-`openwork-core` / `openwork-app`
-
-- Core 持有 Turn 循环和审批暂停/恢复状态
-- `OpenWorkApplication` 是唯一 Composition Root，组合 Provider、Capability Catalog、Execution、Core 和 Journal-backed Session
-- Desktop 只通过 Provider/Session/Turn Application Service 访问应用能力
+- 持有工具定义、Schema、权限策略、工作目录上下文和内置文件/进程执行
+- 当前不包含操作系统级 sandbox；Permission 不能绕过 `ToolContext` 的路径/进程约束
 - 模型始终由用户显式选择 `providerId + model`；不提供自动选模或跨模型 Fallback
 
 ## 桌面端

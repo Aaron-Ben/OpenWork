@@ -18,7 +18,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-openwork-app = { workspace = true }
+openwork-core = { workspace = true }
+openwork-models = { workspace = true }
 dotenvy = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

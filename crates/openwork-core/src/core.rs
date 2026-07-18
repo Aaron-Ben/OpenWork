@@ -8,7 +8,8 @@ use openwork_chat_state::ChatStateHandle;
 use openwork_models::ProviderFactory;
 use openwork_models::model::ContentBlock;
 use openwork_models::provider::{
-    ApiCredential, ModelTier, ProviderKind, ProviderModel, ProviderProfile, ProviderRuntimeConfig,
+    ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
+    ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
 };
 use openwork_tools::{BuiltinToolExecutor, PermissionProfile, ToolCatalog, ToolContext};
 use serde::{Deserialize, Serialize};
@@ -16,13 +17,15 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
+use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
     ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
     SessionRuntimeConfig, SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TurnAccepted, TurnId,
 };
 use crate::storage::{
-    ModelInput, ModelRecord, PostgresStorage, PostgresTraceRecorder, SessionInput, SessionRecord,
-    StorageError, StoredMessageRecord, TraceSpanRecord, TraceTurnSummary,
+    ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
+    PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
+    TraceSpanRecord, TraceTurnSummary,
 };
 
 #[derive(Debug, Clone)]
@@ -52,6 +55,28 @@ impl CredentialResolver for EnvironmentCredentialResolver {
         std::env::var(reference)
             .map(ApiCredential::new)
             .map_err(|_| format!("environment variable is unavailable: {reference}"))
+    }
+}
+
+struct ProviderCredentialResolver {
+    providers: Arc<dyn ProviderRepository>,
+}
+
+#[async_trait]
+impl CredentialResolver for ProviderCredentialResolver {
+    async fn resolve(&self, reference: &str) -> Result<ApiCredential, String> {
+        if let Some(provider_id) = reference.strip_prefix("provider:") {
+            return self
+                .providers
+                .load_runtime(provider_id)
+                .await
+                .map_err(|_| "provider credential is unavailable".to_string())?
+                .map(|runtime| runtime.credential)
+                .ok_or_else(|| "provider credential is unavailable".to_string());
+        }
+        std::env::var(reference)
+            .map(ApiCredential::new)
+            .map_err(|_| "environment credential is unavailable".to_string())
     }
 }
 
@@ -86,6 +111,12 @@ pub enum OpenWorkCoreError {
     UnsupportedProvider(String),
     #[error("runtime component failed: {0}")]
     RuntimeComponent(String),
+    #[error(transparent)]
+    Provider(#[from] ProviderRepositoryError),
+    #[error("provider credential bootstrap failed: {0}")]
+    CredentialBootstrap(#[from] ApiKeyCipherError),
+    #[error("provider repository is unavailable in this core configuration")]
+    ProviderRepositoryUnavailable,
 }
 
 pub struct OpenWorkCore {
@@ -94,6 +125,7 @@ pub struct OpenWorkCore {
     tools: Arc<ToolCatalog>,
     trace: Arc<PostgresTraceRecorder>,
     credentials: Arc<dyn CredentialResolver>,
+    providers: Option<Arc<dyn ProviderRepository>>,
     sessions: RwLock<HashMap<SessionId, SessionHandle>>,
     session_creation: Mutex<()>,
 }
@@ -105,16 +137,30 @@ impl OpenWorkCore {
                 .await
                 .map_err(OpenWorkCoreError::Storage)?,
         );
-        Self::from_storage(storage).await
+        let providers: Arc<dyn ProviderRepository> = Arc::new(
+            PostgresProviderRepository::from_env(storage.pool().clone())?,
+        );
+        let credentials: Arc<dyn CredentialResolver> = Arc::new(ProviderCredentialResolver {
+            providers: Arc::clone(&providers),
+        });
+        Self::from_storage_parts(storage, credentials, Some(providers)).await
     }
 
     pub async fn from_storage(storage: Arc<PostgresStorage>) -> Result<Self, OpenWorkCoreError> {
-        Self::from_storage_with_credentials(storage, Arc::new(EnvironmentCredentialResolver)).await
+        Self::from_storage_parts(storage, Arc::new(EnvironmentCredentialResolver), None).await
     }
 
     pub async fn from_storage_with_credentials(
         storage: Arc<PostgresStorage>,
         credentials: Arc<dyn CredentialResolver>,
+    ) -> Result<Self, OpenWorkCoreError> {
+        Self::from_storage_parts(storage, credentials, None).await
+    }
+
+    async fn from_storage_parts(
+        storage: Arc<PostgresStorage>,
+        credentials: Arc<dyn CredentialResolver>,
+        providers: Option<Arc<dyn ProviderRepository>>,
     ) -> Result<Self, OpenWorkCoreError> {
         storage.migrate().await?;
         storage.mark_running_interrupted().await?;
@@ -129,6 +175,7 @@ impl OpenWorkCore {
             tools,
             trace,
             credentials,
+            providers,
             sessions: RwLock::new(HashMap::new()),
             session_creation: Mutex::new(()),
         })
@@ -136,6 +183,84 @@ impl OpenWorkCore {
 
     pub fn storage(&self) -> &PostgresStorage {
         &self.storage
+    }
+
+    pub async fn list_providers(&self) -> Result<ProviderIndex, OpenWorkCoreError> {
+        let providers = self.provider_repository()?;
+        Ok(ProviderIndex {
+            providers: providers.list_profiles().await?,
+            active_id: providers.active_id().await?,
+        })
+    }
+
+    pub fn provider_presets(&self) -> Vec<ProviderPreset> {
+        BUILTIN_PRESETS.to_vec()
+    }
+
+    pub async fn create_provider(
+        &self,
+        input: ProviderInput,
+    ) -> Result<ProviderProfile, OpenWorkCoreError> {
+        Ok(self.provider_repository()?.create(input).await?)
+    }
+
+    pub async fn update_provider(
+        &self,
+        id: &str,
+        input: ProviderInput,
+    ) -> Result<ProviderProfile, OpenWorkCoreError> {
+        Ok(self.provider_repository()?.update(id, input).await?)
+    }
+
+    pub async fn delete_provider(&self, id: &str) -> Result<(), OpenWorkCoreError> {
+        Ok(self.provider_repository()?.delete(id).await?)
+    }
+
+    pub async fn activate_provider(&self, id: &str) -> Result<(), OpenWorkCoreError> {
+        Ok(self.provider_repository()?.activate(id).await?)
+    }
+
+    pub async fn test_provider(
+        &self,
+        id: Option<String>,
+        input: Option<ProviderInput>,
+        model: &str,
+    ) -> Result<ProviderTestResult, OpenWorkCoreError> {
+        let config = if let Some(id) = id {
+            self.provider_repository()?
+                .load_runtime(&id)
+                .await?
+                .ok_or(ProviderRepositoryError::NotFound { id })?
+        } else if let Some(input) = input {
+            ProviderRuntimeConfig {
+                profile: ProviderProfile {
+                    id: "draft".to_string(),
+                    name: input.name,
+                    base_url: input.base_url,
+                    kind: input.kind,
+                    models: input.models,
+                    enabled: input.enabled,
+                },
+                credential: ApiCredential::new(input.api_key),
+                adapter_options: input.extra_body,
+            }
+        } else {
+            return Err(ProviderRepositoryError::InvalidInput { field: "id/input" }.into());
+        };
+
+        match self.provider_factory.test(&config, model).await {
+            Ok(()) => Ok(ProviderTestResult {
+                success: true,
+                message: "Connectivity OK".to_string(),
+            }),
+            Err(error) => Ok(ProviderTestResult::failed(error.to_string())),
+        }
+    }
+
+    fn provider_repository(&self) -> Result<&dyn ProviderRepository, OpenWorkCoreError> {
+        self.providers
+            .as_deref()
+            .ok_or(OpenWorkCoreError::ProviderRepositoryUnavailable)
     }
 
     pub async fn register_model(&self, input: &ModelInput) -> Result<(), OpenWorkCoreError> {
@@ -350,7 +475,8 @@ async fn provider_runtime(
         .map_err(|_| OpenWorkCoreError::CredentialUnavailable(credential_ref.to_string()))?;
     let adapter_options = model
         .config
-        .as_object()
+        .get("extraBody")
+        .and_then(serde_json::Value::as_object)
         .cloned()
         .filter(|map| !map.is_empty());
     Ok(ProviderRuntimeConfig {

@@ -1,6 +1,6 @@
 # OpenWork 目标项目结构
 
-> 状态：核心 crate 边界与唯一运行链已实施；`openwork-protocol`、`openwork-persistence` 及其他 Legacy 能力 crate 已删除，`openwork-app` 仅为 Desktop composition root。
+> 状态：核心 crate 边界与唯一运行链已实施；`openwork-protocol`、`openwork-persistence`、`openwork-app` 及其他 Legacy 能力 crate 已删除。Tauri 直接持有一个 `OpenWorkCore`。
 >
 > 参考原则：以 `grok-build` 的实际源码所有权为依据，但按 OpenWork 当前能力缩小规模。
 
@@ -169,7 +169,7 @@ OpenWork/
     │       ├── error.rs
     │       ├── profile.rs
     │       └── providers/
-    ├── openwork-tools/
+    └── openwork-tools/
     │   └── src/
     │       ├── lib.rs
     │       ├── catalog.rs
@@ -181,7 +181,6 @@ OpenWork/
     │       └── builtins/
     │           ├── filesystem/
     │           └── process/
-    └── openwork-app/                    # Desktop composition root，不拥有运行循环或 SQL 实现
 ```
 
 目录是职责地图，不要求一次提交完成全部移动。
@@ -189,8 +188,7 @@ OpenWork/
 ## 4. 依赖方向
 
 ```text
-apps/desktop -> openwork-app
-openwork-app -> openwork-core + openwork-models
+apps/desktop/src-tauri -> openwork-core + openwork-models
 openwork-core -> openwork-agent + openwork-chat-state + openwork-models + openwork-tools
 openwork-agent -> openwork-models + openwork-tools
 openwork-chat-state -> openwork-models
@@ -206,8 +204,8 @@ openwork-tools -> openwork-models
 | `openwork-agent` | `openwork-models`、`openwork-tools` |
 | `openwork-chat-state` | `openwork-models` |
 | `openwork-core` | 上述全部能力 crate |
-| `openwork-app` | `openwork-core`、`openwork-models`；只做 Host-facing composition |
-| `apps/desktop` | 只依赖 `openwork-app` 和 Host DTO |
+| `apps/desktop/src-tauri` | `openwork-core`、`openwork-models` 与 Tauri；只做 Command/Event/错误 DTO 适配 |
+| `apps/desktop/src` | 只通过 Tauri Command/Event 使用 Core，不访问 SQL 或 Rust Adapter |
 
 禁止：
 
@@ -304,7 +302,7 @@ Core 拥有 Tool Call 生命周期和用户授权等待；Tools 提供工具风�
 
 | 当前位置 | 目标位置 | 处理 |
 | --- | --- | --- |
-| `openwork-app/src/application.rs` | 原位保留 | 缩成 Desktop composition root，只装配 Core、Provider Repository 和 Credential Resolver |
+| `openwork-app/src/application.rs` | `openwork-core/src/core.rs` + `apps/desktop/src-tauri/src/lib.rs` | Core 装配 Repository/Credential/Runtime；Tauri 只注册 Core State；删除 App crate |
 | `openwork-app/src/chat.rs` | `openwork-core/src/session/*` | 按 Actor/Loop/Model/Tool 拆分 |
 | `openwork-app/src/turn_supervisor.rs` | `openwork-core/src/active_sessions.rs` + `session/actor.rs` | 删除 Turn 双重管理 |
 | `openwork-core/src/agent.rs` | `openwork-core/src/session/run_loop.rs` | 只保留控制循环 |

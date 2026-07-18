@@ -1,80 +1,57 @@
-use openwork_app::{
-    OpenWorkApplication, RuntimeLoadedSession, RuntimeModelInput, RuntimeSessionInput,
-    RuntimeSessionRecord, RuntimeSessionSnapshot, RuntimeSessionUpdate,
-    RuntimeSessionUpdateEnvelope, RuntimeTraceSpan, RuntimeTraceSummary, RuntimeTurnAccepted,
+use openwork_core::{
+    session::TurnId, ClientRequestId, LoadedSession, OpenWorkCore, PermissionDecision, SessionId,
+    SessionInput, SessionRecord, SessionSnapshot, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
+    TraceSpanRecord, TraceTurnSummary, TurnAccepted,
 };
+use openwork_models::model::ContentBlock;
 use tauri::Emitter;
 
 use crate::CommandError;
 
 #[tauri::command]
-pub async fn runtime_model_upsert(
-    application: tauri::State<'_, OpenWorkApplication>,
-    input: RuntimeModelInput,
-) -> Result<(), CommandError> {
-    application
-        .runtime()
-        .register_model(&input)
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
 pub async fn runtime_session_list(
-    application: tauri::State<'_, OpenWorkApplication>,
-) -> Result<Vec<RuntimeSessionRecord>, CommandError> {
-    application
-        .runtime()
-        .list_sessions()
-        .await
-        .map_err(CommandError::from)
+    core: tauri::State<'_, OpenWorkCore>,
+) -> Result<Vec<SessionRecord>, CommandError> {
+    core.list_sessions().await.map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_session_create(
-    application: tauri::State<'_, OpenWorkApplication>,
-    input: RuntimeSessionInput,
-) -> Result<RuntimeSessionRecord, CommandError> {
-    application
-        .runtime()
-        .create_session(&input)
+    core: tauri::State<'_, OpenWorkCore>,
+    input: SessionInput,
+) -> Result<SessionRecord, CommandError> {
+    core.create_session(&input)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_session_load(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
-) -> Result<RuntimeLoadedSession, CommandError> {
-    application
-        .runtime()
-        .load_session(&session_id)
+) -> Result<LoadedSession, CommandError> {
+    core.load_session(&SessionId::new(session_id))
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_session_rename(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     title: String,
-) -> Result<RuntimeSessionRecord, CommandError> {
-    application
-        .runtime()
-        .rename_session(&session_id, &title)
+) -> Result<SessionRecord, CommandError> {
+    core.rename_session(&SessionId::new(session_id), &title)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_session_delete(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
 ) -> Result<(), CommandError> {
-    application
-        .runtime()
-        .delete_session(&session_id)
+    core.delete_session(&SessionId::new(session_id))
         .await
         .map_err(CommandError::from)
 }
@@ -82,19 +59,22 @@ pub async fn runtime_session_delete(
 #[tauri::command]
 pub async fn runtime_turn_start(
     app: tauri::AppHandle,
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     client_request_id: String,
     text: String,
-) -> Result<RuntimeTurnAccepted, CommandError> {
-    let mut updates = application
-        .runtime()
+) -> Result<TurnAccepted, CommandError> {
+    let session_id = SessionId::new(session_id);
+    let mut updates = core
         .subscribe_updates(&session_id)
         .await
         .map_err(CommandError::from)?;
-    let accepted = application
-        .runtime()
-        .start_turn(&session_id, &client_request_id, &text)
+    let accepted = core
+        .start_turn(
+            &session_id,
+            ClientRequestId::new(client_request_id),
+            vec![ContentBlock::text(text)],
+        )
         .await
         .map_err(CommandError::from)?;
     let turn_id = accepted.turn_id.clone();
@@ -102,8 +82,7 @@ pub async fn runtime_turn_start(
         loop {
             match updates.recv().await {
                 Ok(payload) if payload.turn_id == turn_id => {
-                    let terminal =
-                        matches!(&payload.update, RuntimeSessionUpdate::TurnFinished { .. });
+                    let terminal = matches!(&payload.update, SessionUpdate::TurnFinished { .. });
                     let _ = app.emit("session-update", payload);
                     if terminal {
                         break;
@@ -119,78 +98,76 @@ pub async fn runtime_turn_start(
 
 #[tauri::command]
 pub async fn runtime_turn_cancel(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     turn_id: String,
 ) -> Result<bool, CommandError> {
-    application
-        .runtime()
-        .cancel_turn(&session_id, &turn_id)
+    core.cancel_turn(&SessionId::new(session_id), TurnId::new(turn_id))
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_permission_resolve(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     turn_id: String,
     tool_call_id: String,
     allow: bool,
 ) -> Result<(), CommandError> {
-    application
-        .runtime()
-        .resolve_permission(&session_id, &turn_id, &tool_call_id, allow)
-        .await
-        .map_err(CommandError::from)
+    core.resolve_permission(
+        &SessionId::new(session_id),
+        TurnId::new(turn_id),
+        ToolCallId::new(tool_call_id),
+        if allow {
+            PermissionDecision::Allow
+        } else {
+            PermissionDecision::Deny
+        },
+    )
+    .await
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_session_snapshot(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
-) -> Result<RuntimeSessionSnapshot, CommandError> {
-    application
-        .runtime()
-        .snapshot(&session_id)
+) -> Result<SessionSnapshot, CommandError> {
+    core.get_session_snapshot(&SessionId::new(session_id))
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_update_replay(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     after_sequence: u64,
-) -> Result<Vec<RuntimeSessionUpdateEnvelope>, CommandError> {
-    application
-        .runtime()
-        .replay_updates(&session_id, after_sequence)
+) -> Result<Vec<SessionUpdateEnvelope>, CommandError> {
+    core.replay_updates(&SessionId::new(session_id), after_sequence)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_trace_list(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     session_id: Option<String>,
     limit: i64,
-) -> Result<Vec<RuntimeTraceSummary>, CommandError> {
-    application
-        .runtime()
-        .list_traces(session_id.as_deref(), limit)
+) -> Result<Vec<TraceTurnSummary>, CommandError> {
+    let session_id = session_id.map(SessionId::new);
+    core.list_traces(session_id.as_ref(), limit)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn runtime_trace_get(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     turn_id: String,
-) -> Result<Vec<RuntimeTraceSpan>, CommandError> {
-    application
-        .runtime()
-        .get_trace(&turn_id)
+) -> Result<Vec<TraceSpanRecord>, CommandError> {
+    core.get_trace(&TurnId::new(turn_id))
         .await
         .map_err(CommandError::from)
 }

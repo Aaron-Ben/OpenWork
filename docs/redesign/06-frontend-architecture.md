@@ -73,9 +73,9 @@ src/App.tsx
 src/api/sessions.ts / providers.ts
   -> Tauri invoke/listen
 
-src-tauri/commands/chat.rs
-  -> OpenWorkApplication.turns().generate_stream(...)
-  -> app.emit("chat-stream-event", payload)
+src-tauri/commands/runtime.rs
+  -> OpenWorkCore.start_turn(...)
+  -> app.emit("session-update", payload)
 ```
 
 ### 2.2 ChatView 职责过多

@@ -23,6 +23,11 @@ pub(crate) const LEGACY_TABLE_ARCHIVE_NAME: &str = "archive_legacy_runtime_table
 pub(crate) const LEGACY_TABLE_ARCHIVE_CHECKSUM: &str =
     "sha256:archive-legacy-runtime-tables-20260718-01";
 
+pub(crate) const PROVIDER_MODEL_METADATA_REPAIR_VERSION: i64 = 202_607_180_106;
+pub(crate) const PROVIDER_MODEL_METADATA_REPAIR_NAME: &str = "repair_provider_model_metadata_v2";
+pub(crate) const PROVIDER_MODEL_METADATA_REPAIR_CHECKSUM: &str =
+    "sha256:repair-provider-model-metadata-v2-20260718-01";
+
 pub(crate) const STATEMENTS: &[&str] = &[
     r#"
     CREATE TABLE IF NOT EXISTS models_v2 (
@@ -371,5 +376,50 @@ pub(crate) const LEGACY_TABLE_ARCHIVE_STATEMENTS: &[&str] = &[r#"
            AND to_regclass('public.legacy_trace_spans') IS NULL THEN
             ALTER TABLE trace_spans RENAME TO legacy_trace_spans;
         END IF;
+    END $$
+"#];
+
+pub(crate) const PROVIDER_MODEL_METADATA_REPAIR_STATEMENTS: &[&str] = &[r#"
+    DO $$
+    BEGIN
+        IF to_regclass('public.legacy_provider_models') IS NOT NULL THEN
+            UPDATE models_v2 model
+            SET config = model.config || jsonb_build_object(
+                    'providerId', legacy_model.provider_id,
+                    'modelTier', legacy_model.model_tier,
+                    'position', legacy_model.position,
+                    'displayNameProvided', legacy_model.display_name IS NOT NULL,
+                    'modelEnabled', legacy_model.enabled,
+                    'extraBody', COALESCE(provider.config->'extraBody', '{}'::jsonb)
+                ),
+                updated_at = now()
+            FROM legacy_provider_models legacy_model
+            JOIN provider_credentials_v2 provider
+              ON provider.provider_id = legacy_model.provider_id
+            WHERE model.id = 'model:' || legacy_model.provider_id || ':' || legacy_model.model_id
+              AND model.credential_ref = 'provider:' || legacy_model.provider_id
+              AND NOT legacy_model.is_deleted
+              AND (
+                  model.config->>'modelTier' IS NULL
+                  OR model.config->>'modelTier' NOT IN ('lite', 'plus', 'pro')
+              );
+        END IF;
+
+        UPDATE models_v2 model
+        SET config = model.config || jsonb_build_object(
+                'providerId', substring(model.credential_ref FROM 10),
+                'modelTier', 'plus',
+                'position', 0,
+                'displayNameProvided', TRUE,
+                'modelEnabled', model.enabled,
+                'extraBody', COALESCE(provider.config->'extraBody', '{}'::jsonb)
+            ),
+            updated_at = now()
+        FROM provider_credentials_v2 provider
+        WHERE model.credential_ref = 'provider:' || provider.provider_id
+          AND (
+              model.config->>'modelTier' IS NULL
+              OR model.config->>'modelTier' NOT IN ('lite', 'plus', 'pro')
+          );
     END $$
 "#];

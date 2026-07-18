@@ -3,7 +3,6 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import type {
   RuntimeLoadedSession,
-  RuntimeModelInput,
   RuntimeSessionInput,
   RuntimeSessionRecord,
   RuntimeSessionSnapshot,
@@ -14,8 +13,6 @@ import type {
 } from '../type/runtime'
 
 export const runtimeApi = {
-  upsertModel: (input: RuntimeModelInput): Promise<void> =>
-    invoke('runtime_model_upsert', { input }),
   listSessions: (): Promise<RuntimeSessionRecord[]> => invoke('runtime_session_list'),
   createSession: (input: RuntimeSessionInput): Promise<RuntimeSessionRecord> =>
     invoke('runtime_session_create', { input }),

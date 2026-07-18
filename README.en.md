@@ -37,64 +37,39 @@ OpenWork/
   apps/
     desktop/                 # Tauri + React desktop app
   crates/
-    openwork-protocol/       # Stable model/capability/approval/journal contracts
-    openwork-core/           # Turn control loop and approval state ownership
-    openwork-app/            # Application API, supervisor, composition
-    openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
-    openwork-persistence/    # PostgreSQL repositories, Journal, and migrations
-    openwork-capabilities/   # Tool declarations and capability discovery
-    openwork-execution/      # Schema validation and built-in action handlers
-    openwork-workspace/      # Project workspace, Git, and file-boundary primitives
+    openwork-core/           # Core facade, Session Actor, PostgreSQL storage, and Trace
+    openwork-agent/          # Agent definition and system prompt
+    openwork-chat-state/     # Conversation single-writer actor
+    openwork-models/         # Model contracts, provider adapters, and transport
+    openwork-tools/          # Tool catalog, permissions, and built-in execution
   docs/
     model-provider-v1-design.md
 ```
 
 ## Rust Crates
 
-`openwork-protocol`
+`openwork-core`
 
-- Defines `ModelRequest`, `ModelResponse`, and `ModelEvent`
-- Defines `Message` and `ContentBlock`
-- Defines `CapabilitySpec`, `ActionRequest`, and `Observation`
-- Defines recorded events, Expected Version, and `EventJournal`
-- Defines `ModelPort`, `ProviderRepository`, `CapabilityResolverPort`, and `ExecutionPort`
+- `OpenWorkCore` is the single in-process entry point for providers, credentials, and sessions
+- `SessionActor` owns the Model → Tool/Permission → Model loop, cancellation, and outcomes
+- PostgreSQL V2 tables persist providers, models, sessions, turns, messages, and traces
+- Tauri manages one `OpenWorkCore` state and only adapts commands, events, and safe errors
 
-`openwork-providers`
+`openwork-models`
 
-- `OpenAiProvider`
-- `AnthropicProvider`
-- `KimiProvider`
-- `DeepSeekProvider`
-- `QwenProvider`
-- `GlmProvider`
-- Normalized vendor error mapping and `RetryingModelPort`
+- Defines messages, content blocks, `ModelPort`, and stream events
+- Implements OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM adapters
+- Owns HTTP/SSE transport, normalized vendor errors, and retries
 
-`openwork-persistence`
+`openwork-agent` / `openwork-chat-state`
 
-- `PostgresProviderRepository`
-- `PostgresEventJournal`
-- `providers` / `provider_models` migrations
-- Append-only `recorded_events` migration and explicit migrator
-- Session/Turn-event-backed session/message creation, replay, rename, and deletion
-- Transactional provider-and-model writes
-- AES-256-GCM encryption for provider API keys stored in PostgreSQL
+- The agent crate owns only the agent definition, system prompt, and static tool set
+- The Chat State actor serializes Conversation mutations and provides consistent model snapshots
 
-`openwork-capabilities`
+`openwork-tools`
 
-- Owns built-in action names, descriptions, input schemas, and declaration-side risk hints
-- Implements discovery through `CapabilityCatalog` without performing filesystem or process I/O
-
-`openwork-execution`
-
-- Organizes real handlers under `actions/filesystem` and `actions/process`
-- Owns argument validation, path permissions, cancellation, timeouts, output truncation, and `Observation` normalization
-- Does not yet provide an OS-level sandbox; `risk_hint` contributes to approval reasons but cannot replace final argument-level risk evaluation
-
-`openwork-core` / `openwork-app`
-
-- Core owns the Turn loop and approval pause/resume state
-- `OpenWorkApplication` is the single composition root for providers, the capability catalog, execution, Core, and Journal-backed sessions
-- Desktop accesses application capabilities only through the provider/session/turn application services
+- Owns tool definitions, schemas, permission policy, working-directory context, and built-in filesystem/process execution
+- It does not yet provide an OS-level sandbox; permission decisions cannot bypass `ToolContext` path/process constraints
 - The user always selects `providerId + model` explicitly; there is no automatic model selection or cross-model fallback
 
 ## Desktop App

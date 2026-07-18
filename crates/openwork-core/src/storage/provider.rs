@@ -429,7 +429,7 @@ fn record_to_model(record: ProviderModelRecord) -> Result<ProviderModel, Provide
         .config
         .get("modelTier")
         .and_then(Value::as_str)
-        .ok_or_else(|| invalid_stored_value("models_v2.config.modelTier"))?;
+        .unwrap_or("plus");
     let display_name_provided = record
         .config
         .get("displayNameProvided")
@@ -538,5 +538,27 @@ fn credential_error(operation: &'static str, error: ApiKeyCipherError) -> Provid
     ProviderRepositoryError::CredentialEncryption {
         operation,
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use openwork_models::provider::ModelTier;
+    use serde_json::json;
+
+    use super::{ProviderModelRecord, record_to_model};
+
+    #[test]
+    fn legacy_model_without_tier_does_not_break_the_provider_index() {
+        let model = record_to_model(ProviderModelRecord {
+            model_name: "legacy-model".to_string(),
+            display_name: "Legacy model".to_string(),
+            enabled: true,
+            config: json!({ "modelEnabled": true }),
+        })
+        .expect("legacy provider models remain readable");
+
+        assert_eq!(model.model_tier, ModelTier::Plus);
+        assert!(model.enabled);
     }
 }

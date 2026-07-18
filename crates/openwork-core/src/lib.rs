@@ -1,6 +1,7 @@
 //! Durable Turn control loop and state machines.
 
 mod core;
+mod provider;
 pub mod session;
 pub mod storage;
 
@@ -9,6 +10,8 @@ pub use core::{
     OpenWorkCoreConfig, OpenWorkCoreError,
 };
 pub use openwork_models::provider::ApiCredential as ModelCredential;
+pub use openwork_models::provider::{ProviderInput, ProviderProfile};
+pub use provider::{ProviderIndex, ProviderPreset, ProviderPresetModel, ProviderTestResult};
 pub use session::{
     ClientRequestId, LiveToolCall, ModelCallFinished, ModelCallStarted, NoopSessionStorage,
     NoopTraceRecorder, PermissionDecision, PermissionRequest, ResolvedModel, SessionError,

@@ -7,7 +7,6 @@ import { useRuntimeSessionStore } from './runtimeSessionStore'
 
 vi.mock('../api/runtime', () => ({
   runtimeApi: {
-    upsertModel: vi.fn(),
     listSessions: vi.fn(),
     createSession: vi.fn(),
     loadSession: vi.fn(),
@@ -54,8 +53,7 @@ beforeEach(() => {
 })
 
 describe('runtimeSessionStore', () => {
-  it('bridges an encrypted provider reference into a selectable runtime model', async () => {
-    vi.mocked(runtimeApi.upsertModel).mockResolvedValue()
+  it('creates a session from the provider-owned model without rewriting model metadata', async () => {
     vi.mocked(runtimeApi.createSession).mockImplementation(async (input) => ({
       ...input,
       title: input.title ?? null,
@@ -74,13 +72,6 @@ describe('runtimeSessionStore', () => {
     })
 
     expect(id).toMatch(/^sess-/)
-    expect(runtimeApi.upsertModel).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerKind: 'deepseek',
-        modelName: 'deepseek-v4-flash',
-        credentialRef: 'provider:provider-deepseek',
-      }),
-    )
     expect(runtimeApi.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         workingDirectory: '/repo',

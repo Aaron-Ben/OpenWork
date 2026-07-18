@@ -51,7 +51,7 @@
 ## 3. 核心决策
 
 1. `openwork-core` 对应 `xai-grok-shell` 的产品运行时角色，而不是一个狭义状态机库。
-2. `openwork-app` 的旧执行编排和 Provider 凭证存储合并进 `openwork-core`；App 仅保留 Desktop composition root，不新增 `openwork-shell`。
+2. `openwork-app` 的执行编排、Provider 凭证装配和 Host 转发全部合并进 `openwork-core`；`openwork-app` 删除，不新增 `openwork-shell`。
 3. `SessionActor` 是每个活动 Session 的唯一运行时 Owner。
 4. `openwork-agent` 只拥有 Agent Definition、System Prompt、Tool Set 和静态策略。
 5. `openwork-chat-state` 是模型 Conversation 的唯一写入者。
@@ -96,14 +96,13 @@ OpenWork/
     ├── openwork-agent/          # Agent 定义、System Prompt 构建、静态策略
     ├── openwork-chat-state/     # Conversation Actor 与请求快照
     ├── openwork-models/         # 模型类型、Provider、Transport
-    ├── openwork-tools/          # Tool Catalog、文件/进程执行、路径权限、结果
-    └── openwork-app/            # Desktop composition root 与 Host-facing service
+    └── openwork-tools/          # Tool Catalog、文件/进程执行、路径权限、结果
 ```
 
 这些 crate 已被吸收或删除：
 
 ```text
-openwork-app            -> 保留薄 composition root，旧运行编排全部进入 openwork-core
+openwork-app            -> Provider/Runtime 入口进入 openwork-core；Host 错误 DTO 进入 Tauri；crate 删除
 openwork-protocol       -> 类型随 Owner 移动
 openwork-capabilities   -> openwork-tools
 openwork-execution      -> openwork-tools

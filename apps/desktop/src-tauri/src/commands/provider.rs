@@ -1,85 +1,68 @@
-use openwork_app::{
-    OpenWorkApplication, ProviderIndex, ProviderInput, ProviderPreset, ProviderProfile,
-    ProviderTestResult,
+use openwork_core::{
+    OpenWorkCore, ProviderIndex, ProviderInput, ProviderPreset, ProviderProfile, ProviderTestResult,
 };
 
 use crate::CommandError;
 
 #[tauri::command]
 pub async fn provider_list(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
 ) -> Result<ProviderIndex, CommandError> {
-    application
-        .providers()
-        .list()
-        .await
-        .map_err(CommandError::from)
+    core.list_providers().await.map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn provider_presets(application: tauri::State<'_, OpenWorkApplication>) -> Vec<ProviderPreset> {
-    application.providers().presets()
+pub fn provider_presets(core: tauri::State<'_, OpenWorkCore>) -> Vec<ProviderPreset> {
+    core.provider_presets()
 }
 
 #[tauri::command]
 pub async fn provider_create(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     input: ProviderInput,
 ) -> Result<ProviderProfile, CommandError> {
-    application
-        .providers()
-        .create(input)
+    core.create_provider(input)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn provider_update(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     id: String,
     input: ProviderInput,
 ) -> Result<ProviderProfile, CommandError> {
-    application
-        .providers()
-        .update(&id, input)
+    core.update_provider(&id, input)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn provider_delete(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     id: String,
 ) -> Result<(), CommandError> {
-    application
-        .providers()
-        .delete(&id)
-        .await
-        .map_err(CommandError::from)
+    core.delete_provider(&id).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn provider_activate(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     id: String,
 ) -> Result<(), CommandError> {
-    application
-        .providers()
-        .activate(&id)
+    core.activate_provider(&id)
         .await
         .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub async fn provider_test(
-    application: tauri::State<'_, OpenWorkApplication>,
+    core: tauri::State<'_, OpenWorkCore>,
     id: Option<String>,
     input: Option<ProviderInput>,
     model: String,
 ) -> Result<ProviderTestResult, CommandError> {
-    application
-        .providers()
-        .test(id, input, &model)
+    core.test_provider(id, input, &model)
         .await
         .map_err(CommandError::from)
 }
