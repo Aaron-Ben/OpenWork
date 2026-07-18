@@ -248,7 +248,7 @@ impl ProviderRepository for PostgresProviderRepository {
                 api_key_encrypted = COALESCE($5, api_key_encrypted),
                 enabled = $6,
                 config = $7,
-                updated_at = now()
+                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
              WHERE provider_id = $1",
         )
         .bind(id)
@@ -333,7 +333,7 @@ async fn replace_models(
                 credential_ref = EXCLUDED.credential_ref,
                 enabled = EXCLUDED.enabled,
                 config = EXCLUDED.config,
-                updated_at = now()",
+                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
         )
         .bind(id)
         .bind(display_name)

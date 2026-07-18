@@ -1,3 +1,4 @@
 mod retry;
 
-pub use retry::{RetryDecision, RetryPolicy, RetryingModelPort};
+pub use retry::RetryPolicy;
+pub(crate) use retry::RetryingModelPort;

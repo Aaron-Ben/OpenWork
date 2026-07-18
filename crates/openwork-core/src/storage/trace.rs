@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use sqlx::{PgPool, Postgres, Transaction};
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::session::{
@@ -162,7 +163,7 @@ async fn write_model_started(
     .bind(started.sequence)
     .bind(&started.model_id)
     .bind(&started.resolved_model_name)
-    .bind(started.started_at)
+    .bind(utc_naive(started.started_at))
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -177,11 +178,11 @@ async fn write_model_finished(
         "INSERT INTO trace_spans (
              id, turn_id, sequence, kind, name, status, model_id,
              resolved_model_name, provider_request_id, attempt_count,
-             input_tokens, output_tokens, cached_input_tokens,
+             input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
              started_at, ended_at, error_code, error_message
          ) VALUES (
              $1, $2, $3, 'model_call', 'model.call', $4, $5,
-             $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+             $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
          )
          ON CONFLICT (id) DO UPDATE SET
              status = EXCLUDED.status,
@@ -190,6 +191,7 @@ async fn write_model_finished(
              input_tokens = EXCLUDED.input_tokens,
              output_tokens = EXCLUDED.output_tokens,
              cached_input_tokens = EXCLUDED.cached_input_tokens,
+             reasoning_tokens = EXCLUDED.reasoning_tokens,
              ended_at = EXCLUDED.ended_at,
              error_code = EXCLUDED.error_code,
              error_message = EXCLUDED.error_message",
@@ -205,8 +207,9 @@ async fn write_model_finished(
     .bind(usage.and_then(|value| token(value.input_tokens)))
     .bind(usage.and_then(|value| token(value.output_tokens)))
     .bind(usage.and_then(|value| token(value.cached_input_tokens)))
-    .bind(finished.started.started_at)
-    .bind(finished.ended_at)
+    .bind(usage.and_then(|value| token(value.reasoning_tokens)))
+    .bind(utc_naive(finished.started.started_at))
+    .bind(utc_naive(finished.ended_at))
     .bind(&finished.error_code)
     .bind(&finished.error_message)
     .execute(&mut **transaction)
@@ -231,7 +234,7 @@ async fn write_tool_started(
     .bind(started.sequence)
     .bind(&started.provider_call_id)
     .bind(&started.requested_tool_name)
-    .bind(started.started_at)
+    .bind(utc_naive(started.started_at))
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -267,8 +270,8 @@ async fn write_tool_finished(
     .bind(&finished.started.requested_tool_name)
     .bind(&finished.resolved_tool_name)
     .bind(finished.permission_wait_ms)
-    .bind(finished.started.started_at)
-    .bind(finished.ended_at)
+    .bind(utc_naive(finished.started.started_at))
+    .bind(utc_naive(finished.ended_at))
     .bind(&finished.error_code)
     .bind(&finished.error_message)
     .execute(&mut **transaction)
@@ -278,4 +281,25 @@ async fn write_tool_finished(
 
 fn token(value: Option<u64>) -> Option<i64> {
     value.and_then(|value| i64::try_from(value).ok())
+}
+
+fn utc_naive(value: OffsetDateTime) -> PrimitiveDateTime {
+    let utc = value.to_offset(UtcOffset::UTC);
+    PrimitiveDateTime::new(utc.date(), utc.time())
+}
+
+#[cfg(test)]
+mod tests {
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    use super::utc_naive;
+
+    #[test]
+    fn converts_an_offset_timestamp_to_utc_without_timezone() {
+        let source = OffsetDateTime::parse("2026-07-18T08:30:45+08:00", &Rfc3339).unwrap();
+
+        let converted = utc_naive(source);
+
+        assert_eq!(converted.to_string(), "2026-07-18 0:30:45.0");
+    }
 }

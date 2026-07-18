@@ -120,10 +120,16 @@ provider_request_id
 input_tokens
 output_tokens
 cached_input_tokens
+reasoning_tokens
+total_tokens
 started_at
 ended_at
 error_code/error_message
 ```
+
+`reasoning_tokens` 是 `output_tokens` 的子集；`total_tokens` 固定为 `input_tokens + output_tokens`，不再额外加上缓存或推理 Token。
+
+`started_at` 与 `ended_at` 在数据库中保存为 UTC 的 `TIMESTAMP WITHOUT TIME ZONE`；API 补回 `Z` 后返回，桌面端统一按 `Asia/Shanghai` 展示。
 
 `attempt_count` 是该 Model Call 内 Transport 总尝试数。V1 不为每个尝试建立子 Span；`provider_request_id` 保存 Provider 最终公开或最后一次可观察的请求 ID。
 

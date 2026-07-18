@@ -47,5 +47,3 @@ pub enum ModelEvent {
         response: Box<ModelResponse>,
     },
 }
-
-pub type GenerateStreamEvent = ModelEvent;

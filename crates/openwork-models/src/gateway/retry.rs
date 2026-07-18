@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use futures_util::{StreamExt, stream};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetryDecision {
+pub(crate) enum RetryDecision {
     DoNotRetry,
     RetryAfter(Duration),
 }
@@ -45,7 +45,7 @@ impl RetryPolicy {
         self
     }
 
-    pub fn decision(
+    pub(crate) fn decision(
         &self,
         failed_attempt: usize,
         error: &ModelError,

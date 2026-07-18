@@ -7,10 +7,8 @@ mod port;
 mod request;
 mod response;
 
-pub use error::{
-    DeliveryState, ModelError, ModelErrorCode, ModelFailurePhase, ProviderError, RetryHint,
-};
-pub use event::{GenerateStreamEvent, ModelEvent};
+pub use error::{DeliveryState, ModelError, ModelErrorCode, ModelFailurePhase, RetryHint};
+pub use event::ModelEvent;
 pub use message::{
     Base64Source, ContentBlock, DataBlock, DataSource, Message, ProviderOpaqueBlock, Role,
     TextBlock, ThinkingBlock, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
@@ -19,7 +17,5 @@ pub use port::{
     ModelCallOptions, ModelPort, ModelStream, ModelTransportObserver, ModelTransportSignal,
     ModelTransportSignalKind,
 };
-pub use request::{
-    GenerateRequest, ModelCapabilities, ModelRequest, ThinkingConfig, ThinkingMode, ToolDefinition,
-};
-pub use response::{FinishReason, GenerateResponse, ModelResponse, TokenUsage};
+pub use request::{ModelRequest, ThinkingConfig, ThinkingMode, ToolDefinition};
+pub use response::{FinishReason, ModelResponse, TokenUsage};

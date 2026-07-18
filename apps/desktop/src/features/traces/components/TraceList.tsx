@@ -1,6 +1,7 @@
 import { Activity, Bot, Clock3, Wrench } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { formatBeijingDateTime } from '../../../lib/dateTime'
 import type { TraceListItem } from '../traceViewModel'
 
 interface TraceListProps {
@@ -56,7 +57,7 @@ export function TraceList({ items, loading, onOpen }: TraceListProps) {
               </span>
             </span>
             <span className="hidden shrink-0 text-right text-xs text-ink-faint sm:block">
-              <span className="block">{formatDate(item.startedAt)}</span>
+              <span className="block">{formatBeijingDateTime(item.startedAt)}</span>
               <span className="mt-2 inline-flex items-center gap-1"><Clock3 size={12} />{formatDuration(item.durationMs)}</span>
             </span>
           </div>
@@ -87,12 +88,6 @@ function statusBadge(status: string): string {
   if (status === 'running') return 'bg-status-warning-soft text-status-warning-ink'
   if (status === 'cancelled' || status === 'interrupted') return 'bg-paper-hover text-ink-soft'
   return 'bg-status-danger-soft text-status-danger-ink'
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  }).format(Date.parse(value))
 }
 
 export function formatDuration(durationMs: number | null): string {

@@ -17,19 +17,6 @@ pub enum ProviderDriver {
     OpenaiChat(OpenAiChatDialect),
 }
 
-impl ProviderDriver {
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::OpenaiResponses => "openai_responses",
-            Self::AnthropicMessages => "anthropic_messages",
-            Self::OpenaiChat(OpenAiChatDialect::Deepseek) => "openai_chat_deepseek",
-            Self::OpenaiChat(OpenAiChatDialect::Kimi) => "openai_chat_kimi",
-            Self::OpenaiChat(OpenAiChatDialect::Qwen) => "openai_chat_qwen",
-            Self::OpenaiChat(OpenAiChatDialect::Glm) => "openai_chat_glm",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -62,22 +49,6 @@ impl ProviderKind {
             Self::Kimi => ProviderDriver::OpenaiChat(OpenAiChatDialect::Kimi),
             Self::Qwen => ProviderDriver::OpenaiChat(OpenAiChatDialect::Qwen),
             Self::Glm => ProviderDriver::OpenaiChat(OpenAiChatDialect::Glm),
-        }
-    }
-
-    pub fn driver_code(self) -> &'static str {
-        self.driver().code()
-    }
-
-    pub fn from_driver_code(value: &str) -> Option<Self> {
-        match value {
-            "openai_responses" => Some(Self::Openai),
-            "anthropic_messages" => Some(Self::Anthropic),
-            "openai_chat_deepseek" => Some(Self::Deepseek),
-            "openai_chat_kimi" => Some(Self::Kimi),
-            "openai_chat_qwen" => Some(Self::Qwen),
-            "openai_chat_glm" => Some(Self::Glm),
-            _ => None,
         }
     }
 }

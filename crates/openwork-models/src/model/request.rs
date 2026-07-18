@@ -2,31 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{Message, Role};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelCapabilities {
-    pub chat: bool,
-    pub reasoning: bool,
-    pub vision: bool,
-    pub video_input: bool,
-    pub tool_calling: bool,
-    pub json_schema: bool,
-    pub streaming: bool,
-}
-
-impl ModelCapabilities {
-    pub fn generation_defaults() -> Self {
-        Self {
-            chat: true,
-            reasoning: false,
-            vision: false,
-            video_input: false,
-            tool_calling: false,
-            json_schema: false,
-            streaming: true,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
@@ -62,8 +37,6 @@ impl ModelRequest {
         self
     }
 }
-
-pub type GenerateRequest = ModelRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThinkingConfig {

@@ -1,15 +1,9 @@
 //! OpenAI Responses request codec.
 
-use crate::model::{ContentBlock, DataSource, Message, ModelError, ModelRequest};
+use crate::model::{ContentBlock, DataSource, Message, ModelError, ModelRequest, ThinkingMode};
 use serde_json::{Value, json};
 
 pub(crate) fn encode_request(req: &ModelRequest, stream: bool) -> Result<Value, ModelError> {
-    if req.thinking.is_some() {
-        return Err(ModelError::invalid_request(
-            "OpenAI thinking mode is not mapped yet",
-        ));
-    }
-
     let mut input = Vec::new();
     for message in &req.messages {
         input.extend(encode_message_items(message)?);
@@ -25,6 +19,13 @@ pub(crate) fn encode_request(req: &ModelRequest, stream: bool) -> Result<Value, 
     }
     if let Some(max_tokens) = req.max_output_tokens {
         body["max_output_tokens"] = json!(max_tokens);
+    }
+    if let Some(thinking) = req.thinking {
+        let effort = match thinking.mode {
+            ThinkingMode::Enabled => "medium",
+            ThinkingMode::Disabled => "none",
+        };
+        body["reasoning"] = json!({ "effort": effort });
     }
     if !req.tools.is_empty() {
         body["tools"] = Value::Array(
@@ -152,6 +153,7 @@ mod tests {
         assert_eq!(body["model"], "gpt-4.1");
         assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
         assert_eq!(body["max_output_tokens"], 128);
+        assert!(body.get("reasoning").is_none());
     }
 
     #[test]
@@ -194,9 +196,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unmapped_thinking_mode() {
-        let req = ModelRequest::text("gpt-4.1", "hello")
+    fn maps_enabled_thinking_to_medium_reasoning_effort() {
+        let req = ModelRequest::text("gpt-5.1", "hello")
             .with_thinking(crate::model::ThinkingConfig::enabled());
-        assert!(encode_request(&req, false).is_err());
+        let body = encode_request(&req, false).unwrap();
+
+        assert_eq!(body["reasoning"]["effort"], "medium");
+    }
+
+    #[test]
+    fn maps_disabled_thinking_to_none_reasoning_effort() {
+        let req = ModelRequest::text("gpt-5.1", "hello")
+            .with_thinking(crate::model::ThinkingConfig::disabled());
+        let body = encode_request(&req, false).unwrap();
+
+        assert_eq!(body["reasoning"]["effort"], "none");
     }
 }

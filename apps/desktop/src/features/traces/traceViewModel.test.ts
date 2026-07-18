@@ -29,7 +29,8 @@ const model: RuntimeTraceSpan = {
   name: 'model', status: 'succeeded', modelId: 'model-1', resolvedModelName: 'deepseek-v4-flash',
   providerRequestId: 'request-1', providerCallId: null, requestedToolName: null,
   resolvedToolName: null, attemptCount: 1, inputTokens: 10, outputTokens: 20,
-  cachedInputTokens: 2, permissionWaitMs: null, startedAt: '2026-07-18T00:00:00.000Z',
+  cachedInputTokens: 2, reasoningTokens: 4, totalTokens: 30, permissionWaitMs: null,
+  startedAt: '2026-07-18T00:00:00.000Z',
   endedAt: '2026-07-18T00:00:02.000Z', errorCode: null, errorMessage: null, attributes: {},
 }
 
@@ -49,6 +50,8 @@ const tool: RuntimeTraceSpan = {
   inputTokens: null,
   outputTokens: null,
   cachedInputTokens: null,
+  reasoningTokens: null,
+  totalTokens: null,
   permissionWaitMs: 120,
   startedAt: '2026-07-18T00:00:00.500Z',
   endedAt: '2026-07-18T00:00:01.000Z',

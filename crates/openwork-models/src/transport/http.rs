@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::model::ModelError;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
@@ -48,31 +47,36 @@ impl Default for HttpTransport {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct HttpProviderConfig {
-    pub base_url: String,
-    pub api_key: String,
+#[derive(Clone)]
+pub(crate) struct HttpProviderConfig {
+    base_url: String,
+    api_key: String,
 }
 
 impl HttpProviderConfig {
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+    pub(crate) fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: trim_trailing_slash(base_url.into()),
             api_key: api_key.into(),
         }
     }
 
-    pub fn from_env(
-        base_url: impl Into<String>,
-        api_key_env: impl AsRef<str>,
-    ) -> Result<Self, ModelError> {
-        let env_name = api_key_env.as_ref();
-        let api_key = std::env::var(env_name).map_err(|_| ModelError::authentication())?;
-        Ok(Self::new(base_url, api_key))
+    pub(crate) fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
     }
 
-    pub fn endpoint(&self, path: &str) -> String {
-        format!("{}{}", self.base_url, path)
+    pub(crate) fn api_key(&self) -> &str {
+        &self.api_key
+    }
+}
+
+impl std::fmt::Debug for HttpProviderConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpProviderConfig")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"[REDACTED]")
+            .finish()
     }
 }
 

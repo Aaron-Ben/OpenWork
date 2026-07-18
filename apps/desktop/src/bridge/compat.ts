@@ -150,6 +150,8 @@ export interface RuntimeTraceSpan {
   inputTokens: number | null
   outputTokens: number | null
   cachedInputTokens: number | null
+  reasoningTokens: number | null
+  totalTokens: number | null
   permissionWaitMs: number | null
   startedAt: string
   endedAt: string | null

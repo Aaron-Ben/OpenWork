@@ -1,15 +1,15 @@
 use openwork_core::{
     ClientRequestId, ModelCallFinished, ModelCallStarted, ModelInput, PostgresStorage,
     PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    ToolCallFinished, ToolCallStarted, TraceRecorder, TraceSignal, TraceStatus, TurnOutcome,
-    session::TurnId,
+    ToolCallFinished, ToolCallStarted, TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus,
+    TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultBlock,
     ToolResultState,
 };
 use serde_json::json;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 fn test_database_url() -> Option<String> {
@@ -18,6 +18,41 @@ fn test_database_url() -> Option<String> {
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn absolute_time(value: &str) -> OffsetDateTime {
+    OffsetDateTime::parse(value, &Rfc3339).unwrap()
+}
+
+type TurnUsageSummary = (
+    String,
+    i32,
+    i32,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+
+type TraceUsageRow = (
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+
+#[test]
+fn trace_span_contract_exposes_reasoning_and_total_tokens() {
+    fn usage_fields(span: &TraceSpanRecord) -> (Option<i64>, Option<i64>) {
+        (span.reasoning_tokens, span.total_tokens)
+    }
+
+    let _ = usage_fields;
 }
 
 #[tokio::test]
@@ -61,6 +96,24 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             "turns",
         ]
     );
+    let timestamp_columns: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT table_name, column_name, data_type
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = ANY($1)
+           AND data_type LIKE 'timestamp%'
+         ORDER BY table_name, ordinal_position",
+    )
+    .bind(&business_tables)
+    .fetch_all(storage.pool())
+    .await
+    .unwrap();
+    assert_eq!(timestamp_columns.len(), 13);
+    assert!(
+        timestamp_columns
+            .iter()
+            .all(|(_, _, data_type)| data_type == "timestamp without time zone")
+    );
     let applied_migrations: Vec<(i64, String, bool)> = sqlx::query_as(
         "SELECT version, description, success FROM _sqlx_migrations ORDER BY version",
     )
@@ -69,7 +122,15 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     .unwrap();
     assert_eq!(
         applied_migrations,
-        vec![(202_607_180_001, "initial schema".to_string(), true)]
+        vec![
+            (202_607_180_001, "initial schema".to_string(), true),
+            (202_607_180_002, "add usage token columns".to_string(), true,),
+            (
+                202_607_180_003,
+                "store utc naive timestamps".to_string(),
+                true,
+            ),
+        ]
     );
 
     let model_id = unique("model-test");
@@ -88,7 +149,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .unwrap();
 
     let session_id = SessionId::new(unique("session-test"));
-    storage
+    let session = storage
         .create_session(&SessionInput {
             id: session_id.clone(),
             title: Some("Postgres storage test".to_string()),
@@ -97,6 +158,8 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         })
         .await
         .unwrap();
+    assert!(session.created_at.ends_with('Z'));
+    assert!(session.updated_at.ends_with('Z'));
 
     let turn_id = TurnId::new(unique("turn-test"));
     let client_request_id = ClientRequestId::new(unique("request-test"));
@@ -128,7 +191,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 output_tokens: Some(7),
                 total_tokens: Some(18),
                 cached_input_tokens: Some(3),
-                reasoning_tokens: None,
+                reasoning_tokens: Some(5),
             }),
         )
         .await
@@ -158,7 +221,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 output_tokens: Some(2),
                 total_tokens: Some(21),
                 cached_input_tokens: None,
-                reasoning_tokens: None,
+                reasoning_tokens: Some(1),
             }),
         )
         .await
@@ -181,9 +244,10 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             .collect::<Vec<_>>(),
         vec![Role::User, Role::Assistant, Role::Tool, Role::Assistant]
     );
-    let summary: (String, i32, i32, Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(
+    let summary: TurnUsageSummary = sqlx::query_as(
         "SELECT status, model_call_count, tool_call_count,
-                input_tokens, output_tokens, cached_input_tokens
+                input_tokens, output_tokens, cached_input_tokens,
+                reasoning_tokens, total_tokens
          FROM turns WHERE id = $1",
     )
     .bind(turn_id.as_str())
@@ -192,7 +256,16 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     .unwrap();
     assert_eq!(
         summary,
-        ("completed".to_string(), 2, 1, Some(30), Some(9), Some(3))
+        (
+            "completed".to_string(),
+            2,
+            1,
+            Some(30),
+            Some(9),
+            Some(3),
+            Some(6),
+            Some(39),
+        )
     );
 
     let trace = PostgresTraceRecorder::spawn(storage.pool().clone());
@@ -202,7 +275,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         sequence: 1,
         model_id: Some(model_id.clone()),
         resolved_model_name: "deepseek-v4-flash".to_string(),
-        started_at: OffsetDateTime::now_utc(),
+        started_at: absolute_time("2026-07-18T08:30:45+08:00"),
     };
     trace.record(TraceSignal::ModelCallStarted(model_span.clone()));
     trace.record(TraceSignal::ModelCallFinished(ModelCallFinished {
@@ -210,8 +283,14 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         status: TraceStatus::Succeeded,
         provider_request_id: Some("provider-request-test".to_string()),
         attempt_count: 1,
-        usage: None,
-        ended_at: OffsetDateTime::now_utc(),
+        usage: Some(TokenUsage {
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            total_tokens: Some(18),
+            cached_input_tokens: Some(3),
+            reasoning_tokens: Some(5),
+        }),
+        ended_at: absolute_time("2026-07-18T08:30:47+08:00"),
         error_code: None,
         error_message: None,
     }));
@@ -222,7 +301,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         sequence: 2,
         provider_call_id: "provider-call-1".to_string(),
         requested_tool_name: "read_file".to_string(),
-        started_at: OffsetDateTime::now_utc(),
+        started_at: absolute_time("2026-07-18T08:30:45.500+08:00"),
     };
     trace.record(TraceSignal::ToolCallStarted(tool_span.clone()));
     trace.record(TraceSignal::ToolCallFinished(ToolCallFinished {
@@ -230,15 +309,17 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         status: TraceStatus::Succeeded,
         resolved_tool_name: Some("read_file".to_string()),
         permission_wait_ms: Some(4),
-        ended_at: OffsetDateTime::now_utc(),
+        ended_at: absolute_time("2026-07-18T08:30:46+08:00"),
         error_code: None,
         error_message: None,
     }));
     let flush = trace.flush_turn(&turn_id).await;
     assert!(flush.flushed);
     assert_eq!(flush.write_failures, 0);
-    let trace_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT kind, status, parent_span_id
+    let trace_rows: Vec<TraceUsageRow> = sqlx::query_as(
+        "SELECT kind, status, parent_span_id,
+                input_tokens, output_tokens, cached_input_tokens,
+                reasoning_tokens, total_tokens
          FROM trace_spans WHERE turn_id = $1 ORDER BY sequence",
     )
     .bind(turn_id.as_str())
@@ -248,13 +329,38 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     assert_eq!(
         trace_rows,
         vec![
-            ("model_call".to_string(), "succeeded".to_string(), None),
+            (
+                "model_call".to_string(),
+                "succeeded".to_string(),
+                None,
+                Some(11),
+                Some(7),
+                Some(3),
+                Some(5),
+                Some(18),
+            ),
             (
                 "tool_call".to_string(),
                 "succeeded".to_string(),
-                Some(model_span.span_id)
-            )
+                Some(model_span.span_id),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
         ]
+    );
+    let loaded_trace = storage.get_trace(&turn_id).await.unwrap();
+    assert_eq!(loaded_trace[0].started_at, "2026-07-18T00:30:45.000000Z");
+    assert_eq!(
+        loaded_trace[0].ended_at.as_deref(),
+        Some("2026-07-18T00:30:47.000000Z")
+    );
+    assert_eq!(loaded_trace[1].started_at, "2026-07-18T00:30:45.500000Z");
+    assert_eq!(
+        loaded_trace[1].ended_at.as_deref(),
+        Some("2026-07-18T00:30:46.000000Z")
     );
 
     let interrupted_turn_id = TurnId::new(unique("turn-interrupted"));

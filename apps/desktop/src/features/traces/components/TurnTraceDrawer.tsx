@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { coreCommands } from '../../../bridge/commands'
 import type { RuntimeTraceSpan } from '../../../bridge/compat'
+import { formatBeijingDateTime } from '../../../lib/dateTime'
 import { resolveErrorMessage } from '../../../utils/commandError'
 import { shouldPollTrace, type TraceListItem } from '../traceViewModel'
 import { formatDuration } from './TraceList'
@@ -100,7 +101,7 @@ export function TurnTraceDrawer({
   )
   const tokenTotal = useMemo(
     () => (spans ?? []).reduce(
-      (sum, span) => sum + (span.inputTokens ?? 0) + (span.outputTokens ?? 0),
+      (sum, span) => sum + (span.totalTokens ?? 0),
       0,
     ),
     [spans],
@@ -183,12 +184,14 @@ function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
   const fields = [
     [t('activity.statusLabel'), span.status],
     [t('activity.duration'), formatDuration(duration)],
-    [t('activity.startedAt'), span.startedAt],
-    [t('activity.endedAt'), span.endedAt ?? '—'],
+    [t('activity.startedAt'), formatBeijingDateTime(span.startedAt)],
+    [t('activity.endedAt'), span.endedAt ? formatBeijingDateTime(span.endedAt) : '—'],
     [t('activity.attempts'), span.attemptCount ?? '—'],
     [t('activity.inputTokens'), span.inputTokens ?? '—'],
     [t('activity.outputTokens'), span.outputTokens ?? '—'],
     [t('activity.cachedTokens'), span.cachedInputTokens ?? '—'],
+    [t('activity.reasoningTokens'), span.reasoningTokens ?? '—'],
+    [t('activity.totalTokens'), span.totalTokens ?? '—'],
     [t('activity.permissionWait'), span.permissionWaitMs == null ? '—' : formatDuration(span.permissionWaitMs)],
     [t('activity.providerRequestId'), span.providerRequestId ?? '—'],
   ]

@@ -32,6 +32,7 @@ describe('TraceList', () => {
     expect(markup).toContain('2 次模型调用')
     expect(markup).toContain('3 次工具调用')
     expect(markup).toContain('2.00 s')
+    expect(markup).toContain('2026-07-18 08:00:00 (Asia/Shanghai)')
   })
 
   it('distinguishes loading from an empty result', () => {

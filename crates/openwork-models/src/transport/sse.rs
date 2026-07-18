@@ -6,19 +6,19 @@ use futures_util::{Stream, stream};
 use reqwest::Response;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SseFrame {
+pub(crate) struct SseFrame {
     pub event: Option<String>,
     pub id: Option<String>,
     pub data: String,
 }
 
 #[derive(Debug, Default)]
-pub struct SseFramer {
+pub(crate) struct SseFramer {
     buffer: Vec<u8>,
 }
 
 impl SseFramer {
-    pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<SseFrame>, ModelError> {
+    pub(crate) fn push(&mut self, chunk: &[u8]) -> Result<Vec<SseFrame>, ModelError> {
         self.buffer.extend_from_slice(chunk);
         let mut frames = Vec::new();
         while let Some((index, delimiter_len)) = find_event_boundary_bytes(&self.buffer) {
@@ -31,7 +31,7 @@ impl SseFramer {
         Ok(frames)
     }
 
-    pub fn finish(&mut self) -> Result<Vec<SseFrame>, ModelError> {
+    pub(crate) fn finish(&mut self) -> Result<Vec<SseFrame>, ModelError> {
         if self.buffer.iter().all(u8::is_ascii_whitespace) {
             self.buffer.clear();
             return Ok(Vec::new());

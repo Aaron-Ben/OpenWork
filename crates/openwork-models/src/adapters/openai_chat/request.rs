@@ -348,4 +348,68 @@ mod tests {
         assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["stream_options"]["include_usage"], true);
     }
+
+    #[test]
+    fn maps_dialect_specific_request_fields() {
+        let kimi =
+            ModelRequest::text("kimi-k2.6", "answer").with_thinking(ThinkingConfig::disabled());
+        let mut kimi = kimi;
+        kimi.max_output_tokens = Some(256);
+        let kimi_body = encode_request(&kimi, true, OpenAiChatDialect::Kimi, &Map::new()).unwrap();
+        assert_eq!(kimi_body["max_completion_tokens"], 256);
+        assert_eq!(kimi_body["thinking"]["type"], "disabled");
+
+        let qwen =
+            ModelRequest::text("qwen-plus", "think").with_thinking(ThinkingConfig::enabled());
+        let qwen_body = encode_request(&qwen, true, OpenAiChatDialect::Qwen, &Map::new()).unwrap();
+        assert_eq!(qwen_body["enable_thinking"], true);
+
+        let mut glm =
+            ModelRequest::text("glm-5.1", "use a tool").with_thinking(ThinkingConfig::enabled());
+        glm.tools.push(ToolDefinition {
+            name: "read".to_string(),
+            description: "Read a file".to_string(),
+            parameters: json!({"type": "object", "properties": {}}),
+        });
+        let glm_body = encode_request(&glm, true, OpenAiChatDialect::Glm, &Map::new()).unwrap();
+        assert_eq!(glm_body["tool_stream"], true);
+    }
+
+    #[test]
+    fn maps_multimodal_content() {
+        let req = ModelRequest {
+            model: "qwen-vl-plus".to_string(),
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::text("describe this image"),
+                    ContentBlock::image_url("https://example.com/image.png", "image/png"),
+                ],
+            }],
+            temperature: None,
+            max_output_tokens: None,
+            thinking: None,
+            tools: Vec::new(),
+        };
+
+        let body = encode_request(&req, false, OpenAiChatDialect::Qwen, &Map::new()).unwrap();
+
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+    }
+
+    #[test]
+    fn appends_non_reserved_adapter_options() {
+        let extra = Map::from_iter([("reasoning_effort".to_string(), json!("high"))]);
+
+        let body = encode_request(
+            &ModelRequest::text("deepseek-reasoner", "think"),
+            false,
+            OpenAiChatDialect::Deepseek,
+            &extra,
+        )
+        .unwrap();
+
+        assert_eq!(body["reasoning_effort"], "high");
+    }
 }

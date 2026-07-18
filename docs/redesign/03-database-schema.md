@@ -71,7 +71,9 @@ trace_span_events
 
 - ID 使用应用生成的稳定 `TEXT`，允许保留当前带前缀的 ID；
 - 所有 ID 都校验 `btrim(id) <> ''`；
-- 时间统一使用 `TIMESTAMPTZ`；
+- 业务时间统一使用 UTC 的 `TIMESTAMP WITHOUT TIME ZONE`，写入时显式转换到 UTC；
+- API 返回时间时补回 `Z`，桌面端固定按 `Asia/Shanghai` 展示；
+- SQLx 自管的 `_sqlx_migrations.installed_on` 保持其内置类型，不纳入业务时间约定；
 - `created_at` 写入后不修改；
 - Repository 更新业务字段时必须同时更新 `updated_at`；
 - Turn/Message/Span 的顺序由所属 SessionActor 分配，并由唯一约束兜底。
@@ -108,8 +110,10 @@ CREATE TABLE provider_credentials (
     api_key_encrypted  TEXT NOT NULL,
     enabled            BOOLEAN NOT NULL DEFAULT TRUE,
     config             JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at         TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    updated_at         TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
 
     CONSTRAINT provider_credentials_id_not_blank
         CHECK (btrim(provider_id) <> ''),
@@ -141,8 +145,10 @@ CREATE TABLE models (
     credential_ref      TEXT,
     enabled             BOOLEAN NOT NULL DEFAULT TRUE,
     config              JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    updated_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
 
     CONSTRAINT models_id_not_blank
         CHECK (btrim(id) <> ''),
@@ -190,9 +196,11 @@ CREATE TABLE sessions (
     working_directory   TEXT NOT NULL,
     default_model_id    TEXT REFERENCES models(id) ON DELETE SET NULL,
     status              TEXT NOT NULL DEFAULT 'active',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_turn_at        TIMESTAMPTZ,
+    created_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    updated_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    last_turn_at        TIMESTAMP WITHOUT TIME ZONE,
 
     CONSTRAINT sessions_id_not_blank
         CHECK (btrim(id) <> ''),
@@ -233,11 +241,20 @@ CREATE TABLE turns (
     input_tokens            BIGINT,
     output_tokens           BIGINT,
     cached_input_tokens     BIGINT,
+    reasoning_tokens        BIGINT,
+    total_tokens            BIGINT GENERATED ALWAYS AS (
+        CASE
+            WHEN input_tokens IS NULL OR output_tokens IS NULL THEN NULL
+            ELSE input_tokens + output_tokens
+        END
+    ) STORED,
     error_code              TEXT,
     error_message           TEXT,
-    started_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    ended_at                TIMESTAMPTZ,
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at              TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    ended_at                TIMESTAMP WITHOUT TIME ZONE,
+    updated_at              TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
 
     CONSTRAINT turns_id_not_blank
         CHECK (btrim(id) <> ''),
@@ -255,7 +272,8 @@ CREATE TABLE turns (
         CHECK (
             (input_tokens IS NULL OR input_tokens >= 0) AND
             (output_tokens IS NULL OR output_tokens >= 0) AND
-            (cached_input_tokens IS NULL OR cached_input_tokens >= 0)
+            (cached_input_tokens IS NULL OR cached_input_tokens >= 0) AND
+            (reasoning_tokens IS NULL OR reasoning_tokens >= 0)
         ),
     CONSTRAINT turns_terminal_time_valid
         CHECK (
@@ -307,7 +325,8 @@ CREATE TABLE messages (
     content             JSONB NOT NULL,
     provider_call_id    TEXT,
     tool_name           TEXT,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
 
     CONSTRAINT messages_turn_session_fk
         FOREIGN KEY (turn_id, session_id)
@@ -395,9 +414,16 @@ CREATE TABLE trace_spans (
     input_tokens            BIGINT,
     output_tokens           BIGINT,
     cached_input_tokens     BIGINT,
+    reasoning_tokens        BIGINT,
+    total_tokens            BIGINT GENERATED ALWAYS AS (
+        CASE
+            WHEN input_tokens IS NULL OR output_tokens IS NULL THEN NULL
+            ELSE input_tokens + output_tokens
+        END
+    ) STORED,
     permission_wait_ms      BIGINT,
-    started_at              TIMESTAMPTZ NOT NULL,
-    ended_at                TIMESTAMPTZ,
+    started_at              TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    ended_at                TIMESTAMP WITHOUT TIME ZONE,
     error_code              TEXT,
     error_message           TEXT,
     attributes              JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -441,6 +467,7 @@ CREATE TABLE trace_spans (
             (input_tokens IS NULL OR input_tokens >= 0) AND
             (output_tokens IS NULL OR output_tokens >= 0) AND
             (cached_input_tokens IS NULL OR cached_input_tokens >= 0) AND
+            (reasoning_tokens IS NULL OR reasoning_tokens >= 0) AND
             (permission_wait_ms IS NULL OR permission_wait_ms >= 0)
         ),
     CONSTRAINT trace_spans_attributes_is_object
@@ -539,15 +566,15 @@ Core 完成 Migration 后、接受新 Turn 前执行：
 ```sql
 UPDATE turns
 SET status = 'interrupted',
-    ended_at = COALESCE(ended_at, now()),
-    updated_at = now(),
+    ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
     error_code = COALESCE(error_code, 'process_interrupted'),
     error_message = COALESCE(error_message, 'process exited before turn completion')
 WHERE status = 'running';
 
 UPDATE trace_spans
 SET status = 'outcome_unknown',
-    ended_at = COALESCE(ended_at, now()),
+    ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
     error_code = COALESCE(error_code, 'process_interrupted')
 WHERE status = 'running';
 ```

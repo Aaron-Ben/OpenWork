@@ -110,6 +110,8 @@ pub struct TraceSpanRecord {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub cached_input_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
     pub permission_wait_ms: Option<i64>,
     pub started_at: String,
     pub ended_at: Option<String>,
@@ -147,7 +149,7 @@ impl PostgresStorage {
             .acquire_timeout(Duration::from_secs(10))
             .after_connect(|connection, _metadata| {
                 Box::pin(async move {
-                    connection.execute("SET TIME ZONE 'Asia/Shanghai'").await?;
+                    connection.execute("SET TIME ZONE 'UTC'").await?;
                     Ok(())
                 })
             })
@@ -184,7 +186,7 @@ impl PostgresStorage {
                  credential_ref = EXCLUDED.credential_ref,
                  enabled = EXCLUDED.enabled,
                  config = EXCLUDED.config,
-                 updated_at = now()",
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
         )
         .bind(&input.id)
         .bind(&input.display_name)
@@ -261,12 +263,15 @@ impl PostgresStorage {
                 "session title must not be blank".to_string(),
             ));
         }
-        let result =
-            sqlx::query("UPDATE sessions SET title = $2, updated_at = now() WHERE id = $1")
-                .bind(session_id.as_str())
-                .bind(title.trim())
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query(
+            "UPDATE sessions
+                 SET title = $2, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+                 WHERE id = $1",
+        )
+        .bind(session_id.as_str())
+        .bind(title.trim())
+        .execute(&self.pool)
+        .await?;
         if result.rows_affected() == 0 {
             return Err(StorageError::SessionNotFound(session_id.to_string()));
         }
@@ -314,7 +319,8 @@ impl PostgresStorage {
         session_id: &SessionId,
     ) -> Result<Vec<StoredMessageRecord>, StorageError> {
         let rows: Vec<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
-            "SELECT id, turn_id, sequence, role, content, created_at::TEXT
+            "SELECT id, turn_id, sequence, role, content,
+                    to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at
              FROM messages
              WHERE session_id = $1
              ORDER BY sequence",
@@ -340,7 +346,8 @@ impl PostgresStorage {
         let mut transaction = self.pool.begin().await?;
         sqlx::query(
             "UPDATE trace_spans
-             SET status = 'outcome_unknown', ended_at = now(),
+             SET status = 'outcome_unknown',
+                 ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
                  error_code = COALESCE(error_code, 'process_restart'),
                  error_message = COALESCE(error_message, 'process restarted before span completed')
              WHERE status = 'running'",
@@ -349,7 +356,9 @@ impl PostgresStorage {
         .await?;
         let result = sqlx::query(
             "UPDATE turns
-             SET status = 'interrupted', ended_at = now(), updated_at = now(),
+             SET status = 'interrupted',
+                 ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
                  error_code = COALESCE(error_code, 'process_restart'),
                  error_message = COALESCE(error_message, 'process restarted before turn completed')
              WHERE status = 'running'",
@@ -375,8 +384,10 @@ impl PostgresStorage {
                     turns.sequence AS turn_sequence, turns.status,
                     turns.resolved_model_name, turns.model_call_count,
                     turns.tool_call_count, COUNT(spans.id)::BIGINT AS span_count,
-                    turns.started_at::TEXT AS started_at,
-                    turns.ended_at::TEXT AS ended_at
+                    to_char(turns.started_at,
+                        'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS started_at,
+                    to_char(turns.ended_at,
+                        'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS ended_at
              FROM turns turns
              LEFT JOIN trace_spans spans ON spans.turn_id = turns.id
              WHERE ($1::TEXT IS NULL OR turns.session_id = $1)
@@ -397,8 +408,13 @@ impl PostgresStorage {
                     model_id, resolved_model_name, provider_request_id,
                     provider_call_id, requested_tool_name, resolved_tool_name,
                     attempt_count, input_tokens, output_tokens, cached_input_tokens,
-                    permission_wait_ms, started_at::TEXT AS started_at,
-                    ended_at::TEXT AS ended_at, error_code, error_message, attributes
+                    reasoning_tokens, total_tokens,
+                    permission_wait_ms,
+                    to_char(started_at,
+                        'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS started_at,
+                    to_char(ended_at,
+                        'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS ended_at,
+                    error_code, error_message, attributes
              FROM trace_spans
              WHERE turn_id = $1
              ORDER BY sequence, id",
@@ -411,8 +427,9 @@ impl PostgresStorage {
 }
 
 const SESSION_COLUMNS: &str = "SELECT id, title, working_directory, default_model_id, status,
-            created_at::TEXT AS created_at, updated_at::TEXT AS updated_at,
-            last_turn_at::TEXT AS last_turn_at
+            to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at,
+            to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at,
+            to_char(last_turn_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS last_turn_at
      FROM sessions";
 
 #[async_trait]
@@ -437,7 +454,8 @@ impl SessionStorage for PostgresStorage {
     ) -> Result<(), String> {
         let result = sqlx::query(
             "UPDATE turns
-             SET model_call_count = GREATEST(model_call_count, $2), updated_at = now()
+             SET model_call_count = GREATEST(model_call_count, $2),
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
              WHERE id = $1 AND status = 'running'",
         )
         .bind(turn_id.as_str())
@@ -519,10 +537,15 @@ impl PostgresStorage {
             None,
         )
         .await?;
-        sqlx::query("UPDATE sessions SET updated_at = now(), last_turn_at = now() WHERE id = $1")
-            .bind(session_id.as_str())
-            .execute(&mut *transaction)
-            .await?;
+        sqlx::query(
+            "UPDATE sessions
+             SET updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+                 last_turn_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+             WHERE id = $1",
+        )
+        .bind(session_id.as_str())
+        .execute(&mut *transaction)
+        .await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -550,6 +573,7 @@ impl PostgresStorage {
         let output_tokens = optional_token(usage.and_then(|value| value.output_tokens))?;
         let cached_input_tokens =
             optional_token(usage.and_then(|value| value.cached_input_tokens))?;
+        let reasoning_tokens = optional_token(usage.and_then(|value| value.reasoning_tokens))?;
 
         let mut transaction = self.pool.begin().await?;
         let session_id = lock_turn(&mut transaction, turn_id).await?;
@@ -572,7 +596,9 @@ impl PostgresStorage {
                      ELSE COALESCE(output_tokens, 0) + $4 END,
                  cached_input_tokens = CASE WHEN $5::BIGINT IS NULL THEN cached_input_tokens
                      ELSE COALESCE(cached_input_tokens, 0) + $5 END,
-                 updated_at = now()
+                 reasoning_tokens = CASE WHEN $6::BIGINT IS NULL THEN reasoning_tokens
+                     ELSE COALESCE(reasoning_tokens, 0) + $6 END,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
              WHERE id = $1",
         )
         .bind(turn_id.as_str())
@@ -580,6 +606,7 @@ impl PostgresStorage {
         .bind(input_tokens)
         .bind(output_tokens)
         .bind(cached_input_tokens)
+        .bind(reasoning_tokens)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
@@ -640,7 +667,8 @@ impl PostgresStorage {
         let result = sqlx::query(
             "UPDATE turns
              SET status = $2, error_code = $3, error_message = $4,
-                 ended_at = now(), updated_at = now()
+                 ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
              WHERE id = $1 AND status = 'running'",
         )
         .bind(turn_id.as_str())

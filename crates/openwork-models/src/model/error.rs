@@ -105,16 +105,6 @@ impl ModelError {
         }
     }
 
-    pub fn authentication() -> Self {
-        Self::new(
-            ModelErrorCode::Authentication,
-            ModelFailurePhase::RequestEncode,
-            DeliveryState::NotSent,
-            RetryHint::Never,
-            "provider authentication failed",
-        )
-    }
-
     pub fn invalid_request(message: impl Into<String>) -> Self {
         Self::new(
             ModelErrorCode::InvalidRequest,
@@ -182,6 +172,3 @@ impl ModelError {
         self.provider_request_id.as_deref()
     }
 }
-
-/// 迁移期兼容名称。新代码应使用 `ModelError`。
-pub type ProviderError = ModelError;

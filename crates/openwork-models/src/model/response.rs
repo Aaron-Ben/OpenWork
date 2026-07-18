@@ -48,8 +48,6 @@ pub struct ModelResponse {
     pub usage: Option<TokenUsage>,
 }
 
-pub type GenerateResponse = ModelResponse;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,

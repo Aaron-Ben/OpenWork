@@ -5,19 +5,11 @@ use serde_json::Value;
 use std::time::SystemTime;
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
 
+pub(crate) use super::error_dialect::ErrorDialect;
+
 const MAX_ERROR_BODY_CHARS: usize = 4_096;
 const MAX_ERROR_BODY_BYTES: usize = 4_096;
 const MAX_ERROR_CODE_CHARS: usize = 256;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ErrorDialect {
-    OpenAi,
-    Anthropic,
-    DeepSeek,
-    Kimi,
-    Qwen,
-    Glm,
-}
 
 pub fn map_reqwest_error(error: reqwest::Error) -> ModelError {
     if error.is_timeout() {
@@ -140,7 +132,7 @@ pub(crate) fn map_stream_error_event_for(
         .and_then(Value::as_str)
         .map(truncate_code);
     let (kind, retry_hint) =
-        classify_dialect(dialect, StatusCode::OK, provider_code.as_deref(), None)
+        super::error_dialect::classify(dialect, StatusCode::OK, provider_code.as_deref(), None)
             .unwrap_or_else(|| classify_stream_signal(&signal));
 
     let mut error = ModelError::http(
@@ -201,7 +193,7 @@ fn classify_http_error_for_dialect(
     .to_ascii_lowercase();
 
     let (kind, retry_hint) =
-        classify_dialect(dialect, status, provider_code.as_deref(), retry_after_ms)
+        super::error_dialect::classify(dialect, status, provider_code.as_deref(), retry_after_ms)
             .unwrap_or_else(|| classify_status(status, &signal, retry_after_ms));
     ModelError::http(
         kind,
@@ -215,40 +207,6 @@ fn classify_http_error_for_dialect(
         provider_request_id,
         retry_hint,
     )
-}
-
-fn classify_dialect(
-    dialect: ErrorDialect,
-    status: StatusCode,
-    code: Option<&str>,
-    retry_after_ms: Option<u64>,
-) -> Option<(ModelErrorCode, RetryHint)> {
-    match dialect {
-        ErrorDialect::OpenAi => {
-            crate::adapters::openai_responses::error::classify(status, code, retry_after_ms)
-        }
-        ErrorDialect::Anthropic => {
-            crate::adapters::anthropic_messages::error::classify(status, code, retry_after_ms)
-        }
-        ErrorDialect::DeepSeek => crate::adapters::openai_chat::dialect::deepseek::classify_error(
-            status,
-            code,
-            retry_after_ms,
-        ),
-        ErrorDialect::Kimi => crate::adapters::openai_chat::dialect::kimi::classify_error(
-            status,
-            code,
-            retry_after_ms,
-        ),
-        ErrorDialect::Qwen => crate::adapters::openai_chat::dialect::qwen::classify_error(
-            status,
-            code,
-            retry_after_ms,
-        ),
-        ErrorDialect::Glm => {
-            crate::adapters::openai_chat::dialect::glm::classify_error(status, code, retry_after_ms)
-        }
-    }
 }
 
 fn classify_status(

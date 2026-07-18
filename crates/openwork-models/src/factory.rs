@@ -1,13 +1,11 @@
 use crate::{
     model::{Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest, Role},
-    provider::{ProviderKind, ProviderRuntimeConfig},
+    provider::ProviderRuntimeConfig,
 };
 use futures_util::StreamExt;
 
-use crate::{
-    AnthropicProvider, DeepSeekProvider, GlmProvider, HttpProviderConfig, HttpTransport,
-    KimiProvider, OpenAiProvider, QwenProvider, RetryPolicy, RetryingModelPort,
-};
+use crate::adapters::ProviderAdapter;
+use crate::{HttpProviderConfig, HttpTransport, RetryPolicy, RetryingModelPort};
 
 /// 在应用生命周期内持有共享 HTTP Transport，并为每份运行时配置组装 Adapter。
 #[derive(Debug, Clone)]
@@ -39,39 +37,12 @@ impl ProviderFactory {
 
     fn build_adapter(&self, config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
         let http = HttpProviderConfig::new(&config.profile.base_url, config.credential.expose());
-        let transport = self.transport.clone();
-        match config.profile.kind {
-            ProviderKind::Openai => Box::new(OpenAiProvider::new(http, transport)),
-            ProviderKind::Glm => {
-                let mut provider = GlmProvider::new(http, transport);
-                if let Some(extra_body) = config.adapter_options.as_ref() {
-                    provider = provider.with_extra_body(extra_body.clone());
-                }
-                Box::new(provider)
-            }
-            ProviderKind::Kimi => {
-                let mut provider = KimiProvider::new(http, transport);
-                if let Some(extra_body) = config.adapter_options.as_ref() {
-                    provider = provider.with_extra_body(extra_body.clone());
-                }
-                Box::new(provider)
-            }
-            ProviderKind::Deepseek => {
-                let mut provider = DeepSeekProvider::new(http, transport);
-                if let Some(extra_body) = config.adapter_options.as_ref() {
-                    provider = provider.with_extra_body(extra_body.clone());
-                }
-                Box::new(provider)
-            }
-            ProviderKind::Qwen => {
-                let mut provider = QwenProvider::new(http, transport);
-                if let Some(extra_body) = config.adapter_options.as_ref() {
-                    provider = provider.with_extra_body(extra_body.clone());
-                }
-                Box::new(provider)
-            }
-            ProviderKind::Anthropic => Box::new(AnthropicProvider::new(http, transport)),
-        }
+        Box::new(ProviderAdapter::new(
+            http,
+            self.transport.clone(),
+            config.profile.kind.driver(),
+            config.adapter_options.clone(),
+        ))
     }
 
     /// 发出最小生成请求验证配置。UI 如何呈现结果不属于 Provider Adapter。
@@ -114,7 +85,7 @@ impl Default for ProviderFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ApiCredential, ModelTier, ProviderModel, ProviderProfile};
+    use crate::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel, ProviderProfile};
 
     fn sample_config(kind: ProviderKind) -> ProviderRuntimeConfig {
         ProviderRuntimeConfig {
