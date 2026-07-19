@@ -40,6 +40,12 @@ export interface ToolResultBlock {
   name: string
   output: ContentBlock[]
   state: ToolResultState
+  artifacts?: ToolResultArtifact[]
+}
+
+export interface ToolResultArtifact {
+  kind: string
+  payload: unknown
 }
 
 export interface ProviderOpaqueBlock {

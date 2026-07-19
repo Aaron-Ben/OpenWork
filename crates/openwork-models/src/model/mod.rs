@@ -11,7 +11,8 @@ pub use error::{DeliveryState, ModelError, ModelErrorCode, ModelFailurePhase, Re
 pub use event::ModelEvent;
 pub use message::{
     Base64Source, ContentBlock, DataBlock, DataSource, Message, ProviderOpaqueBlock, Role,
-    TextBlock, ThinkingBlock, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
+    TextBlock, ThinkingBlock, ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultBlock,
+    ToolResultState,
 };
 pub use port::{
     ModelCallOptions, ModelPort, ModelStream, ModelTransportObserver, ModelTransportSignal,

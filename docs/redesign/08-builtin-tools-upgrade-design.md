@@ -1,8 +1,8 @@
 # OpenWork 内建工具升级设计
 
-> 状态：阶段 A，以及本次范围内的流式遍历、分页参数、Tool Progress 已实施，当前代码未提交；Bash 操作系统级文件/网络沙箱明确暂缓。
+> 状态：阶段 A、流式遍历、分页参数、Tool Progress，以及 `write`/`edit` 的文件 Diff、Review、Undo 已实施，当前代码未提交；Bash 操作系统级文件/网络沙箱明确暂缓。
 >
-> 日期：2026-07-18；2026-07-19 补充 `FileWalk` 暂缓边界。
+> 日期：2026-07-18；2026-07-19 补充 `FileWalk` 暂缓边界和文件变更展示、撤销链路。
 >
 > 范围：只升级现有 `read`、`write`、`edit`、`grep`、`glob`、`list`、`bash` 七个工具；不新增工具。
 >
@@ -14,9 +14,9 @@ OpenWork 保留现有七个内建工具及其稳定 ID，不照搬 `grok-build`�
 
 1. **P0 安全与资源边界**：统一 canonical path 与 symlink 防护、原子写入、有界 Bash 输出、明确进程退出语义和网络隔离边界；
 2. **P1 大目录与大文件可用性**：有界读取、流式遍历、及时取消、相对路径匹配、结果上限和二进制文件处理；
-3. **P2 可观测性与结果表达**：内部结构化结果、可选进度通道、分页和更明确的文件类型。
+3. **P2 可观测性与结果表达**：内部结构化结果、可选进度通道、分页、文件 Diff 和更明确的文件类型。
 
-阶段 A 不修改公开工具 Schema。本次新增的分页和结果上限参数均可省略，因此旧调用格式仍可反序列化；Tool Progress 增加了 Core Live Update 和桌面端实时展示，但不修改 Conversation 或数据库。
+阶段 A 不修改公开工具 Schema。本次新增的分页和结果上限参数均可省略，因此旧调用格式仍可反序列化。Tool Progress 只增加 Core Live Update 和桌面端实时展示，不修改 Conversation 或数据库；文件变更 Artifact 则随既有 ToolResult 写入 `messages.content` JSONB，以支持会话重载后的 Review 与 Undo，但不增加表、列或 migration。
 
 ### 1.1 当前实施状态
 
@@ -36,8 +36,11 @@ OpenWork 保留现有七个内建工具及其稳定 ID，不照搬 `grok-build`�
 - `grep`、`glob` 的 glob 模式统一匹配搜索根目录下的相对路径，`grep` 对单文件采用 1 MiB 有界读取；
 - `ToolCallContext` 增加尽力而为的有界 Progress 发送器，Bash 分块报告 stdout/stderr，`grep`、`glob` 周期性报告扫描进度；
 - Core 将 Progress 转为 `tool_call_progress` Live Update，桌面端最多保留 32 KiB 运行中预览，并由最终 `ToolResult` 替换；
-- Session Update 契约版本由 1 升为 2；桌面端过渡期兼容读取版本 1 和 2，Session Snapshot 结构未变，仍为版本 1；
-- Progress 不进入 Conversation、Session runtime snapshot 或数据库，不新增表和 migration。
+- `write`、`edit` 在工具文本输出之外生成 `file_change` Artifact，包含准确的增删行数、三行上下文 Diff hunk、修改前后哈希和撤销所需的修改前文本；Artifact 不发送给模型；
+- Core 把 Artifact 随既有 ToolResult 持久化到 `messages.content` JSONB，桌面端据此展示单文件 Diff、多文件汇总、Review 和 Undo；
+- Undo 按变更的逆序执行：修改文件使用内容哈希和条件原子写恢复，创建文件在内容仍匹配时删除；检测到外部修改时拒绝撤销；
+- Session Update 契约版本由 2 升为 3；桌面端兼容读取版本 1、2、3。Session Snapshot 因运行中工具结构增加 Artifact 字段由版本 1 升为 2；
+- Progress 仍不进入 Conversation、Session runtime snapshot 或数据库；文件变更只复用既有 JSONB，不新增表和 migration。
 
 仍未实施的是 Bash 的操作系统级文件/网络沙箱、Shell 重定向强制权限检查，以及更丰富的目录项类型和跳过文件统计。源码已在 `builtins/process/bash.rs` 与 `backend/process.rs` 标注沙箱缺口；在真正的沙箱 Backend 出现前，不能声称 Restricted 模式已强制执行。
 
@@ -339,7 +342,7 @@ stdout 与 stderr 必须持续 drain，避免子进程因管道写满而阻塞�
 
 ### 7.1 内部结构化结果
 
-当前模型最终仍可接收文本，但工具内部不应只构造任意字符串。建议每个工具先生成结构化结果，再由统一 Formatter 转为模型文本：
+当前模型最终仍接收文本，但工具内部不应只构造任意字符串。Bash 已使用结构化结果；`write`、`edit` 还会在模型文本之外附加通用 `ToolResultArtifact`：
 
 ```rust
 pub struct BashResult {
@@ -351,7 +354,7 @@ pub struct BashResult {
 }
 ```
 
-这让测试可以断言字段语义，也为以后桌面端展示保留稳定入口。该改动是 Rust 内部实现，不要求数据库增加列。
+这让测试可以断言字段语义，也为桌面端展示保留稳定入口。模型适配器只序列化 ToolResult 的文本 `output`，不会把 Artifact 放进模型上下文或 Token 统计。该改动不要求数据库增加列。
 
 ### 7.2 可选进度通道
 
@@ -375,6 +378,20 @@ pub enum ToolProgress {
 - 桌面端把进度暂存在运行中工具输出，限制为最后 32 KiB，并由最终结果覆盖。
 
 因此，增加进度能力不需要数据库迁移；只有决定在 UI 中实时展示时才需要前端改动。
+
+### 7.3 文件变更 Artifact、Review 与 Undo
+
+`write`、`edit` 成功改变文本文件时生成 `kind = "file_change"` 的 Artifact。它与 Progress 的生命周期不同：
+
+- Artifact 是最终 ToolResult 的一部分，会通过 Live Update 到达桌面端，并随工具消息写入既有 `messages.content` JSONB；
+- Artifact 保存文件路径、变更 ID、创建/修改类型、准确增删行数、带三行上下文的 Diff hunk、前后 SHA-256，以及修改文件撤销所需的原内容；
+- 桌面端不重新读取当前磁盘来“猜” Diff，因此会话重载后仍能显示当时的准确变更；
+- Artifact 与模型可见文本分离，模型 Provider adapter 不会序列化它；
+- Undo 根据会话和变更 ID 从已持久化的 Artifact 恢复，并把同一 JSONB 中对应 Artifact 标记为 `undone = true`；
+- Undo 与同一会话的新 Turn 串行；文件哈希不匹配时返回冲突，不覆盖用户或外部进程后来写入的内容；
+- 同一批次对同一路径的多次变更按逆序撤销，因此“先创建、再编辑”最终会删除该文件。
+
+当前边界：这是 `write`/`edit` 的文本文件变更历史，不是 Git 工作区快照或任意文件系统事务。为了生成可持久化 Diff 和可撤销内容，覆盖目标也必须是可读取、UTF-8 且不超过 1 MiB 的文本文件。创建文件的“校验内容后删除”在通用文件系统 API 上仍存在外部进程于校验与 unlink 之间抢占的极小竞态；OpenWork 自身的同会话写入已通过写锁和会话操作锁串行。若文件系统已经撤销成功、随后 JSONB 状态写回失败，磁盘与会话标记可能短暂不一致，不能把这条链路描述成数据库与文件系统的单一原子事务。
 
 ## 8. 分阶段实施
 
@@ -411,6 +428,16 @@ pub enum ToolProgress {
 
 所有工具结果进一步统一为专用内部类型仍可继续推进，但不影响本次 Progress 契约完成。
 
+### 阶段 D：文件变更展示与撤销（本次范围已实施）
+
+1. `write`、`edit` 生成模型不可见的文件变更 Artifact；
+2. Core 在 Live Update 和既有工具消息 JSONB 中保留 Artifact；
+3. 桌面端展示准确 Diff、增删行数、多文件 Review 和 Undo；
+4. Undo 校验当前内容哈希，并按变更逆序恢复或删除文件；
+5. 撤销成功后更新既有消息 JSONB 的 `undone` 标记。
+
+该阶段修改前端和现有 JSONB 内容契约，但不修改工具参数 Schema、数据库表结构或 SQLx migration。
+
 ## 9. 测试与验收门槛
 
 ### 9.1 路径安全
@@ -446,6 +473,14 @@ pub enum ToolProgress {
 - Progress 不进入 Conversation，最终结果只写入一次；
 - 进度消费者断开不影响工具最终结果。
 
+### 9.5 文件变更与撤销
+
+- 创建、修改、文件末尾换行变化和相距较远的修改都产生可重建的准确 Diff；
+- 同一路径“创建后编辑”可按逆序完整撤销；
+- 撤销前发生外部写入时拒绝覆盖；
+- Artifact 能经过 Live Update、Session 重载和 JSONB 更新保持兼容；
+- 旧 ToolResult 没有 `artifacts` 字段时仍可反序列化。
+
 每个阶段至少通过 `cargo test -p openwork-tools`；影响 Session 调用链时，再运行 `cargo test -p openwork-core` 的工具调用、取消和权限相关测试。
 
 ## 10. 兼容性与系统影响
@@ -456,9 +491,10 @@ pub enum ToolProgress {
 | 阶段 B 可选参数 | 兼容扩展 | 不需要 | 不需要 | 旧调用格式有效；默认结果数量有界 |
 | 内部结构化结果 | 不变 | 不需要 | 不需要 | 模型文本格式需保持稳定或显式版本化 |
 | Tool Progress | 不变 | 已接入有界实时预览 | 不需要 | 不影响最终 ToolResult，不参与重同步快照 |
+| 文件 Diff、Review、Undo | 不变 | 已接入 | 复用 `messages.content` JSONB | 旧消息兼容；覆盖目标增加 UTF-8、1 MiB 和并发哈希校验 |
 | 操作系统级 Bash 沙箱 | 不变 | 不需要 | 不需要 | 部分过去可执行的越界副作用会被拒绝 |
 
-本设计没有表结构变更，也不新增 migration。只有未来决定把工具进度或额外结果字段持久化为查询事实时，才需要另行设计存储；当前不实施。
+本设计没有表结构变更，也不新增 migration。文件变更 Artifact 作为工具消息内容的一部分复用现有 JSONB；如果未来需要跨会话聚合、按文件查询或审计级不可变历史，才需要另行设计独立存储，当前不实施。
 
 ## 11. 明确暂不实施
 
@@ -471,6 +507,7 @@ pub enum ToolProgress {
 - 暂不实现 Bash 的操作系统级文件/网络沙箱；Restricted 目前仍是策略意图而非强制隔离；
 - 不为 Tool Progress 新建数据库表；
 - 不要求前端在阶段 A、B 同步修改。
+- 不把当前 Undo 扩展成 Git 工作区级快照、任意工具副作用回滚或跨数据库/文件系统的分布式事务。
 
 这些能力不是永久禁止，而是必须在出现明确产品需求、完整生命周期和可测试契约后单独设计。
 
@@ -481,6 +518,8 @@ pub enum ToolProgress {
 - 文件 Backend 会比直接调用 `tokio::fs` 更复杂；
 - canonical path 与跨平台 symlink 行为需要更多平台测试；
 - 原子写入和并发检测增加少量 I/O；
+- 持久化准确 Diff 与 Undo 原文会增加 `messages.content` JSONB 体积，最坏约为每次修改保留一份不超过 1 MiB 的修改前文本；
+- 文件系统操作和 JSONB 状态更新无法形成一个跨资源原子事务，失败处理需要显式报告结果边界；
 - 流式遍历改变 Backend 接口，需要同步调整 `grep` 与 `glob`；
 - 操作系统级 Bash 沙箱需要按 macOS、Linux 分别实现能力探测和降级策略。
 
@@ -509,5 +548,6 @@ pub enum ToolProgress {
 - Bash 输出内存与最终结果均有明确上限；
 - Bash 非零退出、timeout、取消和 Backend 故障语义可区分；
 - 网络限制的声明与真实 enforcement 一致；
-- 不增加工具数量，不修改数据库，不破坏现有七个工具调用；
+- 不增加工具数量，不修改数据库表结构，不破坏现有七个工具调用；
+- `write`、`edit` 的变更可准确展示并在无外部冲突时撤销；
 - 对应测试覆盖权限绕过、资源耗尽、并发写入和取消路径。

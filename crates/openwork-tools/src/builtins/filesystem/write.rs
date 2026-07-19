@@ -1,14 +1,18 @@
+use std::io;
+use std::path::Path;
+
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::policy::AccessKind;
 use crate::{
-    AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, TextToolOutput, Tool,
-    ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, Tool, ToolCallContext,
+    ToolExecutionError, ToolId, ToolResult, ToolRisk, ToolSessionContext,
 };
 
 use crate::context::PathIntent;
+use crate::file_change::build_file_change;
 
 const MAX_BYTES: usize = 1024 * 1024;
 
@@ -26,7 +30,7 @@ pub struct WriteTool;
 #[async_trait]
 impl Tool for WriteTool {
     type Input = WriteInput;
-    type Output = TextToolOutput;
+    type Output = ToolResult;
 
     fn id(&self) -> ToolId {
         ToolId::new_static("write")
@@ -43,9 +47,9 @@ impl Tool for WriteTool {
     async fn execute(
         &self,
         session: &ToolSessionContext,
-        _call: ToolCallContext,
+        call: ToolCallContext,
         input: WriteInput,
-    ) -> Result<TextToolOutput, ToolExecutionError> {
+    ) -> Result<ToolResult, ToolExecutionError> {
         if input.content.len() > MAX_BYTES {
             return Err(ToolExecutionError::invalid_arguments(format!(
                 "content too large: {} bytes (max {})",
@@ -69,16 +73,30 @@ impl Tool for WriteTool {
             .resolve_path(&input.path, AccessKind::Write, PathIntent::MayCreate)
             .await?;
         let _write_guard = session.lock_for_write(&resolved).await;
+        let before = match session
+            .filesystem
+            .read_to_string_limited(resolved.as_path(), MAX_BYTES)
+            .await
+        {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(ToolExecutionError::execution(format!(
+                    "failed to read existing text file {} before write: {error}",
+                    resolved.as_path().display()
+                )));
+            }
+        };
+        let condition = match &before {
+            Some(content) => AtomicWriteCondition::Matches(content.as_bytes().to_vec()),
+            None => AtomicWriteCondition::MustNotExist,
+        };
         let outcome = session
             .filesystem
-            .atomic_write(
-                resolved.as_path(),
-                input.content.as_bytes(),
-                AtomicWriteCondition::Any,
-            )
+            .atomic_write(resolved.as_path(), input.content.as_bytes(), condition)
             .await
             .map_err(|error| map_atomic_write_error(resolved.as_path(), error))?;
-        Ok(TextToolOutput::new(format!(
+        let message = format!(
             "{} {} bytes to {}",
             match outcome {
                 AtomicWriteOutcome::Created => "created",
@@ -87,7 +105,19 @@ impl Tool for WriteTool {
             },
             input.content.len(),
             resolved.as_path().display()
-        )))
+        );
+        let Some(change) = build_file_change(
+            call.call_id.as_str(),
+            Path::new(&input.path),
+            before.as_deref(),
+            &input.content,
+        ) else {
+            return Ok(ToolResult::succeeded(message));
+        };
+        let artifact = change.to_result_artifact().map_err(|error| {
+            ToolExecutionError::execution(format!("failed to encode file change: {error}"))
+        })?;
+        Ok(ToolResult::succeeded_with_artifact(message, artifact))
     }
 }
 

@@ -55,6 +55,11 @@ pub trait AsyncFileSystem: Send + Sync {
         content: &[u8],
         condition: AtomicWriteCondition,
     ) -> Result<AtomicWriteOutcome, AtomicWriteError>;
+    async fn remove_file_if_matches(
+        &self,
+        path: &Path,
+        expected: &[u8],
+    ) -> Result<(), AtomicWriteError>;
     async fn create_dir_all(&self, path: &Path) -> io::Result<()>;
     async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
     async fn is_symlink(&self, path: &Path) -> io::Result<bool>;

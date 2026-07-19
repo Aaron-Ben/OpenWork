@@ -4,6 +4,7 @@ mod backend;
 mod builtins;
 mod context;
 mod definition;
+mod file_change;
 mod invocation;
 pub mod policy;
 mod progress;
@@ -19,6 +20,10 @@ pub use backend::{
 pub use builtins::builtin_registry;
 pub use context::{ToolCallContext, ToolCallId, ToolSessionContext};
 pub use definition::{ToolDefinition, ToolId, ToolRisk};
+pub use file_change::{
+    FileChangeArtifact, FileChangeKind, FileChangeUndoError, FileDiffHunk, FileDiffLine,
+    FileDiffLineKind, UndoFileChangesResult, undo_file_changes,
+};
 pub use invocation::ToolInvocation;
 pub use policy::{
     AccessKind, FileSystemMode, FileSystemPermissions, NetworkMode, PermissionMode,

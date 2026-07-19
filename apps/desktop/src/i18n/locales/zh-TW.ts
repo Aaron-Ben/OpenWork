@@ -76,5 +76,9 @@ export const zhTW = {
     editedFileFallback: '編輯了檔案', readFile: '讀取 {{name}}', readFileFallback: '讀取了檔案',
     listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目錄', calledTool: '呼叫 {{name}}',
     summarySeparator: '、', stopped: '已停止', output: '輸出',
+    createdFile: '建立了檔案', editedOneFile: '編輯了檔案', editedFileCount: '編輯了 {{count}} 個檔案',
+    undo: '復原', undoing: '正在復原', undone: '已復原', undoFailed: '復原失敗：{{message}}',
+    review: '查看', reviewChanges: '查看檔案修改', closeReview: '關閉修改查看',
+    fileChangeCount: '共 {{count}} 個檔案', copyDiff: '複製 Diff',
   },
 } as const

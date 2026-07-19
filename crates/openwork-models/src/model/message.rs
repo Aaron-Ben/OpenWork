@@ -158,6 +158,15 @@ pub struct ToolResultBlock {
     pub name: String,
     pub output: Vec<ContentBlock>,
     pub state: ToolResultState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ToolResultArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolResultArtifact {
+    pub kind: String,
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,5 +188,32 @@ mod tests {
         let message = Message::assistant_with_thinking("answer", "reasoning");
         assert!(matches!(message.content[0], ContentBlock::Thinking(_)));
         assert!(matches!(message.content[1], ContentBlock::Text(_)));
+    }
+
+    #[test]
+    fn tool_result_artifacts_are_optional_and_round_trip() {
+        let legacy = serde_json::json!({
+            "id": "call-1",
+            "name": "write",
+            "output": [{"type": "text", "text": "created file"}],
+            "state": "success"
+        });
+        let legacy: ToolResultBlock = serde_json::from_value(legacy).expect("legacy result");
+        assert!(legacy.artifacts.is_empty());
+
+        let result = ToolResultBlock {
+            id: "call-2".to_string(),
+            name: "write".to_string(),
+            output: vec![ContentBlock::text("edited file")],
+            state: ToolResultState::Success,
+            artifacts: vec![ToolResultArtifact {
+                kind: "file_change".to_string(),
+                payload: serde_json::json!({"changeId": "change-2"}),
+            }],
+        };
+        let encoded = serde_json::to_value(&result).expect("serialize result");
+        let decoded: ToolResultBlock = serde_json::from_value(encoded).expect("deserialize result");
+
+        assert_eq!(decoded.artifacts, result.artifacts);
     }
 }

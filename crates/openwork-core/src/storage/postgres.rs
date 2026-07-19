@@ -342,6 +342,38 @@ impl PostgresStorage {
             .collect()
     }
 
+    pub async fn replace_message_contents(
+        &self,
+        session_id: &SessionId,
+        updates: &[(String, Vec<ContentBlock>)],
+    ) -> Result<(), StorageError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let mut transaction = self.pool.begin().await?;
+        lock_session(&mut transaction, session_id).await?;
+        for (message_id, content) in updates {
+            let encoded = serde_json::to_value(content)?;
+            let result = sqlx::query(
+                "UPDATE messages
+                 SET content = $3
+                 WHERE id = $1 AND session_id = $2 AND role = 'tool'",
+            )
+            .bind(message_id)
+            .bind(session_id.as_str())
+            .bind(encoded)
+            .execute(&mut *transaction)
+            .await?;
+            if result.rows_affected() != 1 {
+                return Err(StorageError::InvalidInput(format!(
+                    "tool message not found for content update: {message_id}"
+                )));
+            }
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     pub async fn mark_running_interrupted(&self) -> Result<u64, StorageError> {
         let mut transaction = self.pool.begin().await?;
         sqlx::query(

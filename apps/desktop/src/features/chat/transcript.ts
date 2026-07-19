@@ -53,6 +53,7 @@ function toolParts(runtime: SessionRuntimeView): ContentBlock[] {
         name: toolCall.name,
         output: [{ type: 'text', text: toolCall.output }],
         state: resultState(toolCall),
+        ...(toolCall.artifacts?.length ? { artifacts: toolCall.artifacts } : {}),
       })
     }
     return parts

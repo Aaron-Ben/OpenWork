@@ -46,6 +46,24 @@ impl AsyncFileSystem for LocalFileSystem {
         atomic_write(path, content, condition).await
     }
 
+    async fn remove_file_if_matches(
+        &self,
+        path: &Path,
+        expected: &[u8],
+    ) -> Result<(), AtomicWriteError> {
+        if !matches!(
+            compare_existing(path, expected).await?,
+            ExistingComparison::Matches
+        ) {
+            return Err(AtomicWriteError::Stale);
+        }
+        // The content check and unlink are the narrowest portable operation
+        // available here. Workspace write locks serialize OpenWork callers;
+        // an external process can still race this final unlink boundary.
+        tokio::fs::remove_file(path).await?;
+        Ok(())
+    }
+
     async fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         tokio::fs::create_dir_all(path).await
     }

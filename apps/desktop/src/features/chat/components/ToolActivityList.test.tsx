@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import type { ContentBlock } from '../../../type/parts'
-import { ToolActivityList, collectToolActivities } from './ToolActivityList'
+import {
+  ToolActivityList,
+  collectFileChanges,
+  collectToolActivities,
+} from './ToolActivityList'
 
 const parts: ContentBlock[] = [
   {
@@ -65,5 +69,67 @@ describe('ToolActivityList', () => {
 
     expect(markup).toContain('data-open-tool-trace="call-bash"')
     expect(markup).toContain('data-open-tool-trace="call-write"')
+  })
+
+  it('renders structured file changes with totals and review controls', () => {
+    const fileChangeParts: ContentBlock[] = [
+      {
+        type: 'tool_call',
+        id: 'call-edit',
+        name: 'edit',
+        input: JSON.stringify({ filePath: 'src/main.rs', oldString: 'old', newString: 'new' }),
+        state: 'finished',
+      },
+      {
+        type: 'tool_result',
+        id: 'call-edit',
+        name: 'edit',
+        output: [{ type: 'text', text: 'edited src/main.rs' }],
+        state: 'success',
+        artifacts: [{
+          kind: 'file_change',
+          payload: {
+            changeId: 'change-edit',
+            path: 'src/main.rs',
+            kind: 'modified',
+            additions: 2,
+            deletions: 1,
+            beforeHash: 'before',
+            afterHash: 'after',
+            undone: false,
+            hunks: [{
+              oldStart: 1,
+              oldLines: 2,
+              newStart: 1,
+              newLines: 3,
+              lines: [
+                { kind: 'context', oldLine: 1, newLine: 1, content: 'fn main() {' },
+                { kind: 'deletion', oldLine: 2, newLine: null, content: 'old' },
+                { kind: 'addition', oldLine: null, newLine: 2, content: 'new' },
+                { kind: 'addition', oldLine: null, newLine: 3, content: '}' },
+              ],
+            }],
+          },
+        }],
+      },
+    ]
+    const activities = collectToolActivities(fileChangeParts)
+    const changes = collectFileChanges(activities)
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={fileChangeParts} onUndoFileChanges={async () => undefined} />,
+    )
+
+    expect(changes).toHaveLength(1)
+    expect(changes[0]).toMatchObject({
+      changeId: 'change-edit',
+      additions: 2,
+      deletions: 1,
+    })
+    expect(markup).toContain('data-file-change-summary="true"')
+    expect(markup).toContain('src/main.rs')
+    expect(markup).toContain('+2')
+    expect(markup).toContain('-1')
+    expect(markup).toContain('data-file-change-review="true"')
+    expect(markup).toContain('data-file-change-undo="true"')
   })
 })

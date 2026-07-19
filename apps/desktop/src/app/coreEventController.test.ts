@@ -10,7 +10,7 @@ import {
 
 function envelope(sequence: number, delta: string): RuntimeSessionUpdateEnvelope {
   return {
-    version: 2,
+    version: 3,
     sessionId: 'session-1',
     turnId: 'turn-1',
     sequence,
@@ -107,13 +107,13 @@ describe('coreEventController', () => {
     }
     vi.mocked(deps.loadSnapshot).mockResolvedValue(snapshot)
 
-    await processSessionUpdate({ ...envelope(1, 'ignored'), version: 3 }, deps)
+    await processSessionUpdate({ ...envelope(1, 'ignored'), version: 4 }, deps)
 
     expect(deps.replaceSnapshot).toHaveBeenCalledWith(snapshot)
     expect(deps.apply).not.toHaveBeenCalled()
     expect(deps.markSyncFailed).toHaveBeenLastCalledWith(
       'session-1',
-      'Unsupported session update version: 3',
+      'Unsupported session update version: 4',
     )
   })
 })

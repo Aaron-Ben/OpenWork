@@ -129,5 +129,9 @@ export const zhCN = {
     editedFileFallback: '编辑了文件', readFile: '读取 {{name}}', readFileFallback: '读取了文件',
     listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目录', calledTool: '调用 {{name}}',
     summarySeparator: '、', stopped: '已停止', output: '输出',
+    createdFile: '创建了文件', editedOneFile: '编辑了文件', editedFileCount: '编辑了 {{count}} 个文件',
+    undo: '撤销', undoing: '正在撤销', undone: '已撤销', undoFailed: '撤销失败：{{message}}',
+    review: '查看', reviewChanges: '查看文件修改', closeReview: '关闭修改查看',
+    fileChangeCount: '共 {{count}} 个文件', copyDiff: '复制 Diff',
   },
 } as const

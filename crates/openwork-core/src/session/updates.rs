@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use openwork_models::model::ToolResultArtifact;
+
 use super::{
     ClientRequestId, PermissionDecision, PermissionRequest, SessionId, ToolCallId, TurnId,
     TurnOutcome,
@@ -25,6 +27,8 @@ pub struct LiveToolCall {
     pub status: String,
     pub output: Option<String>,
     pub is_error: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ToolResultArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +110,8 @@ pub enum SessionUpdate {
         status: String,
         output: String,
         is_error: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        artifacts: Vec<ToolResultArtifact>,
     },
     PermissionRequested {
         request: PermissionRequest,

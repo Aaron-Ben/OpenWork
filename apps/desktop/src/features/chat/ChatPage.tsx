@@ -13,6 +13,7 @@ import { ToolActivityList } from './components/ToolActivityList'
 import { UserMessage } from './components/UserMessage'
 import { selectDefaultModel, useModelStore } from '../models/modelStore'
 import type { RuntimeStoredMessage } from '../../bridge/compat'
+import { coreCommands } from '../../bridge/commands'
 import { TurnTraceDrawer } from '../traces/components/TurnTraceDrawer'
 import { useSessionStore } from '../sessions/sessionStore'
 import { EMPTY_RUNTIME_VIEW, useRuntimeStore } from './runtimeStore'
@@ -30,6 +31,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const runtime = useRuntimeStore((state) => sessionId ? state.bySession[sessionId] ?? EMPTY_RUNTIME_VIEW : EMPTY_RUNTIME_VIEW)
   const session = useSessionStore((state) => sessionId ? state.summaries[sessionId] : undefined)
   const sessionError = useSessionStore((state) => state.error)
+  const reloadSession = useSessionStore((state) => state.reload)
   const providers = useModelStore((state) => state.providers)
   const hasAvailableModel = selectDefaultModel(providers) !== null
   const { startTurn, cancelTurn } = useTurnActions(sessionId)
@@ -62,6 +64,13 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     if (!accepted) setDraft(text)
   }
 
+  async function undoFileChanges(changeIds: string[]) {
+    if (!sessionId) return
+    await coreCommands.undoFileChanges(sessionId, changeIds)
+    const reloaded = await reloadSession(sessionId)
+    if (!reloaded) throw new Error('File changes were undone, but the conversation could not be refreshed')
+  }
+
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="relative min-h-0">
@@ -86,13 +95,18 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                     {message.role === 'user' ? (
                       <UserMessage parts={message.parts} />
                     ) : message.role === 'tool' ? (
-                      <ToolActivityList parts={message.parts} onOpenTrace={openTrace} />
+                      <ToolActivityList
+                        parts={message.parts}
+                        onOpenTrace={openTrace}
+                        onUndoFileChanges={undoFileChanges}
+                      />
                     ) : (
                       <AssistantMessage
                         parts={message.parts}
                         model={message.model}
                         isStreaming={message.isStreaming}
                         onOpenTrace={openTrace}
+                        onUndoFileChanges={undoFileChanges}
                       />
                     )}
                   </div>

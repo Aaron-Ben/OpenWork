@@ -16,7 +16,18 @@ import {
   Wrench,
 } from 'lucide-react'
 
-import { extractText, type ContentBlock, type ToolResultState } from '../../../type/parts'
+import {
+  extractText,
+  type ContentBlock,
+  type ToolResultArtifact,
+  type ToolResultState,
+} from '../../../type/parts'
+import {
+  FileChangeCard,
+  type FileChangeView,
+  type FileDiffHunk,
+  type FileDiffLine,
+} from './FileChangeCard'
 
 type ActivityState = ToolResultState | 'pending' | 'submitted' | 'finished'
 
@@ -28,16 +39,19 @@ export interface ToolActivity {
   summary: string
   output: string
   state: ActivityState
+  artifacts: ToolResultArtifact[]
 }
 
 interface ToolActivityListProps {
   parts: ContentBlock[]
   onOpenTrace?: (providerToolCallId: string) => void
+  onUndoFileChanges?: (changeIds: string[]) => Promise<void>
 }
 
 const TOOL_ICONS: Record<string, typeof Terminal> = {
   read: FileText,
   write: Pencil,
+  edit: Pencil,
   list: Folder,
   bash: Terminal,
 }
@@ -59,6 +73,7 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
         summary: summarize(part.name, input),
         output: existing?.output ?? '',
         state: existing?.state ?? part.state,
+        artifacts: existing?.artifacts ?? [],
       })
       continue
     }
@@ -74,6 +89,7 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
         summary: existing?.summary ?? '',
         output: extractText(part.output),
         state: part.state,
+        artifacts: part.artifacts ?? [],
       })
     }
   }
@@ -84,60 +100,90 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
   })
 }
 
+export function collectFileChanges(activities: ToolActivity[]): FileChangeView[] {
+  return activities.flatMap((activity) =>
+    activity.artifacts.flatMap((artifact) => {
+      const change = parseFileChange(artifact)
+      return change ? [change] : []
+    }),
+  )
+}
+
 export const ToolActivityList = memo(function ToolActivityList({
   parts,
   onOpenTrace,
+  onUndoFileChanges,
 }: ToolActivityListProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(true)
-  const activities = useMemo(() => collectToolActivities(parts), [parts])
+  const allActivities = useMemo(() => collectToolActivities(parts), [parts])
+  const fileChanges = useMemo(() => collectFileChanges(allActivities), [allActivities])
+  const fileActivityIds = useMemo(
+    () => new Set(
+      allActivities
+        .filter((activity) => collectFileChanges([activity]).length > 0)
+        .map((activity) => activity.id),
+    ),
+    [allActivities],
+  )
+  const activities = useMemo(
+    () => allActivities.filter((activity) => !fileActivityIds.has(activity.id)),
+    [allActivities, fileActivityIds],
+  )
 
-  if (activities.length === 0) return null
+  if (allActivities.length === 0) return null
 
-  const SummaryIcon = activities.some((activity) => activity.name === 'write') ? Pencil : Wrench
+  const SummaryIcon = activities.some((activity) => activity.name === 'write' || activity.name === 'edit') ? Pencil : Wrench
   const summary = activitySummary(activities, (key, options) => t(key, options))
 
   return (
-    <div data-tool-activity-list="true" className="w-full py-1 text-sm text-ink-soft">
-      <button
-        type="button"
-        data-tool-activity-summary="true"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-        className="group/summary flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-paper-hover"
-      >
-        <SummaryIcon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
-        <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">{summary}</span>
-        <ChevronDown
-          size={15}
-          className={`shrink-0 text-ink-faint transition-transform duration-200 ${
-            expanded ? 'rotate-0' : '-rotate-90'
-          }`}
-        />
-      </button>
-
-      <AnimatePresence initial={false}>
-        {expanded ? (
-          <motion.div
-            key="tool-activities"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="overflow-hidden"
+    <div data-tool-activity-list="true" className="w-full space-y-2 py-1 text-sm text-ink-soft">
+      {fileChanges.length > 0 ? (
+        <FileChangeCard changes={fileChanges} onUndoFileChanges={onUndoFileChanges} />
+      ) : null}
+      {activities.length > 0 ? (
+        <>
+          <button
+            type="button"
+            data-tool-activity-summary="true"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+            className="group/summary flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-paper-hover"
           >
-            <div className="space-y-0.5 pt-0.5">
-              {activities.map((activity) => (
-                <ToolActivityRow
-                  key={activity.id}
-                  activity={activity}
-                  onOpenTrace={onOpenTrace}
-                />
-              ))}
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+            <SummaryIcon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
+            <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">{summary}</span>
+            <ChevronDown
+              size={15}
+              className={`shrink-0 text-ink-faint transition-transform duration-200 ${
+                expanded ? 'rotate-0' : '-rotate-90'
+              }`}
+            />
+          </button>
+
+          <AnimatePresence initial={false}>
+            {expanded ? (
+              <motion.div
+                key="tool-activities"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="space-y-0.5 pt-0.5">
+                  {activities.map((activity) => (
+                    <ToolActivityRow
+                      key={activity.id}
+                      activity={activity}
+                      onOpenTrace={onOpenTrace}
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </>
+      ) : null}
     </div>
   )
 })
@@ -275,6 +321,7 @@ function summarize(toolName: string, input: Record<string, unknown> | null): str
   if (!input) return ''
   if (toolName === 'bash' && typeof input.command === 'string') return input.command
   if (typeof input.path === 'string') return input.path
+  if (typeof input.filePath === 'string') return input.filePath
   return ''
 }
 
@@ -293,6 +340,7 @@ function activityLabel(
         ? translate('tool.ranCommand', { command: target })
         : translate('tool.ranCommandFallback')
     case 'write':
+    case 'edit':
       return target
         ? translate('tool.editedFile', { name: target })
         : translate('tool.editedFileFallback')
@@ -316,13 +364,16 @@ function activitySummary(
   const categories: string[] = []
   const seen = new Set<string>()
   for (const activity of activities) {
-    const category = ['write', 'read', 'list', 'bash'].includes(activity.name)
-      ? activity.name
+    const category = activity.name === 'edit'
+      ? 'write'
+      : ['write', 'read', 'list', 'bash'].includes(activity.name)
+        ? activity.name
       : `other:${activity.name}`
     if (seen.has(category)) continue
     seen.add(category)
     switch (activity.name) {
       case 'write':
+      case 'edit':
         categories.push(translate('tool.editedFiles'))
         break
       case 'read':
@@ -339,6 +390,69 @@ function activitySummary(
     }
   }
   return categories.join(translate('tool.summarySeparator'))
+}
+
+function parseFileChange(artifact: ToolResultArtifact): FileChangeView | null {
+  if (artifact.kind !== 'file_change' || !isRecord(artifact.payload)) return null
+  const payload = artifact.payload
+  if (
+    typeof payload.changeId !== 'string' ||
+    typeof payload.path !== 'string' ||
+    (payload.kind !== 'created' && payload.kind !== 'modified') ||
+    typeof payload.additions !== 'number' ||
+    typeof payload.deletions !== 'number' ||
+    typeof payload.afterHash !== 'string' ||
+    !Array.isArray(payload.hunks)
+  ) return null
+
+  const hunks: FileDiffHunk[] = payload.hunks.flatMap((candidate) => {
+    if (!isRecord(candidate) || !Array.isArray(candidate.lines)) return []
+    if (
+      typeof candidate.oldStart !== 'number' ||
+      typeof candidate.oldLines !== 'number' ||
+      typeof candidate.newStart !== 'number' ||
+      typeof candidate.newLines !== 'number'
+    ) return []
+    const lines: FileDiffLine[] = candidate.lines.flatMap((line) => {
+      if (!isRecord(line)) return []
+      if (
+        line.kind !== 'context' &&
+        line.kind !== 'addition' &&
+        line.kind !== 'deletion'
+      ) return []
+      if (typeof line.content !== 'string') return []
+      return [{
+        kind: line.kind,
+        oldLine: typeof line.oldLine === 'number' ? line.oldLine : null,
+        newLine: typeof line.newLine === 'number' ? line.newLine : null,
+        content: line.content,
+        noNewline: line.noNewline === true,
+      }]
+    })
+    return [{
+      oldStart: candidate.oldStart,
+      oldLines: candidate.oldLines,
+      newStart: candidate.newStart,
+      newLines: candidate.newLines,
+      lines,
+    }]
+  })
+
+  return {
+    changeId: payload.changeId,
+    path: payload.path,
+    kind: payload.kind,
+    additions: payload.additions,
+    deletions: payload.deletions,
+    hunks,
+    beforeHash: typeof payload.beforeHash === 'string' ? payload.beforeHash : null,
+    afterHash: payload.afterHash,
+    undone: payload.undone === true,
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function activityDetails(

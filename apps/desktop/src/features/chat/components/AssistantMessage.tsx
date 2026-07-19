@@ -11,6 +11,7 @@ interface AssistantMessageProps {
   isStreaming?: boolean
   model?: string
   onOpenTrace?: (providerToolCallId?: string) => void
+  onUndoFileChanges?: (changeIds: string[]) => Promise<void>
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -18,6 +19,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   isStreaming = false,
   model,
   onOpenTrace,
+  onUndoFileChanges,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const messageParts = parts.filter((part) => part.type !== 'tool_call' && part.type !== 'tool_result')
@@ -61,6 +63,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <ToolActivityList
             parts={toolParts}
             onOpenTrace={onOpenTrace ? (providerToolCallId) => onOpenTrace(providerToolCallId) : undefined}
+            onUndoFileChanges={onUndoFileChanges}
           />
         ) : null}
       </div>

@@ -13,6 +13,7 @@ use openwork_core::session::{
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, Role, TokenUsage, ToolCallBlock, ToolCallState,
+    ToolResultArtifact,
 };
 use openwork_tools::{
     PermissionMode, PermissionProfile, Tool, ToolCallContext, ToolExecutionError, ToolId,
@@ -427,6 +428,58 @@ async fn tool_result_is_in_the_next_model_request() {
             "finish_turn"
         ]
     );
+}
+
+#[tokio::test]
+async fn tool_result_artifacts_are_persisted_in_messages_and_forwarded_live() {
+    let artifact = ToolResultArtifact {
+        kind: "file_change".to_string(),
+        payload: serde_json::json!({"changeId": "change-1", "path": "README.md"}),
+    };
+    let mut result = ToolResult::succeeded("edited README.md");
+    result.artifacts.push(artifact.clone());
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call(
+                    "call-artifact",
+                    "write",
+                    r#"{"path":"README.md","content":"new"}"#,
+                )],
+            ),
+            response("final", Vec::new()),
+        ],
+        vec![result],
+        PermissionMode::NeverAsk,
+        false,
+    );
+    start(&fixture).await;
+
+    let live_artifacts = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = fixture.updates.recv().await.expect("session update");
+            if let SessionUpdate::ToolCallFinished { artifacts, .. } = event.update {
+                break artifacts;
+            }
+        }
+    })
+    .await
+    .expect("artifact update timed out");
+    assert_eq!(live_artifacts.as_slice(), std::slice::from_ref(&artifact));
+
+    let _ = wait_for_terminal(&mut fixture.updates).await;
+    let requests = fixture.model.requests.lock().unwrap();
+    let persisted_artifacts = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult(result) => Some(result.artifacts.as_slice()),
+            _ => None,
+        })
+        .expect("tool result in next request");
+    assert_eq!(persisted_artifacts, [artifact]);
 }
 
 #[tokio::test]

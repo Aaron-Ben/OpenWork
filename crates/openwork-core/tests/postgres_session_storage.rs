@@ -5,8 +5,8 @@ use openwork_core::{
     TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
-    ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultBlock,
-    ToolResultState,
+    ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
+    ToolResultBlock, ToolResultState,
 };
 use serde_json::json;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -206,6 +206,10 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                     name: "read_file".to_string(),
                     output: vec![ContentBlock::text("file contents")],
                     state: ToolResultState::Success,
+                    artifacts: vec![ToolResultArtifact {
+                        kind: "file_change".to_string(),
+                        payload: json!({"changeId": "change-storage", "undone": false}),
+                    }],
                 })],
             },
         )
@@ -244,6 +248,32 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             .collect::<Vec<_>>(),
         vec![Role::User, Role::Assistant, Role::Tool, Role::Assistant]
     );
+    let mut records = storage.load_message_records(&session_id).await.unwrap();
+    let tool_record = records
+        .iter_mut()
+        .find(|record| record.role == Role::Tool)
+        .expect("stored tool result");
+    let ContentBlock::ToolResult(result) = &mut tool_record.content[0] else {
+        panic!("tool result block");
+    };
+    result.artifacts[0].payload["undone"] = json!(true);
+    storage
+        .replace_message_contents(
+            &session_id,
+            &[(tool_record.id.clone(), tool_record.content.clone())],
+        )
+        .await
+        .unwrap();
+    let reloaded = storage.load_message_records(&session_id).await.unwrap();
+    let undone = reloaded
+        .iter()
+        .flat_map(|record| &record.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult(result) => result.artifacts.first(),
+            _ => None,
+        })
+        .and_then(|artifact| artifact.payload["undone"].as_bool());
+    assert_eq!(undone, Some(true));
     let summary: TurnUsageSummary = sqlx::query_as(
         "SELECT status, model_call_count, tool_call_count,
                 input_tokens, output_tokens, cached_input_tokens,

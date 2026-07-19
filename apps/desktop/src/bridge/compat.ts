@@ -1,13 +1,13 @@
 // Temporary hand-written mirror of the Rust Host Contract.
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
-import type { ContentBlock } from '../type/parts'
+import type { ContentBlock, ToolResultArtifact } from '../type/parts'
 
-export const RUNTIME_SESSION_UPDATE_VERSION = 2
+export const RUNTIME_SESSION_UPDATE_VERSION = 3
 
 export function supportsRuntimeSessionUpdateVersion(version: number): boolean {
-  // Version 1 remains readable during an in-process rolling transition. New
-  // Rust runtimes emit version 2 after adding tool_call_progress.
-  return version === 1 || version === RUNTIME_SESSION_UPDATE_VERSION
+  // V2 added tool progress and V3 added terminal tool artifacts. Older
+  // versions remain readable during an in-process rolling transition.
+  return version >= 1 && version <= RUNTIME_SESSION_UPDATE_VERSION
 }
 
 export interface RuntimeSessionInput {
@@ -65,6 +65,7 @@ export interface RuntimeLiveToolCall {
   status: string
   output: string | null
   isError: boolean | null
+  artifacts?: ToolResultArtifact[]
 }
 
 export type RuntimeToolProgress =
@@ -93,6 +94,7 @@ export type RuntimeSessionUpdate =
       status: string
       output: string
       isError: boolean
+      artifacts?: ToolResultArtifact[]
     }
   | { type: 'permission_requested'; request: RuntimePermissionRequest }
   | { type: 'permission_resolved'; toolCallId: string; decision: 'allow' | 'deny' }
@@ -105,6 +107,10 @@ export interface RuntimeSessionUpdateEnvelope {
   sequence: number
   occurredAtMs: number
   update: RuntimeSessionUpdate
+}
+
+export interface RuntimeUndoFileChangesResult {
+  undoneChangeIds: string[]
 }
 
 export type RuntimeSnapshotState =

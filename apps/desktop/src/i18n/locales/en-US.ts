@@ -77,5 +77,9 @@ export const enUS = {
     editedFileFallback: 'Edited a file', readFile: 'Read {{name}}', readFileFallback: 'Read a file',
     listedDirectory: 'Listed {{name}}', listedDirectoryFallback: 'Listed a directory', calledTool: 'Called {{name}}',
     summarySeparator: ', ', stopped: 'Stopped', output: 'Output',
+    createdFile: 'Created file', editedOneFile: 'Edited file', editedFileCount: 'Edited {{count}} files',
+    undo: 'Undo', undoing: 'Undoing', undone: 'Undone', undoFailed: 'Undo failed: {{message}}',
+    review: 'Review', reviewChanges: 'Review file changes', closeReview: 'Close file review',
+    fileChangeCount: '{{count}} files', copyDiff: 'Copy diff',
   },
 } as const

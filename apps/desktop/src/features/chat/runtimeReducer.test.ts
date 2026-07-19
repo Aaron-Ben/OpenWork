@@ -16,7 +16,7 @@ function envelope(
   sessionId = 'session-1',
 ): RuntimeSessionUpdateEnvelope {
   return {
-    version: 2,
+    version: 3,
     sessionId,
     turnId: 'turn-1',
     sequence,
@@ -157,6 +157,44 @@ describe('runtimeReducer', () => {
     expect(message.toolCalls['tool-progress'].output).toContain('compiling')
     expect(message.toolCalls['tool-progress'].output).toContain('scanned 250 files')
     expect(finished.toolCalls['tool-progress'].output).toBe('complete')
+  })
+
+  it('keeps structured tool artifacts on the terminal live tool call', () => {
+    const started = reduceSessionUpdate(
+      createSessionRuntimeView(),
+      envelope(1, {
+        type: 'tool_call_started',
+        toolCall: {
+          toolCallId: 'tool-write',
+          providerCallId: 'call-write',
+          name: 'write',
+          input: { path: 'README.md', content: 'new' },
+          status: 'running',
+          output: null,
+          isError: null,
+          artifacts: [],
+        },
+      }),
+    )
+    const artifacts = [{
+      kind: 'file_change',
+      payload: { changeId: 'change-1', path: 'README.md' },
+    }]
+    const finished = reduceSessionUpdate(
+      started,
+      envelope(2, {
+        type: 'tool_call_finished',
+        toolCallId: 'tool-write',
+        providerCallId: 'call-write',
+        toolName: 'write',
+        status: 'succeeded',
+        output: 'edited README.md',
+        isError: false,
+        artifacts,
+      }),
+    )
+
+    expect(finished.toolCalls['tool-write'].artifacts).toEqual(artifacts)
   })
 
   it('replaces ephemeral state from a running snapshot', () => {

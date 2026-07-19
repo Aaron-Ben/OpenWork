@@ -242,6 +242,7 @@ mod tests {
                         name: "read".to_string(),
                         output: vec![ContentBlock::text("workspace")],
                         state: ToolResultState::Success,
+                        artifacts: Vec::new(),
                     })],
                 },
             ],

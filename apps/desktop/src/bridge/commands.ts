@@ -9,6 +9,7 @@ import type {
   RuntimeTraceSpan,
   RuntimeTraceSummary,
   RuntimeTurnAccepted,
+  RuntimeUndoFileChangesResult,
 } from './compat'
 
 export const coreCommands = {
@@ -29,6 +30,11 @@ export const coreCommands = {
     invoke('runtime_turn_start', { sessionId, clientRequestId, text }),
   cancelTurn: (sessionId: string, turnId: string): Promise<boolean> =>
     invoke('runtime_turn_cancel', { sessionId, turnId }),
+  undoFileChanges: (
+    sessionId: string,
+    changeIds: string[],
+  ): Promise<RuntimeUndoFileChangesResult> =>
+    invoke('runtime_file_changes_undo', { sessionId, changeIds }),
   resolvePermission: (
     sessionId: string,
     turnId: string,

@@ -38,4 +38,5 @@ ignore = "0.4"
 libc = "0.2"
 regex = "1"
 schemars = "1"
+sha2 = "0.10"
 tokio-util = { version = "0.7", features = ["rt"] }

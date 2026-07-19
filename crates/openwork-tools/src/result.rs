@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use openwork_models::model::ToolResultArtifact;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolResultStatus {
@@ -40,6 +42,8 @@ pub struct ToolError {
 pub struct ToolResult {
     pub status: ToolResultStatus,
     pub content: Vec<ToolResultContent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ToolResultArtifact>,
     pub error: Option<ToolError>,
 }
 
@@ -127,6 +131,16 @@ impl ToolResult {
         Self {
             status: ToolResultStatus::Succeeded,
             content: vec![ToolResultContent::Text { text: text.into() }],
+            artifacts: Vec::new(),
+            error: None,
+        }
+    }
+
+    pub fn succeeded_with_artifact(text: impl Into<String>, artifact: ToolResultArtifact) -> Self {
+        Self {
+            status: ToolResultStatus::Succeeded,
+            content: vec![ToolResultContent::Text { text: text.into() }],
+            artifacts: vec![artifact],
             error: None,
         }
     }
@@ -192,6 +206,7 @@ impl ToolResult {
             content: vec![ToolResultContent::Text {
                 text: message.clone(),
             }],
+            artifacts: Vec::new(),
             error: Some(ToolError {
                 code,
                 message,

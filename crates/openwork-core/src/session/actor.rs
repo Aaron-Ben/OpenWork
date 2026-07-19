@@ -223,7 +223,7 @@ impl SessionActor {
     ) -> Self {
         Self {
             snapshot: SessionSnapshot {
-                version: 1,
+                version: 2,
                 session_id: config.session_id.clone(),
                 last_update_sequence: 0,
                 runtime: SessionRuntimeSnapshot::Idle,
@@ -516,6 +516,7 @@ impl SessionActor {
                 status,
                 output,
                 is_error,
+                artifacts,
                 ..
             } => {
                 if let Some(tool_call) = tool_calls
@@ -525,6 +526,7 @@ impl SessionActor {
                     tool_call.status = status.clone();
                     tool_call.output = Some(output.clone());
                     tool_call.is_error = Some(*is_error);
+                    tool_call.artifacts = artifacts.clone();
                 }
             }
             SessionUpdate::PermissionRequested { request } => {
@@ -541,9 +543,10 @@ impl SessionActor {
 
     fn emit(&mut self, turn_id: TurnId, update: SessionUpdate) {
         let envelope = SessionUpdateEnvelope {
-            // Version 2 adds the `tool_call_progress` update variant. Snapshots
-            // remain version 1 because their shape did not change.
-            version: 2,
+            // Version 3 adds structured terminal tool artifacts. Version 2
+            // introduced `tool_call_progress`; snapshot version 2 carries the
+            // same artifacts on running tool calls.
+            version: 3,
             session_id: self.session_id.clone(),
             turn_id,
             sequence: self.next_update_sequence,

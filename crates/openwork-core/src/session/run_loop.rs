@@ -574,6 +574,7 @@ impl TurnRunner {
                 status: "validating".to_string(),
                 output: None,
                 is_error: None,
+                artifacts: Vec::new(),
             },
         })
         .await
@@ -614,6 +615,7 @@ impl TurnRunner {
             status: tool_status_name(result.status).to_string(),
             output: result.text_content(),
             is_error: result.is_error(),
+            artifacts: result.artifacts.clone(),
         })
         .await
     }
@@ -712,6 +714,7 @@ fn tool_result_message(call: &ToolCallBlock, result: &ToolResult) -> Message {
             name: call.name.clone(),
             output,
             state,
+            artifacts: result.artifacts.clone(),
         })],
     }
 }

@@ -177,6 +177,7 @@ export function reduceSessionUpdate(
             status: update.status,
             output: update.output,
             isError: update.isError,
+            artifacts: update.artifacts ?? [],
           },
         },
       }

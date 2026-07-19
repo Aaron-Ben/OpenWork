@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use openwork_agent::{AgentBuilder, AgentDefinition};
@@ -11,10 +11,13 @@ use openwork_models::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
 };
-use openwork_tools::{PermissionProfile, ToolSessionContext, builtin_registry};
+use openwork_tools::{
+    FileChangeArtifact, FileChangeUndoError, PermissionProfile, ToolSessionContext,
+    UndoFileChangesResult, builtin_registry, undo_file_changes as undo_workspace_file_changes,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
@@ -102,6 +105,12 @@ pub enum OpenWorkCoreError {
     ModelNotFound(String),
     #[error("session has an active turn and cannot be changed: {0}")]
     SessionActive(String),
+    #[error("file change not found: {0}")]
+    FileChangeNotFound(String),
+    #[error("file change has already been undone: {0}")]
+    FileChangeAlreadyUndone(String),
+    #[error(transparent)]
+    FileChangeUndo(#[from] FileChangeUndoError),
     #[error("model is disabled: {0}")]
     ModelDisabled(String),
     #[error("model credential reference is missing: {0}")]
@@ -129,6 +138,7 @@ pub struct OpenWorkCore {
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
     sessions: RwLock<HashMap<SessionId, SessionHandle>>,
     session_creation: Mutex<()>,
+    workspace_operations: Mutex<HashMap<SessionId, Weak<Mutex<()>>>>,
 }
 
 impl OpenWorkCore {
@@ -176,6 +186,7 @@ impl OpenWorkCore {
             update_tx,
             sessions: RwLock::new(HashMap::new()),
             session_creation: Mutex::new(()),
+            workspace_operations: Mutex::new(HashMap::new()),
         })
     }
 
@@ -313,8 +324,56 @@ impl OpenWorkCore {
         client_request_id: ClientRequestId,
         input: Vec<ContentBlock>,
     ) -> Result<TurnAccepted, OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
         Ok(handle.start_turn(client_request_id, input).await?)
+    }
+
+    pub async fn undo_file_changes(
+        &self,
+        session_id: &SessionId,
+        change_ids: Vec<String>,
+    ) -> Result<UndoFileChangesResult, OpenWorkCoreError> {
+        if change_ids.is_empty() {
+            return Err(StorageError::InvalidInput(
+                "at least one file change id is required".to_string(),
+            )
+            .into());
+        }
+        let unique = change_ids.iter().collect::<HashSet<_>>();
+        if unique.len() != change_ids.len() {
+            return Err(
+                StorageError::InvalidInput("file change ids must be unique".to_string()).into(),
+            );
+        }
+
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        if let Some(handle) = self.sessions.read().await.get(session_id).cloned()
+            && matches!(
+                handle.snapshot().await?.runtime,
+                crate::session::SessionRuntimeSnapshot::Running { .. }
+            )
+        {
+            return Err(OpenWorkCoreError::SessionActive(session_id.to_string()));
+        }
+
+        let session = self
+            .storage
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
+        let mut records = self.storage.load_message_records(session_id).await?;
+        let changes = select_file_changes(&records, &change_ids)?;
+        let context = ToolSessionContext::local(
+            PathBuf::from(&session.working_directory),
+            PermissionProfile::workspace_write(PathBuf::from(&session.working_directory)),
+        );
+        let result = undo_workspace_file_changes(&context, &changes).await?;
+        let updates = mark_file_changes_undone(&mut records, &change_ids)?;
+        self.storage
+            .replace_message_contents(session_id, &updates)
+            .await?;
+        Ok(result)
     }
 
     pub async fn cancel_turn(
@@ -399,6 +458,20 @@ impl OpenWorkCore {
         Ok(handle)
     }
 
+    async fn workspace_operation_guard(&self, session_id: &SessionId) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.workspace_operations.lock().await;
+            if let Some(lock) = locks.get(session_id).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(session_id.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
+
     async fn build_session_handle(
         &self,
         session_id: &SessionId,
@@ -456,6 +529,103 @@ impl OpenWorkCore {
     }
 }
 
+type MessageContentUpdate = (String, Vec<ContentBlock>);
+
+fn select_file_changes(
+    records: &[StoredMessageRecord],
+    change_ids: &[String],
+) -> Result<Vec<FileChangeArtifact>, OpenWorkCoreError> {
+    let requested = change_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut found = HashSet::new();
+    let mut changes = Vec::with_capacity(change_ids.len());
+
+    for record in records {
+        for block in &record.content {
+            let ContentBlock::ToolResult(result) = block else {
+                continue;
+            };
+            for artifact in &result.artifacts {
+                if artifact.kind != "file_change" {
+                    continue;
+                }
+                let change =
+                    FileChangeArtifact::from_result_artifact(artifact).map_err(|error| {
+                        OpenWorkCoreError::RuntimeComponent(format!(
+                            "stored file change artifact is invalid: {error}"
+                        ))
+                    })?;
+                if !requested.contains(change.change_id.as_str()) {
+                    continue;
+                }
+                if !found.insert(change.change_id.clone()) {
+                    return Err(OpenWorkCoreError::RuntimeComponent(format!(
+                        "duplicate stored file change id: {}",
+                        change.change_id
+                    )));
+                }
+                if change.undone {
+                    return Err(OpenWorkCoreError::FileChangeAlreadyUndone(change.change_id));
+                }
+                changes.push(change);
+            }
+        }
+    }
+
+    for change_id in change_ids {
+        if !found.contains(change_id) {
+            return Err(OpenWorkCoreError::FileChangeNotFound(change_id.clone()));
+        }
+    }
+    Ok(changes)
+}
+
+fn mark_file_changes_undone(
+    records: &mut [StoredMessageRecord],
+    change_ids: &[String],
+) -> Result<Vec<MessageContentUpdate>, OpenWorkCoreError> {
+    let requested = change_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut updates = Vec::new();
+
+    for record in records {
+        let mut changed = false;
+        for block in &mut record.content {
+            let ContentBlock::ToolResult(result) = block else {
+                continue;
+            };
+            for artifact in &mut result.artifacts {
+                if artifact.kind != "file_change" {
+                    continue;
+                }
+                let mut change =
+                    FileChangeArtifact::from_result_artifact(artifact).map_err(|error| {
+                        OpenWorkCoreError::RuntimeComponent(format!(
+                            "stored file change artifact is invalid: {error}"
+                        ))
+                    })?;
+                if requested.contains(change.change_id.as_str()) {
+                    change.undone = true;
+                    *artifact = change.to_result_artifact().map_err(|error| {
+                        OpenWorkCoreError::RuntimeComponent(format!(
+                            "failed to encode updated file change artifact: {error}"
+                        ))
+                    })?;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            updates.push((record.id.clone(), record.content.clone()));
+        }
+    }
+    Ok(updates)
+}
+
 async fn provider_runtime(
     model: &ModelRecord,
     credentials: &dyn CredentialResolver,
@@ -503,5 +673,86 @@ fn parse_provider_kind(value: &str) -> Result<ProviderKind, OpenWorkCoreError> {
         "qwen" | "openai_chat_qwen" => Ok(ProviderKind::Qwen),
         "glm" | "openai_chat_glm" => Ok(ProviderKind::Glm),
         other => Err(OpenWorkCoreError::UnsupportedProvider(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use openwork_models::model::{ContentBlock, Role, ToolResultBlock, ToolResultState};
+    use openwork_tools::{FileChangeArtifact, FileChangeKind, FileDiffHunk};
+
+    use super::*;
+
+    fn change(change_id: &str) -> FileChangeArtifact {
+        FileChangeArtifact {
+            change_id: change_id.to_string(),
+            path: "README.md".to_string(),
+            kind: FileChangeKind::Modified,
+            additions: 1,
+            deletions: 1,
+            hunks: Vec::<FileDiffHunk>::new(),
+            before_hash: Some("before".to_string()),
+            after_hash: "after".to_string(),
+            before_content: Some("before".to_string()),
+            undone: false,
+        }
+    }
+
+    fn record(changes: &[FileChangeArtifact]) -> StoredMessageRecord {
+        StoredMessageRecord {
+            id: "message-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            sequence: 3,
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "provider-call-1".to_string(),
+                name: "write".to_string(),
+                output: vec![ContentBlock::text("edited")],
+                state: ToolResultState::Success,
+                artifacts: changes
+                    .iter()
+                    .map(FileChangeArtifact::to_result_artifact)
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("encode changes"),
+            })],
+            created_at: "2026-07-19T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn selects_requested_file_changes_and_marks_only_them_undone() {
+        let mut records = vec![record(&[change("change-1"), change("change-2")])];
+        let selected =
+            select_file_changes(&records, &["change-1".to_string()]).expect("select change");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].change_id, "change-1");
+
+        let updates =
+            mark_file_changes_undone(&mut records, &["change-1".to_string()]).expect("mark undone");
+        assert_eq!(updates.len(), 1);
+
+        let ContentBlock::ToolResult(result) = &records[0].content[0] else {
+            panic!("tool result");
+        };
+        let states = result
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                FileChangeArtifact::from_result_artifact(artifact).expect("decode change")
+            })
+            .map(|change| (change.change_id, change.undone))
+            .collect::<HashMap<_, _>>();
+        assert!(states["change-1"]);
+        assert!(!states["change-2"]);
+    }
+
+    #[test]
+    fn rejects_an_unknown_file_change_id() {
+        let records = vec![record(&[change("change-1")])];
+
+        let error =
+            select_file_changes(&records, &["missing".to_string()]).expect_err("missing change");
+
+        assert!(matches!(error, OpenWorkCoreError::FileChangeNotFound(id) if id == "missing"));
     }
 }

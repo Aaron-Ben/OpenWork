@@ -49,6 +49,17 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::OperationConflict,
                 format!("Session has an active turn: {id}"),
             ),
+            OpenWorkCoreError::FileChangeNotFound(id) => Self::new(
+                CommandErrorCode::InvalidRequest,
+                format!("File change not found: {id}"),
+            ),
+            OpenWorkCoreError::FileChangeAlreadyUndone(id) => Self::new(
+                CommandErrorCode::OperationConflict,
+                format!("File change has already been undone: {id}"),
+            ),
+            OpenWorkCoreError::FileChangeUndo(error) => {
+                Self::new(CommandErrorCode::OperationConflict, error.to_string())
+            }
             OpenWorkCoreError::Session(SessionError::Busy(turn_id)) => Self::new(
                 CommandErrorCode::OperationConflict,
                 format!("Session already has an active turn: {turn_id}"),

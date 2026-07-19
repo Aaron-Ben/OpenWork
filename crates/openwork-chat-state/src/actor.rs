@@ -214,6 +214,7 @@ mod tests {
                 name: "read".to_string(),
                 output: vec![ContentBlock::text("ok")],
                 state: ToolResultState::Success,
+                artifacts: Vec::new(),
             })],
         })
         .await
