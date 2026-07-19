@@ -14,7 +14,7 @@ export const UserMessage = memo(function UserMessage({ parts }: UserMessageProps
   if (!text.trim()) return null
 
   return (
-    <div className="flex justify-end py-1">
+    <div className="flex justify-end pb-1 pt-5">
       <div className="min-w-0 max-w-[85%] rounded-2xl bg-paper-hover px-4 py-2.5 text-sm leading-relaxed text-ink whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word] sm:max-w-[75%]">
         {text}
       </div>

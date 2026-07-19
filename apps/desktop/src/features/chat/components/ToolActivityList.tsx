@@ -3,16 +3,16 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
-  Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleX,
+  Copy,
   FileText,
   Folder,
   Loader2,
   Pencil,
-  Terminal,
+  SquareTerminal,
   Wrench,
 } from 'lucide-react'
 
@@ -52,12 +52,12 @@ interface ToolActivityListProps {
   fileChangePresentation?: 'activity' | 'summary'
 }
 
-const TOOL_ICONS: Record<string, typeof Terminal> = {
+const TOOL_ICONS: Record<string, typeof SquareTerminal> = {
   read: FileText,
   write: Pencil,
   edit: Pencil,
   list: Folder,
-  bash: Terminal,
+  bash: SquareTerminal,
 }
 
 export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
@@ -145,7 +145,7 @@ export const ToolActivityList = memo(function ToolActivityList({
   const summary = activitySummary(activities, (key, options) => t(key, options))
 
   return (
-    <div data-tool-activity-list="true" className="w-full space-y-2 py-1 text-sm text-ink-soft">
+    <div data-tool-activity-list="true" className="w-full space-y-1 py-0.5 text-sm text-ink-soft">
       {fileChangePresentation === 'summary' && fileChanges.length > 0 ? (
         <FileChangeCard
           changes={fileChanges}
@@ -160,12 +160,12 @@ export const ToolActivityList = memo(function ToolActivityList({
             data-tool-activity-summary="true"
             aria-expanded={expanded}
             onClick={() => setExpanded((value) => !value)}
-            className="group/summary flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-paper-hover"
+            className="group/summary flex min-h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-paper-hover"
           >
-            <SummaryIcon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
-            <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">{summary}</span>
+            <SummaryIcon size={13} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
+            <span className="min-w-0 truncate text-xs text-ink-faint">{summary}</span>
             <ChevronDown
-              size={15}
+              size={13}
               className={`shrink-0 text-ink-faint transition-transform duration-200 ${
                 expanded ? 'rotate-0' : '-rotate-90'
               }`}
@@ -209,7 +209,6 @@ function ToolActivityRow({
 }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
-  const Icon = TOOL_ICONS[activity.name] ?? Wrench
   const fileChanges = collectFileChanges([activity])
   const primaryFileChange = fileChanges[0]
   const details = activityDetails(activity, (key) => t(key))
@@ -228,29 +227,29 @@ function ToolActivityRow({
     <div
       data-tool-activity-row={activity.id}
       data-file-change-activity={fileChanges[0]?.changeId}
-      className="min-w-0"
+      className="group/row min-w-0"
     >
       <div className="flex min-w-0 items-center rounded-md transition-colors hover:bg-paper-hover">
         <button
           type="button"
           aria-expanded={hasDetails ? expanded : undefined}
           onClick={() => hasDetails && setExpanded((value) => !value)}
-          className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left"
+          className="flex min-h-6 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left"
         >
-          <Icon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
-          <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">
+          <LeadingIcon activity={activity} />
+          <span className="min-w-0 truncate font-mono text-xs leading-5 text-ink-soft">
             {label}
           </span>
           {primaryFileChange && !expanded ? (
             <FileStats
               additions={primaryFileChange.additions}
               deletions={primaryFileChange.deletions}
+              className="text-xs"
             />
           ) : null}
-          <ActivityStatus state={activity.state} />
           {hasDetails ? (
             <ChevronRight
-              size={14}
+              size={13}
               className={`shrink-0 text-ink-faint transition-transform duration-200 ${
                 expanded ? 'rotate-90' : ''
               }`}
@@ -264,9 +263,9 @@ function ToolActivityRow({
             aria-label={t('activity.openToolSpan')}
             title={t('activity.openToolSpan')}
             onClick={() => onOpenTrace(activity.id)}
-            className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper hover:text-clay"
+            className="mr-1 grid size-6 shrink-0 place-items-center rounded-md text-ink-faint opacity-0 transition-opacity hover:bg-paper hover:text-clay focus-visible:opacity-100 group-hover/row:opacity-100"
           >
-            <Activity size={13} />
+            <Activity size={12} />
           </button>
         ) : null}
       </div>
@@ -282,29 +281,35 @@ function ToolActivityRow({
             className="overflow-hidden"
           >
             {fileChanges.length > 0 ? (
-              <div data-file-change-details="true" className="space-y-2 py-1 pl-6">
+              <div data-file-change-details="true" className="space-y-2 py-1 pl-7">
                 {fileChanges.map((change) => (
                   <div key={change.changeId} className="overflow-hidden rounded-xl border border-line">
                     <FileDiffPanel change={change} />
                   </div>
                 ))}
               </div>
+            ) : activity.name === 'bash' ? (
+              <div className="py-1 pl-7">
+                <ShellDetailsCard activity={activity} />
+              </div>
             ) : (
-              <div className="ml-6 border-l border-line py-1 pl-3">
-                {details.map((detail) => (
-                  <div key={detail.label} className="mb-2 last:mb-0">
-                    <div className="mb-1 text-[10px] uppercase tracking-wider text-ink-faint">
-                      {detail.label}
+              <div className="py-1 pl-7">
+                <div className="overflow-hidden rounded-xl border border-line bg-paper">
+                  {details.map((detail, index) => (
+                    <div key={detail.label} className={index > 0 ? 'border-t border-line' : ''}>
+                      <div className="px-3 pt-1.5 text-[11px] text-ink-faint">
+                        {detail.label}
+                      </div>
+                      <pre
+                        className={`max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 pt-0.5 font-mono text-xs leading-relaxed ${
+                          detail.error ? 'text-status-danger-ink' : 'text-ink-soft'
+                        }`}
+                      >
+                        {detail.value}
+                      </pre>
                     </div>
-                    <pre
-                      className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-[11px] leading-relaxed ${
-                        detail.error ? 'bg-status-danger-soft text-status-danger-ink' : 'bg-paper-hover text-ink-soft'
-                      }`}
-                    >
-                      {detail.value}
-                    </pre>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </motion.div>
@@ -314,12 +319,13 @@ function ToolActivityRow({
   )
 }
 
-function ActivityStatus({ state }: { state: ActivityState }) {
+function LeadingIcon({ activity }: { activity: ToolActivity }) {
   const { t } = useTranslation()
+  const state = activity.state
   if (state === 'pending' || state === 'submitted' || state === 'running') {
     return (
       <span className="inline-flex shrink-0 items-center text-ink-faint" title={t('tool.running')}>
-        <Loader2 size={13} className="animate-spin" />
+        <Loader2 size={14} className="animate-spin" />
         <span className="sr-only">{t('tool.running')}</span>
       </span>
     )
@@ -327,7 +333,7 @@ function ActivityStatus({ state }: { state: ActivityState }) {
   if (state === 'error') {
     return (
       <span className="inline-flex shrink-0 items-center text-status-danger" title={t('tool.error')}>
-        <CircleAlert size={13} />
+        <CircleAlert size={14} />
         <span className="sr-only">{t('tool.error')}</span>
       </span>
     )
@@ -335,16 +341,60 @@ function ActivityStatus({ state }: { state: ActivityState }) {
   if (state === 'denied' || state === 'interrupted') {
     return (
       <span className="inline-flex shrink-0 items-center text-ink-faint" title={t('tool.stopped')}>
-        <CircleX size={13} />
+        <CircleX size={14} />
         <span className="sr-only">{t('tool.stopped')}</span>
       </span>
     )
   }
+  const Icon = TOOL_ICONS[activity.name] ?? Wrench
   return (
-    <span className="inline-flex shrink-0 items-center text-status-success" title={t('tool.done')}>
-      <Check size={13} />
+    <span className="inline-flex shrink-0 items-center text-ink-faint" title={t('tool.done')}>
+      <Icon size={14} strokeWidth={1.9} />
       <span className="sr-only">{t('tool.done')}</span>
     </span>
+  )
+}
+
+function ShellDetailsCard({ activity }: { activity: ToolActivity }) {
+  const { t } = useTranslation()
+  const command = activity.summary
+  const output = activity.output
+  const isError = activity.state === 'error'
+
+  async function copyTranscript() {
+    const text = output ? `$ ${command}\n${output}` : `$ ${command}`
+    await navigator.clipboard?.writeText(text)
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-line bg-paper">
+      <div className="flex items-center gap-2 px-3 pt-1.5">
+        <span className="min-w-0 flex-1 text-[11px] text-ink-faint">{t('tool.shell')}</span>
+        <button
+          type="button"
+          aria-label={t('tool.copy')}
+          title={t('tool.copy')}
+          onClick={() => void copyTranscript()}
+          className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper-hover hover:text-ink"
+        >
+          <Copy size={12} />
+        </button>
+      </div>
+      <div className="max-h-72 overflow-auto px-3 pb-2 pt-0.5 font-mono text-xs leading-relaxed">
+        {command ? (
+          <div className="whitespace-pre-wrap break-words text-ink-soft">$ {command}</div>
+        ) : null}
+        {output ? (
+          <div
+            className={`whitespace-pre-wrap break-words ${
+              isError ? 'text-status-danger-ink' : 'text-ink-faint'
+            }`}
+          >
+            {output}
+          </div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 

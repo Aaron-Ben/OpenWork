@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import {
   Check,
   ChevronDown,
@@ -239,6 +239,8 @@ function ReviewDialog({ changes, onClose }: { changes: FileChangeView[]; onClose
 
 export function FileDiffPanel({ change }: { change: FileChangeView }) {
   const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(true)
+  const contentId = useId()
 
   async function copyDiff() {
     await navigator.clipboard?.writeText(formatPatch(change))
@@ -246,9 +248,26 @@ export function FileDiffPanel({ change }: { change: FileChangeView }) {
 
   return (
     <div data-file-change={change.changeId} className="min-w-0 bg-paper">
-      <div className="flex min-h-11 items-center gap-3 border-b border-line bg-paper-hover/70 px-3">
-        <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-soft">{change.path}</span>
-        <FileStats additions={change.additions} deletions={change.deletions} />
+      <div
+        className={`flex min-h-11 items-center gap-2 bg-paper-hover/70 px-3 ${expanded ? 'border-b border-line' : ''}`}
+      >
+        <button
+          type="button"
+          data-file-change-toggle="true"
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          aria-label={t(expanded ? 'tool.collapseDiff' : 'tool.expandDiff', { name: change.path })}
+          title={t(expanded ? 'tool.collapseDiff' : 'tool.expandDiff', { name: change.path })}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left"
+        >
+          <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-soft">{change.path}</span>
+          <FileStats additions={change.additions} deletions={change.deletions} />
+          <ChevronDown
+            size={16}
+            className={`shrink-0 text-ink-faint transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          />
+        </button>
         <button
           type="button"
           aria-label={t('tool.copyDiff')}
@@ -259,7 +278,12 @@ export function FileDiffPanel({ change }: { change: FileChangeView }) {
           <Copy size={15} />
         </button>
       </div>
-      <div className="max-h-[58vh] overflow-auto bg-code-bg font-mono text-[12px] leading-5">
+      <div
+        id={contentId}
+        data-file-change-code="true"
+        hidden={!expanded}
+        className="max-h-[58vh] overflow-auto bg-code-bg font-mono text-[12px] leading-5"
+      >
         {change.hunks.map((hunk, hunkIndex) => (
           <div key={`${change.changeId}-${hunkIndex}`}>
             <div className="border-y border-line bg-clay-soft/40 px-3 py-1 text-clay">

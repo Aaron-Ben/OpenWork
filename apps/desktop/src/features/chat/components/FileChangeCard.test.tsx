@@ -55,6 +55,25 @@ describe('FileChangeCard', () => {
     expect(markup).toContain('const version = 3')
   })
 
+  it('starts expanded and exposes an accessible code-card toggle', () => {
+    const fileChange = change(6)
+    fileChange.hunks = [{
+      oldStart: 1,
+      oldLines: 0,
+      newStart: 1,
+      newLines: 1,
+      lines: [{ kind: 'addition', oldLine: null, newLine: 1, content: 'new line' }],
+    }]
+
+    const markup = renderToStaticMarkup(<FileDiffPanel change={fileChange} />)
+
+    expect(markup).toContain('data-file-change-toggle="true"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('aria-controls=')
+    expect(markup).toContain('data-file-change-code="true"')
+    expect(markup).toContain('收起 src/file-6.ts 的代码差异')
+  })
+
   it('uses one gutter with old numbers for deletions and new numbers otherwise', () => {
     const fileChange = change(2)
     fileChange.hunks = [{

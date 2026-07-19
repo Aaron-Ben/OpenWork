@@ -24,7 +24,7 @@ export function ThinkingBlock({ content, isActive = false }: ThinkingBlockProps)
   if (!hasContent && !isActive) return null
 
   return (
-    <div className="my-1">
+    <div className="my-0.5">
       <button
         type="button"
         className="flex items-center gap-1 rounded-md py-0.5 pr-1.5 text-xs text-ink-faint transition-colors hover:text-ink-soft"

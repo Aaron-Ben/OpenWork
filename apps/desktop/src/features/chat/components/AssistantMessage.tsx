@@ -40,7 +40,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const showText = messageParts.length > 0 || (parts.length === 0 && isStreaming)
 
   return (
-    <div className="group flex min-w-0 flex-col gap-2 py-1">
+    <div className="group flex min-w-0 flex-col gap-1.5 py-0.5">
       {model ? <div className="text-xs text-ink-faint">{model}</div> : null}
       {showText ? (
         <div className="min-w-0">
