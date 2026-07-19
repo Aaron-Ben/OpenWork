@@ -17,8 +17,8 @@ pub use session::{
     NoopTraceRecorder, PermissionDecision, PermissionRequest, ResolvedModel, SessionError,
     SessionHandle, SessionId, SessionPhase, SessionRuntimeConfig, SessionRuntimeSnapshot,
     SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallFinished,
-    ToolCallId, ToolCallStarted, TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus,
-    TurnAccepted, TurnId as RuntimeTurnId, TurnOutcome,
+    ToolCallId, ToolCallStarted, ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal,
+    TraceStatus, TurnAccepted, TurnId as RuntimeTurnId, TurnOutcome,
 };
 pub use storage::{
     API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError, ModelInput, ModelRecord,

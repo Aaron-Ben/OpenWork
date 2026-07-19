@@ -2,6 +2,14 @@
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
 import type { ContentBlock } from '../type/parts'
 
+export const RUNTIME_SESSION_UPDATE_VERSION = 2
+
+export function supportsRuntimeSessionUpdateVersion(version: number): boolean {
+  // Version 1 remains readable during an in-process rolling transition. New
+  // Rust runtimes emit version 2 after adding tool_call_progress.
+  return version === 1 || version === RUNTIME_SESSION_UPDATE_VERSION
+}
+
 export interface RuntimeSessionInput {
   id: string
   title?: string | null
@@ -59,6 +67,11 @@ export interface RuntimeLiveToolCall {
   isError: boolean | null
 }
 
+export type RuntimeToolProgress =
+  | { kind: 'stdout'; chunk: string }
+  | { kind: 'stderr'; chunk: string }
+  | { kind: 'message'; message: string }
+
 export type RuntimeTurnOutcome =
   | { status: 'completed'; finalText: string }
   | { status: 'failed'; code: string; message: string }
@@ -71,6 +84,7 @@ export type RuntimeSessionUpdate =
   | { type: 'reasoning_delta'; delta: string }
   | { type: 'draft_cleared' }
   | { type: 'tool_call_started'; toolCall: RuntimeLiveToolCall }
+  | { type: 'tool_call_progress'; toolCallId: string; progress: RuntimeToolProgress }
   | {
       type: 'tool_call_finished'
       toolCallId: string

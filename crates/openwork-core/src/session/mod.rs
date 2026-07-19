@@ -18,5 +18,5 @@ pub use trace::{
 };
 pub use updates::{
     LiveToolCall, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionUpdate,
-    SessionUpdateEnvelope,
+    SessionUpdateEnvelope, ToolProgressUpdate,
 };

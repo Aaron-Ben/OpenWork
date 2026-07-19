@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
-use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio::sync::{Mutex, OwnedMutexGuard, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::ToolExecutionError;
 use crate::backend::{AsyncFileSystem, LocalFileSystem, ProcessBackend, TokioProcessBackend};
 use crate::policy::{
     AccessKind, FileSystemMode, PermissionProfile, lexical_normalize, path_is_within,
 };
+use crate::{ToolExecutionError, ToolProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolCallId(String);
@@ -32,6 +32,7 @@ pub struct ToolCallContext {
     pub call_id: ToolCallId,
     pub cancel: CancellationToken,
     pub deadline: Option<Instant>,
+    progress: Option<mpsc::Sender<ToolProgress>>,
 }
 
 impl ToolCallContext {
@@ -40,12 +41,28 @@ impl ToolCallContext {
             call_id,
             cancel,
             deadline: None,
+            progress: None,
         }
     }
 
     pub fn with_deadline(mut self, deadline: Instant) -> Self {
         self.deadline = Some(deadline);
         self
+    }
+
+    pub fn with_progress_sender(mut self, progress: mpsc::Sender<ToolProgress>) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
+    /// Reports live progress without applying backpressure to tool execution.
+    ///
+    /// Full or disconnected channels intentionally drop the progress item. The
+    /// terminal tool result remains the source of truth.
+    pub fn report_progress(&self, progress: ToolProgress) {
+        if let Some(sender) = &self.progress {
+            let _ = sender.try_send(progress);
+        }
     }
 }
 
@@ -267,4 +284,43 @@ fn session_environment() -> HashMap<String, String> {
                 .map(|value| (key.to_string(), value))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::ToolProgress;
+
+    #[tokio::test]
+    async fn tool_call_context_reports_best_effort_progress() {
+        let (progress_tx, mut progress_rx) = mpsc::channel(1);
+        let call = ToolCallContext::new(ToolCallId::new("progress"), CancellationToken::new())
+            .with_progress_sender(progress_tx);
+
+        call.report_progress(ToolProgress::Message {
+            message: "working".to_string(),
+        });
+
+        assert_eq!(
+            progress_rx.recv().await,
+            Some(ToolProgress::Message {
+                message: "working".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn disconnected_progress_consumer_does_not_fail_the_tool_call() {
+        let (progress_tx, progress_rx) = mpsc::channel(1);
+        drop(progress_rx);
+        let call = ToolCallContext::new(ToolCallId::new("disconnected"), CancellationToken::new())
+            .with_progress_sender(progress_tx);
+
+        call.report_progress(ToolProgress::Message {
+            message: "ignored".to_string(),
+        });
+    }
 }

@@ -10,11 +10,19 @@ use crate::{
 use crate::context::PathIntent;
 
 const MAX_BYTES: usize = 1024 * 1024;
+const MAX_LINE_LIMIT: usize = 2000;
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadInput {
     /// Absolute path, or a path relative to the working directory.
     pub path: String,
+    /// Zero-based line offset. Defaults to 0.
+    #[serde(default)]
+    pub offset: usize,
+    /// Maximum number of lines to return. Omit to return all remaining lines.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Default)]
@@ -43,6 +51,14 @@ impl Tool for ReadTool {
         _call: ToolCallContext,
         input: ReadInput,
     ) -> Result<TextToolOutput, ToolExecutionError> {
+        if input
+            .limit
+            .is_some_and(|limit| limit == 0 || limit > MAX_LINE_LIMIT)
+        {
+            return Err(ToolExecutionError::invalid_arguments(format!(
+                "limit must be between 1 and {MAX_LINE_LIMIT}"
+            )));
+        }
         let resolved = session
             .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
             .await?;
@@ -56,12 +72,26 @@ impl Tool for ReadTool {
                     resolved.as_path().display()
                 ))
             })?;
-        let numbered = content
+        let total_lines = content.lines().count();
+        let returned_lines = total_lines
+            .saturating_sub(input.offset)
+            .min(input.limit.unwrap_or(usize::MAX));
+        let mut numbered = content
             .lines()
             .enumerate()
+            .skip(input.offset)
+            .take(input.limit.unwrap_or(usize::MAX))
             .map(|(index, line)| format!("{:>6}\t{}", index + 1, line))
             .collect::<Vec<_>>()
             .join("\n");
+        if numbered.is_empty() && total_lines > 0 {
+            numbered = format!("no lines at offset {} (total {total_lines})", input.offset);
+        } else if input.offset.saturating_add(returned_lines) < total_lines {
+            numbered.push_str(&format!(
+                "\n[more lines available at offset {}]",
+                input.offset.saturating_add(returned_lines)
+            ));
+        }
         Ok(TextToolOutput::new(numbered))
     }
 }
@@ -96,6 +126,8 @@ mod tests {
                 ToolCallContext::new(ToolCallId::new("read-symlink"), CancellationToken::new()),
                 ReadInput {
                     path: "escape/secret.txt".to_string(),
+                    offset: 0,
+                    limit: None,
                 },
             )
             .await
@@ -127,6 +159,8 @@ mod tests {
                 ),
                 ReadInput {
                     path: "alias/file.txt".to_string(),
+                    offset: 0,
+                    limit: None,
                 },
             )
             .await
@@ -134,5 +168,37 @@ mod tests {
             .into_tool_result();
 
         assert!(result.text_content().contains("inside"));
+    }
+
+    #[tokio::test]
+    async fn reads_a_zero_based_line_page_with_original_line_numbers() {
+        use crate::ToolOutput;
+
+        let workspace = TestDirectory::new("read-page");
+        std::fs::write(workspace.path().join("page.txt"), "one\ntwo\nthree\nfour\n")
+            .expect("write fixture");
+        let session = ToolSessionContext::local(
+            workspace.path().to_path_buf(),
+            PermissionProfile::workspace_write(workspace.path().to_path_buf()),
+        );
+
+        let result = ReadTool
+            .execute(
+                &session,
+                ToolCallContext::new(ToolCallId::new("read-page"), CancellationToken::new()),
+                ReadInput {
+                    path: "page.txt".to_string(),
+                    offset: 1,
+                    limit: Some(2),
+                },
+            )
+            .await
+            .expect("read page")
+            .into_tool_result();
+
+        assert_eq!(
+            result.text_content(),
+            "     2\ttwo\n     3\tthree\n[more lines available at offset 3]"
+        );
     }
 }

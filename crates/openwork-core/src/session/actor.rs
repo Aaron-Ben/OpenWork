@@ -508,6 +508,9 @@ impl SessionActor {
                 draft_reasoning.clear();
             }
             SessionUpdate::ToolCallStarted { tool_call } => tool_calls.push(tool_call.clone()),
+            // Progress is intentionally live-only observation data. It remains in
+            // the bounded update buffer but is not folded into runtime snapshots.
+            SessionUpdate::ToolCallProgress { .. } => {}
             SessionUpdate::ToolCallFinished {
                 tool_call_id,
                 status,
@@ -538,7 +541,9 @@ impl SessionActor {
 
     fn emit(&mut self, turn_id: TurnId, update: SessionUpdate) {
         let envelope = SessionUpdateEnvelope {
-            version: 1,
+            // Version 2 adds the `tool_call_progress` update variant. Snapshots
+            // remain version 1 because their shape did not change.
+            version: 2,
             session_id: self.session_id.clone(),
             turn_id,
             sequence: self.next_update_sequence,

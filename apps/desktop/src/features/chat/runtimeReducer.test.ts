@@ -16,7 +16,7 @@ function envelope(
   sessionId = 'session-1',
 ): RuntimeSessionUpdateEnvelope {
   return {
-    version: 1,
+    version: 2,
     sessionId,
     turnId: 'turn-1',
     sequence,
@@ -107,6 +107,56 @@ describe('runtimeReducer', () => {
     expect(requested.phase).toBe('waiting_permission')
     expect(resolved.pendingPermission).toBeNull()
     expect(resolved.phase).toBe('running_tools')
+  })
+
+  it('appends live tool progress until the terminal result replaces it', () => {
+    const started = reduceSessionUpdate(
+      createSessionRuntimeView(),
+      envelope(1, {
+        type: 'tool_call_started',
+        toolCall: {
+          toolCallId: 'tool-progress',
+          providerCallId: 'call-progress',
+          name: 'bash',
+          input: { command: 'build' },
+          status: 'running',
+          output: null,
+          isError: null,
+        },
+      }),
+    )
+    const stdout = reduceSessionUpdate(
+      started,
+      envelope(2, {
+        type: 'tool_call_progress',
+        toolCallId: 'tool-progress',
+        progress: { kind: 'stdout', chunk: 'compiling' },
+      }),
+    )
+    const message = reduceSessionUpdate(
+      stdout,
+      envelope(3, {
+        type: 'tool_call_progress',
+        toolCallId: 'tool-progress',
+        progress: { kind: 'message', message: 'scanned 250 files' },
+      }),
+    )
+    const finished = reduceSessionUpdate(
+      message,
+      envelope(4, {
+        type: 'tool_call_finished',
+        toolCallId: 'tool-progress',
+        providerCallId: 'call-progress',
+        toolName: 'bash',
+        status: 'succeeded',
+        output: 'complete',
+        isError: false,
+      }),
+    )
+
+    expect(message.toolCalls['tool-progress'].output).toContain('compiling')
+    expect(message.toolCalls['tool-progress'].output).toContain('scanned 250 files')
+    expect(finished.toolCalls['tool-progress'].output).toBe('complete')
   })
 
   it('replaces ephemeral state from a running snapshot', () => {

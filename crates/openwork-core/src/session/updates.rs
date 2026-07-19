@@ -27,6 +27,18 @@ pub struct LiveToolCall {
     pub is_error: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ToolProgressUpdate {
+    Stdout { chunk: String },
+    Stderr { chunk: String },
+    Message { message: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "state",
@@ -82,6 +94,10 @@ pub enum SessionUpdate {
     DraftCleared,
     ToolCallStarted {
         tool_call: LiveToolCall,
+    },
+    ToolCallProgress {
+        tool_call_id: ToolCallId,
+        progress: ToolProgressUpdate,
     },
     ToolCallFinished {
         tool_call_id: ToolCallId,

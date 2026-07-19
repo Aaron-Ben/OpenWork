@@ -3,6 +3,7 @@ import type {
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
 } from '../bridge/compat'
+import { supportsRuntimeSessionUpdateVersion } from '../bridge/compat'
 import { useRuntimeStore, type RuntimeApplyResult } from '../features/chat/runtimeStore'
 import { useSessionStore } from '../features/sessions/sessionStore'
 import { resolveErrorMessage } from '../utils/commandError'
@@ -64,7 +65,7 @@ export async function processSessionUpdate(
   payload: RuntimeSessionUpdateEnvelope,
   deps: CoreEventControllerDependencies = defaultDependencies(),
 ): Promise<void> {
-  if (payload.version !== 1) {
+  if (!supportsRuntimeSessionUpdateVersion(payload.version)) {
     await loadSnapshotForResync(payload.sessionId, deps)
     deps.markSyncFailed(
       payload.sessionId,

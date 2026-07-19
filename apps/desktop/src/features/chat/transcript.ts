@@ -27,6 +27,7 @@ function safeStringify(value: unknown): string {
 }
 
 function resultState(toolCall: RuntimeLiveToolCall): ToolResultState {
+  if (toolCall.isError == null) return 'running'
   if (toolCall.isError) return 'error'
   if (toolCall.status === 'denied') return 'denied'
   if (toolCall.status === 'cancelled' || toolCall.status === 'outcome_unknown') return 'interrupted'
@@ -43,7 +44,7 @@ function toolParts(runtime: SessionRuntimeView): ContentBlock[] {
       id: toolCall.providerCallId,
       name: toolCall.name,
       input: safeStringify(toolCall.input),
-      state: toolCall.output == null ? 'submitted' : 'finished',
+      state: toolCall.isError == null ? 'submitted' : 'finished',
     }]
     if (toolCall.output != null) {
       parts.push({

@@ -8,7 +8,7 @@ use openwork_chat_state::ChatStateHandle;
 use openwork_core::session::{
     ClientRequestId, NoopTraceRecorder, PermissionDecision, ResolvedModel, SessionError,
     SessionHandle, SessionId, SessionRuntimeConfig, SessionStorage, SessionUpdate,
-    SessionUpdateEnvelope, ToolCallId, TurnId, TurnOutcome,
+    SessionUpdateEnvelope, ToolCallId, ToolProgressUpdate, TurnId, TurnOutcome,
 };
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
@@ -16,7 +16,8 @@ use openwork_models::model::{
 };
 use openwork_tools::{
     PermissionMode, PermissionProfile, Tool, ToolCallContext, ToolExecutionError, ToolId,
-    ToolInvocation, ToolRegistryBuilder, ToolResult, ToolRisk, ToolSessionContext,
+    ToolInvocation, ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
+    ToolSessionContext,
 };
 use tokio::sync::broadcast;
 
@@ -95,11 +96,15 @@ impl Tool for FakeTool {
         input: serde_json::Value,
     ) -> Result<ToolResult, ToolExecutionError> {
         let wait_for_cancel = input["waitForCancel"] == true;
+        let progress_message = input["emitProgress"].as_str().map(str::to_string);
         self.state
             .invocations
             .lock()
             .unwrap()
             .push(ToolInvocation::new(self.id.to_string(), input));
+        if let Some(message) = progress_message {
+            call.report_progress(RuntimeToolProgress::Message { message });
+        }
         if wait_for_cancel {
             call.cancel.cancelled().await;
             return Ok(ToolResult::cancelled("fake tool cancelled"));
@@ -422,6 +427,52 @@ async fn tool_result_is_in_the_next_model_request() {
             "finish_turn"
         ]
     );
+}
+
+#[tokio::test]
+async fn tool_progress_is_forwarded_before_the_terminal_tool_update() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call(
+                    "call-progress",
+                    "read",
+                    r#"{"emitProgress":"scanning"}"#,
+                )],
+            ),
+            response("final", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+    start(&fixture).await;
+
+    let (progress_sequence, finished_sequence) =
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut progress_sequence = None;
+            loop {
+                let event = fixture.updates.recv().await.expect("session update");
+                match event.update {
+                    SessionUpdate::ToolCallProgress {
+                        progress: ToolProgressUpdate::Message { message },
+                        ..
+                    } => {
+                        assert_eq!(message, "scanning");
+                        progress_sequence = Some(event.sequence);
+                    }
+                    SessionUpdate::ToolCallFinished { .. } => {
+                        break (progress_sequence.expect("progress update"), event.sequence);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("tool updates timed out");
+
+    assert!(progress_sequence < finished_sequence);
 }
 
 #[tokio::test]

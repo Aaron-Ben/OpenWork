@@ -64,6 +64,10 @@ impl Tool for BashTool {
             }
             .to_string(),
         );
+        // SECURITY LIMITATION: `OPENWORK_NETWORK_MODE` is advisory metadata only.
+        // This backend does not yet enforce an operating-system-level filesystem
+        // or network sandbox, nor can it reliably inspect shell redirections.
+        // Keep the explicit terminal warning below until a sandbox backend exists.
         let timeout_ms = input.timeout_ms.clamp(1, MAX_TIMEOUT_MS);
         let output = session
             .process_backend
@@ -130,10 +134,11 @@ fn default_timeout_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{PermissionProfile, ToolCallId, ToolErrorCode, ToolOutput};
+    use crate::{PermissionProfile, ToolCallId, ToolErrorCode, ToolOutput, ToolProgress};
 
     fn session() -> ToolSessionContext {
         ToolSessionContext::local(
@@ -246,5 +251,38 @@ mod tests {
             Some(ToolErrorCode::Cancelled)
         );
         assert!(result.text_content().contains("before-cancel"));
+    }
+
+    #[tokio::test]
+    async fn reports_stdout_and_stderr_before_the_final_result() {
+        let (progress_tx, mut progress_rx) = mpsc::channel(8);
+        let call = call("progress").with_progress_sender(progress_tx);
+
+        BashTool
+            .execute(
+                &session(),
+                call,
+                BashInput {
+                    command: "printf out; printf err >&2".to_string(),
+                    timeout_ms: 1_000,
+                },
+            )
+            .await
+            .expect("completed command");
+
+        let mut progress = Vec::new();
+        while let Ok(item) = progress_rx.try_recv() {
+            progress.push(item);
+        }
+        assert!(
+            progress.iter().any(
+                |item| matches!(item, ToolProgress::Stdout { chunk } if chunk.contains("out"))
+            )
+        );
+        assert!(
+            progress.iter().any(
+                |item| matches!(item, ToolProgress::Stderr { chunk } if chunk.contains("err"))
+            )
+        );
     }
 }

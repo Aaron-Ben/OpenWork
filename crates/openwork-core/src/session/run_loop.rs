@@ -10,8 +10,9 @@ use openwork_models::model::{
 };
 use openwork_tools::{
     FinalizedToolset, PolicyDecision, ToolCallContext as RuntimeToolCallContext,
-    ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation, ToolResult, ToolResultContent,
-    ToolResultStatus, ToolValidationError,
+    ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation,
+    ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent, ToolResultStatus,
+    ToolValidationError,
 };
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
@@ -21,8 +22,8 @@ use uuid::Uuid;
 use super::{
     ClientRequestId, LiveToolCall, ModelCallFinished, ModelCallStarted, PermissionDecision,
     PermissionRequest, ResolvedModel, SessionId, SessionPhase, SessionStorage, SessionUpdate,
-    ToolCallFinished, ToolCallId, ToolCallStarted, TraceRecorder, TraceSignal, TraceStatus, TurnId,
-    TurnOutcome,
+    ToolCallFinished, ToolCallId, ToolCallStarted, ToolProgressUpdate, TraceRecorder, TraceSignal,
+    TraceStatus, TurnId, TurnOutcome,
 };
 
 pub(super) struct TurnRunRequest {
@@ -467,11 +468,38 @@ impl TurnRunner {
             }
         }
 
+        let (progress_tx, mut progress_rx) = mpsc::channel(64);
         let call_context = RuntimeToolCallContext::new(
             RuntimeToolCallId::new(tool_call_id.to_string()),
             self.request.cancel.child_token(),
-        );
-        let result = self.request.tools.call(call_context, invocation).await;
+        )
+        .with_progress_sender(progress_tx);
+        let tools = Arc::clone(&self.request.tools);
+        let mut execution = Box::pin(tools.call(call_context, invocation));
+        let mut progress_open = true;
+        let result = loop {
+            tokio::select! {
+                biased;
+                progress = progress_rx.recv(), if progress_open => {
+                    let Some(progress) = progress else {
+                        progress_open = false;
+                        continue;
+                    };
+                    self.update(SessionUpdate::ToolCallProgress {
+                        tool_call_id: tool_call_id.clone(),
+                        progress: tool_progress_update(progress),
+                    }).await?;
+                }
+                result = &mut execution => break result,
+            }
+        };
+        while let Ok(progress) = progress_rx.try_recv() {
+            self.update(SessionUpdate::ToolCallProgress {
+                tool_call_id: tool_call_id.clone(),
+                progress: tool_progress_update(progress),
+            })
+            .await?;
+        }
         let cancelled = result.status == ToolResultStatus::Cancelled;
         self.finish_tool_trace(
             &tool_trace,
@@ -620,6 +648,14 @@ impl TurnRunner {
             })
             .await
             .map_err(|_| TurnRunError::ActorStopped)
+    }
+}
+
+fn tool_progress_update(progress: RuntimeToolProgress) -> ToolProgressUpdate {
+    match progress {
+        RuntimeToolProgress::Stdout { chunk } => ToolProgressUpdate::Stdout { chunk },
+        RuntimeToolProgress::Stderr { chunk } => ToolProgressUpdate::Stderr { chunk },
+        RuntimeToolProgress::Message { message } => ToolProgressUpdate::Message { message },
     }
 }
 

@@ -51,7 +51,7 @@ mod tests {
         );
 
         let expected_properties = [
-            ("read", &["path"][..]),
+            ("read", &["path", "offset", "limit"][..]),
             ("write", &["path", "content"][..]),
             (
                 "edit",
@@ -61,8 +61,8 @@ mod tests {
                 "grep",
                 &["pattern", "path", "glob", "outputMode", "maxResults"][..],
             ),
-            ("glob", &["pattern", "path"][..]),
-            ("list", &["path"][..]),
+            ("glob", &["pattern", "path", "maxResults"][..]),
+            ("list", &["path", "offset", "limit"][..]),
             ("bash", &["command", "timeoutMs"][..]),
         ];
         for (name, properties) in expected_properties {

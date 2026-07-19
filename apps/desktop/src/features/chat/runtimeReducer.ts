@@ -3,8 +3,12 @@ import type {
   RuntimePermissionRequest,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
+  RuntimeToolProgress,
   RuntimeTurnOutcome,
 } from '../../bridge/compat'
+import { supportsRuntimeSessionUpdateVersion } from '../../bridge/compat'
+
+const MAX_LIVE_TOOL_OUTPUT_CHARS = 32 * 1024
 
 export type SessionRuntimePhase =
   | 'idle'
@@ -66,11 +70,31 @@ function draftFor(state: SessionRuntimeView, turnId: string): AssistantDraft {
     : { turnId, text: '', reasoning: '' }
 }
 
+function appendToolProgress(
+  output: string | null,
+  progress: RuntimeToolProgress,
+): string {
+  const current = output ?? ''
+  let addition: string
+  switch (progress.kind) {
+    case 'stdout':
+      addition = progress.chunk
+      break
+    case 'stderr':
+      addition = `${current && !current.endsWith('\n') ? '\n' : ''}[stderr]\n${progress.chunk}`
+      break
+    case 'message':
+      addition = `${current && !current.endsWith('\n') ? '\n' : ''}[progress] ${progress.message}\n`
+      break
+  }
+  return (current + addition).slice(-MAX_LIVE_TOOL_OUTPUT_CHARS)
+}
+
 export function reduceSessionUpdate(
   state: SessionRuntimeView,
   envelope: RuntimeSessionUpdateEnvelope,
 ): SessionRuntimeView {
-  if (envelope.version !== 1) {
+  if (!supportsRuntimeSessionUpdateVersion(envelope.version)) {
     return {
       ...state,
       syncState: 'stale',
@@ -123,6 +147,20 @@ export function reduceSessionUpdate(
         orderedToolCallIds: state.orderedToolCallIds.includes(id)
           ? state.orderedToolCallIds
           : [...state.orderedToolCallIds, id],
+      }
+    }
+    case 'tool_call_progress': {
+      const previous = state.toolCalls[update.toolCallId]
+      if (!previous) return next
+      return {
+        ...next,
+        toolCalls: {
+          ...state.toolCalls,
+          [update.toolCallId]: {
+            ...previous,
+            output: appendToolProgress(previous.output, update.progress),
+          },
+        },
       }
     }
     case 'tool_call_finished': {

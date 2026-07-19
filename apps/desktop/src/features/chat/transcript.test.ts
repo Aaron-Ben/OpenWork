@@ -88,4 +88,43 @@ describe('buildTranscript', () => {
 
     expect(buildTranscript(canonical, runtime).map((item) => item.id)).toEqual(['message-1'])
   })
+
+  it('keeps a tool with progress output in the running state', () => {
+    const runtime = {
+      ...createSessionRuntimeView(),
+      turnId: 'turn-progress',
+      phase: 'running_tools' as const,
+      toolCalls: {
+        'tool-progress': {
+          toolCallId: 'tool-progress',
+          providerCallId: 'provider-progress',
+          name: 'bash',
+          input: { command: 'build' },
+          status: 'validating',
+          output: 'compiling',
+          isError: null,
+        },
+      },
+      orderedToolCallIds: ['tool-progress'],
+    }
+
+    const liveItem = buildTranscript([], runtime)[0]
+
+    expect(liveItem.parts).toEqual([
+      {
+        type: 'tool_call',
+        id: 'provider-progress',
+        name: 'bash',
+        input: '{\n  "command": "build"\n}',
+        state: 'submitted',
+      },
+      {
+        type: 'tool_result',
+        id: 'provider-progress',
+        name: 'bash',
+        output: [{ type: 'text', text: 'compiling' }],
+        state: 'running',
+      },
+    ])
+  })
 })
