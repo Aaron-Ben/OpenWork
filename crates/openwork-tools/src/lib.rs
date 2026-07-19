@@ -21,8 +21,9 @@ pub use builtins::builtin_registry;
 pub use context::{ToolCallContext, ToolCallId, ToolSessionContext};
 pub use definition::{ToolDefinition, ToolId, ToolRisk};
 pub use file_change::{
-    FileChangeArtifact, FileChangeKind, FileChangeUndoError, FileDiffHunk, FileDiffLine,
-    FileDiffLineKind, UndoFileChangesResult, undo_file_changes,
+    FileChangeArtifact, FileChangeKind, FileChangeReapplyError, FileChangeUndoError, FileDiffHunk,
+    FileDiffLine, FileDiffLineKind, ReapplyFileChangesResult, UndoFileChangesResult,
+    reapply_file_changes, undo_file_changes,
 };
 pub use invocation::ToolInvocation;
 pub use policy::{

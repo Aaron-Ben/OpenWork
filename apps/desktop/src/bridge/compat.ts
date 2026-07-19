@@ -113,6 +113,10 @@ export interface RuntimeUndoFileChangesResult {
   undoneChangeIds: string[]
 }
 
+export interface RuntimeReapplyFileChangesResult {
+  reappliedChangeIds: string[]
+}
+
 export type RuntimeSnapshotState =
   | { state: 'idle' }
   | {

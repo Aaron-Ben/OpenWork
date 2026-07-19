@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use openwork_tools::{
     FileChangeArtifact, FileChangeKind, FileChangeUndoError, PermissionProfile, ToolCallContext,
     ToolCallId, ToolInvocation, ToolResult, ToolSessionContext, ToolsetConfig, builtin_registry,
-    undo_file_changes,
+    reapply_file_changes, undo_file_changes,
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -88,6 +88,10 @@ async fn write_reports_complete_created_and_modified_diffs() {
     assert_eq!(created.hunks.len(), 1);
     assert_eq!(created.hunks[0].lines.len(), 3);
     assert!(created.before_content.is_none());
+    assert_eq!(
+        created.after_content.as_deref(),
+        Some("fn main() {\n    println!(\"hello\");\n}\n")
+    );
 
     let modified = call(
         &toolset,
@@ -176,6 +180,96 @@ async fn undo_refuses_to_overwrite_an_external_change() {
         .expect_err("external edit must conflict");
 
     assert!(matches!(error, FileChangeUndoError::Conflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read preserved external edit"),
+        "external\n"
+    );
+}
+
+#[tokio::test]
+async fn reapply_restores_chained_changes_in_forward_order() {
+    let root = TestDirectory::new("reapply-chain");
+    let context = session(root.path());
+    let toolset = builtin_registry()
+        .finalize(
+            &ToolsetConfig::from_names(["write", "edit"]),
+            context.clone(),
+        )
+        .expect("toolset");
+    let path = root.path().join("notes.txt");
+
+    let created = call(
+        &toolset,
+        "change-1",
+        "write",
+        json!({"path": path, "content": "alpha\n"}),
+    )
+    .await;
+    let edited = call(
+        &toolset,
+        "change-2",
+        "edit",
+        json!({
+            "filePath": path,
+            "oldString": "alpha",
+            "newString": "beta",
+            "replaceAll": false
+        }),
+    )
+    .await;
+    let mut changes = vec![file_change(&created), file_change(&edited)];
+
+    undo_file_changes(&context, &changes)
+        .await
+        .expect("undo chained file changes");
+    for change in &mut changes {
+        change.undone = true;
+    }
+
+    let result = reapply_file_changes(&context, &changes)
+        .await
+        .expect("reapply chained file changes");
+
+    assert_eq!(result.reapplied_change_ids, ["change-1", "change-2"]);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read reapplied file"),
+        "beta\n"
+    );
+}
+
+#[tokio::test]
+async fn reapply_refuses_to_overwrite_a_change_made_after_undo() {
+    let root = TestDirectory::new("reapply-conflict");
+    let context = session(root.path());
+    let toolset = builtin_registry()
+        .finalize(&ToolsetConfig::from_names(["write"]), context.clone())
+        .expect("toolset");
+    let path = root.path().join("README.md");
+    std::fs::write(&path, "before\n").expect("write fixture");
+
+    let changed = call(
+        &toolset,
+        "change-conflict",
+        "write",
+        json!({"path": path, "content": "after\n"}),
+    )
+    .await;
+    let mut change = file_change(&changed);
+    undo_file_changes(&context, &[change.clone()])
+        .await
+        .expect("undo file change");
+    change.undone = true;
+    std::fs::write(&path, "external\n").expect("simulate external edit after undo");
+
+    let error = reapply_file_changes(&context, &[change])
+        .await
+        .expect_err("external edit must conflict");
+
+    assert!(
+        error
+            .to_string()
+            .contains("changed after the recorded undo")
+    );
     assert_eq!(
         std::fs::read_to_string(&path).expect("read preserved external edit"),
         "external\n"

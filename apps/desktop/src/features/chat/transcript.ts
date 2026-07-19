@@ -1,7 +1,10 @@
 import type { ChatItem } from '../../type/chat'
 import type { ContentBlock, ToolResultState } from '../../type/parts'
 import type { RuntimeLiveToolCall, RuntimeStoredMessage } from '../../bridge/compat'
-import { mergeToolMessages } from './components/toolActivity'
+import {
+  appendCompletedFileChangeSummaries,
+  mergeToolMessages,
+} from './components/toolActivity'
 import type { SessionRuntimeView } from './runtimeReducer'
 
 function canonicalItems(messages: RuntimeStoredMessage[]): ChatItem[] {
@@ -35,10 +38,13 @@ function resultState(toolCall: RuntimeLiveToolCall): ToolResultState {
   return 'success'
 }
 
-function toolParts(runtime: SessionRuntimeView): ContentBlock[] {
+function toolParts(
+  runtime: SessionRuntimeView,
+  persistedToolResultIds: ReadonlySet<string>,
+): ContentBlock[] {
   return runtime.orderedToolCallIds.flatMap((id) => {
     const toolCall = runtime.toolCalls[id]
-    if (!toolCall) return []
+    if (!toolCall || persistedToolResultIds.has(toolCall.providerCallId)) return []
     const parts: ContentBlock[] = [{
       type: 'tool_call',
       id: toolCall.providerCallId,
@@ -65,6 +71,11 @@ export function buildTranscript(
   runtime: SessionRuntimeView,
 ): ChatItem[] {
   const transcript = canonicalItems(messages)
+  const persistedToolResultIds = new Set(
+    messages.flatMap((message) => message.content.flatMap((part) =>
+      part.type === 'tool_result' ? [part.id] : [],
+    )),
+  )
   const canonicalTurnIds = new Set(
     messages.filter((message) => message.role === 'user').map((message) => message.turnId),
   )
@@ -85,7 +96,7 @@ export function buildTranscript(
   if (runtime.assistantDraft?.text) {
     parts.push({ type: 'text', text: runtime.assistantDraft.text })
   }
-  parts.push(...toolParts(runtime))
+  parts.push(...toolParts(runtime, persistedToolResultIds))
   if (runtime.turnId && parts.length > 0) {
     transcript.push({
       id: `live-${runtime.turnId}`,
@@ -96,5 +107,8 @@ export function buildTranscript(
       requestId: runtime.clientRequestId ?? undefined,
     })
   }
-  return mergeToolMessages(transcript)
+  return appendCompletedFileChangeSummaries(
+    mergeToolMessages(transcript),
+    runtime.phase === 'idle' ? null : runtime.turnId,
+  )
 }

@@ -9,4 +9,5 @@ export interface ChatItem {
   model?: string
   isStreaming?: boolean
   requestId?: string
+  fileChangePresentation?: 'activity' | 'summary'
 }

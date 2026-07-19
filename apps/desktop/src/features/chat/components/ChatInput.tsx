@@ -55,7 +55,7 @@ export function ChatInput({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[980px] px-4 pb-7">
+    <div className="mx-auto w-full max-w-3xl px-6 pb-7 max-[560px]:px-4">
       {topContent ? (
         <div data-chat-input-top-content="true" className="mb-3">
           {topContent}

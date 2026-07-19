@@ -41,6 +41,81 @@ export function mergeToolMessages(messages: ChatItem[]): ChatItem[] {
   return merged
 }
 
+/// 文件工具始终保留在执行时间线上；Turn 完成后，再在最后一条文本回答后
+/// 追加一条只负责汇总展示的派生消息。派生消息不写回数据库。
+export function appendCompletedFileChangeSummaries(
+  messages: ChatItem[],
+  activeTurnId: string | null,
+): ChatItem[] {
+  const arranged = messages.map((message) => ({
+    ...message,
+    parts: [...message.parts],
+    fileChangePresentation: message.fileChangePresentation ?? ('activity' as const),
+  }))
+  const summariesAfter = new Map<number, ChatItem>()
+  const turnIds = new Set(
+    arranged.flatMap((message) => message.turnId ? [message.turnId] : []),
+  )
+
+  for (const turnId of turnIds) {
+    if (turnId === activeTurnId) continue
+    const turnIndexes = arranged.flatMap((message, index) =>
+      message.turnId === turnId ? [index] : [],
+    )
+    let answerIndex: number | null = null
+    for (let offset = turnIndexes.length - 1; offset >= 0; offset -= 1) {
+      const index = turnIndexes[offset]
+      if (
+        arranged[index].role === 'assistant' && arranged[index].parts.some(
+          (part) => part.type === 'text' && part.text.trim().length > 0,
+        )
+      ) {
+        answerIndex = index
+        break
+      }
+    }
+    if (answerIndex == null) continue
+
+    const fileChangeCallIds = new Set<string>()
+    for (const index of turnIndexes) {
+      for (const part of arranged[index].parts) {
+        if (
+          part.type === 'tool_result' &&
+          part.artifacts?.some((artifact) => artifact.kind === 'file_change')
+        ) {
+          fileChangeCallIds.add(part.id)
+        }
+      }
+    }
+    if (fileChangeCallIds.size === 0) continue
+
+    const summaryParts: ChatItem['parts'] = []
+    for (const index of turnIndexes) {
+      for (const part of arranged[index].parts) {
+        if (
+          (part.type === 'tool_call' || part.type === 'tool_result') &&
+          fileChangeCallIds.has(part.id)
+        ) {
+          summaryParts.push(part)
+        }
+      }
+    }
+    if (summaryParts.length === 0) continue
+    summariesAfter.set(answerIndex, {
+      id: `${arranged[answerIndex].id}-file-change-summary`,
+      turnId,
+      role: 'assistant',
+      parts: summaryParts,
+      fileChangePresentation: 'summary',
+    })
+  }
+
+  return arranged.flatMap((message, index) => {
+    const summary = summariesAfter.get(index)
+    return summary ? [message, summary] : [message]
+  })
+}
+
 function findMatchingAssistant(messages: ChatItem[], toolCallId: string): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]

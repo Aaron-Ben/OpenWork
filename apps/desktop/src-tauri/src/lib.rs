@@ -40,6 +40,7 @@ pub fn run() {
             commands::runtime::runtime_turn_start,
             commands::runtime::runtime_turn_cancel,
             commands::runtime::runtime_file_changes_undo,
+            commands::runtime::runtime_file_changes_reapply,
             commands::runtime::runtime_permission_resolve,
             commands::runtime::runtime_session_snapshot,
             commands::runtime::runtime_update_replay,

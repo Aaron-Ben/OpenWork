@@ -57,7 +57,14 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::OperationConflict,
                 format!("File change has already been undone: {id}"),
             ),
+            OpenWorkCoreError::FileChangeNotUndone(id) => Self::new(
+                CommandErrorCode::OperationConflict,
+                format!("File change has not been undone: {id}"),
+            ),
             OpenWorkCoreError::FileChangeUndo(error) => {
+                Self::new(CommandErrorCode::OperationConflict, error.to_string())
+            }
+            OpenWorkCoreError::FileChangeReapply(error) => {
                 Self::new(CommandErrorCode::OperationConflict, error.to_string())
             }
             OpenWorkCoreError::Session(SessionError::Busy(turn_id)) => Self::new(
@@ -155,5 +162,15 @@ mod tests {
         assert_eq!(error.code, CommandErrorCode::DatabaseUnavailable);
         assert_eq!(error.message, "Runtime persistence is unavailable");
         assert!(!error.message.contains("secret"));
+    }
+
+    #[test]
+    fn reapply_of_an_active_change_is_an_operation_conflict() {
+        let error = CommandError::from(OpenWorkCoreError::FileChangeNotUndone(
+            "change-1".to_string(),
+        ));
+
+        assert_eq!(error.code, CommandErrorCode::OperationConflict);
+        assert_eq!(error.message, "File change has not been undone: change-1");
     }
 }

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import type {
   RuntimeLoadedSession,
+  RuntimeReapplyFileChangesResult,
   RuntimeSessionInput,
   RuntimeSessionRecord,
   RuntimeSessionSnapshot,
@@ -35,6 +36,11 @@ export const coreCommands = {
     changeIds: string[],
   ): Promise<RuntimeUndoFileChangesResult> =>
     invoke('runtime_file_changes_undo', { sessionId, changeIds }),
+  reapplyFileChanges: (
+    sessionId: string,
+    changeIds: string[],
+  ): Promise<RuntimeReapplyFileChangesResult> =>
+    invoke('runtime_file_changes_reapply', { sessionId, changeIds }),
   resolvePermission: (
     sessionId: string,
     turnId: string,

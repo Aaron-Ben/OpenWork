@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use openwork_models::model::ToolResultArtifact;
@@ -64,6 +65,8 @@ pub struct FileChangeArtifact {
     pub after_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_content: Option<String>,
     #[serde(default)]
     pub undone: bool,
 }
@@ -90,6 +93,12 @@ pub struct UndoFileChangesResult {
     pub undone_change_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReapplyFileChangesResult {
+    pub reapplied_change_ids: Vec<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum FileChangeUndoError {
     #[error("file change has already been undone: {change_id}")]
@@ -101,6 +110,20 @@ pub enum FileChangeUndoError {
     #[error("failed to restore {path}: {message}")]
     Io { path: String, message: String },
     #[error("undo failed and rollback was incomplete: {message}")]
+    RollbackFailed { message: String },
+}
+
+#[derive(Debug, Error)]
+pub enum FileChangeReapplyError {
+    #[error("file change has not been undone: {change_id}")]
+    NotUndone { change_id: String },
+    #[error("file change is invalid: {change_id}: {message}")]
+    InvalidArtifact { change_id: String, message: String },
+    #[error("file changed after the recorded undo: {path}")]
+    Conflict { path: String },
+    #[error("failed to reapply {path}: {message}")]
+    Io { path: String, message: String },
+    #[error("reapply failed and rollback was incomplete: {message}")]
     RollbackFailed { message: String },
 }
 
@@ -139,6 +162,7 @@ pub(crate) fn build_file_change(
         before_hash: before.map(content_hash),
         after_hash: content_hash(after),
         before_content: before.map(str::to_string),
+        after_content: Some(after.to_string()),
         undone: false,
     })
 }
@@ -249,6 +273,237 @@ pub async fn undo_file_changes(
 
     drop(guards);
     Ok(UndoFileChangesResult { undone_change_ids })
+}
+
+pub async fn reapply_file_changes(
+    session: &ToolSessionContext,
+    changes: &[FileChangeArtifact],
+) -> Result<ReapplyFileChangesResult, FileChangeReapplyError> {
+    if changes.is_empty() {
+        return Ok(ReapplyFileChangesResult {
+            reapplied_change_ids: Vec::new(),
+        });
+    }
+    for change in changes {
+        validate_reapply_change(change)?;
+    }
+
+    let mut checked_paths = Vec::with_capacity(changes.len());
+    for change in changes {
+        let checked = session
+            .resolve_path(&change.path, AccessKind::Write, PathIntent::MayCreate)
+            .await
+            .map_err(|error| FileChangeReapplyError::Io {
+                path: change.path.clone(),
+                message: error.to_string(),
+            })?;
+        checked_paths.push(checked);
+    }
+
+    let mut unique_paths = checked_paths.clone();
+    unique_paths.sort_by(|left, right| left.as_path().cmp(right.as_path()));
+    unique_paths.dedup_by(|left, right| left.as_path() == right.as_path());
+    let mut guards = Vec::with_capacity(unique_paths.len());
+    for path in &unique_paths {
+        guards.push(session.lock_for_write(path).await);
+    }
+
+    let mut current_by_path = HashMap::<PathBuf, Option<String>>::new();
+    for path in &unique_paths {
+        let content = match session
+            .filesystem
+            .read_to_string_limited(path.as_path(), MAX_UNDO_FILE_BYTES)
+            .await
+        {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(FileChangeReapplyError::Io {
+                    path: path.as_path().display().to_string(),
+                    message: error.to_string(),
+                });
+            }
+        };
+        current_by_path.insert(path.as_path().to_path_buf(), content);
+    }
+
+    let mut simulated = current_by_path.clone();
+    for (change, checked) in changes.iter().zip(&checked_paths) {
+        let state = simulated.get_mut(checked.as_path()).ok_or_else(|| {
+            FileChangeReapplyError::InvalidArtifact {
+                change_id: change.change_id.clone(),
+                message: "resolved path has no loaded state".to_string(),
+            }
+        })?;
+        match change.kind {
+            FileChangeKind::Created if state.is_some() => {
+                return Err(FileChangeReapplyError::Conflict {
+                    path: change.path.clone(),
+                });
+            }
+            FileChangeKind::Created => {}
+            FileChangeKind::Modified => {
+                let current = state
+                    .as_deref()
+                    .ok_or_else(|| FileChangeReapplyError::Conflict {
+                        path: change.path.clone(),
+                    })?;
+                if change.before_hash.as_deref() != Some(content_hash(current).as_str()) {
+                    return Err(FileChangeReapplyError::Conflict {
+                        path: change.path.clone(),
+                    });
+                }
+            }
+        }
+        *state = Some(after_content(change)?.to_string());
+    }
+
+    let mut applied = Vec::<AppliedReapply>::new();
+    let mut reapplied_change_ids = Vec::with_capacity(changes.len());
+    for (change, checked) in changes.iter().zip(&checked_paths) {
+        let current = current_by_path
+            .get(checked.as_path())
+            .cloned()
+            .ok_or_else(|| FileChangeReapplyError::InvalidArtifact {
+                change_id: change.change_id.clone(),
+                message: "resolved path has no loaded state".to_string(),
+            })?;
+        let after = after_content(change)?.to_string();
+        if let Err(error) =
+            apply_reapply(session, checked.as_path(), current.as_deref(), &after).await
+        {
+            rollback_reapplied(session, &applied).await?;
+            return Err(error);
+        }
+        current_by_path.insert(checked.as_path().to_path_buf(), Some(after.clone()));
+        applied.push(AppliedReapply {
+            path: checked.as_path().to_path_buf(),
+            previous: current,
+            applied: after,
+        });
+        reapplied_change_ids.push(change.change_id.clone());
+    }
+
+    drop(guards);
+    Ok(ReapplyFileChangesResult {
+        reapplied_change_ids,
+    })
+}
+
+fn validate_reapply_change(change: &FileChangeArtifact) -> Result<(), FileChangeReapplyError> {
+    if !change.undone {
+        return Err(FileChangeReapplyError::NotUndone {
+            change_id: change.change_id.clone(),
+        });
+    }
+    match change.kind {
+        FileChangeKind::Created => {
+            if change.before_content.is_some() || change.before_hash.is_some() {
+                return Err(FileChangeReapplyError::InvalidArtifact {
+                    change_id: change.change_id.clone(),
+                    message: "created change unexpectedly contains a before state".to_string(),
+                });
+            }
+        }
+        FileChangeKind::Modified => {
+            let before = change.before_content.as_deref().ok_or_else(|| {
+                FileChangeReapplyError::InvalidArtifact {
+                    change_id: change.change_id.clone(),
+                    message: "modified change is missing before content".to_string(),
+                }
+            })?;
+            if change.before_hash.as_deref() != Some(content_hash(before).as_str()) {
+                return Err(FileChangeReapplyError::InvalidArtifact {
+                    change_id: change.change_id.clone(),
+                    message: "before content hash does not match".to_string(),
+                });
+            }
+        }
+    }
+    let _ = after_content(change)?;
+    Ok(())
+}
+
+fn after_content(change: &FileChangeArtifact) -> Result<&str, FileChangeReapplyError> {
+    let after =
+        change
+            .after_content
+            .as_deref()
+            .ok_or_else(|| FileChangeReapplyError::InvalidArtifact {
+                change_id: change.change_id.clone(),
+                message: "file change is missing after content".to_string(),
+            })?;
+    if content_hash(after) != change.after_hash {
+        return Err(FileChangeReapplyError::InvalidArtifact {
+            change_id: change.change_id.clone(),
+            message: "after content hash does not match".to_string(),
+        });
+    }
+    Ok(after)
+}
+
+async fn apply_reapply(
+    session: &ToolSessionContext,
+    path: &Path,
+    current: Option<&str>,
+    after: &str,
+) -> Result<(), FileChangeReapplyError> {
+    let condition = current.map_or(AtomicWriteCondition::MustNotExist, |content| {
+        AtomicWriteCondition::Matches(content.as_bytes().to_vec())
+    });
+    session
+        .filesystem
+        .atomic_write(path, after.as_bytes(), condition)
+        .await
+        .map(|_| ())
+        .map_err(|error| map_reapply_atomic_error(path, error))
+}
+
+struct AppliedReapply {
+    path: PathBuf,
+    previous: Option<String>,
+    applied: String,
+}
+
+async fn rollback_reapplied(
+    session: &ToolSessionContext,
+    applied: &[AppliedReapply],
+) -> Result<(), FileChangeReapplyError> {
+    for operation in applied.iter().rev() {
+        let result = match &operation.previous {
+            Some(previous) => session
+                .filesystem
+                .atomic_write(
+                    &operation.path,
+                    previous.as_bytes(),
+                    AtomicWriteCondition::Matches(operation.applied.as_bytes().to_vec()),
+                )
+                .await
+                .map(|_| ()),
+            None => {
+                session
+                    .filesystem
+                    .remove_file_if_matches(&operation.path, operation.applied.as_bytes())
+                    .await
+            }
+        };
+        result.map_err(|error| FileChangeReapplyError::RollbackFailed {
+            message: format!("{}: {error}", operation.path.display()),
+        })?;
+    }
+    Ok(())
+}
+
+fn map_reapply_atomic_error(path: &Path, error: AtomicWriteError) -> FileChangeReapplyError {
+    match error {
+        AtomicWriteError::Stale => FileChangeReapplyError::Conflict {
+            path: path.display().to_string(),
+        },
+        AtomicWriteError::Io(error) => FileChangeReapplyError::Io {
+            path: path.display().to_string(),
+            message: error.to_string(),
+        },
+    }
 }
 
 fn validate_change(change: &FileChangeArtifact) -> Result<(), FileChangeUndoError> {

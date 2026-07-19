@@ -12,6 +12,8 @@ interface AssistantMessageProps {
   model?: string
   onOpenTrace?: (providerToolCallId?: string) => void
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
+  onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
+  fileChangePresentation?: 'activity' | 'summary'
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -20,6 +22,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   model,
   onOpenTrace,
   onUndoFileChanges,
+  onReapplyFileChanges,
+  fileChangePresentation = 'activity',
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const messageParts = parts.filter((part) => part.type !== 'tool_call' && part.type !== 'tool_result')
@@ -33,40 +37,30 @@ export const AssistantMessage = memo(function AssistantMessage({
   const documentLayout = messageParts.some(
     (part) => part.type === 'text' && shouldUseDocumentLayout(part.text),
   )
-  const showMessageCard = messageParts.length > 0 || (parts.length === 0 && isStreaming)
+  const showText = messageParts.length > 0 || (parts.length === 0 && isStreaming)
 
   return (
-    <div className="mb-5 flex justify-start">
-      <div
-        className={`group flex min-w-0 flex-col items-start gap-2 ${
-          documentLayout
-            ? 'w-full max-w-full'
-            : 'w-full max-w-[88%] sm:max-w-[80%] lg:max-w-[72%]'
-        }`}
-      >
-        {showMessageCard ? (
-          <div
-            className={`rounded-[20px] rounded-tl-lg border border-line bg-paper px-4 py-3 text-sm text-ink shadow-sm ${
-              documentLayout ? 'w-full' : 'max-w-full'
-            }`}
-          >
-            {model ? <div className="mb-2 text-xs text-ink-faint">{model}</div> : null}
-            {messageParts.map((part, index) =>
-              renderMessagePart(part, index, isStreaming, hasContent, documentLayout),
-            )}
-            {parts.length === 0 && isStreaming ? (
-              <span className="text-ink-faint">{t('chat.waiting')}</span>
-            ) : null}
-          </div>
-        ) : null}
-        {toolParts.length > 0 ? (
-          <ToolActivityList
-            parts={toolParts}
-            onOpenTrace={onOpenTrace ? (providerToolCallId) => onOpenTrace(providerToolCallId) : undefined}
-            onUndoFileChanges={onUndoFileChanges}
-          />
-        ) : null}
-      </div>
+    <div className="group flex min-w-0 flex-col gap-2 py-1">
+      {model ? <div className="text-xs text-ink-faint">{model}</div> : null}
+      {showText ? (
+        <div className="min-w-0">
+          {messageParts.map((part, index) =>
+            renderMessagePart(part, index, isStreaming, hasContent, documentLayout),
+          )}
+          {parts.length === 0 && isStreaming ? (
+            <span className="text-sm text-ink-faint">{t('chat.waiting')}</span>
+          ) : null}
+        </div>
+      ) : null}
+      {toolParts.length > 0 ? (
+        <ToolActivityList
+          parts={toolParts}
+          onOpenTrace={onOpenTrace ? (providerToolCallId) => onOpenTrace(providerToolCallId) : undefined}
+          onUndoFileChanges={onUndoFileChanges}
+          onReapplyFileChanges={onReapplyFileChanges}
+          fileChangePresentation={fileChangePresentation}
+        />
+      ) : null}
     </div>
   )
 })

@@ -24,6 +24,8 @@ import {
 } from '../../../type/parts'
 import {
   FileChangeCard,
+  FileDiffPanel,
+  FileStats,
   type FileChangeView,
   type FileDiffHunk,
   type FileDiffLine,
@@ -46,6 +48,8 @@ interface ToolActivityListProps {
   parts: ContentBlock[]
   onOpenTrace?: (providerToolCallId: string) => void
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
+  onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
+  fileChangePresentation?: 'activity' | 'summary'
 }
 
 const TOOL_ICONS: Record<string, typeof Terminal> = {
@@ -113,6 +117,8 @@ export const ToolActivityList = memo(function ToolActivityList({
   parts,
   onOpenTrace,
   onUndoFileChanges,
+  onReapplyFileChanges,
+  fileChangePresentation = 'activity',
 }: ToolActivityListProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(true)
@@ -127,8 +133,10 @@ export const ToolActivityList = memo(function ToolActivityList({
     [allActivities],
   )
   const activities = useMemo(
-    () => allActivities.filter((activity) => !fileActivityIds.has(activity.id)),
-    [allActivities, fileActivityIds],
+    () => fileChangePresentation === 'summary'
+      ? allActivities.filter((activity) => !fileActivityIds.has(activity.id))
+      : allActivities,
+    [allActivities, fileActivityIds, fileChangePresentation],
   )
 
   if (allActivities.length === 0) return null
@@ -138,8 +146,12 @@ export const ToolActivityList = memo(function ToolActivityList({
 
   return (
     <div data-tool-activity-list="true" className="w-full space-y-2 py-1 text-sm text-ink-soft">
-      {fileChanges.length > 0 ? (
-        <FileChangeCard changes={fileChanges} onUndoFileChanges={onUndoFileChanges} />
+      {fileChangePresentation === 'summary' && fileChanges.length > 0 ? (
+        <FileChangeCard
+          changes={fileChanges}
+          onUndoFileChanges={onUndoFileChanges}
+          onReapplyFileChanges={onReapplyFileChanges}
+        />
       ) : null}
       {activities.length > 0 ? (
         <>
@@ -198,11 +210,26 @@ function ToolActivityRow({
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const Icon = TOOL_ICONS[activity.name] ?? Wrench
+  const fileChanges = collectFileChanges([activity])
+  const primaryFileChange = fileChanges[0]
   const details = activityDetails(activity, (key) => t(key))
-  const hasDetails = details.length > 0
+  const hasDetails = fileChanges.length > 0 || details.length > 0
+  const label = primaryFileChange
+    ? expanded
+      ? primaryFileChange.kind === 'created'
+        ? t('tool.createdFile')
+        : t('tool.editedOneFile')
+      : primaryFileChange.kind === 'created'
+        ? t('tool.createdNamedFile', { name: fileName(primaryFileChange.path) })
+        : t('tool.editedFile', { name: fileName(primaryFileChange.path) })
+    : activityLabel(activity, (key, options) => t(key, options))
 
   return (
-    <div data-tool-activity-row={activity.id} className="min-w-0">
+    <div
+      data-tool-activity-row={activity.id}
+      data-file-change-activity={fileChanges[0]?.changeId}
+      className="min-w-0"
+    >
       <div className="flex min-w-0 items-center rounded-md transition-colors hover:bg-paper-hover">
         <button
           type="button"
@@ -212,8 +239,14 @@ function ToolActivityRow({
         >
           <Icon size={16} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
           <span className="min-w-0 flex-1 truncate text-sm text-ink-soft">
-            {activityLabel(activity, (key, options) => t(key, options))}
+            {label}
           </span>
+          {primaryFileChange && !expanded ? (
+            <FileStats
+              additions={primaryFileChange.additions}
+              deletions={primaryFileChange.deletions}
+            />
+          ) : null}
           <ActivityStatus state={activity.state} />
           {hasDetails ? (
             <ChevronRight
@@ -248,22 +281,32 @@ function ToolActivityRow({
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            <div className="ml-6 border-l border-line py-1 pl-3">
-              {details.map((detail) => (
-                <div key={detail.label} className="mb-2 last:mb-0">
-                  <div className="mb-1 text-[10px] uppercase tracking-wider text-ink-faint">
-                    {detail.label}
+            {fileChanges.length > 0 ? (
+              <div data-file-change-details="true" className="space-y-2 py-1 pl-6">
+                {fileChanges.map((change) => (
+                  <div key={change.changeId} className="overflow-hidden rounded-xl border border-line">
+                    <FileDiffPanel change={change} />
                   </div>
-                  <pre
-                    className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-[11px] leading-relaxed ${
-                      detail.error ? 'bg-status-danger-soft text-status-danger-ink' : 'bg-paper-hover text-ink-soft'
-                    }`}
-                  >
-                    {detail.value}
-                  </pre>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="ml-6 border-l border-line py-1 pl-3">
+                {details.map((detail) => (
+                  <div key={detail.label} className="mb-2 last:mb-0">
+                    <div className="mb-1 text-[10px] uppercase tracking-wider text-ink-faint">
+                      {detail.label}
+                    </div>
+                    <pre
+                      className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md px-3 py-2 font-mono text-[11px] leading-relaxed ${
+                        detail.error ? 'bg-status-danger-soft text-status-danger-ink' : 'bg-paper-hover text-ink-soft'
+                      }`}
+                    >
+                      {detail.value}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -326,7 +369,7 @@ function summarize(toolName: string, input: Record<string, unknown> | null): str
 }
 
 function fileName(path: string): string {
-  return path.split('/').filter(Boolean).pop() ?? path
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
 function activityLabel(
@@ -340,6 +383,9 @@ function activityLabel(
         ? translate('tool.ranCommand', { command: target })
         : translate('tool.ranCommandFallback')
     case 'write':
+      return target
+        ? translate('tool.wroteFile', { name: target })
+        : translate('tool.wroteFileFallback')
     case 'edit':
       return target
         ? translate('tool.editedFile', { name: target })
@@ -373,6 +419,8 @@ function activitySummary(
     seen.add(category)
     switch (activity.name) {
       case 'write':
+        categories.push(translate('tool.wroteFiles'))
+        break
       case 'edit':
         categories.push(translate('tool.editedFiles'))
         break

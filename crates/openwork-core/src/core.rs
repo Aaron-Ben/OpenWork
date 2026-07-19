@@ -12,8 +12,10 @@ use openwork_models::provider::{
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
 };
 use openwork_tools::{
-    FileChangeArtifact, FileChangeUndoError, PermissionProfile, ToolSessionContext,
-    UndoFileChangesResult, builtin_registry, undo_file_changes as undo_workspace_file_changes,
+    FileChangeArtifact, FileChangeReapplyError, FileChangeUndoError, PermissionProfile,
+    ReapplyFileChangesResult, ToolSessionContext, UndoFileChangesResult, builtin_registry,
+    reapply_file_changes as reapply_workspace_file_changes,
+    undo_file_changes as undo_workspace_file_changes,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -109,8 +111,12 @@ pub enum OpenWorkCoreError {
     FileChangeNotFound(String),
     #[error("file change has already been undone: {0}")]
     FileChangeAlreadyUndone(String),
+    #[error("file change has not been undone: {0}")]
+    FileChangeNotUndone(String),
     #[error(transparent)]
     FileChangeUndo(#[from] FileChangeUndoError),
+    #[error(transparent)]
+    FileChangeReapply(#[from] FileChangeReapplyError),
     #[error("model is disabled: {0}")]
     ModelDisabled(String),
     #[error("model credential reference is missing: {0}")]
@@ -376,6 +382,53 @@ impl OpenWorkCore {
         Ok(result)
     }
 
+    pub async fn reapply_file_changes(
+        &self,
+        session_id: &SessionId,
+        change_ids: Vec<String>,
+    ) -> Result<ReapplyFileChangesResult, OpenWorkCoreError> {
+        if change_ids.is_empty() {
+            return Err(StorageError::InvalidInput(
+                "at least one file change id is required".to_string(),
+            )
+            .into());
+        }
+        let unique = change_ids.iter().collect::<HashSet<_>>();
+        if unique.len() != change_ids.len() {
+            return Err(
+                StorageError::InvalidInput("file change ids must be unique".to_string()).into(),
+            );
+        }
+
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        if let Some(handle) = self.sessions.read().await.get(session_id).cloned()
+            && matches!(
+                handle.snapshot().await?.runtime,
+                crate::session::SessionRuntimeSnapshot::Running { .. }
+            )
+        {
+            return Err(OpenWorkCoreError::SessionActive(session_id.to_string()));
+        }
+
+        let session = self
+            .storage
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
+        let mut records = self.storage.load_message_records(session_id).await?;
+        let changes = select_undone_file_changes(&records, &change_ids)?;
+        let context = ToolSessionContext::local(
+            PathBuf::from(&session.working_directory),
+            PermissionProfile::workspace_write(PathBuf::from(&session.working_directory)),
+        );
+        let result = reapply_workspace_file_changes(&context, &changes).await?;
+        let updates = mark_file_changes_reapplied(&mut records, &change_ids)?;
+        self.storage
+            .replace_message_contents(session_id, &updates)
+            .await?;
+        Ok(result)
+    }
+
     pub async fn cancel_turn(
         &self,
         session_id: &SessionId,
@@ -535,6 +588,21 @@ fn select_file_changes(
     records: &[StoredMessageRecord],
     change_ids: &[String],
 ) -> Result<Vec<FileChangeArtifact>, OpenWorkCoreError> {
+    select_file_changes_in_state(records, change_ids, false)
+}
+
+fn select_undone_file_changes(
+    records: &[StoredMessageRecord],
+    change_ids: &[String],
+) -> Result<Vec<FileChangeArtifact>, OpenWorkCoreError> {
+    select_file_changes_in_state(records, change_ids, true)
+}
+
+fn select_file_changes_in_state(
+    records: &[StoredMessageRecord],
+    change_ids: &[String],
+    expected_undone: bool,
+) -> Result<Vec<FileChangeArtifact>, OpenWorkCoreError> {
     let requested = change_ids
         .iter()
         .map(String::as_str)
@@ -566,8 +634,11 @@ fn select_file_changes(
                         change.change_id
                     )));
                 }
-                if change.undone {
+                if !expected_undone && change.undone {
                     return Err(OpenWorkCoreError::FileChangeAlreadyUndone(change.change_id));
+                }
+                if expected_undone && !change.undone {
+                    return Err(OpenWorkCoreError::FileChangeNotUndone(change.change_id));
                 }
                 changes.push(change);
             }
@@ -585,6 +656,21 @@ fn select_file_changes(
 fn mark_file_changes_undone(
     records: &mut [StoredMessageRecord],
     change_ids: &[String],
+) -> Result<Vec<MessageContentUpdate>, OpenWorkCoreError> {
+    mark_file_changes_state(records, change_ids, true)
+}
+
+fn mark_file_changes_reapplied(
+    records: &mut [StoredMessageRecord],
+    change_ids: &[String],
+) -> Result<Vec<MessageContentUpdate>, OpenWorkCoreError> {
+    mark_file_changes_state(records, change_ids, false)
+}
+
+fn mark_file_changes_state(
+    records: &mut [StoredMessageRecord],
+    change_ids: &[String],
+    undone: bool,
 ) -> Result<Vec<MessageContentUpdate>, OpenWorkCoreError> {
     let requested = change_ids
         .iter()
@@ -609,7 +695,7 @@ fn mark_file_changes_undone(
                         ))
                     })?;
                 if requested.contains(change.change_id.as_str()) {
-                    change.undone = true;
+                    change.undone = undone;
                     *artifact = change.to_result_artifact().map_err(|error| {
                         OpenWorkCoreError::RuntimeComponent(format!(
                             "failed to encode updated file change artifact: {error}"
@@ -694,6 +780,7 @@ mod tests {
             before_hash: Some("before".to_string()),
             after_hash: "after".to_string(),
             before_content: Some("before".to_string()),
+            after_content: Some("after".to_string()),
             undone: false,
         }
     }
@@ -754,5 +841,45 @@ mod tests {
             select_file_changes(&records, &["missing".to_string()]).expect_err("missing change");
 
         assert!(matches!(error, OpenWorkCoreError::FileChangeNotFound(id) if id == "missing"));
+    }
+
+    #[test]
+    fn selects_undone_changes_and_marks_them_reapplied() {
+        let mut undone = change("change-1");
+        undone.undone = true;
+        let mut records = vec![record(&[undone, change("change-2")])];
+
+        let selected = select_undone_file_changes(&records, &["change-1".to_string()])
+            .expect("select undone change");
+        assert_eq!(selected.len(), 1);
+        assert!(selected[0].undone);
+
+        let updates = mark_file_changes_reapplied(&mut records, &["change-1".to_string()])
+            .expect("mark reapplied");
+        assert_eq!(updates.len(), 1);
+
+        let ContentBlock::ToolResult(result) = &records[0].content[0] else {
+            panic!("tool result");
+        };
+        let states = result
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                FileChangeArtifact::from_result_artifact(artifact).expect("decode change")
+            })
+            .map(|change| (change.change_id, change.undone))
+            .collect::<HashMap<_, _>>();
+        assert!(!states["change-1"]);
+        assert!(!states["change-2"]);
+    }
+
+    #[test]
+    fn rejects_a_file_change_that_was_not_undone_for_reapply() {
+        let records = vec![record(&[change("change-1")])];
+
+        let error = select_undone_file_changes(&records, &["change-1".to_string()])
+            .expect_err("applied change cannot be reapplied");
+
+        assert!(matches!(error, OpenWorkCoreError::FileChangeNotUndone(id) if id == "change-1"));
     }
 }

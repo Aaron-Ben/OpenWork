@@ -71,6 +71,13 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     if (!reloaded) throw new Error('File changes were undone, but the conversation could not be refreshed')
   }
 
+  async function reapplyFileChanges(changeIds: string[]) {
+    if (!sessionId) return
+    await coreCommands.reapplyFileChanges(sessionId, changeIds)
+    const reloaded = await reloadSession(sessionId)
+    if (!reloaded) throw new Error('File changes were reapplied, but the conversation could not be refreshed')
+  }
+
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="relative min-h-0">
@@ -81,11 +88,12 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
               hasSession={Boolean(sessionId)}
             />
           ) : (
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8 max-[560px]:px-4">
               {messages.map((message) => {
                 const openTrace = message.turnId
                   ? (providerToolCallId?: string) => setSelectedTrace({ turnId: message.turnId!, providerToolCallId })
                   : undefined
+                const fileChangePresentation = message.fileChangePresentation ?? 'activity'
                 return (
                   <div
                     key={message.id}
@@ -99,6 +107,8 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                         parts={message.parts}
                         onOpenTrace={openTrace}
                         onUndoFileChanges={undoFileChanges}
+                        onReapplyFileChanges={reapplyFileChanges}
+                        fileChangePresentation={fileChangePresentation}
                       />
                     ) : (
                       <AssistantMessage
@@ -107,6 +117,8 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                         isStreaming={message.isStreaming}
                         onOpenTrace={openTrace}
                         onUndoFileChanges={undoFileChanges}
+                        onReapplyFileChanges={reapplyFileChanges}
+                        fileChangePresentation={fileChangePresentation}
                       />
                     )}
                   </div>
@@ -127,12 +139,12 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
       <div>
         {runtime.syncState !== 'current' ? (
-          <p className="mx-auto mb-2 max-w-5xl px-6 text-xs text-status-warning-ink">
+          <p className="mx-auto mb-2 max-w-3xl px-6 text-xs text-status-warning-ink max-[560px]:px-4">
             {runtime.syncState === 'resyncing' ? t('chat.syncResyncing') : t('chat.syncStale')}
           </p>
         ) : null}
         {runtime.error || sessionError ? (
-          <p className="mx-auto mb-2 max-w-5xl px-6 text-xs text-status-danger-ink" role="alert">
+          <p className="mx-auto mb-2 max-w-3xl px-6 text-xs text-status-danger-ink max-[560px]:px-4" role="alert">
             {runtime.error ?? sessionError}
           </p>
         ) : null}

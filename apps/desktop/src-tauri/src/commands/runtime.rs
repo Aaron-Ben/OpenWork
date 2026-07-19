@@ -1,7 +1,8 @@
 use openwork_core::{
-    session::TurnId, ClientRequestId, LoadedSession, OpenWorkCore, PermissionDecision, SessionId,
-    SessionInput, SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId,
-    TraceSpanRecord, TraceTurnSummary, TurnAccepted, UndoFileChangesResult,
+    session::TurnId, ClientRequestId, LoadedSession, OpenWorkCore, PermissionDecision,
+    ReapplyFileChangesResult, SessionId, SessionInput, SessionRecord, SessionSnapshot,
+    SessionUpdateEnvelope, ToolCallId, TraceSpanRecord, TraceTurnSummary, TurnAccepted,
+    UndoFileChangesResult,
 };
 use openwork_models::model::ContentBlock;
 
@@ -90,6 +91,17 @@ pub async fn runtime_file_changes_undo(
     change_ids: Vec<String>,
 ) -> Result<UndoFileChangesResult, CommandError> {
     core.undo_file_changes(&SessionId::new(session_id), change_ids)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_file_changes_reapply(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    change_ids: Vec<String>,
+) -> Result<ReapplyFileChangesResult, CommandError> {
+    core.reapply_file_changes(&SessionId::new(session_id), change_ids)
         .await
         .map_err(CommandError::from)
 }
