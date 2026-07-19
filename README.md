@@ -1,187 +1,158 @@
-# OpenWork
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/openwork-wordmark-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/openwork-wordmark-light.svg">
+    <img src="docs/assets/openwork-wordmark-light.svg" alt="OpenWork" width="420">
+  </picture>
 
-<p align="center">
-  <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
-</p>
+  <p><strong>本地优先、可追踪的桌面 Agent 工作台</strong></p>
+  <p>用 Rust 驱动 Model → Tool/Permission → Model 循环，通过 Tauri Desktop 管理模型、会话、工具权限和运行 Trace。</p>
 
-OpenWork 是一个以 Rust 实现的本地 Agent 工作台实验项目。当前代码已经具备多厂商模型调用、工具循环、审批和 PostgreSQL 持久化；目标架构是可恢复、可验证的 Durable Agent Harness。
+  <p>
+    <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb">
+    <img alt="Status" src="https://img.shields.io/badge/status-active_development-f59e0b">
+    <img alt="Rust" src="https://img.shields.io/badge/backend-Rust-dea584">
+    <img alt="Tauri" src="https://img.shields.io/badge/desktop-Tauri_2-24c8db">
+    <img alt="PostgreSQL" src="https://img.shields.io/badge/storage-PostgreSQL_16-4169e1">
+  </p>
 
-English version: [README.en.md](README.en.md)
+  <p>
+    <a href="README.en.md">English</a> ·
+    <a href="docs/README.md">文档</a> ·
+    <a href="docs/redesign/README.md">架构</a> ·
+    <a href="https://github.com/Aaron-Ben/OpenWork/issues">Issues</a>
+  </p>
+</div>
 
-## 项目状态
+> [!IMPORTANT]
+> OpenWork 目前处于 `0.1.0` 主动开发阶段，需要从源码运行。它提供工作目录和工具权限边界，但**不提供操作系统级沙箱**；请只在可信目录和可接受的权限配置中使用。
 
-已经完成的基础能力包括：
+## OpenWork 是什么
 
-- Rust workspace 基础结构
-- Tauri + React + TypeScript 桌面客户端骨架
-- OpenAI、Anthropic、Kimi、DeepSeek、Qwen/DashScope 与 GLM Adapter
-- 厂商无关的 `ModelRequest`、`ModelResponse`、`ModelEvent`、`ModelError` 与 `ModelPort`
-- 可区分限流与额度耗尽的错误映射，以及流式输出感知的 Transport Retry
-- Agent 多步工具调用、审批、取消和 doom-loop 检测
-- PostgreSQL Provider Repository 与 Provider Model 配置持久化
-- append-only Event Journal、Journal-backed Session/Turn/Message 与显式 migration
-- PostgreSQL Provider API Key 加密存储
-- Tauri + React + TypeScript 桌面端
+OpenWork 是一个本地桌面 Agent 工作台。你可以选择模型和工作目录，让 Agent 在一个持续的 Session 中读取、搜索和修改文件、运行命令，并在需要时等待你的权限决定。
 
-还没有完成：
+它关注的是一条清晰、可诊断的本地运行链：
 
-- Durable Turn 的完整 Journal 写入、崩溃恢复和幂等 Projection
-- 操作系统级 Sandbox 与可靠副作用对账
-- Context 压缩、Plan、Memory、MCP 与 Skill 的目标实现
-- 自动化 live provider smoke test
+- **多模型接入**：内置 OpenAI、Anthropic、DeepSeek、Kimi、Qwen 和 GLM Provider 配置；
+- **持续 Agent Loop**：一次 Turn 可以经历多次模型调用和工具调用，直到完成、失败、取消或触发保护条件；
+- **受控工具执行**：内置 `read`、`write`、`edit`、`grep`、`glob`、`list` 和 `bash`，受工作目录和 Permission Profile 约束；
+- **可审阅的文件变更**：文件工具生成结构化 Diff，并支持冲突检查下的 Undo/Reapply；
+- **本地持久化**：Provider、Model、Session、Turn、Message 和 Trace 统一保存在 PostgreSQL；
+- **运行诊断**：Trace 展示 Model/Tool 调用、真实重试、Token、分段耗时、权限等待和采集完整度；
+- **桌面体验**：Tauri 2 + React，支持简体中文、繁体中文和英文界面。
 
-## 目录结构
+## 快速开始
 
-```text
-OpenWork/
-  apps/
-    desktop/                 # Tauri + React desktop app
-  crates/
-    openwork-protocol/       # Stable model/capability/approval/journal contracts
-    openwork-core/           # Turn control loop and approval state ownership
-    openwork-app/            # Application API, supervisor, composition
-    openwork-providers/      # Pure model HTTP/SSE adapters, errors, retry
-    openwork-persistence/    # PostgreSQL repositories, Journal and migrations
-    openwork-capabilities/   # Tool declarations and capability discovery
-    openwork-execution/      # Schema validation and built-in action handlers
-    openwork-workspace/      # Project workspace, Git and file boundary primitives
-  docs/
-    model-provider-v1-design.md
-```
-
-## Rust 模块
-
-`openwork-protocol`
-
-- 定义 `ModelRequest`、`ModelResponse`、`ModelEvent`
-- 定义 `Message` 和 `ContentBlock`
-- 定义 `CapabilitySpec`、`ActionRequest`、`Observation`
-- 定义 Recorded Event、Expected Version 与 `EventJournal`
-- 定义 `ModelPort`、`ProviderRepository`、`CapabilityResolverPort`、`ExecutionPort`
-
-`openwork-providers`
-
-- `OpenAiProvider`
-- `AnthropicProvider`
-- `KimiProvider`
-- `DeepSeekProvider`
-- `QwenProvider`
-- `GlmProvider`
-- 统一厂商错误分类与 `RetryingModelPort`
-
-`openwork-persistence`
-
-- `PostgresProviderRepository`
-- `PostgresEventJournal`
-- `providers` / `provider_models` migration
-- `recorded_events` append-only migration 与显式 migrator
-- 基于 Session/Turn 事件的 Session/Message 创建、回放、改名和删除
-- Provider 与 Models 的事务写入
-- 使用 AES-256-GCM 加密 Provider API Key 后写入 PostgreSQL
-
-`openwork-capabilities`
-
-- 持有内置 Action 的名称、描述、参数 Schema 和声明侧风险提示
-- 通过 `CapabilityCatalog` 实现能力发现，不执行文件或进程 IO
-
-`openwork-execution`
-
-- 按 `actions/filesystem` 与 `actions/process` 组织真实 Handler
-- 负责参数校验、路径权限、取消、超时、输出截断和 `Observation` 归一化
-- 当前不包含操作系统级 sandbox；`risk_hint` 已参与审批原因，但不能替代参数级最终风险判断
-
-`openwork-core` / `openwork-app`
-
-- Core 持有 Turn 循环和审批暂停/恢复状态
-- `OpenWorkApplication` 是唯一 Composition Root，组合 Provider、Capability Catalog、Execution、Core 和 Journal-backed Session
-- Desktop 只通过 Provider/Session/Turn Application Service 访问应用能力
-- 模型始终由用户显式选择 `providerId + model`；不提供自动选模或跨模型 Fallback
-
-## 桌面端
-
-OpenWork Desktop 是 OpenWork 的 Tauri + React + TypeScript 客户端。
-
-技术栈：
-
-- Tauri 2
-- React
-- TypeScript
-- Vite
-- pnpm
-
-## 环境要求
+### 1. 环境要求
 
 - Rust stable
-- Node.js
-- pnpm
-- Tauri 依赖环境
+- Node.js 与 Corepack/pnpm
+- Docker 与 Docker Compose
+- 当前平台所需的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)
 
-如果没有 pnpm：
+如果本机还没有 pnpm：
 
 ```bash
 corepack enable
 corepack prepare pnpm@latest --activate
 ```
 
-## 安装依赖
+### 2. 获取源码并配置环境
 
-桌面端：
+```bash
+git clone https://github.com/Aaron-Ben/OpenWork.git
+cd OpenWork
+cp .env.example .env
+openssl rand -base64 32
+```
+
+把最后一条命令生成的值写入根目录 `.env`：
+
+```dotenv
+DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork
+OPENWORK_API_KEY_ENCRYPTION_KEY=<生成的 Base64 值>
+```
+
+> [!WARNING]
+> 只要继续使用同一个数据库，就不要更换 `OPENWORK_API_KEY_ENCRYPTION_KEY`。更换后，数据库中已有的 Provider API Key 将无法解密。
+
+### 3. 启动 PostgreSQL 并迁移
+
+在仓库根目录运行：
+
+```bash
+docker compose up -d postgres
+cargo run -p openwork-core --bin openwork-migrate
+```
+
+### 4. 启动 Desktop
 
 ```bash
 cd apps/desktop
 pnpm install
-```
-
-## 启动桌面客户端
-
-> 桌面端命令必须在 `apps/desktop` 目录下执行。项目根目录只有 `Cargo.toml`（Rust workspace），没有 `package.json`，在根目录运行 `pnpm tauri dev` 会报 `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`。
-
-```bash
-cargo run -p openwork-persistence --bin openwork-migrate
-cd apps/desktop
 pnpm tauri dev
 ```
 
-Migration 必须在仓库根目录显式执行；Desktop 启动只检查 schema，不会自动建表。
+桌面端命令必须在 `apps/desktop` 中执行；仓库根目录没有 `package.json`。`OpenWorkCore::bootstrap` 也会应用待执行 migration，独立迁移命令主要用于首次配置和数据库诊断。
 
-## 构建桌面客户端
+## 基本使用流程
 
-```bash
-cd apps/desktop
-pnpm tauri build
+1. 在 Settings 中配置 Provider、Model 和 API Key；
+2. 创建 Session，并显式选择 `providerId + model` 与工作目录；
+3. 向 Agent 提交任务，在权限请求出现时选择允许或拒绝；
+4. 在会话中审阅工具活动、文件 Diff，并按需 Undo/Reapply；
+5. 从运行记录或会话入口打开 Trace，定位模型重试、工具耗时和失败阶段。
+
+OpenWork 不会自动选择模型，也不会在 Provider 失败时静默切换到其他模型。
+
+## 运行架构
+
+```mermaid
+flowchart LR
+    UI["Tauri Desktop<br/>React + TypeScript"] -->|"Command / Event"| Core["OpenWorkCore"]
+    Core --> Registry["Session Registry"]
+    Registry --> Actor["SessionActor"]
+    Actor --> Chat["Chat State Actor"]
+    Actor --> Model["Model Adapters<br/>HTTP + SSE"]
+    Actor --> Tools["Tool Runtime<br/>Permission + Workspace"]
+    Core --> DB[("PostgreSQL")]
+    Actor -. "best-effort signals" .-> Trace["Trace Recorder"]
+    Trace --> DB
 ```
 
-## Rust 测试和检查
+架构中的关键约束：
 
-在项目根目录运行：
+- `openwork-core` 是唯一运行时入口；
+- 一个活动 Session 对应一个 `SessionActor`，同一时间最多推进一个 Turn；
+- `openwork-chat-state` 是 Conversation 的唯一写入者；
+- Desktop 只适配 Command/Event，不复制后端状态机；
+- Trace 是 best-effort 诊断数据，失败不能推进或改变 Turn；
+- 未完成 Turn 在进程重启后标记为 `interrupted`，不会自动重放工具。
 
-```bash
-cargo test
-cargo clippy --all-targets --all-features
-cargo fmt
-```
+## 仓库结构
 
-## API Key
+| 路径 | 职责 |
+| --- | --- |
+| `apps/desktop` | Tauri 2 / React / TypeScript 桌面客户端 |
+| `crates/openwork-core` | Core Facade、Session Runtime、PostgreSQL Storage 与 Trace |
+| `crates/openwork-agent` | Agent Definition、System Prompt 与静态策略 |
+| `crates/openwork-chat-state` | Conversation 单写者 Actor 与模型请求快照 |
+| `crates/openwork-models` | 模型协议、Provider Adapter、HTTP/SSE Transport 与错误分类 |
+| `crates/openwork-tools` | Tool Catalog、权限策略、文件/进程执行与结构化文件变更结果 |
+| `docs/redesign` | 当前权威架构、实施状态和明确暂缓项 |
 
-桌面端仍把用户填写的 API Key 保存到 PostgreSQL，但 `providers` 表只保存 `api_key_encrypted` 密文。`openwork-persistence` 使用 AES-256-GCM 加密，随机 Nonce 随版本化 envelope 一起保存，并使用 Provider ID 作为认证附加数据。
+依赖保持单向：`openwork-models` 位于底层，`openwork-tools` 与 `openwork-chat-state` 依赖模型契约，`openwork-agent` 依赖工具契约，`openwork-core` 组合所有运行时能力，Tauri 位于最外层 Host 边界。
 
-主密钥必须通过 `OPENWORK_API_KEY_ENCRYPTION_KEY` 提供，值为标准 Base64 编码的 32 字节随机数据，不能写入数据库或提交到 Git：
+## 数据与安全边界
 
-```bash
-openssl rand -base64 32
-```
+- Provider API Key 使用 AES-256-GCM、随机 Nonce 和版本化 Envelope 加密后存入 PostgreSQL；
+- 主密钥只通过 `OPENWORK_API_KEY_ENCRYPTION_KEY` 注入，不写入数据库；
+- Debug Desktop 会自动加载根目录 `.env`，Release 构建不会加载开发 `.env`；
+- Permission `Allow` 不能绕过 `ToolSessionContext` 的路径和进程边界；
+- 当前没有 OS 级 Sandbox，应用进程仍能访问其操作系统账户拥有的资源；
+- Trace V0.1 默认只记录白名单化的状态、计数、大小、耗时和错误信息，不保存完整 Prompt、Provider Body 或 Tool Input/Output 原文。
 
-本地开发时只生成一次，把结果填写到仓库根目录且已被 Git 忽略的 `.env`：
-
-```dotenv
-OPENWORK_API_KEY_ENCRYPTION_KEY=<上一步生成的值>
-```
-
-`pnpm tauri dev` 的 Debug 构建会自动加载根目录 `.env`；Release 构建不会读取开发 `.env`，仍须由部署环境注入。只要继续使用同一个数据库，就不能重新生成这个主密钥，否则已有 Provider API Key 将无法解密。
-
-该设计保护数据库文件、备份或 SQL 导出泄露场景；如果攻击者同时控制应用进程并能读取环境变量，则仍可取得主密钥和解密后的 API Key。
-
-当前使用开发期干净 schema，不迁移旧明文；已有开发库需要按 `docs/local-postgres.md` 重建 Provider 表并重新填写 API Key。底层 Adapter 仍保留从调用方或环境变量构造配置的入口。常用变量名：
+底层 Adapter 也支持环境变量配置。常用变量名：
 
 ```bash
 OPENWORK_API_KEY_ENCRYPTION_KEY=...
@@ -194,17 +165,51 @@ DASHSCOPE_API_KEY=...
 
 不要提交真实密钥。
 
-## 设计文档
+## 开发与验证
+
+Rust 命令在仓库根目录运行：
+
+```bash
+cargo test
+cargo clippy --all-targets --all-features
+cargo fmt
+```
+
+Desktop 命令在 `apps/desktop` 中运行：
+
+```bash
+pnpm test
+pnpm build
+pnpm tauri build
+```
+
+PostgreSQL 集成测试需要显式提供测试数据库，否则相关测试会提前返回：
+
+```bash
+TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
+  cargo test -p openwork-core
+```
+
+## 当前边界
+
+仍未完成：
+
+- 自动生成 Rust → TypeScript Host Contract 和 Drift Check；
+- Trace 的生产关闭入口及 Queue/数据库/Flush 完整降级验收；
+- OS 级 Sandbox 和可靠的工具副作用对账；
+- 自动化 Live Provider Smoke Test。
+
+当前 `0.1.x` 不包含跨进程恢复未完成 Turn、Event Journal、Checkpoint、Memory、MCP、Plan、Skill、Compaction、Git 集成、仓库级 Diff 或 Worktree。完整边界以权威设计文档为准。
+
+## 文档
 
 - [文档索引](docs/README.md)
-- [OpenWork Core 架构蓝图](plans/openwork-core-architecture-blueprint.md)
-- [Model Provider V1 设计](docs/model-provider-v1-design.md)
+- [Runtime 重构与当前状态](docs/redesign/README.md)
+- [项目结构](docs/redesign/01-project-structure.md)
+- [Session Runtime 与事件模型](docs/redesign/02-event-update-model.md)
+- [PostgreSQL Schema](docs/redesign/03-database-schema.md)
+- [Trace 设计 V0.1](docs/redesign/04-trace-design.md)
+- [Desktop 前端架构](docs/redesign/06-frontend-architecture.md)
+- [本地 PostgreSQL 与 SQLx Migration](docs/local-postgres.md)
 
-## 下一步
-
-建议优先推进：
-
-1. 建立 Golden Case 与最小 Eval 骨架。
-2. 明确 Protocol Foundation，以及 Plan、Capability、Retry、Approval 的运行语义。
-3. 建立可回放的 Persistence 与 Capabilities/Execution 合同。
-4. 将当前 Agent loop 迁入可恢复、可验证的 `openwork-core` Durable Turn。
+发现问题或希望讨论设计时，请提交 [GitHub Issue](https://github.com/Aaron-Ben/OpenWork/issues)。

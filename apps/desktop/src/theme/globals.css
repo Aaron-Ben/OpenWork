@@ -70,18 +70,9 @@
   --clay: #d97757;           /* Claude clay 橘,唯一 accent */
   --clay-soft: #d977571a;    /* clay 低透明底 */
 
-  /* Trace Waterfall:低饱和分类色,避免在浅色纸面上喧宾夺主 */
-  --trace-bar-turn: #65757c;
-  --trace-bar-step: #5f7190;
+  /* Trace Waterfall 只表达目标协议里的 Model Call 与 Tool Call */
   --trace-bar-model: #925d49;
-  --trace-bar-transport: #766542;
   --trace-bar-tool: #47706e;
-  --trace-bar-approval: #806942;
-  --trace-bar-recovery: #506f59;
-  --trace-bar-other: #696274;
-  --trace-bar-error: #92504f;
-  --trace-bar-ink: #faf9f5;
-  --trace-bar-outline: #ffffff33;
 
   /* 全局状态:图标、徽标、提示横幅共享同一语义 */
   --status-success: #5f7d67;
@@ -128,17 +119,8 @@
   --clay-soft: #d9775726;
 
   /* 暗色单独降亮度和饱和度,不直接复用亮色分类色 */
-  --trace-bar-turn: #596c73;
-  --trace-bar-step: #5c6d8b;
   --trace-bar-model: #845745;
-  --trace-bar-transport: #706046;
   --trace-bar-tool: #456d6b;
-  --trace-bar-approval: #776548;
-  --trace-bar-recovery: #4c6b55;
-  --trace-bar-other: #615a6c;
-  --trace-bar-error: #895050;
-  --trace-bar-ink: #faf9f5;
-  --trace-bar-outline: #ffffff24;
 
   --status-success: #78977f;
   --status-success-soft: #78977f24;
@@ -188,17 +170,8 @@
   --color-line-strong: var(--line-strong);
   --color-clay: var(--clay);
   --color-clay-soft: var(--clay-soft);
-  --color-trace-bar-turn: var(--trace-bar-turn);
-  --color-trace-bar-step: var(--trace-bar-step);
   --color-trace-bar-model: var(--trace-bar-model);
-  --color-trace-bar-transport: var(--trace-bar-transport);
   --color-trace-bar-tool: var(--trace-bar-tool);
-  --color-trace-bar-approval: var(--trace-bar-approval);
-  --color-trace-bar-recovery: var(--trace-bar-recovery);
-  --color-trace-bar-other: var(--trace-bar-other);
-  --color-trace-bar-error: var(--trace-bar-error);
-  --color-trace-bar-ink: var(--trace-bar-ink);
-  --color-trace-bar-outline: var(--trace-bar-outline);
   --color-status-success: var(--status-success);
   --color-status-success-soft: var(--status-success-soft);
   --color-status-success-ink: var(--status-success-ink);

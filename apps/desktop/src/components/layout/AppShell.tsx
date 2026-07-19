@@ -1,32 +1,55 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ProviderSettings } from '../ProviderSettings'
 import { AppearanceSettings } from '../settings/AppearanceSettings'
-import { TraceSettings } from '../settings/TraceSettings'
-import { useChatStreamListener } from '../../hooks/useChatStreamListener'
-import { useSessionStore } from '../../stores/sessionStore'
+import { useCoreEventBridge } from '../../app/useCoreEventBridge'
+import { shouldCollapseSidebar, useNavigationStore } from '../../app/navigationStore'
+import { resyncSessionView } from '../../app/coreEventController'
+import { ChatPage } from '../../features/chat/ChatPage'
+import { ModelSettings } from '../../features/models/components/ModelSettings'
+import { useSessionStore } from '../../features/sessions/sessionStore'
 import { normalizeDirectoryPath, useProjectStore } from '../../stores/projectStore'
-import { ChatView } from '../../views/ChatView'
 import { MainHeader } from './MainHeader'
 import { Sidebar } from './Sidebar'
-import type { AppView } from './types'
+
+const TracePage = lazy(() => import('../../features/traces/components/TracePage'))
 
 export function AppShell() {
   const { t } = useTranslation()
-  const [view, setView] = useState<AppView>('chat')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const view = useNavigationStore((state) => state.view)
+  const sidebarOpen = useNavigationStore((state) => state.sidebarExpanded)
+  const navigate = useNavigationStore((state) => state.navigate)
+  const setSidebarOpen = useNavigationStore((state) => state.setSidebarExpanded)
+  const toggleSidebar = useNavigationStore((state) => state.toggleSidebar)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
-  const sessions = useSessionStore((state) => state.sessions)
+  const orderedSessionIds = useSessionStore((state) => state.orderedSessionIds)
+  const sessionSummaries = useSessionStore((state) => state.summaries)
+  const sessions = useMemo(
+    () => orderedSessionIds.flatMap((id) => sessionSummaries[id] ? [sessionSummaries[id]] : []),
+    [orderedSessionIds, sessionSummaries],
+  )
   const selectSession = useSessionStore((state) => state.select)
   const clearSessionSelection = useSessionStore((state) => state.clearSelection)
   const activeProjectPath = useProjectStore((state) => state.activeProjectPath)
   const activeSessionTitle = useSessionStore(
-    (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.title ?? null,
+    (state) => state.activeSessionId ? state.summaries[state.activeSessionId]?.title ?? null : null,
   )
 
-  // 全局单订阅 chat-stream-event(生命周期 = app)。
-  useChatStreamListener()
+  useCoreEventBridge()
+
+  useEffect(() => {
+    function collapseSidebarForNarrowWindow() {
+      if (shouldCollapseSidebar(window.innerWidth)) setSidebarOpen(false)
+    }
+
+    collapseSidebarForNarrowWindow()
+    window.addEventListener('resize', collapseSidebarForNarrowWindow)
+    return () => window.removeEventListener('resize', collapseSidebarForNarrowWindow)
+  }, [setSidebarOpen])
+
+  useEffect(() => {
+    if (activeSessionId) void resyncSessionView(activeSessionId)
+  }, [activeSessionId])
 
   useEffect(() => {
     if (!activeProjectPath) {
@@ -35,10 +58,10 @@ export function AppShell() {
     }
     const normalizedProject = normalizeDirectoryPath(activeProjectPath)
     const selected = sessions.find((session) => session.id === activeSessionId)
-    if (selected && normalizeDirectoryPath(selected.workingDir ?? '') === normalizedProject) return
+    if (selected && normalizeDirectoryPath(selected.workingDirectory) === normalizedProject) return
 
     const first = sessions.find(
-      (session) => normalizeDirectoryPath(session.workingDir ?? '') === normalizedProject,
+      (session) => normalizeDirectoryPath(session.workingDirectory) === normalizedProject,
     )
     if (first) void selectSession(first.id)
     else if (activeSessionId) clearSessionSelection()
@@ -49,36 +72,39 @@ export function AppShell() {
       <Sidebar
         view={view}
         expanded={sidebarOpen}
-        onToggleExpanded={() => setSidebarOpen((open) => !open)}
-        onNavigate={setView}
+        onToggleExpanded={toggleSidebar}
+        onNavigate={navigate}
       />
       <section className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
         <MainHeader
           title={
             view === 'chat'
               ? activeSessionTitle
+              : view === 'traces'
+                ? t('activity.title')
               : view === 'settings-models'
                 ? t('settings.models.title')
-                : view === 'settings-appearance'
-                  ? t('settings.appearance.title')
-                  : t('settings.trace.title')
+                : t('settings.appearance.title')
           }
+          kind={view === 'chat' ? 'session' : view === 'traces' ? 'activity' : 'settings'}
           sidebarExpanded={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen(true)}
         />
         <div className="min-h-0 flex-1 overflow-hidden">
           {view === 'chat' ? (
-            <ChatView sessionId={activeSessionId} />
+            <ChatPage sessionId={activeSessionId} />
+          ) : view === 'traces' ? (
+            <Suspense fallback={<div className="p-8 text-sm text-ink-faint">{t('activity.loading')}</div>}>
+              <TracePage />
+            </Suspense>
           ) : view === 'settings-models' ? (
             <div className="h-full overflow-auto bg-paper">
-              <ProviderSettings />
+              <ModelSettings />
             </div>
-          ) : view === 'settings-appearance' ? (
+          ) : (
             <div className="h-full overflow-auto bg-paper">
               <AppearanceSettings />
             </div>
-          ) : (
-            <TraceSettings />
           )}
         </div>
       </section>

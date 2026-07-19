@@ -1,7 +1,8 @@
 mod commands;
 mod error;
+mod event_bridge;
 
-use openwork_app::{ApplicationConfig, OpenWorkApplication};
+use openwork_core::{OpenWorkCore, OpenWorkCoreConfig};
 use tauri::Manager;
 
 pub use error::{CommandError, CommandErrorCode};
@@ -14,10 +15,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let application = tauri::async_runtime::block_on(OpenWorkApplication::bootstrap(
-                ApplicationConfig::from_env_or_local(),
+            let core = tauri::async_runtime::block_on(OpenWorkCore::bootstrap(
+                OpenWorkCoreConfig::from_env_or_local(),
             ))?;
-            app.manage(application);
+            event_bridge::spawn_session_update_bridge(
+                app.handle().clone(),
+                core.subscribe_updates(),
+            );
+            app.manage(core);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -26,20 +31,21 @@ pub fn run() {
             commands::provider::provider_create,
             commands::provider::provider_update,
             commands::provider::provider_delete,
-            commands::provider::provider_activate,
             commands::provider::provider_test,
-            commands::session::session_list,
-            commands::session::session_create,
-            commands::session::session_load,
-            commands::session::session_delete,
-            commands::session::session_rename,
-            commands::trace::trace_session,
-            commands::trace::trace_turn,
-            commands::trace::trace_span_detail,
-            commands::trace::trace_list,
-            commands::chat::chat_generate_stream,
-            commands::chat::resolve_approval,
-            commands::chat::chat_abort,
+            commands::runtime::runtime_session_list,
+            commands::runtime::runtime_session_create,
+            commands::runtime::runtime_session_load,
+            commands::runtime::runtime_session_rename,
+            commands::runtime::runtime_session_delete,
+            commands::runtime::runtime_turn_start,
+            commands::runtime::runtime_turn_cancel,
+            commands::runtime::runtime_file_changes_undo,
+            commands::runtime::runtime_file_changes_reapply,
+            commands::runtime::runtime_permission_resolve,
+            commands::runtime::runtime_session_snapshot,
+            commands::runtime::runtime_update_replay,
+            commands::runtime::runtime_trace_list,
+            commands::runtime::runtime_trace_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

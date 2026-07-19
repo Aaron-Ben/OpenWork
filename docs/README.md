@@ -1,40 +1,38 @@
 # OpenWork 文档索引
 
-Last reviewed: 2026-07-16
+Last reviewed: 2026-07-19
 
-## 目标架构与路线
+## 当前权威文档
 
-- [../plans/openwork-core-architecture-blueprint.md](../plans/openwork-core-architecture-blueprint.md)：唯一的目标架构与建设顺序，定义 `openwork-core`、Protocol、Capabilities、Execution、Workspace、Persistence 等模块边界。
-- [../plans/event-journal-persistence-refactor.md](../plans/event-journal-persistence-refactor.md)：S2 Persistence 专题设计，冻结 `recorded_events`、Expected Version、事件边界、显式迁移和三旧 crate 的退出顺序。
-- [../plans/desktop-tauri-application-boundary-refactor.md](../plans/desktop-tauri-application-boundary-refactor.md)：S7 Desktop 收口专题设计，定义 Tauri Host、Application API、Command/Query/Subscription 和启动/退出边界。
-- [trace-bata-design.md](trace-bata-design.md)：Trace Bata Run/Event 升级专题设计，冻结三类 Run、Run Event、UUIDv7、Recorder 命令、PostgreSQL migration、Capture Health、Tree/Waterfall 和验收边界；当前标记为待实现。
+重构后的项目结构、运行时、数据库、Trace 和 Desktop 只以以下文档为准：
 
-## 当前实现参考
+- [redesign/README.md](redesign/README.md)：范围、实施状态、明确非目标和已知暂缓项；
+- [redesign/01-project-structure.md](redesign/01-project-structure.md)：五个 Rust crate、模块职责和依赖方向；
+- [redesign/02-event-update-model.md](redesign/02-event-update-model.md)：Session、Turn、Model Call、Tool Call、Permission 和 Live Update；
+- [redesign/03-database-schema.md](redesign/03-database-schema.md)：SQLx 干净基线与六张业务表；
+- [redesign/04-trace-design.md](redesign/04-trace-design.md)：OpenWork Trace 设计 V0.1，定义 Turn 下的 Model Call/Tool Call Trace 与降级边界；
+- [redesign/05-refactor-roadmap.md](redesign/05-refactor-roadmap.md)：迁移结果、验收 Gate 和未关闭项；
+- [redesign/06-frontend-architecture.md](redesign/06-frontend-architecture.md)：Tauri/React 边界、Runtime Store、Trace 页面与暂缓的 Host Contract 生成。
 
-- [architecture-overview.md](architecture-overview.md)：当前整体架构、模块边界和核心数据流，不定义未来路线。
-- [agent-runtime-and-tool-flow.md](agent-runtime-and-tool-flow.md)：Agent loop、工具调用、runtime 事件、doom-loop 检测。
-- [local-postgres.md](local-postgres.md)：当前代码所需的本地 PostgreSQL 开发方式，不代表目标 Persistence 方案。
+本地数据库启动、迁移、检查和重建见 [local-postgres.md](local-postgres.md)。
 
-## 权限、审批与工具安全
+## 当前实施边界
 
-- [permissions-and-approvals.md](permissions-and-approvals.md)：权限数据模型、各工具权限、human-in-the-loop 审批流程、当前边界。
-- [../plans/capability-tool-observation-design.md](../plans/capability-tool-observation-design.md)：Capability 合同、Catalog、Action Handler、Execution 与 Observation 的当前专题设计。
+- `openwork-core` 是唯一 Session Runtime 和组合入口；
+- 一次用户输入对应一个 Turn，工具结果由同一 Agent Loop 送入下一次 Model Call；
+- PostgreSQL 使用 SQLx migration，不保留 Event Journal、旧表回填或 `legacy_*` 路径；
+- 未完成 Turn 在启动时标记为 `interrupted`，不自动恢复或重放工具；
+- Trace 是 best-effort 诊断数据，不参与业务推进；
+- Desktop 通过 Tauri Command/Event 使用 Core，不复制后端状态机。
 
-## Provider 与流式协议
+原重构完成定义中的已知暂缓项仍只有两组：Rust → TypeScript Host Contract/Drift Check，以及 Trace 关闭入口/完整降级验收。它们保留在 `docs/redesign/` 的完成标准中，但当前不实施。
 
-- [model-provider-v1-design.md](model-provider-v1-design.md)：Model Port、厂商 Adapter、错误分类、流式重试闸门、Provider Repository 与 PostgreSQL 表结构。
-- [desktop-streaming-flow.md](desktop-streaming-flow.md)：Tauri stream event、前端状态累积、审批 UI、reload 策略。
-
-## 持久化与观测
-
-- [durable-turn-lifecycle.md](durable-turn-lifecycle.md)：当前可持久化 Turn 生命周期、Recorded/Live Event 边界、审批等待恢复、Replay 状态与崩溃窗口。
-- [session-persistence-and-tracing.md](session-persistence-and-tracing.md)：当前迁移状态、Journal-backed Session/Turn/Message、遗留表删除状态和未完成边界。
+2026-07-19 实施了 Trace 语义增强：保留 PostgreSQL 领域 Trace，补真实重试、Model/Tool 分段耗时、版本化 P0/P1 形状属性和 Trace Completeness；Rust `tracing` 与 OpenTelemetry/OTLP 仍只作为未来可选旁路。权威契约见 [redesign/04-trace-design.md](redesign/04-trace-design.md)，实施状态见 [redesign/05-refactor-roadmap.md](redesign/05-refactor-roadmap.md)。
 
 ## 维护原则
 
-- 未来架构、模块所有权和建设顺序只以 `openwork-core-architecture-blueprint.md` 为准。
-- 其余文档只描述当前代码或某个专题，不再各自维护第二套路线路径。
-- 文档应描述当前实现，不要把未实现能力写成已完成。
-- 如果修改 `ModelEvent`、`AgentEvent`、`ContentBlock` 或 PostgreSQL schema，需要同步更新相关文档。
-- 如果新增内置 Action，需要同步更新 Capability Catalog、Execution Handler、名称对齐测试、权限表和工具调用流程文档。
-- 如果修改根目录 README，需要同步检查 `README.md` 和 `README.en.md` 是否保持一致。
+- 源码和 SQLx migration 回答“当前实际是什么”；
+- `docs/redesign/` 同时记录目标、已实施结果和明确暂缓项，不再建立平行蓝图；
+- 领域词汇统一使用 Session、Turn、Model Call、Tool Call、Permission、Message、Update 和 Trace；
+- 修改根目录 README 时同步检查 `README.md` 与 `README.en.md`；
+- 本轮不引入跨进程 Turn 恢复、Event Journal、Memory、MCP、Skill、Plan、Compaction、Artifact、Git/Diff 或 Worktree 能力。

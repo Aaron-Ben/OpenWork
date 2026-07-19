@@ -1,15 +1,16 @@
-import { FolderClosed, MoreHorizontal, PanelLeftOpen } from 'lucide-react'
+import { Activity, FolderClosed, PanelLeftOpen, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 
 interface MainHeaderProps {
   title: string | null
+  kind?: 'session' | 'activity' | 'settings'
   sidebarExpanded: boolean
   onToggleSidebar: () => void
 }
 
-export function MainHeader({ title, sidebarExpanded, onToggleSidebar }: MainHeaderProps) {
+export function MainHeader({ title, kind = 'session', sidebarExpanded, onToggleSidebar }: MainHeaderProps) {
   const { t } = useTranslation()
   return (
     <header
@@ -33,20 +34,12 @@ export function MainHeader({ title, sidebarExpanded, onToggleSidebar }: MainHead
           <div className="h-6 w-px shrink-0 bg-line" />
         </>
       ) : null}
-      <FolderClosed size={19} className="shrink-0 text-ink-soft" />
+      {kind === 'session' ? <FolderClosed size={19} className="shrink-0 text-ink-soft" /> : null}
+      {kind === 'activity' ? <Activity size={19} className="shrink-0 text-ink-soft" /> : null}
+      {kind === 'settings' ? <Settings size={19} className="shrink-0 text-ink-soft" /> : null}
       <h1 className="min-w-0 truncate font-sans text-base font-semibold text-ink">
         {title?.trim() || t('sidebar.untitledSession')}
       </h1>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-8 shrink-0 rounded-lg"
-        aria-label={t('header.sessionActions')}
-        title={t('header.sessionActions')}
-      >
-        <MoreHorizontal size={18} />
-      </Button>
     </header>
   )
 }

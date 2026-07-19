@@ -4,13 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-openwork-protocol = { workspace = true }
+openwork-agent = { workspace = true }
+openwork-chat-state = { workspace = true }
+openwork-models = { workspace = true }
+openwork-tools = { workspace = true }
+async-trait = { workspace = true }
+aes-gcm = { workspace = true }
+base64 = { workspace = true }
 futures-util = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
-
-[dev-dependencies]
-async-trait = { workspace = true }
+zeroize = { workspace = true }

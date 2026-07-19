@@ -1,13 +1,13 @@
 import { useEffect } from 'react'
 
 import { AppShell } from './components/layout/AppShell'
+import { useModelStore } from './features/models/modelStore'
+import { useSessionStore } from './features/sessions/sessionStore'
 import { useTheme } from './hooks/useTheme'
-import { useProviderStore } from './stores/providerStore'
-import { useSessionStore } from './stores/sessionStore'
 
 function App() {
-  const fetchProviders = useProviderStore((state) => state.fetchAll)
-  const fetchPresets = useProviderStore((state) => state.fetchPresets)
+  const fetchProviders = useModelStore((state) => state.fetchAll)
+  const fetchPresets = useModelStore((state) => state.fetchPresets)
   const fetchSessions = useSessionStore((state) => state.fetchAll)
 
   useTheme()

@@ -20,6 +20,8 @@ describe('Sidebar', () => {
     expect(markup).toContain('aria-label="打开文件夹"')
     expect(markup).not.toContain('aria-label="项目菜单"')
     expect(markup).toContain('设置')
+    expect(markup).not.toContain('运行记录')
+    expect(markup).not.toContain('data-activity-navigation="true"')
     expect(markup).toContain('data-sidebar-footer="true"')
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('data-motion-sidebar="true"')
@@ -35,7 +37,6 @@ describe('Sidebar', () => {
         project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
         active
         expanded
-        canCreateSession
         onSelect={vi.fn()}
         onRemove={vi.fn()}
         onCreateSession={vi.fn()}
@@ -46,6 +47,7 @@ describe('Sidebar', () => {
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-label="OpenWork 项目操作"')
     expect(markup).toContain('aria-label="在 OpenWork 中创建会话"')
+    expect(markup).not.toContain('disabled=""')
     expect(markup).not.toContain('删除电脑上的项目')
   })
 
@@ -77,9 +79,28 @@ describe('Sidebar', () => {
 
     expect(markup).toContain('data-settings-sidebar="true"')
     expect(markup).toContain('返回 OpenWork')
+    expect(markup).toContain('运行记录')
+    expect(markup).toContain('data-activity-navigation="true"')
     expect(markup).toContain('模型配置')
     expect(markup).toContain('外观')
-    expect(markup).toContain('运行追踪')
+    expect(markup).not.toContain('打开文件夹')
+  })
+
+  it('keeps the trace page inside the settings navigation', () => {
+    const markup = renderToStaticMarkup(
+      <Sidebar
+        view="traces"
+        expanded
+        onToggleExpanded={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('data-settings-sidebar="true"')
+    expect(markup).toContain('返回 OpenWork')
+    expect(markup).toContain('运行记录')
+    expect(markup).toContain('模型配置')
+    expect(markup).toContain('外观')
     expect(markup).not.toContain('打开文件夹')
   })
 })
