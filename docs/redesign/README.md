@@ -117,7 +117,7 @@ openwork-observability  -> openwork-core::trace
 1. [01-project-structure.md](01-project-structure.md)：目标 crate、模块、依赖方向和 current-to-target 映射。
 2. [02-event-update-model.md](02-event-update-model.md)：SessionActor、Agent Loop、消息、Live Update、崩溃语义。
 3. [03-database-schema.md](03-database-schema.md)：不做中途恢复时的 7 表 PostgreSQL Schema。
-4. [04-trace-design.md](04-trace-design.md)：Turn 下的 Model Call/Tool Call 诊断 Trace。
+4. [04-trace-design.md](04-trace-design.md)：OpenWork Trace 设计 V0.1，定义 Turn 下的 Model Call/Tool Call 诊断 Trace。
 5. [05-refactor-roadmap.md](05-refactor-roadmap.md)：分阶段迁移顺序、验收门槛和旧代码删除条件。
 6. [06-frontend-architecture.md](06-frontend-architecture.md)：React/Tauri 边界、Host Contract、per-session Runtime Store 和页面拆分。
 7. [07-tool-runtime-design.md](07-tool-runtime-design.md)：工具契约、Tool Set、Session/Call Context 与 `FinalizedToolset` 的四层分层设计。
@@ -175,3 +175,9 @@ workspace trust subsystem
 2. **Trace 的关闭与降级闭环尚未完成。** 当前 PostgreSQL Trace Recorder 已采用有界队列和 best-effort 写入，写失败不作为业务状态来源；但 `OpenWorkCoreConfig` 尚无关闭 Trace 的配置入口，也缺少 Queue 满、数据库不可用和 Flush 超时不改变 Turn 结果的完整自动化验收。
 
 这两项不改变当前唯一运行链、数据库事实源或“不恢复未完成 Turn”的 V1 决策。后续若重新启动其中任一项，必须作为独立改动实现并补齐对应测试；在此之前文档不得把整轮重构标记为完全完成。
+
+### 2026-07-19 已实施 Trace 增强
+
+在不增加 Span Kind、数据库表和恢复语义的前提下，已补齐真实 Transport Attempt、Model/Tool 分段耗时、版本化 P0/P1 形状属性和 `TurnTrace { summary, spans, completeness }`。PostgreSQL Trace 继续作为本地产品契约；Rust `tracing` 与 OpenTelemetry/OTLP 若以后引入，只能作为默认关闭的运行时/外部遥测旁路，失败不能影响领域 Trace 或 Turn。
+
+该增强不回溯增加原重构 Cutover Gate，当前代码、查询、Desktop 与测试已落地。详细字段、隐私边界和剩余暂缓项以 [04-trace-design.md](04-trace-design.md) 与 [05-refactor-roadmap.md](05-refactor-roadmap.md) 为准。

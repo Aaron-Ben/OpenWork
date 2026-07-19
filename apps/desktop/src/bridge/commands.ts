@@ -7,8 +7,8 @@ import type {
   RuntimeSessionRecord,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
-  RuntimeTraceSpan,
   RuntimeTraceSummary,
+  RuntimeTurnTrace,
   RuntimeTurnAccepted,
   RuntimeUndoFileChangesResult,
 } from './compat'
@@ -57,6 +57,6 @@ export const coreCommands = {
     invoke('runtime_update_replay', { sessionId, afterSequence }),
   listTraces: (sessionId?: string, limit = 100): Promise<RuntimeTraceSummary[]> =>
     invoke('runtime_trace_list', { sessionId, limit }),
-  getTrace: (turnId: string): Promise<RuntimeTraceSpan[]> =>
+  getTrace: (turnId: string): Promise<RuntimeTurnTrace> =>
     invoke('runtime_trace_get', { turnId }),
 }

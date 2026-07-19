@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -6,14 +7,14 @@ use futures_util::stream;
 use openwork_agent::{AgentBuilder, AgentDefinition};
 use openwork_chat_state::ChatStateHandle;
 use openwork_core::session::{
-    ClientRequestId, NoopTraceRecorder, PermissionDecision, ResolvedModel, SessionError,
-    SessionHandle, SessionId, SessionRuntimeConfig, SessionStorage, SessionUpdate,
-    SessionUpdateEnvelope, ToolCallId, ToolProgressUpdate, TurnId, TurnOutcome,
+    ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
+    SessionRuntimeConfig, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
+    ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TurnId, TurnOutcome,
 };
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
-    ModelRequest, ModelResponse, ModelStream, Role, TokenUsage, ToolCallBlock, ToolCallState,
-    ToolResultArtifact,
+    ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, TokenUsage,
+    ToolCallBlock, ToolCallState, ToolResultArtifact,
 };
 use openwork_tools::{
     PermissionMode, PermissionProfile, Tool, ToolCallContext, ToolExecutionError, ToolId,
@@ -37,7 +38,7 @@ impl ModelPort for FakeModel {
     async fn invoke(
         &self,
         request: ModelRequest,
-        _options: ModelCallOptions,
+        options: ModelCallOptions,
     ) -> Result<ModelStream, ModelError> {
         self.state.requests.lock().unwrap().push(request);
         let response = self
@@ -47,6 +48,13 @@ impl ModelPort for FakeModel {
             .unwrap()
             .pop_front()
             .ok_or_else(|| ModelError::protocol("fake model has no response"))?;
+        options.observe_transport(1, ModelTransportSignalKind::Started);
+        options.observe_transport(
+            1,
+            ModelTransportSignalKind::Succeeded {
+                provider_request_id: response.provider_request_id.clone(),
+            },
+        );
         let mut events = Vec::new();
         if !response.text.is_empty() {
             events.push(Ok(ModelEvent::TextDelta {
@@ -124,6 +132,7 @@ impl Tool for FakeTool {
 struct RecordingStorage {
     events: Mutex<Vec<String>>,
     fail_assistant: bool,
+    fail_tool_result: AtomicBool,
 }
 
 #[async_trait]
@@ -172,12 +181,35 @@ impl SessionStorage for RecordingStorage {
         _message: &Message,
     ) -> Result<(), String> {
         self.events.lock().unwrap().push("tool_result".to_string());
-        Ok(())
+        if self.fail_tool_result.load(Ordering::Relaxed) {
+            Err("tool result write failed".to_string())
+        } else {
+            Ok(())
+        }
     }
 
     async fn finish_turn(&self, _turn_id: &TurnId, _outcome: &TurnOutcome) -> Result<(), String> {
         self.events.lock().unwrap().push("finish_turn".to_string());
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RecordingTrace {
+    signals: Mutex<Vec<TraceSignal>>,
+}
+
+#[async_trait]
+impl TraceRecorder for RecordingTrace {
+    fn record(&self, signal: TraceSignal) {
+        self.signals.lock().unwrap().push(signal);
+    }
+
+    async fn flush_turn(&self, _turn_id: &TurnId) -> TraceFlushResult {
+        TraceFlushResult {
+            flushed: true,
+            ..TraceFlushResult::default()
+        }
     }
 }
 
@@ -188,6 +220,7 @@ struct RuntimeFixture {
     model: Arc<ModelState>,
     tools: Arc<ToolState>,
     storage: Arc<RecordingStorage>,
+    trace: Arc<RecordingTrace>,
     chat: ChatStateHandle,
 }
 
@@ -212,7 +245,9 @@ fn runtime(
     let storage = Arc::new(RecordingStorage {
         events: Mutex::new(Vec::new()),
         fail_assistant,
+        fail_tool_result: AtomicBool::new(false),
     });
+    let trace = Arc::new(RecordingTrace::default());
     let registry = AgentDefinition::default().tool_names.into_iter().fold(
         ToolRegistryBuilder::new(),
         |registry, name| {
@@ -251,7 +286,7 @@ fn runtime(
             }),
             tools: Arc::new(toolset),
             storage: storage.clone(),
-            trace: Arc::new(NoopTraceRecorder),
+            trace: trace.clone(),
         },
         global_update_tx,
     );
@@ -263,6 +298,7 @@ fn runtime(
         model,
         tools,
         storage,
+        trace,
         chat,
     }
 }
@@ -759,4 +795,125 @@ async fn duplicate_client_request_is_idempotent_and_a_different_turn_is_busy() {
         .await
         .expect("cleanup permission");
     wait_for_terminal(&mut fixture.updates).await;
+}
+
+#[tokio::test]
+async fn runtime_records_versioned_model_and_tool_trace_attributes() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
+            ),
+            response("done", Vec::new()),
+        ],
+        vec![ToolResult::succeeded("file contents")],
+        PermissionMode::NeverAsk,
+        false,
+    );
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let first_model = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ModelCallFinished(finished) if finished.started.sequence == 1 => {
+                Some(finished)
+            }
+            _ => None,
+        })
+        .expect("first model trace");
+    assert_eq!(first_model.attempt_count, Some(1));
+    assert_eq!(first_model.attributes.schema_version, 1);
+    assert_eq!(first_model.attributes.model_call_index, 1);
+    assert_eq!(
+        first_model.attributes.finish_reason.as_deref(),
+        Some("tool_use")
+    );
+    assert_eq!(
+        first_model.attributes.response_id.as_deref(),
+        Some("response")
+    );
+    assert_eq!(
+        first_model.attributes.actual_model.as_deref(),
+        Some("test-model")
+    );
+    assert_eq!(first_model.attributes.attempts.len(), 1);
+    assert!(first_model.attributes.ttft_ms.is_some());
+    assert_eq!(
+        first_model.attributes.delivery_state.as_deref(),
+        Some("semantic_output_emitted")
+    );
+    assert_eq!(first_model.attributes.request_message_count, Some(2));
+    assert!(
+        first_model
+            .attributes
+            .request_content_bytes
+            .is_some_and(|value| value > 0)
+    );
+
+    let tool = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("tool trace");
+    assert_eq!(tool.attributes.schema_version, 1);
+    assert_eq!(tool.attributes.permission_policy.as_deref(), Some("allow"));
+    assert_eq!(
+        tool.attributes.permission_decision.as_deref(),
+        Some("allow")
+    );
+    assert_eq!(
+        tool.attributes.permission_decision_source.as_deref(),
+        Some("policy")
+    );
+    assert_eq!(tool.attributes.result_persisted, Some(true));
+    assert_eq!(
+        tool.attributes.output_bytes,
+        Some("file contents".len() as u64)
+    );
+    assert_eq!(tool.attributes.artifact_count, Some(0));
+}
+
+#[tokio::test]
+async fn tool_trace_records_result_persistence_failure_without_changing_tool_status() {
+    let mut fixture = runtime(
+        vec![response(
+            "",
+            vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
+        )],
+        vec![ToolResult::succeeded("file contents")],
+        PermissionMode::NeverAsk,
+        false,
+    );
+    fixture
+        .storage
+        .fail_tool_result
+        .store(true, Ordering::Relaxed);
+    start(&fixture).await;
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Failed { code, .. } if code == "persistence_error"
+    ));
+    let signals = fixture.trace.signals.lock().unwrap();
+    let tool = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("terminal tool trace");
+    assert_eq!(tool.status.as_str(), "succeeded");
+    assert_eq!(tool.attributes.result_persisted, Some(false));
+    assert_eq!(
+        tool.attributes.result_persist_error_code.as_deref(),
+        Some("persistence_error")
+    );
 }

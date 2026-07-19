@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction, types::Json};
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use tokio::sync::{mpsc, oneshot};
 
@@ -154,8 +154,8 @@ async fn write_model_started(
     sqlx::query(
         "INSERT INTO trace_spans (
              id, turn_id, sequence, kind, name, status, model_id,
-             resolved_model_name, started_at
-         ) VALUES ($1, $2, $3, 'model_call', 'model.call', 'running', $4, $5, $6)
+             resolved_model_name, started_at, attributes
+         ) VALUES ($1, $2, $3, 'model_call', 'model.call', 'running', $4, $5, $6, $7)
          ON CONFLICT (id) DO NOTHING",
     )
     .bind(&started.span_id)
@@ -164,6 +164,7 @@ async fn write_model_started(
     .bind(&started.model_id)
     .bind(&started.resolved_model_name)
     .bind(utc_naive(started.started_at))
+    .bind(Json(&started.attributes))
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -179,10 +180,10 @@ async fn write_model_finished(
              id, turn_id, sequence, kind, name, status, model_id,
              resolved_model_name, provider_request_id, attempt_count,
              input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
-             started_at, ended_at, error_code, error_message
+             started_at, ended_at, error_code, error_message, attributes
          ) VALUES (
              $1, $2, $3, 'model_call', 'model.call', $4, $5,
-             $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+             $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
          )
          ON CONFLICT (id) DO UPDATE SET
              status = EXCLUDED.status,
@@ -194,7 +195,8 @@ async fn write_model_finished(
              reasoning_tokens = EXCLUDED.reasoning_tokens,
              ended_at = EXCLUDED.ended_at,
              error_code = EXCLUDED.error_code,
-             error_message = EXCLUDED.error_message",
+             error_message = EXCLUDED.error_message,
+             attributes = EXCLUDED.attributes",
     )
     .bind(&finished.started.span_id)
     .bind(finished.started.turn_id.as_str())
@@ -212,6 +214,7 @@ async fn write_model_finished(
     .bind(utc_naive(finished.ended_at))
     .bind(&finished.error_code)
     .bind(&finished.error_message)
+    .bind(Json(&finished.attributes))
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -224,8 +227,8 @@ async fn write_tool_started(
     sqlx::query(
         "INSERT INTO trace_spans (
              id, turn_id, parent_span_id, sequence, kind, name, status,
-             provider_call_id, requested_tool_name, started_at
-         ) VALUES ($1, $2, $3, $4, 'tool_call', 'tool.call', 'running', $5, $6, $7)
+             provider_call_id, requested_tool_name, started_at, attributes
+         ) VALUES ($1, $2, $3, $4, 'tool_call', 'tool.call', 'running', $5, $6, $7, $8)
          ON CONFLICT (id) DO NOTHING",
     )
     .bind(&started.span_id)
@@ -235,6 +238,7 @@ async fn write_tool_started(
     .bind(&started.provider_call_id)
     .bind(&started.requested_tool_name)
     .bind(utc_naive(started.started_at))
+    .bind(Json(&started.attributes))
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -248,10 +252,10 @@ async fn write_tool_finished(
         "INSERT INTO trace_spans (
              id, turn_id, parent_span_id, sequence, kind, name, status,
              provider_call_id, requested_tool_name, resolved_tool_name,
-             permission_wait_ms, started_at, ended_at, error_code, error_message
+             permission_wait_ms, started_at, ended_at, error_code, error_message, attributes
          ) VALUES (
              $1, $2, $3, $4, 'tool_call', 'tool.call', $5,
-             $6, $7, $8, $9, $10, $11, $12, $13
+             $6, $7, $8, $9, $10, $11, $12, $13, $14
          )
          ON CONFLICT (id) DO UPDATE SET
              status = EXCLUDED.status,
@@ -259,7 +263,8 @@ async fn write_tool_finished(
              permission_wait_ms = EXCLUDED.permission_wait_ms,
              ended_at = EXCLUDED.ended_at,
              error_code = EXCLUDED.error_code,
-             error_message = EXCLUDED.error_message",
+             error_message = EXCLUDED.error_message,
+             attributes = EXCLUDED.attributes",
     )
     .bind(&finished.started.span_id)
     .bind(finished.started.turn_id.as_str())
@@ -274,6 +279,7 @@ async fn write_tool_finished(
     .bind(utc_naive(finished.ended_at))
     .bind(&finished.error_code)
     .bind(&finished.error_message)
+    .bind(Json(&finished.attributes))
     .execute(&mut **transaction)
     .await?;
     Ok(())

@@ -1,7 +1,7 @@
 use openwork_core::{
     session::TurnId, ClientRequestId, LoadedSession, OpenWorkCore, PermissionDecision,
     ReapplyFileChangesResult, SessionId, SessionInput, SessionRecord, SessionSnapshot,
-    SessionUpdateEnvelope, ToolCallId, TraceSpanRecord, TraceTurnSummary, TurnAccepted,
+    SessionUpdateEnvelope, ToolCallId, TraceTurnSummary, TurnAccepted, TurnTrace,
     UndoFileChangesResult,
 };
 use openwork_models::model::ContentBlock;
@@ -165,7 +165,7 @@ pub async fn runtime_trace_list(
 pub async fn runtime_trace_get(
     core: tauri::State<'_, OpenWorkCore>,
     turn_id: String,
-) -> Result<Vec<TraceSpanRecord>, CommandError> {
+) -> Result<TurnTrace, CommandError> {
     core.get_trace(&TurnId::new(turn_id))
         .await
         .map_err(CommandError::from)

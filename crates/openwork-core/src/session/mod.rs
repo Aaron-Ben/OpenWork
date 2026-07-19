@@ -13,8 +13,10 @@ pub use commands::{
 pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use storage::{NoopSessionStorage, SessionStorage};
 pub use trace::{
-    ModelCallFinished, ModelCallStarted, NoopTraceRecorder, ToolCallFinished, ToolCallStarted,
-    TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus,
+    ModelCallFinished, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
+    ModelTransportAttemptTrace, NoopTraceRecorder, ToolCallFinished, ToolCallStarted,
+    ToolCallTraceGuard, ToolTraceAttributesV1, TraceFlushResult, TraceRecorder, TraceSignal,
+    TraceStatus,
 };
 pub use updates::{
     LiveToolCall, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionUpdate,

@@ -15,7 +15,7 @@
 | F2 Runtime Store | 已完成 | `runtimeReducer` 为纯函数；Runtime View 按 Session 隔离并处理重复、缺口与 Snapshot Replace |
 | F3 Event Bridge | 已完成 | Core 使用全局 Update Bus；Rust Host 在进程启动时订阅一次并转发 `openwork://session-update`，React 只建立一个 listener |
 | F4 Chat/Permission | 已完成 | canonical Message 与流式 Draft 分离；全局 `activeStream`、`approvalStore` 已删除 |
-| F5 Model/Trace/Sidebar | 已完成 | Model 配置、设置内运行记录页、Turn Trace Drawer 和 Project/Session 子组件已切换到 Feature 边界 |
+| F5 Model/Trace/Sidebar | 已完成 | Model 配置、设置内运行记录页、Turn Trace Drawer 和 Project/Session 子组件已切换到 Feature 边界；P0/P1 Trace Detail、Attempt 明细与 Completeness 已展示 |
 | F6 删除兼容层 | 部分完成/暂缓 | 前端 Legacy Runtime/API、`provider_activate` 和 Host 每 Turn 临时事件转发已删除；`compat.ts` 保留到生成契约重新立项 |
 
 因此，本轮“前端主体重构完成”只表示 React 侧状态所有权、页面边界、交互路径和进程级事件桥已经收口；F1 生成契约及对应 F6 兼容层删除仍未完成，且当前明确暂缓。
@@ -780,7 +780,7 @@ activeProvider    -> session.defaultModelId / composer.modelId
 
 ## 19. Trace UI
 
-当前 Trace UI 完整复制旧 Span Tree。目标类型：
+当前 Trace UI 展示 Model Call/Tool Call Tree、Waterfall、P0 详情、Transport Attempt 明细、折叠 P1 形状信息和 Trace Completeness；`getTrace` 当前返回：
 
 ```ts
 type TraceSpanKind = 'model_call' | 'tool_call'
@@ -789,6 +789,17 @@ interface TurnTrace {
   summary: TurnTraceSummary
   spans: TraceSpan[]
   completeness: TraceCompleteness
+}
+
+interface TraceCompleteness {
+  expectedModelCalls: number
+  capturedModelCalls: number
+  expectedToolCalls: number
+  capturedToolCalls: number
+  orphanToolSpans: number
+  runningSpans: number
+  outcomeUnknownSpans: number
+  state: 'complete' | 'partial' | 'none'
 }
 ```
 
@@ -827,7 +838,29 @@ Step Count
 - Trace Completeness；
 - 从 Tool Call 跳回聊天活动。
 
-遵守 [04-trace-design.md](04-trace-design.md) 的隐私边界：默认详情不显示完整 System/User Prompt、Tool Input、Tool Output 或 Provider Body。当前 `input_output` Tab 必须删除或只显示经过后端白名单化的大小/形状摘要。
+Model Call Detail 增加：
+
+```text
+requestBuildMs / ttftMs / streamMs
+finishReason / responseId / actualModel
+attempt_count + attempts[]
+errorPhase / deliveryState / httpStatus / providerCode
+P1 request/response shape
+```
+
+Tool Call Detail 增加：
+
+```text
+inputBytes / validationMs
+permissionPolicy / permissionDecision / permissionDecisionSource
+permissionWaitMs / executionMs
+outputBytes / outputLines / outputTruncated / artifactCount
+resultPersisted / resultPersistMs / resultPersistErrorCode
+```
+
+页面默认先展示 P0，P1 大小/数量/版本信息放在折叠的“请求/响应形状”区域。`attempts[]` 只作为 Model Call 内的明细表，不渲染成独立 Span 或 Tree Row。
+
+遵守 [04-trace-design.md](04-trace-design.md) 的隐私边界：默认详情不显示完整 System/User Prompt、Tool Input、Tool Output 或 Provider Body。详情只能显示后端版本化白名单返回的大小、数量、枚举和阶段耗时，前端不得从 Message Store 自行拼装“原始 Trace”内容。
 
 Trace Query 不再绑定 `activeStream.requestId`。只在以下时机失效：
 

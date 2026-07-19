@@ -36,6 +36,111 @@ export interface WaterfallRow {
   durationMs: number
 }
 
+export interface TraceAttributeRow {
+  key: string
+  value: string
+}
+
+export interface TraceAttributeSections {
+  p0: TraceAttributeRow[]
+  p1: TraceAttributeRow[]
+}
+
+export interface TraceAttempt {
+  index: number
+  status: string
+  durationMs?: number
+  errorCode?: string
+  errorPhase?: string
+  deliveryState?: string
+  httpStatus?: number
+  providerCode?: string
+  providerRequestId?: string
+  retryDelayMs?: number
+}
+
+export const TRACE_ATTRIBUTE_KEYS = [
+  'schemaVersion', 'modelCallIndex', 'requestBuildMs', 'ttftMs', 'streamMs',
+  'finishReason', 'responseId', 'actualModel', 'errorPhase', 'deliveryState',
+  'httpStatus', 'providerCode', 'attempts', 'inputBytes', 'validationMs',
+  'permissionPolicy', 'permissionDecision', 'permissionDecisionSource', 'executionMs',
+  'outputBytes', 'outputLines', 'artifactCount', 'errorRetryable', 'resultPersisted',
+  'resultPersistMs', 'resultPersistErrorCode', 'appVersion', 'requestMessageCount',
+  'requestSystemMessageCount', 'requestUserMessageCount', 'requestAssistantMessageCount',
+  'requestToolMessageCount', 'requestContentBytes', 'toolDefinitionCount',
+  'toolDefinitionBytes', 'maxOutputTokens', 'thinkingMode', 'responseTextBytes',
+  'responseReasoningBytes', 'responseToolCallCount', 'responseToolArgumentsBytes',
+  'inputTopLevelKeyCount', 'outputTruncated', 'artifactTypes', 'progressEventCount',
+] as const
+
+const TRACE_DURATION_KEYS = new Set(['requestBuildMs', 'ttftMs', 'streamMs', 'validationMs', 'executionMs', 'resultPersistMs'])
+const TRACE_BYTE_KEYS = new Set(['inputBytes', 'outputBytes', 'requestContentBytes', 'toolDefinitionBytes', 'responseTextBytes', 'responseReasoningBytes', 'responseToolArgumentsBytes'])
+const TRACE_P1_KEYS = new Set([
+  'appVersion', 'requestMessageCount', 'requestSystemMessageCount',
+  'requestUserMessageCount', 'requestAssistantMessageCount', 'requestToolMessageCount',
+  'requestContentBytes', 'toolDefinitionCount', 'toolDefinitionBytes', 'maxOutputTokens',
+  'thinkingMode', 'responseTextBytes', 'responseReasoningBytes', 'responseToolCallCount',
+  'responseToolArgumentsBytes', 'inputTopLevelKeyCount', 'outputTruncated', 'artifactTypes',
+  'progressEventCount',
+])
+
+export function buildTraceAttributeRows(span: RuntimeTraceSpan): TraceAttributeRow[] {
+  const rows: TraceAttributeRow[] = []
+  for (const key of TRACE_ATTRIBUTE_KEYS) {
+    const value = span.attributes[key]
+    if (value == null) continue
+    if (key === 'attempts' && Array.isArray(value)) {
+      rows.push({ key, value: String(value.length) })
+      continue
+    }
+    if (key === 'artifactTypes' && Array.isArray(value)) {
+      rows.push({ key, value: value.filter((item): item is string => typeof item === 'string').join(', ') || '—' })
+      continue
+    }
+    if (typeof value === 'number') {
+      rows.push({
+        key,
+        value: TRACE_DURATION_KEYS.has(key)
+          ? `${value} ms`
+          : TRACE_BYTE_KEYS.has(key)
+            ? `${value} B`
+            : String(value),
+      })
+      continue
+    }
+    if (typeof value === 'string' || typeof value === 'boolean') {
+      rows.push({ key, value: String(value) })
+    }
+  }
+  return rows
+}
+
+export function buildTraceAttributeSections(span: RuntimeTraceSpan): TraceAttributeSections {
+  const rows = buildTraceAttributeRows(span)
+  return {
+    p0: rows.filter((row) => !TRACE_P1_KEYS.has(row.key)),
+    p1: rows.filter((row) => TRACE_P1_KEYS.has(row.key)),
+  }
+}
+
+export function readTraceAttempts(span: RuntimeTraceSpan): TraceAttempt[] {
+  const value = span.attributes.attempts
+  if (!Array.isArray(value)) return []
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const record = candidate as Record<string, unknown>
+    if (typeof record.index !== 'number' || typeof record.status !== 'string') return []
+    const attempt: TraceAttempt = { index: record.index, status: record.status }
+    for (const key of ['durationMs', 'httpStatus', 'retryDelayMs'] as const) {
+      if (typeof record[key] === 'number') attempt[key] = record[key]
+    }
+    for (const key of ['errorCode', 'errorPhase', 'deliveryState', 'providerCode', 'providerRequestId'] as const) {
+      if (typeof record[key] === 'string') attempt[key] = record[key]
+    }
+    return [attempt]
+  })
+}
+
 export function buildTraceListItems(
   summaries: RuntimeTraceSummary[],
   sessions: Record<string, TraceSessionContext>,

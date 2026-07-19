@@ -514,9 +514,44 @@ Repository 还必须校验：
 - `provider_request_id` 表示最终一次或 Provider 公开的请求 ID，而不是尝试明细；
 - `attributes` 不保存原始 Prompt 内容、完整 Tool Input/Output 或凭证。
 
+### 10.1 版本化 attributes 契约
+
+2026-07-19 实施的 Trace P0/P1 增强没有修改 `trace_spans` DDL。现有稳定标量继续使用普通列：
+
+```text
+attempt_count
+provider_request_id
+input/output/cached/reasoning/total_tokens
+permission_wait_ms
+status/started_at/ended_at/error_code/error_message
+```
+
+阶段耗时、Transport Attempt 摘要、请求/响应形状和 Tool 执行细节写入现有 `attributes JSONB`。Core 必须先构造版本化的 `ModelTraceAttributesV1` 或 `ToolTraceAttributesV1`，再由 Repository 序列化；Repository 不接受调用点传入任意 JSON 对象。
+
+Model Call P0 属性至少包括：
+
+```text
+schemaVersion/modelCallIndex/requestBuildMs/ttftMs/streamMs
+finishReason/responseId/actualModel
+errorPhase/deliveryState/httpStatus/providerCode/attempts[]
+```
+
+Tool Call P0 属性至少包括：
+
+```text
+schemaVersion/inputBytes/validationMs
+permissionPolicy/permissionDecision/permissionDecisionSource
+executionMs/outputBytes/outputLines/artifactCount/errorRetryable
+resultPersisted/resultPersistMs/resultPersistErrorCode
+```
+
+P1 只允许大小、数量、布尔值、闭集枚举和版本信息，例如 message/tool-definition/response/tool-output 的字节数、数量、截断状态、`appVersion` 和 `apiProtocol`。完整 Prompt、响应文本、Tool Arguments/Result、Shell/File 内容、Header 和凭证仍禁止进入 `attributes`。
+
+`attempts[]` 是有界诊断摘要，不是 HTTP Attempt Ledger。它不产生新的表、行或 Span Kind。只有字段已经形成稳定查询语义，并出现跨 Trace 高频筛选、聚合或索引需求时，才允许通过新的 SQLx migration 提升为普通列；不得修改已应用 migration。
+
 ## 11. 写入顺序和事务
 
-### 10.1 开始 Turn
+### 11.1 开始 Turn
 
 一个事务：
 
@@ -526,7 +561,7 @@ Repository 还必须校验：
 4. 更新 `sessions.last_turn_at/updated_at`；
 5. 提交后才调用模型。
 
-### 10.2 完成一次 Model Call
+### 11.2 完成一次 Model Call
 
 1. 调用 Provider 前先把 `model_call_count + 1` 提交；
 2. 流式草稿只在内存中；
@@ -537,7 +572,7 @@ Repository 还必须校验：
 
 这保证“数据库尚未保存模型要求执行什么”时不会先产生工具副作用。
 
-### 10.3 完成一次 Tool Call
+### 11.3 完成一次 Tool Call
 
 1. 工具执行；
 2. 形成成功或错误 Tool Message；
@@ -547,7 +582,7 @@ Repository 还必须校验：
 
 若副作用已发生但 Tool Message 写入失败，Turn 失败。重启后保持 `interrupted/outcome_unknown`，不自动执行同一工具。
 
-### 10.4 结束 Turn
+### 11.4 结束 Turn
 
 更新 `turns`：
 

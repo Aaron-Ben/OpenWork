@@ -1,8 +1,8 @@
 use openwork_core::{
-    ClientRequestId, ModelCallFinished, ModelCallStarted, ModelInput, PostgresStorage,
-    PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    ToolCallFinished, ToolCallStarted, TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus,
-    TurnOutcome, session::TurnId,
+    ClientRequestId, ModelCallFinished, ModelCallStarted, ModelInput, ModelTraceAttributesV1,
+    PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
+    ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TraceRecorder, TraceSignal,
+    TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
@@ -306,24 +306,34 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         model_id: Some(model_id.clone()),
         resolved_model_name: "deepseek-v4-flash".to_string(),
         started_at: absolute_time("2026-07-18T08:30:45+08:00"),
+        attributes: ModelTraceAttributesV1::from_request(
+            1,
+            3,
+            &openwork_models::model::ModelRequest::text("deepseek-v4-flash", "hello"),
+        ),
     };
     trace.record(TraceSignal::ModelCallStarted(model_span.clone()));
-    trace.record(TraceSignal::ModelCallFinished(ModelCallFinished {
-        started: model_span.clone(),
-        status: TraceStatus::Succeeded,
-        provider_request_id: Some("provider-request-test".to_string()),
-        attempt_count: 1,
-        usage: Some(TokenUsage {
-            input_tokens: Some(11),
-            output_tokens: Some(7),
-            total_tokens: Some(18),
-            cached_input_tokens: Some(3),
-            reasoning_tokens: Some(5),
-        }),
-        ended_at: absolute_time("2026-07-18T08:30:47+08:00"),
-        error_code: None,
-        error_message: None,
-    }));
+    let mut model_finished_attributes = model_span.attributes.clone();
+    model_finished_attributes.finish_reason = Some("stop".to_string());
+    trace.record(TraceSignal::ModelCallFinished(Box::new(
+        ModelCallFinished {
+            started: model_span.clone(),
+            status: TraceStatus::Succeeded,
+            provider_request_id: Some("provider-request-test".to_string()),
+            attempt_count: Some(1),
+            usage: Some(TokenUsage {
+                input_tokens: Some(11),
+                output_tokens: Some(7),
+                total_tokens: Some(18),
+                cached_input_tokens: Some(3),
+                reasoning_tokens: Some(5),
+            }),
+            ended_at: absolute_time("2026-07-18T08:30:47+08:00"),
+            error_code: None,
+            error_message: None,
+            attributes: model_finished_attributes,
+        },
+    )));
     let tool_span = ToolCallStarted {
         span_id: unique("span-tool"),
         turn_id: turn_id.clone(),
@@ -332,17 +342,21 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         provider_call_id: "provider-call-1".to_string(),
         requested_tool_name: "read_file".to_string(),
         started_at: absolute_time("2026-07-18T08:30:45.500+08:00"),
+        attributes: ToolTraceAttributesV1::new(r#"{"path":"README.md"}"#),
     };
     trace.record(TraceSignal::ToolCallStarted(tool_span.clone()));
-    trace.record(TraceSignal::ToolCallFinished(ToolCallFinished {
-        started: tool_span,
+    let mut tool_finished_attributes = tool_span.attributes.clone();
+    tool_finished_attributes.result_persisted = Some(true);
+    trace.record(TraceSignal::ToolCallFinished(Box::new(ToolCallFinished {
+        started: tool_span.clone(),
         status: TraceStatus::Succeeded,
         resolved_tool_name: Some("read_file".to_string()),
         permission_wait_ms: Some(4),
         ended_at: absolute_time("2026-07-18T08:30:46+08:00"),
         error_code: None,
         error_message: None,
-    }));
+        attributes: tool_finished_attributes,
+    })));
     let flush = trace.flush_turn(&turn_id).await;
     assert!(flush.flushed);
     assert_eq!(flush.write_failures, 0);
@@ -382,15 +396,28 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         ]
     );
     let loaded_trace = storage.get_trace(&turn_id).await.unwrap();
-    assert_eq!(loaded_trace[0].started_at, "2026-07-18T00:30:45.000000Z");
     assert_eq!(
-        loaded_trace[0].ended_at.as_deref(),
+        loaded_trace.spans[0].started_at,
+        "2026-07-18T00:30:45.000000Z"
+    );
+    assert_eq!(
+        loaded_trace.spans[0].ended_at.as_deref(),
         Some("2026-07-18T00:30:47.000000Z")
     );
-    assert_eq!(loaded_trace[1].started_at, "2026-07-18T00:30:45.500000Z");
     assert_eq!(
-        loaded_trace[1].ended_at.as_deref(),
+        loaded_trace.spans[1].started_at,
+        "2026-07-18T00:30:45.500000Z"
+    );
+    assert_eq!(
+        loaded_trace.spans[1].ended_at.as_deref(),
         Some("2026-07-18T00:30:46.000000Z")
+    );
+    assert_eq!(loaded_trace.spans[0].attributes["schemaVersion"], 1);
+    assert_eq!(loaded_trace.spans[0].attributes["finishReason"], "stop");
+    assert_eq!(loaded_trace.spans[1].attributes["resultPersisted"], true);
+    assert_eq!(
+        loaded_trace.completeness.state,
+        openwork_core::TraceCompletenessState::Partial
     );
 
     let interrupted_turn_id = TurnId::new(unique("turn-interrupted"));

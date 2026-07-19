@@ -1,169 +1,158 @@
-# OpenWork
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/openwork-wordmark-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/openwork-wordmark-light.svg">
+    <img src="docs/assets/openwork-wordmark-light.svg" alt="OpenWork" width="420">
+  </picture>
 
-<p align="center">
-  <img src="docs/assets/openwork-readme.png" alt="OpenWork" width="420">
-</p>
+  <p><strong>A local-first, traceable desktop agent workbench</strong></p>
+  <p>A Rust runtime drives the Model → Tool/Permission → Model loop while Tauri Desktop manages models, sessions, tool permissions, and runtime traces.</p>
 
-OpenWork is a local agent workbench experiment implemented in Rust. The current code supports multi-provider model calls, a session-owned agent loop, tool permissions, PostgreSQL persistence, Trace, and a Tauri desktop client.
+  <p>
+    <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb">
+    <img alt="Status" src="https://img.shields.io/badge/status-active_development-f59e0b">
+    <img alt="Rust" src="https://img.shields.io/badge/backend-Rust-dea584">
+    <img alt="Tauri" src="https://img.shields.io/badge/desktop-Tauri_2-24c8db">
+    <img alt="PostgreSQL" src="https://img.shields.io/badge/storage-PostgreSQL_16-4169e1">
+  </p>
 
-中文版本: [README.md](README.md)
+  <p>
+    <a href="README.md">简体中文</a> ·
+    <a href="docs/README.md">Documentation</a> ·
+    <a href="docs/redesign/README.md">Architecture</a> ·
+    <a href="https://github.com/Aaron-Ben/OpenWork/issues">Issues</a>
+  </p>
+</div>
 
-## Project Status
+> [!IMPORTANT]
+> OpenWork `0.1.0` is under active development and currently runs from source. It enforces workspace and tool-permission boundaries, but it **does not provide an OS-level sandbox**. Use it only with trusted directories and acceptable permission settings.
 
-The current foundation includes:
+## What is OpenWork?
 
-- Rust workspace structure
-- Tauri + React + TypeScript desktop shell
-- Adapters for OpenAI, Anthropic, Kimi, DeepSeek, Qwen/DashScope, and GLM
-- Vendor-neutral `ModelRequest`, `ModelResponse`, `ModelEvent`, `ModelError`, and `ModelPort`
-- Error mapping that separates rate limits from exhausted quota, plus stream-aware transport retry
-- Multi-step agent tool calls, approvals, cancellation, and doom-loop detection
-- A single `SessionActor` path for Model → Tool/Permission → Model execution
-- A Chat State actor that serializes model Conversation changes
-- Direct PostgreSQL persistence for providers, models, sessions, turns, messages, and traces
-- A single SQLx migration baseline and standalone migration command
-- Encrypted PostgreSQL storage for provider API keys
-- Per-session runtime views, one process-level event bridge, and runtime records under Settings
+OpenWork is a local desktop agent workbench. Choose a model and working directory, then let the agent read, search, and modify files, run commands, and pause for your permission decisions inside a persistent session.
 
-Not yet complete:
+The project focuses on a clear, diagnosable local runtime:
 
-- Generated Rust → TypeScript Host Contracts and a drift check; the bridge DTOs remain handwritten for now
-- A production Trace disable path and complete queue/database degradation verification
-- OS-level sandboxing and reliable side-effect reconciliation
-- Automated live-provider smoke tests
+- **Multiple model providers**: built-in profiles for OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM;
+- **Persistent agent loop**: one turn may contain multiple model and tool calls until it completes, fails, is cancelled, or reaches a safety guard;
+- **Controlled tool execution**: built-in `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash` tools constrained by the working directory and permission profile;
+- **Reviewable file changes**: file tools produce structured diffs with conflict-aware Undo/Reapply;
+- **Local persistence**: providers, models, sessions, turns, messages, and traces live in PostgreSQL;
+- **Runtime diagnostics**: Trace shows model/tool calls, actual retries, token usage, phase timing, permission waits, and capture completeness;
+- **Desktop experience**: Tauri 2 + React with Simplified Chinese, Traditional Chinese, and English interfaces.
 
-Cross-process resumption of unfinished turns, an Event Journal, checkpoints, memory, MCP, planning, skills, Git/Diff, and worktrees are outside the current V1 scope.
+## Quick start
 
-## Structure
-
-```text
-OpenWork/
-  apps/
-    desktop/                 # Tauri + React desktop app
-  crates/
-    openwork-core/           # Core facade, Session Actor, PostgreSQL storage, and Trace
-    openwork-agent/          # Agent definition and system prompt
-    openwork-chat-state/     # Conversation single-writer actor
-    openwork-models/         # Model contracts, provider adapters, and transport
-    openwork-tools/          # Tool catalog, permissions, and built-in execution
-  docs/
-    README.md                 # Documentation index
-    local-postgres.md         # Local PostgreSQL and SQLx migrations
-    redesign/                 # Authoritative architecture and refactor status
-```
-
-## Rust Crates
-
-`openwork-core`
-
-- `OpenWorkCore` is the single in-process entry point for providers, credentials, and sessions
-- `SessionActor` owns the Model → Tool/Permission → Model loop, cancellation, and outcomes
-- The PostgreSQL SQLx baseline persists providers, models, sessions, turns, messages, and traces
-- Tauri manages one `OpenWorkCore` state and only adapts commands, events, and safe errors
-
-`openwork-models`
-
-- Defines messages, content blocks, `ModelPort`, and stream events
-- Implements OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM adapters
-- Owns HTTP/SSE transport, normalized vendor errors, and retries
-
-`openwork-agent` / `openwork-chat-state`
-
-- The agent crate owns only the agent definition, system prompt, and static tool set
-- The Chat State actor serializes Conversation mutations and provides consistent model snapshots
-
-`openwork-tools`
-
-- Owns tool definitions, schemas, permission policy, working-directory context, and built-in filesystem/process execution
-- It does not yet provide an OS-level sandbox; permission decisions cannot bypass `ToolSessionContext` path/process constraints
-- The user always selects `providerId + model` explicitly; there is no automatic model selection or cross-model fallback
-
-## Desktop App
-
-OpenWork Desktop is the Tauri + React + TypeScript client for OpenWork.
-
-Stack:
-
-- Tauri 2
-- React
-- TypeScript
-- Vite
-- pnpm
-
-## Requirements
+### 1. Prerequisites
 
 - Rust stable
-- Node.js
-- pnpm
-- Tauri system dependencies
+- Node.js with Corepack/pnpm
+- Docker with Docker Compose
+- The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform
 
-Install pnpm if needed:
+If pnpm is not installed:
 
 ```bash
 corepack enable
 corepack prepare pnpm@latest --activate
 ```
 
-## Install Dependencies
-
-Desktop app:
+### 2. Clone and configure
 
 ```bash
-cd apps/desktop
-pnpm install
+git clone https://github.com/Aaron-Ben/OpenWork.git
+cd OpenWork
+cp .env.example .env
+openssl rand -base64 32
 ```
 
-## Run Desktop App
+Put the generated value in the root `.env` file:
 
-> Desktop commands must run inside `apps/desktop`. The repository root only has `Cargo.toml` for the Rust workspace and does not have `package.json`, so running `pnpm tauri dev` from the root fails with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`.
+```dotenv
+DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork
+OPENWORK_API_KEY_ENCRYPTION_KEY=<generated Base64 value>
+```
+
+> [!WARNING]
+> Do not change `OPENWORK_API_KEY_ENCRYPTION_KEY` while keeping the same database. Existing provider API keys will become undecryptable.
+
+### 3. Start PostgreSQL and migrate
+
+Run from the repository root:
 
 ```bash
 docker compose up -d postgres
 cargo run -p openwork-core --bin openwork-migrate
+```
+
+### 4. Start Desktop
+
+```bash
 cd apps/desktop
+pnpm install
 pnpm tauri dev
 ```
 
-`OpenWorkCore::bootstrap` applies pending migrations. The standalone command remains useful for provisioning and database diagnostics.
+Desktop commands must run inside `apps/desktop`; the repository root does not contain a `package.json`. `OpenWorkCore::bootstrap` also applies pending migrations. The standalone migration command is mainly useful for first-time provisioning and database diagnostics.
 
-## Build Desktop App
+## Basic workflow
 
-```bash
-cd apps/desktop
-pnpm tauri build
+1. Configure a provider, model, and API key in Settings;
+2. Create a session and explicitly choose `providerId + model` and a working directory;
+3. Submit a task and allow or deny tool requests when prompted;
+4. Review tool activity and file diffs, then Undo/Reapply changes when needed;
+5. Open Trace from the runtime records or session UI to inspect retries, tool latency, and failure phases.
+
+OpenWork never auto-selects a model and never silently falls back to a different model when a provider fails.
+
+## Runtime architecture
+
+```mermaid
+flowchart LR
+    UI["Tauri Desktop<br/>React + TypeScript"] -->|"Command / Event"| Core["OpenWorkCore"]
+    Core --> Registry["Session Registry"]
+    Registry --> Actor["SessionActor"]
+    Actor --> Chat["Chat State Actor"]
+    Actor --> Model["Model Adapters<br/>HTTP + SSE"]
+    Actor --> Tools["Tool Runtime<br/>Permission + Workspace"]
+    Core --> DB[("PostgreSQL")]
+    Actor -. "best-effort signals" .-> Trace["Trace Recorder"]
+    Trace --> DB
 ```
 
-## Rust Checks
+Key architecture invariants:
 
-From the repository root:
+- `openwork-core` is the only runtime entry point;
+- one active session maps to one `SessionActor`, which advances at most one turn at a time;
+- `openwork-chat-state` is the only conversation writer;
+- Desktop adapts Commands/Events and does not duplicate the backend state machine;
+- Trace is best-effort diagnostics and cannot advance or alter a turn;
+- unfinished turns become `interrupted` after process restart and tools are never replayed automatically.
 
-```bash
-cargo test
-cargo clippy --all-targets --all-features
-cargo fmt
-```
+## Repository layout
 
-## API Keys
+| Path | Responsibility |
+| --- | --- |
+| `apps/desktop` | Tauri 2 / React / TypeScript desktop client |
+| `crates/openwork-core` | Core facade, session runtime, PostgreSQL storage, and Trace |
+| `crates/openwork-agent` | Agent definition, system prompt, and static policy |
+| `crates/openwork-chat-state` | Single-writer conversation actor and model-request snapshots |
+| `crates/openwork-models` | Model protocols, provider adapters, HTTP/SSE transport, and error classification |
+| `crates/openwork-tools` | Tool catalog, permission policy, file/process execution, and structured file-change results |
+| `docs/redesign` | Authoritative architecture, implementation status, and explicitly deferred work |
 
-The desktop encrypts user-entered API keys into PostgreSQL `provider_credentials.api_key_encrypted`. Credential storage in `openwork-core` uses AES-256-GCM with a random nonce in a versioned envelope and binds the ciphertext to the provider ID as authenticated associated data.
+Dependencies remain one-way: `openwork-models` is the foundation; `openwork-tools` and `openwork-chat-state` depend on its model contracts; `openwork-agent` depends on the tool contract; `openwork-core` composes the runtime; and Tauri sits at the outer host boundary.
 
-The master key must be supplied through `OPENWORK_API_KEY_ENCRYPTION_KEY` as standard Base64 encoding of 32 random bytes. It must not be stored in PostgreSQL or committed to Git:
+## Data and security boundaries
 
-```bash
-openssl rand -base64 32
-```
+- Provider API keys are stored in PostgreSQL using AES-256-GCM, a random nonce, and a versioned envelope;
+- the master key is injected only through `OPENWORK_API_KEY_ENCRYPTION_KEY` and is never stored in PostgreSQL;
+- Debug Desktop builds load the root `.env`; release builds do not load the development `.env`;
+- Permission `Allow` cannot bypass `ToolSessionContext` path and process boundaries;
+- there is currently no OS-level sandbox, so the application process retains the access of its operating-system account;
+- Trace V0.1 records allowlisted status, count, size, timing, and error fields by default—not full prompts, provider bodies, or raw tool input/output.
 
-For local development, generate the value once and put it in the repository-root `.env`, which is ignored by Git:
-
-```dotenv
-OPENWORK_API_KEY_ENCRYPTION_KEY=<value generated above>
-```
-
-The Debug build used by `pnpm tauri dev` loads the root `.env` automatically. Release builds do not load the development `.env` and still require deployment-time injection. Do not regenerate the master key while retaining the same database, or existing provider API keys will no longer decrypt.
-
-This protects database files, backups, and SQL dumps. It does not protect secrets from an attacker who controls the application process and can read its environment and decrypted memory.
-
-The project currently uses a clean development schema and does not migrate old plaintext values. Existing development databases must rebuild the provider tables and re-enter their API keys. Low-level adapters still accept caller-provided or environment-backed configuration. Common variable names:
+Low-level adapters can also use environment-backed configuration. Common variables:
 
 ```bash
 OPENWORK_API_KEY_ENCRYPTION_KEY=...
@@ -174,18 +163,53 @@ DEEPSEEK_API_KEY=...
 DASHSCOPE_API_KEY=...
 ```
 
-Do not commit real secrets.
+Never commit real secrets.
 
-## Design Docs
+## Development and verification
+
+Run Rust commands from the repository root:
+
+```bash
+cargo test
+cargo clippy --all-targets --all-features
+cargo fmt
+```
+
+Run Desktop commands from `apps/desktop`:
+
+```bash
+pnpm test
+pnpm build
+pnpm tauri build
+```
+
+PostgreSQL integration tests require an explicit test database; otherwise those tests return early:
+
+```bash
+TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
+  cargo test -p openwork-core
+```
+
+## Current boundaries
+
+Still incomplete:
+
+- generated Rust → TypeScript host contracts and a drift check;
+- a production Trace disable path and full queue/database/flush degradation verification;
+- OS-level sandboxing and reliable tool side-effect reconciliation;
+- automated live-provider smoke tests.
+
+The current `0.1.x` scope does not include cross-process unfinished-turn recovery, an Event Journal, checkpoints, memory, MCP, planning, skills, compaction, Git integration, repository-level diffs, or worktrees. The authoritative design documents define the complete boundary.
+
+## Documentation
 
 - [Documentation index](docs/README.md)
-- [Runtime redesign](docs/redesign/README.md)
+- [Runtime redesign and current status](docs/redesign/README.md)
+- [Project structure](docs/redesign/01-project-structure.md)
+- [Session runtime and event model](docs/redesign/02-event-update-model.md)
+- [PostgreSQL schema](docs/redesign/03-database-schema.md)
+- [Trace design V0.1](docs/redesign/04-trace-design.md)
+- [Desktop frontend architecture](docs/redesign/06-frontend-architecture.md)
 - [Local PostgreSQL and SQLx migrations](docs/local-postgres.md)
 
-## Next Steps
-
-Recommended near-term work:
-
-1. Complete automated coverage for cancellation, doom loops, Trace degradation, and startup interruption semantics.
-2. Decide when to resume generated Rust → TypeScript Host Contracts.
-3. Add a production Trace disable path and degradation tests, or formally revise the completion criteria.
+Found a bug or want to discuss the design? Open a [GitHub Issue](https://github.com/Aaron-Ben/OpenWork/issues).

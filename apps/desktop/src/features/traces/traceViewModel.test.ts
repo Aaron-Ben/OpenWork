@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeTraceSpan, RuntimeTraceSummary } from '../../bridge/compat'
 import {
+  buildTraceAttributeRows,
+  buildTraceAttributeSections,
+  readTraceAttempts,
   buildTraceListItems,
   buildTraceTree,
   buildWaterfallRows,
@@ -89,5 +92,37 @@ describe('traceViewModel', () => {
     expect(shouldPollTrace('running', [])).toBe(true)
     expect(shouldPollTrace('completed', [{ ...tool, endedAt: null }])).toBe(true)
     expect(shouldPollTrace('completed', [tool])).toBe(false)
+  })
+
+  it('exposes versioned P0/P1 fields without requiring raw payloads', () => {
+    const span = {
+      ...model,
+      attributes: {
+        schemaVersion: 1,
+        requestBuildMs: 7,
+        ttftMs: 20,
+        finishReason: 'stop',
+        requestMessageCount: 4,
+        requestContentBytes: 512,
+        attempts: [{ index: 1, status: 'succeeded', durationMs: 80 }],
+      },
+    }
+    const rows = buildTraceAttributeRows(span)
+
+    expect(rows).toEqual(expect.arrayContaining([
+      { key: 'schemaVersion', value: '1' },
+      { key: 'requestBuildMs', value: '7 ms' },
+      { key: 'finishReason', value: 'stop' },
+      { key: 'requestMessageCount', value: '4' },
+      { key: 'requestContentBytes', value: '512 B' },
+      { key: 'attempts', value: '1' },
+    ]))
+    const sections = buildTraceAttributeSections(span)
+    expect(sections.p0.map((row) => row.key)).toContain('requestBuildMs')
+    expect(sections.p1.map((row) => row.key)).toContain('requestMessageCount')
+    expect(readTraceAttempts({
+      ...model,
+      attributes: { attempts: [{ index: 1, status: 'succeeded', durationMs: 80 }] },
+    })).toEqual([{ index: 1, status: 'succeeded', durationMs: 80 }])
   })
 })

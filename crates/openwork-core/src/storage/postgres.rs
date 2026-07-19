@@ -120,6 +120,35 @@ pub struct TraceSpanRecord {
     pub attributes: Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceCompletenessState {
+    Complete,
+    Partial,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceCompleteness {
+    pub expected_model_calls: u32,
+    pub captured_model_calls: u32,
+    pub expected_tool_calls: u32,
+    pub captured_tool_calls: u32,
+    pub orphan_tool_spans: u32,
+    pub running_spans: u32,
+    pub outcome_unknown_spans: u32,
+    pub state: TraceCompletenessState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnTrace {
+    pub summary: TraceTurnSummary,
+    pub spans: Vec<TraceSpanRecord>,
+    pub completeness: TraceCompleteness,
+}
+
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("database error: {0}")]
@@ -434,7 +463,25 @@ impl PostgresStorage {
         Ok(traces)
     }
 
-    pub async fn get_trace(&self, turn_id: &TurnId) -> Result<Vec<TraceSpanRecord>, StorageError> {
+    pub async fn get_trace(&self, turn_id: &TurnId) -> Result<TurnTrace, StorageError> {
+        let mut summary = sqlx::query_as::<_, TraceTurnSummary>(
+            "SELECT turns.id AS turn_id, turns.session_id,
+                    turns.sequence AS turn_sequence, turns.status,
+                    turns.resolved_model_name, turns.model_call_count,
+                    turns.tool_call_count, COUNT(spans.id)::BIGINT AS span_count,
+                    to_char(turns.started_at,
+                        'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS started_at,
+                    to_char(turns.ended_at,
+                        'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS ended_at
+             FROM turns turns
+             LEFT JOIN trace_spans spans ON spans.turn_id = turns.id
+             WHERE turns.id = $1
+             GROUP BY turns.id",
+        )
+        .bind(turn_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| StorageError::TurnNotFound(turn_id.to_string()))?;
         let spans = sqlx::query_as::<_, TraceSpanRecord>(
             "SELECT id, turn_id, parent_span_id, sequence, kind, name, status,
                     model_id, resolved_model_name, provider_request_id,
@@ -454,8 +501,93 @@ impl PostgresStorage {
         .bind(turn_id.as_str())
         .fetch_all(&self.pool)
         .await?;
-        Ok(spans)
+        summary.span_count = i64::try_from(spans.len()).unwrap_or(i64::MAX);
+        let completeness = derive_trace_completeness(
+            &summary.status,
+            summary.model_call_count,
+            summary.tool_call_count,
+            &spans,
+        );
+        Ok(TurnTrace {
+            summary,
+            spans,
+            completeness,
+        })
     }
+}
+
+fn derive_trace_completeness(
+    turn_status: &str,
+    expected_model_calls: i32,
+    expected_tool_calls: i32,
+    spans: &[TraceSpanRecord],
+) -> TraceCompleteness {
+    use std::collections::HashSet;
+
+    let expected_model_calls = u32::try_from(expected_model_calls.max(0)).unwrap_or(u32::MAX);
+    let expected_tool_calls = u32::try_from(expected_tool_calls.max(0)).unwrap_or(u32::MAX);
+    let model_ids = spans
+        .iter()
+        .filter(|span| span.kind == "model_call")
+        .map(|span| span.id.as_str())
+        .collect::<HashSet<_>>();
+    let captured_model_calls = saturating_u32(
+        spans
+            .iter()
+            .filter(|span| span.kind == "model_call")
+            .count(),
+    );
+    let captured_tool_calls =
+        saturating_u32(spans.iter().filter(|span| span.kind == "tool_call").count());
+    let orphan_tool_spans = saturating_u32(
+        spans
+            .iter()
+            .filter(|span| {
+                span.kind == "tool_call"
+                    && span
+                        .parent_span_id
+                        .as_deref()
+                        .is_none_or(|parent| !model_ids.contains(parent))
+            })
+            .count(),
+    );
+    let running_spans =
+        saturating_u32(spans.iter().filter(|span| span.status == "running").count());
+    let outcome_unknown_spans = saturating_u32(
+        spans
+            .iter()
+            .filter(|span| span.status == "outcome_unknown")
+            .count(),
+    );
+    let expected_total = expected_model_calls.saturating_add(expected_tool_calls);
+    let captured_total = captured_model_calls.saturating_add(captured_tool_calls);
+    let state = if expected_total > 0 && captured_total == 0 {
+        TraceCompletenessState::None
+    } else if turn_status != "running"
+        && captured_model_calls == expected_model_calls
+        && captured_tool_calls == expected_tool_calls
+        && orphan_tool_spans == 0
+        && running_spans == 0
+        && outcome_unknown_spans == 0
+    {
+        TraceCompletenessState::Complete
+    } else {
+        TraceCompletenessState::Partial
+    };
+    TraceCompleteness {
+        expected_model_calls,
+        captured_model_calls,
+        expected_tool_calls,
+        captured_tool_calls,
+        orphan_tool_spans,
+        running_spans,
+        outcome_unknown_spans,
+        state,
+    }
+}
+
+fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 const SESSION_COLUMNS: &str = "SELECT id, title, working_directory, default_model_id, status,
@@ -873,5 +1005,68 @@ fn parse_role(value: &str) -> Result<Role, StorageError> {
         other => Err(StorageError::InvalidInput(format!(
             "unknown stored message role: {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod trace_completeness_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn span(id: &str, kind: &str, parent_span_id: Option<&str>, status: &str) -> TraceSpanRecord {
+        TraceSpanRecord {
+            id: id.to_string(),
+            turn_id: "turn-1".to_string(),
+            parent_span_id: parent_span_id.map(str::to_string),
+            sequence: 1,
+            kind: kind.to_string(),
+            name: format!("{kind}.call"),
+            status: status.to_string(),
+            model_id: None,
+            resolved_model_name: None,
+            provider_request_id: None,
+            provider_call_id: None,
+            requested_tool_name: None,
+            resolved_tool_name: None,
+            attempt_count: None,
+            input_tokens: None,
+            output_tokens: None,
+            cached_input_tokens: None,
+            reasoning_tokens: None,
+            total_tokens: None,
+            permission_wait_ms: None,
+            started_at: "2026-07-19T00:00:00.000000Z".to_string(),
+            ended_at: Some("2026-07-19T00:00:01.000000Z".to_string()),
+            error_code: None,
+            error_message: None,
+            attributes: json!({}),
+        }
+    }
+
+    #[test]
+    fn derives_complete_partial_and_none_without_persisting_another_status() {
+        let complete_spans = vec![
+            span("model-1", "model_call", None, "succeeded"),
+            span("tool-1", "tool_call", Some("model-1"), "succeeded"),
+        ];
+        let complete = derive_trace_completeness("completed", 1, 1, &complete_spans);
+        assert_eq!(complete.state, TraceCompletenessState::Complete);
+        assert_eq!(complete.captured_model_calls, 1);
+        assert_eq!(complete.captured_tool_calls, 1);
+
+        let none = derive_trace_completeness("failed", 1, 1, &[]);
+        assert_eq!(none.state, TraceCompletenessState::None);
+
+        let orphan = vec![
+            span("model-1", "model_call", None, "succeeded"),
+            span("tool-1", "tool_call", Some("missing"), "succeeded"),
+        ];
+        let partial = derive_trace_completeness("completed", 1, 1, &orphan);
+        assert_eq!(partial.state, TraceCompletenessState::Partial);
+        assert_eq!(partial.orphan_tool_spans, 1);
+
+        let running = derive_trace_completeness("running", 1, 1, &complete_spans);
+        assert_eq!(running.state, TraceCompletenessState::Partial);
     }
 }

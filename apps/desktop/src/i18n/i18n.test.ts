@@ -4,6 +4,7 @@ import i18n, { supportedLanguages } from './index'
 import { enUS } from './locales/en-US'
 import { zhCN } from './locales/zh-CN'
 import { zhTW } from './locales/zh-TW'
+import { TRACE_ATTRIBUTE_KEYS } from '../features/traces/traceViewModel'
 
 function keyPaths(value: object, prefix = ''): string[] {
   return Object.entries(value).flatMap(([key, child]) => {
@@ -35,5 +36,35 @@ describe('i18n', () => {
     const expected = keyPaths(zhCN).sort()
     expect(keyPaths(zhTW).sort()).toEqual(expected)
     expect(keyPaths(enUS).sort()).toEqual(expected)
+  })
+
+  it('localizes every trace attribute and attempt detail in all supported languages', () => {
+    for (const language of supportedLanguages) {
+      const translate = i18n.getFixedT(language)
+      for (const key of TRACE_ATTRIBUTE_KEYS) {
+        const path = `activity.traceFields.${key}`
+        expect(translate(path)).not.toBe(path)
+      }
+      for (const key of ['errorCode', 'providerRequestId', 'retryDelayMs'] as const) {
+        const path = `activity.traceFields.${key}`
+        expect(translate(path)).not.toBe(path)
+      }
+      for (const value of [
+        'started', 'failed', 'succeeded', 'tool_use', 'stream_decode',
+        'semantic_output_emitted', 'allow', 'policy', 'enabled', 'true', 'false',
+      ] as const) {
+        const path = `activity.traceValues.${value}`
+        expect(translate(path)).not.toBe(path)
+      }
+      expect(translate('activity.transportAttemptSummary', {
+        index: 2,
+        status: translate('activity.traceValues.succeeded'),
+        duration: '80 ms',
+      })).not.toContain('activity.transportAttemptSummary')
+    }
+
+    expect(i18n.getFixedT('zh-CN')('activity.traceFields.requestBuildMs')).toBe('请求构建耗时')
+    expect(i18n.getFixedT('zh-TW')('activity.traceFields.requestBuildMs')).toBe('請求建置耗時')
+    expect(i18n.getFixedT('en-US')('activity.traceFields.requestBuildMs')).toBe('Request build time')
   })
 })

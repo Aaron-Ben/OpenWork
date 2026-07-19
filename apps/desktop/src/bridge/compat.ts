@@ -183,3 +183,20 @@ export interface RuntimeTraceSpan {
   errorMessage: string | null
   attributes: Record<string, unknown>
 }
+
+export interface RuntimeTraceCompleteness {
+  expectedModelCalls: number
+  capturedModelCalls: number
+  expectedToolCalls: number
+  capturedToolCalls: number
+  orphanToolSpans: number
+  runningSpans: number
+  outcomeUnknownSpans: number
+  state: 'complete' | 'partial' | 'none'
+}
+
+export interface RuntimeTurnTrace {
+  summary: RuntimeTraceSummary
+  spans: RuntimeTraceSpan[]
+  completeness: RuntimeTraceCompleteness
+}

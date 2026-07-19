@@ -29,7 +29,7 @@ use crate::session::{
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
     PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
-    TraceSpanRecord, TraceTurnSummary,
+    TraceTurnSummary, TurnTrace,
 };
 
 const CORE_UPDATE_BROADCAST_CAPACITY: usize = 4096;
@@ -483,10 +483,7 @@ impl OpenWorkCore {
         Ok(self.storage.list_traces(session_id, limit).await?)
     }
 
-    pub async fn get_trace(
-        &self,
-        turn_id: &TurnId,
-    ) -> Result<Vec<TraceSpanRecord>, OpenWorkCoreError> {
+    pub async fn get_trace(&self, turn_id: &TurnId) -> Result<TurnTrace, OpenWorkCoreError> {
         Ok(self.storage.get_trace(turn_id).await?)
     }
 

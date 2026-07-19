@@ -91,7 +91,14 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
     assert!(final_text.contains("OPENWORK_RUNTIME_OK"));
     let loaded = core.load_session(&session_id).await.unwrap();
     assert!(loaded.messages.len() >= 2);
-    assert!(!core.get_trace(&accepted.turn_id).await.unwrap().is_empty());
+    assert!(
+        !core
+            .get_trace(&accepted.turn_id)
+            .await
+            .unwrap()
+            .spans
+            .is_empty()
+    );
 
     core.delete_session(&session_id).await.unwrap();
     sqlx::query("DELETE FROM models WHERE id = $1")

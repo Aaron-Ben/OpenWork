@@ -20,10 +20,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    ClientRequestId, LiveToolCall, ModelCallFinished, ModelCallStarted, PermissionDecision,
-    PermissionRequest, ResolvedModel, SessionId, SessionPhase, SessionStorage, SessionUpdate,
-    ToolCallFinished, ToolCallId, ToolCallStarted, ToolProgressUpdate, TraceRecorder, TraceSignal,
-    TraceStatus, TurnId, TurnOutcome,
+    ClientRequestId, LiveToolCall, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
+    PermissionDecision, PermissionRequest, ResolvedModel, SessionId, SessionPhase, SessionStorage,
+    SessionUpdate, ToolCallId, ToolCallStarted, ToolCallTraceGuard, ToolProgressUpdate,
+    ToolTraceAttributesV1, TraceRecorder, TraceStatus, TurnId, TurnOutcome,
 };
 
 pub(super) struct TurnRunRequest {
@@ -97,6 +97,11 @@ struct TurnRunner {
     next_trace_sequence: i64,
 }
 
+struct CompletedModelCall {
+    response: ModelResponse,
+    trace_span_id: String,
+}
+
 impl TurnRunner {
     async fn begin(&self) -> Result<(), TurnRunError> {
         self.ensure_not_cancelled()?;
@@ -135,17 +140,8 @@ impl TurnRunner {
                 .await
                 .map_err(TurnRunError::Persistence)?;
 
-            let model_trace = self.start_model_trace();
-            let response = match self.call_model(model_call_index).await {
-                Ok(response) => {
-                    self.finish_model_trace(&model_trace, Ok(&response));
-                    response
-                }
-                Err(error) => {
-                    self.finish_model_trace(&model_trace, Err(&error));
-                    return Err(error);
-                }
-            };
+            let completed_model = self.call_model(model_call_index).await?;
+            let response = completed_model.response;
             let assistant_message = assistant_message(&response);
             self.request
                 .storage
@@ -167,11 +163,14 @@ impl TurnRunner {
             })
             .await?;
             for (index, tool_call) in response.tool_calls.iter().enumerate() {
-                if let Err(error) = self.run_tool_call(tool_call, &model_trace.span_id).await {
+                if let Err(error) = self
+                    .run_tool_call(tool_call, &completed_model.trace_span_id)
+                    .await
+                {
                     for pending in response.tool_calls.iter().skip(index + 1) {
                         self.append_cancelled_tool_result(
                             pending,
-                            &model_trace.span_id,
+                            &completed_model.trace_span_id,
                             "tool was not executed because the turn already terminated",
                         )
                         .await?;
@@ -186,58 +185,12 @@ impl TurnRunner {
         ))
     }
 
-    fn start_model_trace(&mut self) -> ModelCallStarted {
-        let started = ModelCallStarted {
-            span_id: trace_id("model"),
-            turn_id: self.request.turn_id.clone(),
-            sequence: self.allocate_trace_sequence(),
-            model_id: self.request.resolved_model.model_id.clone(),
-            resolved_model_name: self.request.resolved_model.model_name.clone(),
-            started_at: OffsetDateTime::now_utc(),
-        };
-        self.request
-            .trace
-            .record(TraceSignal::ModelCallStarted(started.clone()));
-        started
-    }
-
-    fn finish_model_trace(
-        &self,
-        started: &ModelCallStarted,
-        result: Result<&ModelResponse, &TurnRunError>,
-    ) {
-        let (status, provider_request_id, usage, error_code, error_message) = match result {
-            Ok(response) => (
-                TraceStatus::Succeeded,
-                response.provider_request_id.clone(),
-                response.usage,
-                None,
-                None,
-            ),
-            Err(error) => (
-                trace_status_for_error(error),
-                None,
-                None,
-                Some(error.code().to_string()),
-                Some(error.to_string()),
-            ),
-        };
-        self.request
-            .trace
-            .record(TraceSignal::ModelCallFinished(ModelCallFinished {
-                started: started.clone(),
-                status,
-                provider_request_id,
-                attempt_count: 1,
-                usage,
-                ended_at: OffsetDateTime::now_utc(),
-                error_code,
-                error_message,
-            }));
-    }
-
-    async fn call_model(&self, model_call_index: u32) -> Result<ModelResponse, TurnRunError> {
+    async fn call_model(
+        &mut self,
+        model_call_index: u32,
+    ) -> Result<CompletedModelCall, TurnRunError> {
         self.request.chat.begin_draft().await?;
+        let request_build_started = Instant::now();
         let request = self
             .request
             .chat
@@ -247,8 +200,66 @@ impl TurnRunner {
                 self.request.tools.definitions().to_vec(),
             )
             .await?;
+        let request_build_ms = elapsed_millis_u64(request_build_started);
+        let attributes =
+            ModelTraceAttributesV1::from_request(model_call_index, request_build_ms, &request);
         let options =
             ModelCallOptions::new(format!("{}-model-{model_call_index}", self.request.turn_id));
+        let max_transport_attempts = options.max_transport_attempts;
+        let mut model_trace = ModelCallTraceGuard::start(
+            Arc::clone(&self.request.trace),
+            ModelCallStarted {
+                span_id: trace_id("model"),
+                turn_id: self.request.turn_id.clone(),
+                sequence: self.allocate_trace_sequence(),
+                model_id: self.request.resolved_model.model_id.clone(),
+                resolved_model_name: self.request.resolved_model.model_name.clone(),
+                started_at: OffsetDateTime::now_utc(),
+                attributes,
+            },
+            self.request.cancel.clone(),
+            max_transport_attempts,
+        );
+        let trace_span_id = model_trace.span_id().to_string();
+        let options = options.with_transport_observer(model_trace.transport_observer());
+        let result = self
+            .invoke_and_consume_model(request, options, &mut model_trace)
+            .await;
+        match result {
+            Ok(response) => {
+                model_trace.finish_success(&response);
+                Ok(CompletedModelCall {
+                    response,
+                    trace_span_id,
+                })
+            }
+            Err(error) => {
+                let trace_model_error = match &error {
+                    TurnRunError::Model(error) => Some(error.clone()),
+                    TurnRunError::Protocol(message) => Some(ModelError::protocol(message.clone())),
+                    _ => None,
+                };
+                let provider_request_id = trace_model_error
+                    .as_ref()
+                    .and_then(|error| error.provider_request_id.clone());
+                model_trace.finish_failure(
+                    trace_status_for_error(&error),
+                    provider_request_id,
+                    error.code(),
+                    error.to_string(),
+                    trace_model_error.as_ref(),
+                );
+                Err(error)
+            }
+        }
+    }
+
+    async fn invoke_and_consume_model(
+        &self,
+        request: openwork_models::model::ModelRequest,
+        options: ModelCallOptions,
+        model_trace: &mut ModelCallTraceGuard,
+    ) -> Result<ModelResponse, TurnRunError> {
         let stream = tokio::select! {
             _ = self.request.cancel.cancelled() => {
                 self.request.chat.discard_draft().await?;
@@ -281,6 +292,9 @@ impl TurnRunner {
                     return Err(TurnRunError::Model(error));
                 }
             };
+            if is_first_semantic_event(&event) {
+                model_trace.record_first_semantic_event();
+            }
             match event {
                 ModelEvent::TextDelta { delta, .. } => {
                     self.request.chat.apply_text_delta(&delta).await?;
@@ -314,6 +328,7 @@ impl TurnRunner {
                 "model stream ended without a completed response".to_string(),
             ));
         };
+        model_trace.record_stream_finished();
         let _ = self.request.chat.finish_draft().await?;
         Ok(response)
     }
@@ -325,11 +340,15 @@ impl TurnRunner {
     ) -> Result<(), TurnRunError> {
         self.ensure_not_cancelled()?;
         let tool_call_id = ToolCallId::generate();
-        let tool_trace = self.start_tool_trace(call, parent_span_id);
-        let mut permission_wait_ms = None;
+        let mut tool_trace = self.start_tool_trace(call, parent_span_id);
+        let parse_started = Instant::now();
         let input: serde_json::Value = match serde_json::from_str(&call.input) {
-            Ok(input) => input,
+            Ok(input) => {
+                tool_trace.record_input_shape(&input);
+                input
+            }
             Err(error) => {
+                tool_trace.record_validation_ms(elapsed_millis_u64(parse_started));
                 let input = serde_json::Value::Null;
                 self.start_live_tool(call, &tool_call_id, input.clone())
                     .await?;
@@ -338,24 +357,38 @@ impl TurnRunner {
                     format!("invalid tool input: {error}"),
                     false,
                 );
-                self.finish_tool_trace(&tool_trace, &result, None, permission_wait_ms);
-                return self.append_tool_result(call, tool_call_id, result).await;
+                return self
+                    .append_tool_result(call, tool_call_id, result, tool_trace)
+                    .await;
             }
         };
+        let parse_ms = elapsed_millis_u64(parse_started);
         self.start_live_tool(call, &tool_call_id, input.clone())
             .await?;
 
         let invocation = ToolInvocation::new(&call.name, input.clone());
+        let schema_validation_started = Instant::now();
         let resolved_tool_name = match self.request.tools.validate(&invocation) {
-            Ok(definition) => definition.id.to_string(),
+            Ok(definition) => {
+                tool_trace.record_validation_ms(
+                    parse_ms.saturating_add(elapsed_millis_u64(schema_validation_started)),
+                );
+                let name = definition.id.to_string();
+                tool_trace.set_resolved_tool_name(&name);
+                name
+            }
             Err(error) => {
+                tool_trace.record_validation_ms(
+                    parse_ms.saturating_add(elapsed_millis_u64(schema_validation_started)),
+                );
                 let code = match error {
                     ToolValidationError::UnknownTool(_) => ToolErrorCode::ToolNotFound,
                     ToolValidationError::InvalidInput(_) => ToolErrorCode::InvalidArguments,
                 };
                 let result = ToolResult::failed(code, error.to_string(), false);
-                self.finish_tool_trace(&tool_trace, &result, None, permission_wait_ms);
-                return self.append_tool_result(call, tool_call_id, result).await;
+                return self
+                    .append_tool_result(call, tool_call_id, result, tool_trace)
+                    .await;
             }
         };
 
@@ -366,13 +399,8 @@ impl TurnRunner {
                 format!("doom loop detected for tool '{}'", call.name),
                 false,
             );
-            self.finish_tool_trace(
-                &tool_trace,
-                &result,
-                Some(&resolved_tool_name),
-                permission_wait_ms,
-            );
-            self.append_tool_result(call, tool_call_id, result).await?;
+            self.append_tool_result(call, tool_call_id, result, tool_trace)
+                .await?;
             return Err(TurnRunError::DoomLoop(call.name.clone()));
         }
 
@@ -381,19 +409,20 @@ impl TurnRunner {
             .tools
             .authorize(&invocation, self.request.agent.policy().permission_mode)
         {
-            PolicyDecision::Allow => {}
+            PolicyDecision::Allow => {
+                tool_trace.record_permission_policy("allow");
+                tool_trace.record_permission_decision("allow", "policy");
+            }
             PolicyDecision::Deny { reason } => {
+                tool_trace.record_permission_policy("deny");
+                tool_trace.record_permission_decision("deny", "policy");
                 let result = ToolResult::denied(reason.clone());
-                self.finish_tool_trace(
-                    &tool_trace,
-                    &result,
-                    Some(&resolved_tool_name),
-                    permission_wait_ms,
-                );
-                self.append_tool_result(call, tool_call_id, result).await?;
+                self.append_tool_result(call, tool_call_id, result, tool_trace)
+                    .await?;
                 return Err(TurnRunError::PermissionDenied(reason));
             }
             PolicyDecision::Ask { reason } => {
+                tool_trace.record_permission_policy("ask");
                 let request = PermissionRequest {
                     session_id: self.request.session_id.clone(),
                     turn_id: self.request.turn_id.clone(),
@@ -414,14 +443,10 @@ impl TurnRunner {
                     .await
                     .is_err()
                 {
+                    tool_trace.record_permission_decision("cancelled", "system");
                     let result = ToolResult::outcome_unknown("session actor stopped");
-                    self.finish_tool_trace(
-                        &tool_trace,
-                        &result,
-                        Some(&resolved_tool_name),
-                        permission_wait_ms,
-                    );
-                    self.append_tool_result(call, tool_call_id, result).await?;
+                    self.append_tool_result(call, tool_call_id, result, tool_trace)
+                        .await?;
                     return Err(TurnRunError::ActorStopped);
                 }
                 let wait_started = Instant::now();
@@ -431,21 +456,17 @@ impl TurnRunner {
                     }
                     result = decision => result.ok(),
                 };
-                permission_wait_ms = Some(elapsed_millis(wait_started));
+                tool_trace.record_permission_wait_ms(elapsed_millis(wait_started));
                 let Some(decision) = decision else {
                     let cancelled = self.request.cancel.is_cancelled();
+                    tool_trace.record_permission_decision("cancelled", "system");
                     let result = if cancelled {
                         ToolResult::cancelled("turn cancelled while waiting for permission")
                     } else {
                         ToolResult::outcome_unknown("permission responder stopped")
                     };
-                    self.finish_tool_trace(
-                        &tool_trace,
-                        &result,
-                        Some(&resolved_tool_name),
-                        permission_wait_ms,
-                    );
-                    self.append_tool_result(call, tool_call_id, result).await?;
+                    self.append_tool_result(call, tool_call_id, result, tool_trace)
+                        .await?;
                     return Err(if cancelled {
                         TurnRunError::Cancelled
                     } else {
@@ -453,18 +474,15 @@ impl TurnRunner {
                     });
                 };
                 if decision == PermissionDecision::Deny {
+                    tool_trace.record_permission_decision("deny", "user");
                     let result = ToolResult::denied("user denied tool permission");
-                    self.finish_tool_trace(
-                        &tool_trace,
-                        &result,
-                        Some(&resolved_tool_name),
-                        permission_wait_ms,
-                    );
-                    self.append_tool_result(call, tool_call_id, result).await?;
+                    self.append_tool_result(call, tool_call_id, result, tool_trace)
+                        .await?;
                     return Err(TurnRunError::PermissionDenied(
                         "user denied tool permission".to_string(),
                     ));
                 }
+                tool_trace.record_permission_decision("allow", "user");
             }
         }
 
@@ -475,6 +493,7 @@ impl TurnRunner {
         )
         .with_progress_sender(progress_tx);
         let tools = Arc::clone(&self.request.tools);
+        let execution_started = Instant::now();
         let mut execution = Box::pin(tools.call(call_context, invocation));
         let mut progress_open = true;
         let result = loop {
@@ -485,6 +504,7 @@ impl TurnRunner {
                         progress_open = false;
                         continue;
                     };
+                    tool_trace.record_progress_event();
                     self.update(SessionUpdate::ToolCallProgress {
                         tool_call_id: tool_call_id.clone(),
                         progress: tool_progress_update(progress),
@@ -493,7 +513,9 @@ impl TurnRunner {
                 result = &mut execution => break result,
             }
         };
+        tool_trace.record_execution_ms(elapsed_millis_u64(execution_started));
         while let Ok(progress) = progress_rx.try_recv() {
+            tool_trace.record_progress_event();
             self.update(SessionUpdate::ToolCallProgress {
                 tool_call_id: tool_call_id.clone(),
                 progress: tool_progress_update(progress),
@@ -501,56 +523,33 @@ impl TurnRunner {
             .await?;
         }
         let cancelled = result.status == ToolResultStatus::Cancelled;
-        self.finish_tool_trace(
-            &tool_trace,
-            &result,
-            Some(&resolved_tool_name),
-            permission_wait_ms,
-        );
-        self.append_tool_result(call, tool_call_id, result).await?;
+        self.append_tool_result(call, tool_call_id, result, tool_trace)
+            .await?;
         if cancelled {
             return Err(TurnRunError::Cancelled);
         }
         Ok(())
     }
 
-    fn start_tool_trace(&mut self, call: &ToolCallBlock, parent_span_id: &str) -> ToolCallStarted {
-        let started = ToolCallStarted {
-            span_id: trace_id("tool"),
-            turn_id: self.request.turn_id.clone(),
-            parent_span_id: parent_span_id.to_string(),
-            sequence: self.allocate_trace_sequence(),
-            provider_call_id: call.id.clone(),
-            requested_tool_name: call.name.clone(),
-            started_at: OffsetDateTime::now_utc(),
-        };
-        self.request
-            .trace
-            .record(TraceSignal::ToolCallStarted(started.clone()));
-        started
-    }
-
-    fn finish_tool_trace(
-        &self,
-        started: &ToolCallStarted,
-        result: &ToolResult,
-        resolved_tool_name: Option<&str>,
-        permission_wait_ms: Option<i64>,
-    ) {
-        self.request
-            .trace
-            .record(TraceSignal::ToolCallFinished(ToolCallFinished {
-                started: started.clone(),
-                status: trace_status_for_tool(result.status),
-                resolved_tool_name: resolved_tool_name.map(str::to_string),
-                permission_wait_ms,
-                ended_at: OffsetDateTime::now_utc(),
-                error_code: result
-                    .error
-                    .as_ref()
-                    .map(|error| tool_error_code(error.code).to_string()),
-                error_message: result.error.as_ref().map(|error| error.message.clone()),
-            }));
+    fn start_tool_trace(
+        &mut self,
+        call: &ToolCallBlock,
+        parent_span_id: &str,
+    ) -> ToolCallTraceGuard {
+        ToolCallTraceGuard::start(
+            Arc::clone(&self.request.trace),
+            ToolCallStarted {
+                span_id: trace_id("tool"),
+                turn_id: self.request.turn_id.clone(),
+                parent_span_id: parent_span_id.to_string(),
+                sequence: self.allocate_trace_sequence(),
+                provider_call_id: call.id.clone(),
+                requested_tool_name: call.name.clone(),
+                started_at: OffsetDateTime::now_utc(),
+                attributes: ToolTraceAttributesV1::new(&call.input),
+            },
+            self.request.cancel.clone(),
+        )
     }
 
     fn allocate_trace_sequence(&mut self) -> i64 {
@@ -587,12 +586,16 @@ impl TurnRunner {
         reason: &str,
     ) -> Result<(), TurnRunError> {
         let tool_call_id = ToolCallId::generate();
-        let tool_trace = self.start_tool_trace(call, parent_span_id);
+        let mut tool_trace = self.start_tool_trace(call, parent_span_id);
+        let validation_started = Instant::now();
         let input = serde_json::from_str(&call.input).unwrap_or(serde_json::Value::Null);
+        tool_trace.record_input_shape(&input);
+        tool_trace.record_validation_ms(elapsed_millis_u64(validation_started));
+        tool_trace.record_permission_decision("cancelled", "system");
         self.start_live_tool(call, &tool_call_id, input).await?;
         let result = ToolResult::cancelled(reason);
-        self.finish_tool_trace(&tool_trace, &result, None, None);
-        self.append_tool_result(call, tool_call_id, result).await
+        self.append_tool_result(call, tool_call_id, result, tool_trace)
+            .await
     }
 
     async fn append_tool_result(
@@ -600,13 +603,23 @@ impl TurnRunner {
         call: &ToolCallBlock,
         tool_call_id: ToolCallId,
         result: ToolResult,
+        tool_trace: ToolCallTraceGuard,
     ) -> Result<(), TurnRunError> {
         let message = tool_result_message(call, &result);
-        self.request
+        let persistence_started = Instant::now();
+        let persisted = self
+            .request
             .storage
             .append_tool_result(&self.request.turn_id, &message)
-            .await
-            .map_err(TurnRunError::Persistence)?;
+            .await;
+        let persistence_ms = elapsed_millis_u64(persistence_started);
+        match persisted {
+            Ok(()) => tool_trace.finish_result(&result, true, persistence_ms, None),
+            Err(message) => {
+                tool_trace.finish_result(&result, false, persistence_ms, Some("persistence_error"));
+                return Err(TurnRunError::Persistence(message));
+            }
+        }
         self.request.chat.append_tool_result(message).await?;
         self.update(SessionUpdate::ToolCallFinished {
             tool_call_id,
@@ -729,13 +742,25 @@ fn tool_status_name(status: ToolResultStatus) -> &'static str {
     }
 }
 
-fn trace_status_for_tool(status: ToolResultStatus) -> TraceStatus {
-    match status {
-        ToolResultStatus::Succeeded => TraceStatus::Succeeded,
-        ToolResultStatus::Failed => TraceStatus::Failed,
-        ToolResultStatus::Denied => TraceStatus::Denied,
-        ToolResultStatus::Cancelled => TraceStatus::Cancelled,
-        ToolResultStatus::OutcomeUnknown => TraceStatus::OutcomeUnknown,
+fn is_first_semantic_event(event: &ModelEvent) -> bool {
+    match event {
+        ModelEvent::TextStart { .. }
+        | ModelEvent::TextDelta { .. }
+        | ModelEvent::ReasoningStart { .. }
+        | ModelEvent::ReasoningDelta { .. }
+        | ModelEvent::ToolCallStart { .. }
+        | ModelEvent::ToolCallDelta { .. } => true,
+        ModelEvent::ResponseCompleted { response } => {
+            !response.text.is_empty()
+                || response
+                    .reasoning_text
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                || !response.tool_calls.is_empty()
+        }
+        ModelEvent::TextEnd { .. }
+        | ModelEvent::ReasoningEnd { .. }
+        | ModelEvent::ToolCallEnd { .. } => false,
     }
 }
 
@@ -747,24 +772,16 @@ fn trace_status_for_error(error: &TurnRunError) -> TraceStatus {
     }
 }
 
-fn tool_error_code(code: ToolErrorCode) -> &'static str {
-    match code {
-        ToolErrorCode::ToolNotFound => "tool_not_found",
-        ToolErrorCode::InvalidArguments => "invalid_arguments",
-        ToolErrorCode::PermissionDenied => "permission_denied",
-        ToolErrorCode::Cancelled => "cancelled",
-        ToolErrorCode::Timeout => "timeout",
-        ToolErrorCode::ExecutionFailed => "execution_failed",
-        ToolErrorCode::OutcomeUnknown => "outcome_unknown",
-    }
-}
-
 fn trace_id(kind: &str) -> String {
     format!("span-{kind}-{}", Uuid::new_v4().simple())
 }
 
 fn elapsed_millis(started: Instant) -> i64 {
     i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)
+}
+
+fn elapsed_millis_u64(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
 #[derive(Debug, thiserror::Error)]

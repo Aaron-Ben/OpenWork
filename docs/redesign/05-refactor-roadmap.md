@@ -1,6 +1,6 @@
 # OpenWork 重构实施路线
 
-> 状态：Phase 1-7 的主体代码迁移已完成；当前无生产数据，数据库已切换为 SQLx 单一干净基线。Host Contract 生成和 Trace 关闭/降级验收暂缓实施，因此整轮重构尚未满足全部完成定义。
+> 状态：Phase 1-7 的主体代码迁移及 2026-07-19 P0/P1 Trace 语义增强已完成；当前无生产数据，数据库已切换为 SQLx 单一干净基线。Host Contract 生成和 Trace 关闭/降级验收暂缓实施，因此整轮重构尚未满足全部完成定义。
 >
 > 原则：每一阶段都必须可编译、可测试、可回退；先建立新的唯一运行链，再删除旧链。
 
@@ -365,16 +365,23 @@ mark_running_turns_interrupted(...)
 
 ## 8. Phase 5：简化 Trace
 
-### 工作
+### 已实施基础
 
-- 在 `openwork-core::trace` 实现有界 Recorder；
+- 在 `openwork-core` 内部 Trace 模块实现有界 Recorder；
 - Runtime 直接产生 ModelCall/ToolCall Signal；
-- 使用 RAII Guard 结束 Span；
 - Permission Wait 聚合到 Tool Span；
-- Transport Retry 聚合到 Model Span；
-- 实现 Trace Completeness；
 - 将 Trace List Root 改为查询 `turns`；
 - 移除 `TracingTurnRecorder` 和 Step/Approval/Recovery Span 生成。
+
+### 2026-07-19 已实施语义增强
+
+- 使用类型化 RAII Guard 收口 Model/Tool early return、错误和取消路径；
+- 接入现有 `ModelTransportObserver`，用真实 Attempt 更新 `attempt_count/attempts[]`；
+- 增加 Model `requestBuildMs/ttftMs/streamMs/finishReason` 和标准化错误阶段；
+- 增加 Tool validation/permission/execution/persistence 分段耗时及决定来源；
+- 使用版本化 `ModelTraceAttributesV1/ToolTraceAttributesV1` 记录 P0 与 P1 形状字段；
+- 实现 `TurnTrace { summary, spans, completeness }` 并在 Desktop 显示 Complete/Partial/None；
+- 保留 PostgreSQL 领域 Trace；Rust `tracing` 和 OpenTelemetry/OTLP 只作为未来可选旁路，本阶段不新增依赖、表或 Span Kind。
 
 ### Gate
 
@@ -382,6 +389,10 @@ mark_running_turns_interrupted(...)
 - Queue 满和数据库不可用测试证明 Turn 结果不变；
 - Trace Payload 脱敏测试通过；
 - Current Turn Count 与 Trace Completeness 能显式显示缺口。
+- Provider Retry 的真实 Attempt 数、重试原因和延迟与 Model Span 一致；
+- Model/Tool 阶段耗时可分别验证，Tool Result 持久化失败仍产生 terminal Tool Span；
+- P1 只含大小、数量、枚举和版本信息，不出现 Prompt/Tool/文件/Shell 原文；
+- 未来若启用 `tracing`/OTLP，其关闭或导出失败不改变 PostgreSQL Trace 和 Turn 结果。
 
 ## 9. Phase 6：Desktop 切换
 
@@ -554,4 +565,6 @@ rg -n "invoke\(|listen\(" apps/desktop/src --glob '!bridge/**'
 - Legacy crate、类型、Journal 写路径和旧 Trace 节点已删除；
 - 文档中的命名、SQL 与实际代码一致。
 
-当前未满足的完成项只有两组：Rust → TypeScript Host Contract/Drift Check，以及 Trace 关闭入口/降级验收。它们必须在后续独立改动中完成，或通过新的架构决策正式移出完成定义。
+原重构完成定义当前未满足的项目仍只有两组：Rust → TypeScript Host Contract/Drift Check，以及 Trace 关闭入口/降级验收。它们必须在后续独立改动中完成，或通过新的架构决策正式移出完成定义。
+
+2026-07-19 确认的 P0/P1 Trace 语义增强是原简化架构上的能力迭代，不回溯增加旧重构的 Cutover Gate；当前代码、数据库查询、Desktop 和测试已同时落地。Rust `tracing`/OTLP、Trace 关闭入口和完整降级验收仍保持独立后续边界。

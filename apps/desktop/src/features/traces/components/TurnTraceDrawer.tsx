@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { Bot, Clock3, Wrench, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { coreCommands } from '../../../bridge/commands'
-import type { RuntimeTraceSpan } from '../../../bridge/compat'
+import type { RuntimeTraceSpan, RuntimeTurnTrace } from '../../../bridge/compat'
 import { formatBeijingDateTime } from '../../../lib/dateTime'
 import { resolveErrorMessage } from '../../../utils/commandError'
-import { shouldPollTrace, type TraceListItem } from '../traceViewModel'
+import {
+  buildTraceAttributeSections,
+  readTraceAttempts,
+  shouldPollTrace,
+  type TraceAttributeRow,
+  type TraceListItem,
+} from '../traceViewModel'
 import { formatDuration } from './TraceList'
 import { TraceTimeline } from './TraceTimeline'
 
@@ -25,12 +32,13 @@ export function TurnTraceDrawer({
   onClose,
 }: TurnTraceDrawerProps) {
   const { t } = useTranslation()
-  const [spans, setSpans] = useState<RuntimeTraceSpan[] | null>(null)
+  const [trace, setTrace] = useState<RuntimeTurnTrace | null>(null)
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const drawerRef = useRef<HTMLElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
   const requestGeneration = useRef(0)
+  const spans = trace?.spans ?? null
 
   useEffect(() => {
     previousFocus.current = document.activeElement as HTMLElement | null
@@ -41,16 +49,16 @@ export function TurnTraceDrawer({
   useEffect(() => {
     const generation = ++requestGeneration.current
     let active = true
-    setSpans(null)
+    setTrace(null)
     setError(null)
     void coreCommands.getTrace(turnId)
       .then((value) => {
         if (!active || generation !== requestGeneration.current) return
-        setSpans(value)
+        setTrace(value)
         const initial = initialProviderCallId
-          ? value.find((span) => span.providerCallId === initialProviderCallId)
+          ? value.spans.find((span) => span.providerCallId === initialProviderCallId)
           : null
-        setSelectedSpanId(initial?.id ?? value[0]?.id ?? null)
+        setSelectedSpanId(initial?.id ?? value.spans[0]?.id ?? null)
       })
       .catch((reason) => {
         if (active && generation === requestGeneration.current) {
@@ -63,7 +71,7 @@ export function TurnTraceDrawer({
     }
   }, [initialProviderCallId, turnId])
 
-  const shouldPoll = shouldPollTrace(summary?.status, spans ?? [])
+  const shouldPoll = shouldPollTrace(summary?.status ?? trace?.summary.status, spans ?? [])
   useEffect(() => {
     if (!shouldPoll) return
     const generation = requestGeneration.current
@@ -71,12 +79,12 @@ export function TurnTraceDrawer({
       void coreCommands.getTrace(turnId)
         .then((value) => {
           if (generation !== requestGeneration.current) return
-          setSpans(value)
+          setTrace(value)
           setError(null)
           setSelectedSpanId((current) =>
-            current && value.some((span) => span.id === current)
+            current && value.spans.some((span) => span.id === current)
               ? current
-              : value[0]?.id ?? null,
+              : value.spans[0]?.id ?? null,
           )
         })
         .catch((reason) => {
@@ -145,6 +153,13 @@ export function TurnTraceDrawer({
               <SummaryPill icon={<Bot size={12} />} label={t('activity.modelCalls', { count: spans?.filter((span) => span.kind === 'model_call').length ?? summary?.modelCallCount ?? 0 })} />
               <SummaryPill icon={<Wrench size={12} />} label={t('activity.toolCalls', { count: spans?.filter((span) => span.kind === 'tool_call').length ?? summary?.toolCallCount ?? 0 })} />
               <SummaryPill label={t('activity.tokens', { count: tokenTotal })} />
+              {trace ? (
+                <SummaryPill label={t('activity.traceCompleteness', {
+                  state: t(`activity.completeness.${trace.completeness.state}`),
+                  captured: trace.completeness.capturedModelCalls + trace.completeness.capturedToolCalls,
+                  expected: trace.completeness.expectedModelCalls + trace.completeness.expectedToolCalls,
+                })} />
+              ) : null}
             </div>
           </header>
 
@@ -176,13 +191,13 @@ function SummaryPill({ icon, label }: { icon?: React.ReactNode; label: string })
   return <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1">{icon}{label}</span>
 }
 
-function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
+export function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
   const { t } = useTranslation()
   const duration = span.endedAt
     ? Math.max(0, Date.parse(span.endedAt) - Date.parse(span.startedAt))
     : Math.max(0, Date.now() - Date.parse(span.startedAt))
   const fields = [
-    [t('activity.statusLabel'), span.status],
+    [t('activity.statusLabel'), localizeTraceValue(span.status, t)],
     [t('activity.duration'), formatDuration(duration)],
     [t('activity.startedAt'), formatBeijingDateTime(span.startedAt)],
     [t('activity.endedAt'), span.endedAt ? formatBeijingDateTime(span.endedAt) : '—'],
@@ -195,6 +210,8 @@ function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
     [t('activity.permissionWait'), span.permissionWaitMs == null ? '—' : formatDuration(span.permissionWaitMs)],
     [t('activity.providerRequestId'), span.providerRequestId ?? '—'],
   ]
+  const attributeSections = buildTraceAttributeSections(span)
+  const transportAttempts = readTraceAttempts(span)
   return (
     <div>
       <div className="flex items-center gap-2">
@@ -213,6 +230,41 @@ function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
           </div>
         ))}
       </dl>
+      {attributeSections.p0.length > 0 ? (
+        <div className="mt-5">
+          <h4 className="text-xs font-semibold text-ink">{t('activity.traceAttributes')}</h4>
+          <TraceAttributeList rows={attributeSections.p0} />
+        </div>
+      ) : null}
+      {transportAttempts.length > 0 ? (
+        <details className="mt-5 rounded-xl border border-line p-3">
+          <summary className="cursor-pointer text-xs font-semibold text-ink">{t('activity.transportAttempts')}</summary>
+          <div className="mt-3 grid gap-2">
+            {transportAttempts.map((attempt) => (
+              <div key={attempt.index} className="rounded-lg bg-surface p-3 font-mono text-[11px] text-ink-soft">
+                <div>{t('activity.transportAttemptSummary', {
+                  index: attempt.index,
+                  status: localizeTraceValue(attempt.status, t),
+                  duration: attempt.durationMs == null ? '—' : `${attempt.durationMs} ms`,
+                })}</div>
+                {attempt.errorCode ? <div>{traceDetailField(t, 'errorCode', attempt.errorCode)}</div> : null}
+                {attempt.errorPhase ? <div>{traceDetailField(t, 'errorPhase', localizeTraceValue(attempt.errorPhase, t))}</div> : null}
+                {attempt.deliveryState ? <div>{traceDetailField(t, 'deliveryState', localizeTraceValue(attempt.deliveryState, t))}</div> : null}
+                {attempt.httpStatus == null ? null : <div>{traceDetailField(t, 'httpStatus', attempt.httpStatus)}</div>}
+                {attempt.providerCode ? <div>{traceDetailField(t, 'providerCode', attempt.providerCode)}</div> : null}
+                {attempt.providerRequestId ? <div>{traceDetailField(t, 'providerRequestId', attempt.providerRequestId)}</div> : null}
+                {attempt.retryDelayMs == null ? null : <div>{traceDetailField(t, 'retryDelayMs', `${attempt.retryDelayMs} ms`)}</div>}
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      {attributeSections.p1.length > 0 ? (
+        <details className="mt-5 rounded-xl border border-line p-3">
+          <summary className="cursor-pointer text-xs font-semibold text-ink">{t('activity.traceShape')}</summary>
+          <TraceAttributeList rows={attributeSections.p1} />
+        </details>
+      ) : null}
       {span.errorMessage ? (
         <div className="mt-5 rounded-xl bg-status-danger-soft p-3 text-xs text-status-danger-ink">
           <div className="font-semibold">{span.errorCode ?? t('activity.error')}</div>
@@ -221,4 +273,45 @@ function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
       ) : null}
     </div>
   )
+}
+
+function TraceAttributeList({ rows }: { rows: TraceAttributeRow[] }) {
+  const { t } = useTranslation()
+  return (
+    <dl className="mt-3 grid gap-3">
+      {rows.map((row) => (
+        <div key={row.key} className="grid grid-cols-[170px_minmax(0,1fr)] gap-3 border-b border-line pb-2 text-xs">
+          <dt className="break-all text-ink-faint">{t(`activity.traceFields.${row.key}`, { defaultValue: row.key })}</dt>
+          <dd className="min-w-0 break-all font-mono text-ink-soft">{localizeTraceAttributeValue(row, t)}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+const LOCALIZED_TRACE_ATTRIBUTE_VALUES = new Set([
+  'finishReason', 'errorPhase', 'deliveryState', 'permissionPolicy',
+  'permissionDecision', 'permissionDecisionSource', 'thinkingMode',
+])
+
+function localizeTraceAttributeValue(row: TraceAttributeRow, t: TFunction): string {
+  if (LOCALIZED_TRACE_ATTRIBUTE_VALUES.has(row.key) || row.value === 'true' || row.value === 'false') {
+    return localizeTraceValue(row.value, t)
+  }
+  return row.value
+}
+
+function localizeTraceValue(value: string, t: TFunction): string {
+  return t(`activity.traceValues.${value}`, { defaultValue: value })
+}
+
+function traceDetailField(
+  t: TFunction,
+  field: string,
+  value: string | number,
+): string {
+  return t('activity.traceDetailField', {
+    label: t(`activity.traceFields.${field}`, { defaultValue: field }),
+    value,
+  })
 }
