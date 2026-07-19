@@ -93,7 +93,7 @@ impl PermissionProfile {
         }
     }
 
-    fn is_protected(&self, path: &Path) -> bool {
+    pub(crate) fn is_protected(&self, path: &Path) -> bool {
         path.components().any(|component| {
             let std::path::Component::Normal(name) = component else {
                 return false;

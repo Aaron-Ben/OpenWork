@@ -10,7 +10,7 @@ use crate::{
     TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
-use super::resolve;
+use crate::context::PathIntent;
 
 const DEFAULT_MAX_RESULTS: usize = 200;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
@@ -82,24 +82,12 @@ impl Tool for GrepTool {
                 ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
             })?
             .map(|glob| glob.compile_matcher());
-        let root = resolve(&session.working_directory, &input.path);
-        session
-            .check_path(&root, AccessKind::Read)
-            .map_err(ToolExecutionError::denied)?;
-        if !session
-            .filesystem
-            .exists(&root)
-            .await
-            .map_err(|error| ToolExecutionError::execution(error.to_string()))?
-        {
-            return Ok(TextToolOutput::new(format!(
-                "path not found: {}",
-                root.display()
-            )));
-        }
+        let root = session
+            .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
+            .await?;
         let files = session
             .filesystem
-            .walk_files(&root)
+            .walk_files(root.as_path())
             .await
             .map_err(|error| ToolExecutionError::execution(format!("grep failed: {error}")))?;
         let mut output = String::new();
@@ -118,7 +106,7 @@ impl Tool for GrepTool {
             let Ok(content) = session.filesystem.read_to_string(&path).await else {
                 continue;
             };
-            let relative = path.strip_prefix(&root).unwrap_or(&path);
+            let relative = path.strip_prefix(root.as_path()).unwrap_or(&path);
             match input.output_mode {
                 GrepOutputMode::FilesWithMatches => {
                     if content.lines().any(|line| regex.is_match(line)) {

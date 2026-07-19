@@ -5,10 +5,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::builtins::truncate_output;
+use crate::context::PathIntent;
 use crate::policy::{AccessKind, NetworkMode};
 use crate::{
-    ProcessRequest, TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk,
-    ToolSessionContext,
+    ProcessRequest, ProcessStatus, Tool, ToolCallContext, ToolErrorCode, ToolExecutionError,
+    ToolId, ToolResult, ToolRisk, ToolSessionContext,
 };
 
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
@@ -31,7 +32,7 @@ pub struct BashTool;
 #[async_trait]
 impl Tool for BashTool {
     type Input = BashInput;
-    type Output = TextToolOutput;
+    type Output = ToolResult;
 
     fn id(&self) -> ToolId {
         ToolId::new_static("bash")
@@ -50,14 +51,19 @@ impl Tool for BashTool {
         session: &ToolSessionContext,
         call: ToolCallContext,
         input: BashInput,
-    ) -> Result<TextToolOutput, ToolExecutionError> {
-        session
-            .check_path(&session.working_directory, AccessKind::Read)
-            .map_err(ToolExecutionError::denied)?;
+    ) -> Result<ToolResult, ToolExecutionError> {
+        let working_directory = session
+            .resolve_path(".", AccessKind::Read, PathIntent::MustExist)
+            .await?;
         let mut environment = session.environment.as_ref().clone();
-        if session.permissions.network == NetworkMode::Restricted {
-            environment.insert("OPENWORK_NETWORK_RESTRICTED".to_string(), "1".to_string());
-        }
+        environment.insert(
+            "OPENWORK_NETWORK_MODE".to_string(),
+            match session.permissions.network {
+                NetworkMode::Restricted => "restricted",
+                NetworkMode::Enabled => "enabled",
+            }
+            .to_string(),
+        );
         let timeout_ms = input.timeout_ms.clamp(1, MAX_TIMEOUT_MS);
         let output = session
             .process_backend
@@ -65,15 +71,16 @@ impl Tool for BashTool {
                 ProcessRequest {
                     program: "sh".to_string(),
                     arguments: vec!["-c".to_string(), input.command],
-                    working_directory: session.working_directory.clone(),
+                    working_directory: working_directory.as_path().to_path_buf(),
                     environment,
                     timeout: Duration::from_millis(timeout_ms),
+                    network_mode: session.permissions.network,
                 },
                 &call,
             )
             .await?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = output.stdout.render_lossy();
+        let stderr = output.stderr.render_lossy();
         let mut combined = String::new();
         if !stdout.is_empty() {
             combined.push_str(&stdout);
@@ -85,21 +92,159 @@ impl Tool for BashTool {
             combined.push_str("[stderr]\n");
             combined.push_str(&stderr);
         }
-        let mut combined = truncate_output(combined, MAX_OUTPUT_BYTES);
-        combined.push_str(&format!(
-            "\n[exit {}; duration {} ms]",
-            output.exit_code,
-            output.elapsed.as_millis()
-        ));
-
-        if output.exit_code == 0 {
-            Ok(TextToolOutput::new(combined))
-        } else {
-            Err(ToolExecutionError::execution(combined))
+        if session.permissions.network == NetworkMode::Restricted
+            && !output.network_restriction_enforced
+        {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str("[network restriction requested but not enforced by this backend]");
         }
+        let footer = match output.status {
+            ProcessStatus::Exited { exit_code } => format!(
+                "\n[exit {exit_code}; duration {} ms]",
+                output.elapsed.as_millis()
+            ),
+            ProcessStatus::TimedOut => format!(
+                "\n[timed out after {timeout_ms} ms; duration {} ms]",
+                output.elapsed.as_millis()
+            ),
+            ProcessStatus::Cancelled => {
+                format!("\n[cancelled; duration {} ms]", output.elapsed.as_millis())
+            }
+        };
+        let mut combined = truncate_output(combined, MAX_OUTPUT_BYTES.saturating_sub(footer.len()));
+        combined.push_str(&footer);
+
+        Ok(match output.status {
+            ProcessStatus::Exited { .. } => ToolResult::succeeded(combined),
+            ProcessStatus::TimedOut => ToolResult::failed(ToolErrorCode::Timeout, combined, false),
+            ProcessStatus::Cancelled => ToolResult::cancelled(combined),
+        })
     }
 }
 
 fn default_timeout_ms() -> u64 {
     DEFAULT_TIMEOUT_MS
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::{PermissionProfile, ToolCallId, ToolErrorCode, ToolOutput};
+
+    fn session() -> ToolSessionContext {
+        ToolSessionContext::local(
+            std::env::temp_dir(),
+            PermissionProfile::danger_full_access(),
+        )
+    }
+
+    fn call(id: &str) -> ToolCallContext {
+        ToolCallContext::new(ToolCallId::new(id), CancellationToken::new())
+    }
+
+    #[tokio::test]
+    async fn non_zero_exit_is_a_completed_tool_result() {
+        let result = BashTool
+            .execute(
+                &session(),
+                call("non-zero"),
+                BashInput {
+                    command: "printf failure >&2; exit 7".to_string(),
+                    timeout_ms: 1_000,
+                },
+            )
+            .await
+            .expect("non-zero exit is still a completed command")
+            .into_tool_result();
+
+        assert!(!result.is_error());
+        assert!(result.text_content().contains("failure"));
+        assert!(result.text_content().contains("exit 7"));
+    }
+
+    #[tokio::test]
+    async fn timeout_preserves_partial_output() {
+        let result = BashTool
+            .execute(
+                &session(),
+                call("timeout-output"),
+                BashInput {
+                    command: "printf before-timeout; sleep 30".to_string(),
+                    timeout_ms: 50,
+                },
+            )
+            .await
+            .expect("timeout should produce a terminal tool result")
+            .into_tool_result();
+
+        assert_eq!(
+            result.error.as_ref().map(|error| error.code),
+            Some(ToolErrorCode::Timeout)
+        );
+        assert!(result.text_content().contains("before-timeout"));
+    }
+
+    #[tokio::test]
+    async fn restricted_network_mode_reports_missing_enforcement() {
+        let working_directory = std::env::temp_dir();
+        let session = ToolSessionContext::local(
+            working_directory.clone(),
+            PermissionProfile::workspace_write(working_directory),
+        );
+
+        let result = BashTool
+            .execute(
+                &session,
+                call("network-enforcement"),
+                BashInput {
+                    command: "printf ok".to_string(),
+                    timeout_ms: 1_000,
+                },
+            )
+            .await
+            .expect("completed command")
+            .into_tool_result();
+
+        assert!(
+            result
+                .text_content()
+                .contains("network restriction requested but not enforced")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_preserves_partial_output() {
+        let cancel = CancellationToken::new();
+        let call = ToolCallContext::new(ToolCallId::new("cancel-output"), cancel.clone());
+        let task = tokio::spawn(async move {
+            BashTool
+                .execute(
+                    &session(),
+                    call,
+                    BashInput {
+                        command: "printf before-cancel; sleep 30".to_string(),
+                        timeout_ms: 60_000,
+                    },
+                )
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.cancel();
+
+        let result = task
+            .await
+            .expect("bash task")
+            .expect("cancelled tool result")
+            .into_tool_result();
+
+        assert_eq!(
+            result.error.as_ref().map(|error| error.code),
+            Some(ToolErrorCode::Cancelled)
+        );
+        assert!(result.text_content().contains("before-cancel"));
+    }
 }

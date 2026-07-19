@@ -7,7 +7,7 @@ use crate::{
     TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
-use super::resolve;
+use crate::context::PathIntent;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListInput {
@@ -42,18 +42,17 @@ impl Tool for ListTool {
         _call: ToolCallContext,
         input: ListInput,
     ) -> Result<TextToolOutput, ToolExecutionError> {
-        let resolved = resolve(&session.working_directory, &input.path);
-        session
-            .check_path(&resolved, AccessKind::Read)
-            .map_err(ToolExecutionError::denied)?;
+        let resolved = session
+            .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
+            .await?;
         let mut names = session
             .filesystem
-            .read_dir(&resolved)
+            .read_dir(resolved.as_path())
             .await
             .map_err(|error| {
                 ToolExecutionError::execution(format!(
                     "failed to list {}: {error}",
-                    resolved.display()
+                    resolved.as_path().display()
                 ))
             })?
             .into_iter()
@@ -67,7 +66,7 @@ impl Tool for ListTool {
             .collect::<Vec<_>>();
         names.sort();
         let output = if names.is_empty() {
-            format!("{} is empty", resolved.display())
+            format!("{} is empty", resolved.as_path().display())
         } else {
             names.join("\n")
         };

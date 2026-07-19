@@ -9,7 +9,7 @@ use crate::{
     TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
-use super::resolve;
+use crate::context::PathIntent;
 
 const MAX_RESULTS: usize = 2000;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
@@ -55,24 +55,12 @@ impl Tool for GlobTool {
         let set = GlobSet::builder().add(glob).build().map_err(|error| {
             ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
         })?;
-        let root = resolve(&session.working_directory, &input.path);
-        session
-            .check_path(&root, AccessKind::Read)
-            .map_err(ToolExecutionError::denied)?;
-        if !session
-            .filesystem
-            .exists(&root)
-            .await
-            .map_err(|error| ToolExecutionError::execution(error.to_string()))?
-        {
-            return Ok(TextToolOutput::new(format!(
-                "path not found: {}",
-                root.display()
-            )));
-        }
+        let root = session
+            .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
+            .await?;
         let files = session
             .filesystem
-            .walk_files(&root)
+            .walk_files(root.as_path())
             .await
             .map_err(|error| ToolExecutionError::execution(format!("glob failed: {error}")))?;
         let mut matches = files
@@ -80,7 +68,7 @@ impl Tool for GlobTool {
             .filter(|path| set.is_match(path))
             .take(MAX_RESULTS)
             .map(|path| {
-                path.strip_prefix(&root)
+                path.strip_prefix(root.as_path())
                     .unwrap_or(&path)
                     .display()
                     .to_string()

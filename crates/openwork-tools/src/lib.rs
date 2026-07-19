@@ -11,8 +11,9 @@ mod result;
 mod tool;
 
 pub use backend::{
-    AsyncFileSystem, FileSystemEntry, LocalFileSystem, ProcessBackend, ProcessOutput,
-    ProcessRequest, TokioProcessBackend,
+    AsyncFileSystem, AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, CapturedOutput,
+    FileSystemEntry, LocalFileSystem, ProcessBackend, ProcessOutput, ProcessRequest, ProcessStatus,
+    TokioProcessBackend,
 };
 pub use builtins::builtin_registry;
 pub use context::{ToolCallContext, ToolCallId, ToolSessionContext};

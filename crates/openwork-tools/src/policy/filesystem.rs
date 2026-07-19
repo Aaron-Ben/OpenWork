@@ -6,11 +6,11 @@ pub enum AccessKind {
     Write,
 }
 
-pub(super) fn path_is_within(path: &Path, root: &Path) -> bool {
+pub(crate) fn path_is_within(path: &Path, root: &Path) -> bool {
     lexical_normalize(path).starts_with(lexical_normalize(root))
 }
 
-fn lexical_normalize(path: &Path) -> PathBuf {
+pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

@@ -5,8 +5,6 @@ mod list;
 mod read;
 mod write;
 
-use std::path::{Path, PathBuf};
-
 pub(crate) use edit::EditTool;
 pub(crate) use glob::GlobTool;
 pub(crate) use grep::GrepTool;
@@ -14,12 +12,36 @@ pub(crate) use list::ListTool;
 pub(crate) use read::ReadTool;
 pub(crate) use write::WriteTool;
 
-/// 解析 Action 的 path 参数：绝对路径原样返回，相对路径基于工作目录解析。
-pub(super) fn resolve(working_dir: &Path, path: &str) -> PathBuf {
-    let path = Path::new(path);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        working_dir.join(path)
+#[cfg(test)]
+pub(super) mod test_support {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    pub struct TestDirectory {
+        path: PathBuf,
+    }
+
+    impl TestDirectory {
+        pub fn new(label: &str) -> Self {
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "openwork-tools-{label}-{}-{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create test directory");
+            Self { path }
+        }
+
+        pub fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }
