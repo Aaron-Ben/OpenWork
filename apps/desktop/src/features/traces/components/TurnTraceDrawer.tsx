@@ -196,17 +196,18 @@ export function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
   const duration = span.endedAt
     ? Math.max(0, Date.parse(span.endedAt) - Date.parse(span.startedAt))
     : Math.max(0, Date.now() - Date.parse(span.startedAt))
+  const tokenStats: Array<[string, number | null]> = [
+    [t('activity.inputTokens'), span.inputTokens],
+    [t('activity.outputTokens'), span.outputTokens],
+    [t('activity.cachedTokens'), span.cachedInputTokens],
+    [t('activity.reasoningTokens'), span.reasoningTokens],
+    [t('activity.totalTokens'), span.totalTokens],
+  ]
+  const visibleTokenStats = tokenStats.filter(([, value]) => value != null)
   const fields = [
-    [t('activity.statusLabel'), localizeTraceValue(span.status, t)],
-    [t('activity.duration'), formatDuration(duration)],
     [t('activity.startedAt'), formatBeijingDateTime(span.startedAt)],
     [t('activity.endedAt'), span.endedAt ? formatBeijingDateTime(span.endedAt) : '—'],
     [t('activity.attempts'), span.attemptCount ?? '—'],
-    [t('activity.inputTokens'), span.inputTokens ?? '—'],
-    [t('activity.outputTokens'), span.outputTokens ?? '—'],
-    [t('activity.cachedTokens'), span.cachedInputTokens ?? '—'],
-    [t('activity.reasoningTokens'), span.reasoningTokens ?? '—'],
-    [t('activity.totalTokens'), span.totalTokens ?? '—'],
     [t('activity.permissionWait'), span.permissionWaitMs == null ? '—' : formatDuration(span.permissionWaitMs)],
     [t('activity.providerRequestId'), span.providerRequestId ?? '—'],
   ]
@@ -214,34 +215,57 @@ export function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
   const transportAttempts = readTraceAttempts(span)
   return (
     <div>
-      <div className="flex items-center gap-2">
-        {span.kind === 'model_call' ? <Bot size={18} /> : <Wrench size={18} />}
-        <h3 className="min-w-0 truncate text-sm font-semibold text-ink">
-          {span.kind === 'model_call'
-            ? span.resolvedModelName ?? t('activity.modelCall')
-            : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
-        </h3>
+      <div className="flex items-center gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-paper-hover text-ink-soft">
+          {span.kind === 'model_call' ? <Bot size={16} /> : <Wrench size={16} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold text-ink">
+            {span.kind === 'model_call'
+              ? span.resolvedModelName ?? t('activity.modelCall')
+              : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
+          </h3>
+          <div className="mt-1 flex items-center gap-2">
+            <SpanStatusChip status={span.status} />
+            <span className="font-mono text-[11px] tabular-nums text-ink-faint">
+              {formatDuration(duration)}
+            </span>
+          </div>
+        </div>
       </div>
-      <dl className="mt-5 grid gap-3">
+
+      {visibleTokenStats.length > 0 ? (
+        <div className="mt-4 grid grid-cols-2 gap-1.5 min-[480px]:grid-cols-3">
+          {visibleTokenStats.map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-line px-2.5 py-1.5">
+              <div className="text-[10px] text-ink-faint">{label}</div>
+              <div className="mt-0.5 font-mono text-xs tabular-nums text-ink">{value}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <dl className="mt-4 divide-y divide-line/70 rounded-xl border border-line px-3">
         {fields.map(([label, value]) => (
-          <div key={String(label)} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 border-b border-line pb-2 text-xs">
+          <div key={String(label)} className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 py-1.5 text-xs">
             <dt className="text-ink-faint">{label}</dt>
             <dd className="min-w-0 break-all font-mono text-ink-soft">{value}</dd>
           </div>
         ))}
       </dl>
+
       {attributeSections.p0.length > 0 ? (
-        <div className="mt-5">
+        <div className="mt-4">
           <h4 className="text-xs font-semibold text-ink">{t('activity.traceAttributes')}</h4>
           <TraceAttributeList rows={attributeSections.p0} />
         </div>
       ) : null}
       {transportAttempts.length > 0 ? (
-        <details className="mt-5 rounded-xl border border-line p-3">
+        <details className="mt-4 rounded-xl border border-line px-3 py-2.5">
           <summary className="cursor-pointer text-xs font-semibold text-ink">{t('activity.transportAttempts')}</summary>
-          <div className="mt-3 grid gap-2">
+          <div className="mt-2.5 grid gap-1.5">
             {transportAttempts.map((attempt) => (
-              <div key={attempt.index} className="rounded-lg bg-surface p-3 font-mono text-[11px] text-ink-soft">
+              <div key={attempt.index} className="rounded-lg border border-line/70 px-2.5 py-1.5 font-mono text-[11px] leading-5 text-ink-soft">
                 <div>{t('activity.transportAttemptSummary', {
                   index: attempt.index,
                   status: localizeTraceValue(attempt.status, t),
@@ -260,13 +284,13 @@ export function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
         </details>
       ) : null}
       {attributeSections.p1.length > 0 ? (
-        <details className="mt-5 rounded-xl border border-line p-3">
+        <details className="mt-4 rounded-xl border border-line px-3 py-2.5">
           <summary className="cursor-pointer text-xs font-semibold text-ink">{t('activity.traceShape')}</summary>
           <TraceAttributeList rows={attributeSections.p1} />
         </details>
       ) : null}
       {span.errorMessage ? (
-        <div className="mt-5 rounded-xl bg-status-danger-soft p-3 text-xs text-status-danger-ink">
+        <div className="mt-4 rounded-xl bg-status-danger-soft p-3 text-xs text-status-danger-ink">
           <div className="font-semibold">{span.errorCode ?? t('activity.error')}</div>
           <p className="mt-1 whitespace-pre-wrap">{span.errorMessage}</p>
         </div>
@@ -275,12 +299,28 @@ export function SpanDetail({ span }: { span: RuntimeTraceSpan }) {
   )
 }
 
+function SpanStatusChip({ status }: { status: string }) {
+  const { t } = useTranslation()
+  const classes = status === 'succeeded' || status === 'completed'
+    ? 'bg-status-success-soft text-status-success'
+    : status === 'running'
+      ? 'bg-status-warning-soft text-status-warning-ink'
+      : status === 'cancelled' || status === 'interrupted'
+        ? 'bg-paper-hover text-ink-soft'
+        : 'bg-status-danger-soft text-status-danger-ink'
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${classes}`}>
+      {localizeTraceValue(status, t)}
+    </span>
+  )
+}
+
 function TraceAttributeList({ rows }: { rows: TraceAttributeRow[] }) {
   const { t } = useTranslation()
   return (
-    <dl className="mt-3 grid gap-3">
+    <dl className="mt-2 divide-y divide-line/60 rounded-xl border border-line px-3">
       {rows.map((row) => (
-        <div key={row.key} className="grid grid-cols-[170px_minmax(0,1fr)] gap-3 border-b border-line pb-2 text-xs">
+        <div key={row.key} className="grid grid-cols-[150px_minmax(0,1fr)] gap-3 py-1.5 text-xs">
           <dt className="break-all text-ink-faint">{t(`activity.traceFields.${row.key}`, { defaultValue: row.key })}</dt>
           <dd className="min-w-0 break-all font-mono text-ink-soft">{localizeTraceAttributeValue(row, t)}</dd>
         </div>
