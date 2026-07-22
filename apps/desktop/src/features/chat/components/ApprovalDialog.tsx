@@ -116,7 +116,7 @@ export function ApprovalDialog({ sessionId }: { sessionId: string | null }) {
       role="alertdialog"
       aria-modal="false"
       aria-labelledby="permission-title"
-      className="overflow-hidden rounded-lg border border-clay-soft bg-paper shadow-sm"
+      className="overflow-hidden rounded-xl border border-clay-soft bg-paper shadow-sm"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()

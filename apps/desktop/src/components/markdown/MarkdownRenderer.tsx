@@ -1,4 +1,5 @@
 import { memo, useMemo, type ReactNode } from 'react'
+import { Copy } from 'lucide-react'
 
 type MarkdownVariant = 'default' | 'document' | 'compact'
 
@@ -174,14 +175,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
       )
     }
     case 'code':
-      return (
-        <div key={index} className={codeBlockClass(variant)}>
-          {block.language ? <div className="border-b border-line px-2.5 py-1.5 text-xs text-ink-faint">{block.language}</div> : null}
-          <pre className={preClass(variant)}>
-            <code className="border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed whitespace-pre text-ink">{block.code}</code>
-          </pre>
-        </div>
-      )
+      return <CodeBlock key={index} code={block.code} language={block.language} variant={variant} />
     case 'table':
       return (
         <div key={index} className={tableWrapClass(variant)}>
@@ -198,7 +192,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
             </thead>
             <tbody>
               {block.rows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="odd:bg-paper even:bg-paper-hover/70">
+                <tr key={rowIndex}>
                   {block.headers.map((_, cellIndex) => (
                     <td key={cellIndex} className={tableBodyCellClass(cellIndex, block.headers.length)}>
                       {renderInline(row[cellIndex] ?? '', { inTable: true })}
@@ -294,11 +288,47 @@ function renderInline(text: string, context: InlineContext = {}): ReactNode[] {
 
 function inlineCodeClass(context: InlineContext): string {
   return [
-    'font-mono text-code-ink',
-    context.inTable
-      ? 'rounded border border-line bg-code-bg px-1 py-0.5 text-[0.82rem] leading-5'
-      : 'rounded-md border border-line bg-code-bg px-1.5 py-0.5 text-[0.82rem]',
+    'rounded bg-code-bg font-mono text-[0.85em] text-ink',
+    context.inTable ? 'px-1 py-px leading-5' : 'px-1.5 py-0.5',
   ].join(' ')
+}
+
+function CodeBlock({
+  code,
+  language,
+  variant,
+}: {
+  code: string
+  language?: string
+  variant: MarkdownVariant
+}) {
+  async function copyCode() {
+    await navigator.clipboard?.writeText(code)
+  }
+
+  return (
+    <div className={codeBlockClass(variant)}>
+      <div className="flex items-center gap-2 px-3 pt-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-paper/45">
+          {language || 'text'}
+        </span>
+        <button
+          type="button"
+          aria-label="Copy code"
+          title="Copy code"
+          onClick={() => void copyCode()}
+          className="grid size-6 shrink-0 place-items-center rounded-md text-paper/45 transition-colors hover:bg-paper/10 hover:text-paper"
+        >
+          <Copy size={12} />
+        </button>
+      </div>
+      <pre className={preClass(variant)}>
+        <code className="whitespace-pre border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed text-paper">
+          {code}
+        </code>
+      </pre>
+    </div>
+  )
 }
 
 function isSafeHref(href: string): boolean {
@@ -347,10 +377,10 @@ function tableClass(columnCount: number): string {
 function getMarkdownClasses(variant: MarkdownVariant, className?: string): string {
   return [
     'min-w-0 max-w-none break-words [overflow-wrap:anywhere] [&>:first-child]:mt-0 [&>:last-child]:mb-0',
-    variant === 'compact' ? 'text-xs leading-5 text-ink-soft' : 'text-sm leading-relaxed text-ink',
-    variant === 'document' ? 'text-[0.94rem] leading-7' : '',
+    variant === 'compact' ? 'text-xs leading-5 text-ink-soft' : 'text-[0.94rem] leading-7 text-ink',
     '[&_a]:text-clay [&_a]:no-underline hover:[&_a]:underline',
     '[&_strong]:font-semibold [&_strong]:text-ink',
+    '[&_li::marker]:text-ink-faint',
     className ?? '',
   ]
     .filter(Boolean)
@@ -359,15 +389,15 @@ function getMarkdownClasses(variant: MarkdownVariant, className?: string): strin
 
 function headingClass(level: number): string {
   const size = {
-    1: 'text-2xl',
-    2: 'text-xl border-b border-line pb-1.5',
-    3: 'text-base',
-    4: 'text-sm',
-    5: 'text-sm',
-    6: 'text-xs',
-  }[level] ?? 'text-xs'
+    1: 'mt-5 mb-2 text-lg',
+    2: 'mt-4 mb-1.5 text-base',
+    3: 'mt-4 mb-1.5 text-sm',
+    4: 'mt-3 mb-1 text-sm text-ink-soft',
+    5: 'mt-3 mb-1 text-xs text-ink-soft',
+    6: 'mt-3 mb-1 text-xs text-ink-soft',
+  }[level] ?? 'mt-3 mb-1 text-xs text-ink-soft'
 
-  return `mt-5 mb-2 font-semibold leading-tight text-ink ${size}`
+  return `font-semibold leading-snug text-ink ${size}`
 }
 
 function paragraphClass(variant: MarkdownVariant): string {
@@ -376,8 +406,8 @@ function paragraphClass(variant: MarkdownVariant): string {
 
 function blockquoteClass(variant: MarkdownVariant): string {
   return [
-    'border-l-4 border-clay bg-paper-hover text-ink-soft',
-    variant === 'compact' ? 'my-2 px-3 py-1.5 text-xs' : 'my-3 px-4 py-2',
+    'border-l-2 border-line-strong text-ink-soft',
+    variant === 'compact' ? 'my-1.5 pl-2.5 text-xs' : 'my-2.5 pl-3',
   ].join(' ')
 }
 
@@ -395,41 +425,29 @@ function listItemClass(variant: MarkdownVariant): string {
 
 function codeBlockClass(variant: MarkdownVariant): string {
   return [
-    'overflow-hidden rounded-lg border border-line bg-surface',
-    variant === 'compact' ? 'my-2' : 'my-4',
+    'overflow-hidden rounded-lg bg-ink',
+    variant === 'compact' ? 'my-2' : 'my-3',
   ].join(' ')
 }
 
 function preClass(variant: MarkdownVariant): string {
   return [
-    'm-0 overflow-x-auto',
-    variant === 'compact' ? 'p-2' : 'p-3',
+    'm-0 overflow-x-auto px-3 pb-2.5 pt-1',
+    variant === 'compact' ? 'text-[0.78rem]' : '',
   ].join(' ')
 }
 
 function tableWrapClass(variant: MarkdownVariant): string {
   return [
-    'overflow-x-auto rounded-lg border border-line bg-paper shadow-sm',
-    variant === 'compact' ? 'my-2' : 'my-4',
+    'overflow-x-auto rounded-lg border border-line',
+    variant === 'compact' ? 'my-2' : 'my-3',
   ].join(' ')
 }
 
-function tableHeaderCellClass(cellIndex: number, columnCount: number): string {
-  return [
-    'border-b border-line bg-paper-hover px-3 py-2 text-left align-top font-semibold text-ink',
-    'whitespace-normal break-words [overflow-wrap:anywhere]',
-    cellIndex < columnCount - 1 ? 'border-r border-line' : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
+function tableHeaderCellClass(_cellIndex: number, _columnCount: number): string {
+  return 'border-b border-line bg-paper-hover/60 px-3 py-1.5 text-left align-top font-semibold text-ink whitespace-normal break-words [overflow-wrap:anywhere]'
 }
 
-function tableBodyCellClass(cellIndex: number, columnCount: number): string {
-  return [
-    'border-t border-line px-3 py-2 align-top text-ink-soft',
-    'whitespace-normal break-words [overflow-wrap:anywhere]',
-    cellIndex < columnCount - 1 ? 'border-r border-line' : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
+function tableBodyCellClass(_cellIndex: number, _columnCount: number): string {
+  return 'border-t border-line/70 px-3 py-1.5 align-top text-ink-soft whitespace-normal break-words [overflow-wrap:anywhere]'
 }
