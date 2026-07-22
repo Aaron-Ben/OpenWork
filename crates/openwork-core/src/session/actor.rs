@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,7 @@ const UPDATE_BROADCAST_CAPACITY: usize = 512;
 
 pub struct SessionRuntimeConfig {
     pub session_id: SessionId,
+    pub working_directory: PathBuf,
     pub resolved_model: ResolvedModel,
     pub agent: Agent,
     pub chat: ChatStateHandle,
@@ -193,6 +195,7 @@ struct PendingPermission {
 
 struct SessionActor {
     session_id: SessionId,
+    working_directory: PathBuf,
     resolved_model: ResolvedModel,
     agent: Agent,
     chat: ChatStateHandle,
@@ -229,6 +232,7 @@ impl SessionActor {
                 runtime: SessionRuntimeSnapshot::Idle,
             },
             session_id: config.session_id,
+            working_directory: config.working_directory,
             resolved_model: config.resolved_model,
             agent: config.agent,
             chat: config.chat,
@@ -364,6 +368,7 @@ impl SessionActor {
 
         let request = TurnRunRequest {
             session_id: self.session_id.clone(),
+            working_directory: self.working_directory.clone(),
             turn_id,
             client_request_id,
             input,

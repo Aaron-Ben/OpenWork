@@ -1,9 +1,9 @@
-use openwork_models::model::{ContentBlock, Message, ModelRequest, ToolDefinition};
+use openwork_models::model::{ContentBlock, Message};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::commands::ChatStateCommand;
 use crate::state::ConversationState;
-use crate::{AssistantDraftSnapshot, ChatStateError, ConversationSnapshot};
+use crate::{AssistantDraftSnapshot, ChatStateError, ConversationSnapshot, ConversationView};
 
 #[derive(Clone)]
 pub struct ChatStateHandle {
@@ -89,20 +89,10 @@ impl ChatStateHandle {
         self.send(ChatStateCommand::DiscardDraft).await
     }
 
-    pub async fn build_request(
-        &self,
-        model: impl Into<String>,
-        system_prompt: impl Into<String>,
-        tools: Vec<ToolDefinition>,
-    ) -> Result<ModelRequest, ChatStateError> {
+    pub async fn conversation_view(&self) -> Result<ConversationView, ChatStateError> {
         let (respond_to, response) = oneshot::channel();
-        self.send(ChatStateCommand::BuildRequest {
-            model: model.into(),
-            system_prompt: system_prompt.into(),
-            tools,
-            respond_to,
-        })
-        .await?;
+        self.send(ChatStateCommand::ConversationView { respond_to })
+            .await?;
         response.await.map_err(|_| ChatStateError::ActorStopped)
     }
 
@@ -154,13 +144,8 @@ async fn run_actor(mut state: ConversationState, mut command_rx: mpsc::Receiver<
                 let _ = respond_to.send(state.finish_draft());
             }
             ChatStateCommand::DiscardDraft => state.discard_draft(),
-            ChatStateCommand::BuildRequest {
-                model,
-                system_prompt,
-                tools,
-                respond_to,
-            } => {
-                let _ = respond_to.send(state.build_request(model, system_prompt, tools));
+            ChatStateCommand::ConversationView { respond_to } => {
+                let _ = respond_to.send(state.conversation_view());
             }
             ChatStateCommand::Snapshot { respond_to } => {
                 let _ = respond_to.send(state.snapshot());
@@ -178,19 +163,17 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn serializes_conversation_writes_and_builds_a_request_snapshot() {
+    async fn serializes_conversation_writes_and_returns_a_conversation_view() {
         let chat = ChatStateHandle::spawn(Vec::new()).expect("chat state");
         chat.append_user(vec![ContentBlock::text("hello")])
             .await
             .expect("user");
+        chat.begin_draft().await.expect("draft");
+        chat.apply_text_delta("not committed").await.expect("delta");
 
-        let request = chat
-            .build_request("model", "system", Vec::new())
-            .await
-            .expect("request");
-        assert_eq!(request.messages.len(), 2);
-        assert_eq!(request.messages[0].role, Role::System);
-        assert_eq!(request.messages[1].role, Role::User);
+        let view = chat.conversation_view().await.expect("view");
+        assert_eq!(view.messages.len(), 1);
+        assert_eq!(view.messages[0].role, Role::User);
     }
 
     #[tokio::test]

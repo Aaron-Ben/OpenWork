@@ -43,6 +43,8 @@ export const zhTW = {
       appVersion: '應用程式版本', requestMessageCount: '請求訊息數', requestSystemMessageCount: 'System 訊息數',
       requestUserMessageCount: 'User 訊息數', requestAssistantMessageCount: 'Assistant 訊息數',
       requestToolMessageCount: 'Tool 訊息數', requestContentBytes: '請求內容大小',
+      requestEstimatedSystemContextTokens: 'System Context 預估 Tokens', requestEstimatedConversationTokens: 'Conversation 預估 Tokens',
+      requestEstimatedToolSurfaceTokens: 'Tool Surface 預估 Tokens', requestEstimatedInputTokens: '輸入預估 Tokens',
       toolDefinitionCount: '工具定義數', toolDefinitionBytes: '工具定義大小', maxOutputTokens: '最大輸出 Tokens',
       thinkingMode: '思考模式', responseTextBytes: '回應文字大小', responseReasoningBytes: '推理內容大小',
       responseToolCallCount: '回應工具呼叫數', responseToolArgumentsBytes: '工具參數大小',
@@ -66,6 +68,9 @@ export const zhTW = {
     jumpToTurn: '跳至第 {{index}} 輪：{{title}}',
     turnPreview: '第 {{index}} 輪',
     placeholder: '想問些什麼……', selectModel: '選擇模型', noModel: '暫無模型', send: '傳送', stop: '停止生成',
+    contextWindow: '上下文視窗：', contextUsagePercent: '已使用 {{usedPercent}}%（剩餘 {{leftPercent}}%）',
+    contextTokensUsed: '已使用 {{used}} / {{total}} Tokens', contextUsageEstimated: '依最近一次模型請求估算',
+    contextUsageUnavailable: '暫無上下文用量', contextUsageAria: '上下文已使用 {{usedPercent}}%，{{used}} / {{total}} Tokens',
     approvalMode: '審批模式：{{mode}}', askForApproval: '詢問審批', executionPermission: '執行權限',
     askForApprovalDescription: '工具呼叫前暫停，等待你確認允許或拒絕。',
     startConversation: '開始對話', createSession: '建立對話',
@@ -76,6 +81,12 @@ export const zhTW = {
   },
   settings: {
     title: '設定',
+    contextWindow: {
+      title: '上下文視窗', description: '獨立於模型選擇，設定 OpenWork 使用的上下文預算。',
+      sizeLabel: '上下文視窗大小', sizeDescription: '用於上下文用量與預算顯示的 Token 容量，不屬於特定模型。',
+      observationOnly: '目前僅用於預算觀測，不會自動裁剪或壓縮對話。',
+      save: '儲存', saved: '已儲存', invalid: '請輸入大於 0 的整數 Token 數。',
+    },
     models: {
       title: '模型配置', description: '新增模型供應商與可用模型；新對話會選擇第一個可用模型。', providers: '模型供應商',
       addProvider: '新增供應商', empty: '尚未配置模型供應商。點選「新增供應商」開始配置。',

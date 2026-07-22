@@ -11,6 +11,8 @@ use std::time::Instant;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 
+use crate::model_call::ContextBudgetEstimate;
+
 use super::TurnId;
 
 const TRACE_SCHEMA_VERSION: u16 = 1;
@@ -97,6 +99,8 @@ pub struct ModelTraceAttributesV1 {
     pub request_tool_message_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_content_bytes: Option<u64>,
+    #[serde(flatten)]
+    request_context_budget: Option<Box<ContextBudgetTraceV1>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_definition_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -160,6 +164,7 @@ impl ModelTraceAttributesV1 {
                     .map(|message| &message.content)
                     .collect::<Vec<_>>(),
             )),
+            request_context_budget: None,
             tool_definition_count: Some(saturating_u64(request.tools.len())),
             tool_definition_bytes: Some(serialized_bytes(&request.tools)),
             max_output_tokens: request.max_output_tokens,
@@ -172,6 +177,16 @@ impl ModelTraceAttributesV1 {
             response_tool_call_count: None,
             response_tool_arguments_bytes: None,
         }
+    }
+
+    pub(crate) fn record_context_budget(&mut self, estimate: ContextBudgetEstimate) {
+        debug_assert_eq!(self.max_output_tokens, estimate.reserved_output_tokens);
+        self.request_context_budget = Some(Box::new(ContextBudgetTraceV1 {
+            request_estimated_system_context_tokens: estimate.system_context_tokens,
+            request_estimated_conversation_tokens: estimate.conversation_tokens,
+            request_estimated_tool_surface_tokens: estimate.tool_surface_tokens,
+            request_estimated_input_tokens: estimate.estimated_input_tokens,
+        }));
     }
 
     fn record_response(&mut self, response: &ModelResponse) {
@@ -196,6 +211,15 @@ impl ModelTraceAttributesV1 {
         self.http_status = error.http_status;
         self.provider_code = bounded_option(error.provider_code.as_deref(), MAX_TRACE_STRING_CHARS);
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContextBudgetTraceV1 {
+    request_estimated_system_context_tokens: u64,
+    request_estimated_conversation_tokens: u64,
+    request_estimated_tool_surface_tokens: u64,
+    request_estimated_input_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -948,7 +972,15 @@ mod tests {
                 parameters: serde_json::json!({"type": "object"}),
             }],
         };
-        let attributes = ModelTraceAttributesV1::from_request(2, 7, &request);
+        let mut attributes = ModelTraceAttributesV1::from_request(2, 7, &request);
+        let estimate = ContextBudgetEstimate {
+            system_context_tokens: 15,
+            conversation_tokens: 8,
+            tool_surface_tokens: 3,
+            estimated_input_tokens: 26,
+            reserved_output_tokens: request.max_output_tokens,
+        };
+        attributes.record_context_budget(estimate);
         let recorder = Arc::new(RecordingTrace::default());
         let recorder_port: Arc<dyn TraceRecorder> = recorder.clone();
         let mut guard = ModelCallTraceGuard::start(
@@ -1034,8 +1066,19 @@ mod tests {
         assert_eq!(finished.attributes.response_text_bytes, Some(15));
         assert_eq!(finished.attributes.response_tool_call_count, Some(1));
         assert!(finished.attributes.ttft_ms.is_some());
+        assert_eq!(
+            finished
+                .attributes
+                .request_context_budget
+                .as_deref()
+                .map(|budget| budget.request_estimated_input_tokens),
+            Some(estimate.estimated_input_tokens)
+        );
 
         let encoded = serde_json::to_string(&finished.attributes).expect("attributes serialize");
+        let decoded: ModelTraceAttributesV1 =
+            serde_json::from_str(&encoded).expect("attributes round trip");
+        assert_eq!(decoded, finished.attributes);
         for secret in [
             "secret system prompt",
             "secret user prompt",

@@ -104,6 +104,10 @@ describe('traceViewModel', () => {
         finishReason: 'stop',
         requestMessageCount: 4,
         requestContentBytes: 512,
+        requestEstimatedSystemContextTokens: 20,
+        requestEstimatedConversationTokens: 80,
+        requestEstimatedToolSurfaceTokens: 10,
+        requestEstimatedInputTokens: 110,
         attempts: [{ index: 1, status: 'succeeded', durationMs: 80 }],
       },
     }
@@ -115,6 +119,8 @@ describe('traceViewModel', () => {
       { key: 'finishReason', value: 'stop' },
       { key: 'requestMessageCount', value: '4' },
       { key: 'requestContentBytes', value: '512 B' },
+      { key: 'requestEstimatedSystemContextTokens', value: '20' },
+      { key: 'requestEstimatedInputTokens', value: '110' },
       { key: 'attempts', value: '1' },
     ]))
     const sections = buildTraceAttributeSections(span)

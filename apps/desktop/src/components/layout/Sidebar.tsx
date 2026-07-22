@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bot, PanelLeftClose, Palette, Settings as SettingsIcon } from 'lucide-react'
+import { Activity, ArrowLeft, Bot, CircleGauge, PanelLeftClose, Palette, Settings as SettingsIcon } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -52,6 +52,9 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           <div className="px-3 pb-2 font-sans text-xs font-medium text-ink-faint">{t('settings.title')}</div>
           <SettingsNavItem active={view === 'settings-models'} icon={<Bot size={18} />} onClick={() => onNavigate('settings-models')}>
             {t('settings.models.title')}
+          </SettingsNavItem>
+          <SettingsNavItem active={view === 'settings-context'} icon={<CircleGauge size={18} />} onClick={() => onNavigate('settings-context')}>
+            {t('settings.contextWindow.title')}
           </SettingsNavItem>
           <SettingsNavItem
             active={view === 'traces'}

@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
-use openwork_models::model::{ContentBlock, Message, ModelRequest, Role, ToolDefinition};
+use openwork_models::model::{ContentBlock, Message, Role};
 use thiserror::Error;
 
-use crate::{AssistantDraftSnapshot, ConversationSnapshot};
+use crate::{AssistantDraftSnapshot, ConversationSnapshot, ConversationView};
 
 pub(crate) struct ConversationState {
     messages: Vec<Message>,
@@ -107,22 +107,9 @@ impl ConversationState {
         self.draft = None;
     }
 
-    pub(crate) fn build_request(
-        &self,
-        model: String,
-        system_prompt: String,
-        tools: Vec<ToolDefinition>,
-    ) -> ModelRequest {
-        let mut messages = Vec::with_capacity(self.messages.len() + 1);
-        messages.push(Message::text(Role::System, system_prompt));
-        messages.extend(self.messages.clone());
-        ModelRequest {
-            model,
-            messages,
-            temperature: None,
-            max_output_tokens: None,
-            thinking: None,
-            tools,
+    pub(crate) fn conversation_view(&self) -> ConversationView {
+        ConversationView {
+            messages: self.messages.clone(),
         }
     }
 

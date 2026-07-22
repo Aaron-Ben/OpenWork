@@ -408,6 +408,10 @@ Model Call P1 允许的请求/响应形状字段：
   "requestAssistantMessageCount": 5,
   "requestToolMessageCount": 4,
   "requestContentBytes": 18340,
+  "requestEstimatedSystemContextTokens": 2300,
+  "requestEstimatedConversationTokens": 2285,
+  "requestEstimatedToolSurfaceTokens": 2303,
+  "requestEstimatedInputTokens": 6888,
   "toolDefinitionCount": 6,
   "toolDefinitionBytes": 9210,
   "maxOutputTokens": 4096,
@@ -546,6 +550,7 @@ Trace 页面读取失败不能影响 Session 页面和普通聊天历史。
 | Model Call 很慢且 `attempt_count > 1` | Transport Retry 贡献主要延迟 |
 | Model Call `ttftMs` 高、`streamMs` 正常 | Provider 排队、连接或首包路径贡献主要延迟 |
 | Model Call `requestContentBytes/toolDefinitionBytes` 持续增长 | Conversation 或 Tool Schema 正在膨胀 |
+| `requestEstimatedInputTokens` 与 Provider 返回的 `input_tokens` 长期偏差很大 | 当前 bytes/4 估算不适合该模型，只能作为发送前近似值 |
 | Tool Call `permission_wait_ms` 占大部分 | 用户权限等待 |
 | Tool Call `executionMs` 低但总耗时高 | 验证、权限或结果持久化贡献主要延迟 |
 | Tool Call `outputTruncated=true` | 后续模型看到的是截断结果，不能按完整输出推断 |

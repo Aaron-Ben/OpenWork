@@ -554,7 +554,7 @@ impl OpenWorkCore {
                 agent.toolset_config(),
                 ToolSessionContext::local(
                     working_directory.clone(),
-                    PermissionProfile::workspace_write(working_directory),
+                    PermissionProfile::workspace_write(working_directory.clone()),
                 ),
             )
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
@@ -562,6 +562,7 @@ impl OpenWorkCore {
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
                 session_id: session_id.clone(),
+                working_directory,
                 resolved_model: ResolvedModel::new(
                     Some(model.id),
                     model.provider_kind,

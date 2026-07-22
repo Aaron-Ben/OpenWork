@@ -1,7 +1,7 @@
-use openwork_models::model::{ContentBlock, Message, ModelRequest, ToolDefinition};
+use openwork_models::model::{ContentBlock, Message};
 use tokio::sync::oneshot;
 
-use crate::{AssistantDraftSnapshot, ChatStateError, ConversationSnapshot};
+use crate::{AssistantDraftSnapshot, ChatStateError, ConversationSnapshot, ConversationView};
 
 pub(crate) enum ChatStateCommand {
     AppendUser {
@@ -31,11 +31,8 @@ pub(crate) enum ChatStateCommand {
         respond_to: oneshot::Sender<Result<AssistantDraftSnapshot, ChatStateError>>,
     },
     DiscardDraft,
-    BuildRequest {
-        model: String,
-        system_prompt: String,
-        tools: Vec<ToolDefinition>,
-        respond_to: oneshot::Sender<ModelRequest>,
+    ConversationView {
+        respond_to: oneshot::Sender<ConversationView>,
     },
     Snapshot {
         respond_to: oneshot::Sender<ConversationSnapshot>,

@@ -32,6 +32,17 @@ describe('ConversationNavigator', () => {
     ])
   })
 
+  it('uses the turn ID so navigation markers match persisted message anchors', () => {
+    expect(getConversationTurns([{
+      id: 'message-1',
+      turnId: 'turn-1',
+      role: 'user',
+      parts: [{ type: 'text', text: '带有独立消息 ID 的问题' }],
+    }])).toEqual([
+      { id: 'turn-1', label: '带有独立消息 ID 的问题' },
+    ])
+  })
+
   it('renders a compact conversation rail when multiple turns exist', () => {
     const markup = renderToStaticMarkup(
       <ConversationNavigator

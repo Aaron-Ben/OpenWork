@@ -1,6 +1,6 @@
 # OpenWork 文档索引
 
-Last reviewed: 2026-07-19
+Last reviewed: 2026-07-21
 
 ## 当前权威文档
 
@@ -13,6 +13,9 @@ Last reviewed: 2026-07-19
 - [redesign/04-trace-design.md](redesign/04-trace-design.md)：OpenWork Trace 设计 V0.1，定义 Turn 下的 Model Call/Tool Call Trace 与降级边界；
 - [redesign/05-refactor-roadmap.md](redesign/05-refactor-roadmap.md)：迁移结果、验收 Gate 和未关闭项；
 - [redesign/06-frontend-architecture.md](redesign/06-frontend-architecture.md)：Tauri/React 边界、Runtime Store、Trace 页面与暂缓的 Host Contract 生成。
+- [redesign/07-tool-runtime-design.md](redesign/07-tool-runtime-design.md)：Tool Contract、Tool Set、Session/Call Context 和不可变 `FinalizedToolset`；
+- [redesign/08-builtin-tools-upgrade-design.md](redesign/08-builtin-tools-upgrade-design.md)：内建工具的安全、资源、取消、进度和文件变更语义；
+- [redesign/09-context-assembly-extensibility.md](redesign/09-context-assembly-extensibility.md)：System Context、Conversation、Tool Surface 三条物化链，集中请求组装，以及来源生命周期、synthetic provenance、压缩恢复与 Prompt Cache 稳定性边界。
 
 本地数据库启动、迁移、检查和重建见 [local-postgres.md](local-postgres.md)。
 

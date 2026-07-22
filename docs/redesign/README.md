@@ -122,6 +122,7 @@ openwork-observability  -> openwork-core::trace
 6. [06-frontend-architecture.md](06-frontend-architecture.md)：React/Tauri 边界、Host Contract、per-session Runtime Store 和页面拆分。
 7. [07-tool-runtime-design.md](07-tool-runtime-design.md)：工具契约、Tool Set、Session/Call Context 与 `FinalizedToolset` 的四层分层设计。
 8. [08-builtin-tools-upgrade-design.md](08-builtin-tools-upgrade-design.md)：现有七个内建工具的路径安全、原子写入、资源上限、取消、文件 Diff/Review/Undo 与结果语义升级方案。
+9. [09-context-assembly-extensibility.md](09-context-assembly-extensibility.md)：System Context、Conversation、Tool Surface 三条物化链，集中请求组装，以及来源生命周期、synthetic provenance、压缩恢复与 Prompt Cache 稳定性边界。
 
 ## 7. V1 明确不做什么
 

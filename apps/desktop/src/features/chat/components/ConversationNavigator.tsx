@@ -21,7 +21,7 @@ export function getConversationTurns(messages: ChatItem[]): ConversationTurn[] {
   return messages
     .filter((message) => message.role === 'user')
     .map((message, index) => ({
-      id: message.id,
+      id: message.turnId ?? message.id,
       label: message.parts.find((part) => part.type === 'text')?.text.trim() || `#${index + 1}`,
     }))
 }

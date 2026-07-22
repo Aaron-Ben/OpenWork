@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AppearanceSettings } from '../settings/AppearanceSettings'
+import { ContextWindowSettings } from '../settings/ContextWindowSettings'
 import { useCoreEventBridge } from '../../app/useCoreEventBridge'
 import { shouldCollapseSidebar, useNavigationStore } from '../../app/navigationStore'
 import { resyncSessionView } from '../../app/coreEventController'
@@ -84,6 +85,8 @@ export function AppShell() {
                 ? t('activity.title')
               : view === 'settings-models'
                 ? t('settings.models.title')
+                : view === 'settings-context'
+                  ? t('settings.contextWindow.title')
                 : t('settings.appearance.title')
           }
           kind={view === 'chat' ? 'session' : view === 'traces' ? 'activity' : 'settings'}
@@ -100,6 +103,10 @@ export function AppShell() {
           ) : view === 'settings-models' ? (
             <div className="h-full overflow-auto bg-paper">
               <ModelSettings />
+            </div>
+          ) : view === 'settings-context' ? (
+            <div className="h-full overflow-auto bg-paper">
+              <ContextWindowSettings />
             </div>
           ) : (
             <div className="h-full overflow-auto bg-paper">

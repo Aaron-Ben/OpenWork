@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +24,7 @@ use openwork_tools::{
     ToolSessionContext,
 };
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 #[derive(Default)]
 struct ModelState {
@@ -100,12 +103,15 @@ impl Tool for FakeTool {
 
     async fn execute(
         &self,
-        _session: &ToolSessionContext,
+        session: &ToolSessionContext,
         call: ToolCallContext,
         input: serde_json::Value,
     ) -> Result<ToolResult, ToolExecutionError> {
         let wait_for_cancel = input["waitForCancel"] == true;
         let progress_message = input["emitProgress"].as_str().map(str::to_string);
+        let replacement = input["replaceProjectInstruction"]
+            .as_str()
+            .map(str::to_string);
         self.state
             .invocations
             .lock()
@@ -117,6 +123,10 @@ impl Tool for FakeTool {
         if wait_for_cancel {
             call.cancel.cancelled().await;
             return Ok(ToolResult::cancelled("fake tool cancelled"));
+        }
+        if let Some(content) = replacement {
+            fs::write(session.working_directory.join("AGENTS.md"), content)
+                .map_err(|error| ToolExecutionError::execution(error.to_string()))?;
         }
         Ok(self
             .state
@@ -222,6 +232,36 @@ struct RuntimeFixture {
     storage: Arc<RecordingStorage>,
     trace: Arc<RecordingTrace>,
     chat: ChatStateHandle,
+    workspace: TestWorkspace,
+}
+
+struct TestWorkspace {
+    root: PathBuf,
+}
+
+impl TestWorkspace {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "openwork-session-runtime-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).expect("workspace");
+        Self { root }
+    }
+
+    fn path(&self) -> &Path {
+        &self.root
+    }
+
+    fn write_instructions(&self, content: impl AsRef<[u8]>) {
+        fs::write(self.root.join("AGENTS.md"), content).expect("instructions");
+    }
+}
+
+impl Drop for TestWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 fn runtime(
@@ -230,6 +270,23 @@ fn runtime(
     permission_mode: PermissionMode,
     fail_assistant: bool,
 ) -> RuntimeFixture {
+    runtime_in_workspace(
+        responses,
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        TestWorkspace::new(),
+    )
+}
+
+fn runtime_in_workspace(
+    responses: Vec<ModelResponse>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    workspace: TestWorkspace,
+) -> RuntimeFixture {
+    let working_directory = workspace.path().to_path_buf();
     let mut definition = AgentDefinition::default();
     definition.policy.permission_mode = permission_mode;
     let agent = AgentBuilder::new(definition).build().expect("agent");
@@ -269,7 +326,7 @@ fn runtime(
         .finalize(
             agent.toolset_config(),
             ToolSessionContext::local(
-                std::env::temp_dir(),
+                working_directory.clone(),
                 PermissionProfile::danger_full_access(),
             ),
         )
@@ -278,6 +335,7 @@ fn runtime(
     let handle = SessionHandle::spawn_with_global_updates(
         SessionRuntimeConfig {
             session_id: SessionId::new("session-test"),
+            working_directory,
             resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
             agent,
             chat: chat.clone(),
@@ -300,6 +358,7 @@ fn runtime(
         storage,
         trace,
         chat,
+        workspace,
     }
 }
 
@@ -347,15 +406,32 @@ fn tool_call(id: &str, name: &str, input: &str) -> ToolCallBlock {
 }
 
 async fn start(fixture: &RuntimeFixture) -> TurnId {
+    start_with_request(fixture, "client-request").await
+}
+
+async fn start_with_request(fixture: &RuntimeFixture, client_request_id: &str) -> TurnId {
     fixture
         .handle
         .start_turn(
-            ClientRequestId::new("client-request"),
+            ClientRequestId::new(client_request_id),
             vec![ContentBlock::text("do the task")],
         )
         .await
         .expect("turn accepted")
         .turn_id
+}
+
+fn project_instruction_text(request: &ModelRequest) -> Option<&str> {
+    request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .nth(1)
+        .and_then(|message| message.content.first())
+        .and_then(|block| match block {
+            ContentBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
 }
 
 async fn wait_for_terminal(
@@ -417,11 +493,130 @@ async fn no_tool_turn_completes_after_one_model_call() {
             final_text: "done".to_string()
         }
     );
-    assert_eq!(fixture.model.requests.lock().unwrap().len(), 1);
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].model, "test-model");
+    assert_eq!(
+        requests[0]
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        [Role::System, Role::User]
+    );
+    assert_eq!(requests[0].temperature, None);
+    assert_eq!(requests[0].max_output_tokens, None);
+    assert_eq!(requests[0].thinking, None);
+    drop(requests);
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
     assert_eq!(
         *fixture.storage.events.lock().unwrap(),
         ["begin_turn", "model_1", "assistant", "finish_turn"]
+    );
+}
+
+#[tokio::test]
+async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("instruction-v1");
+    let mut fixture = runtime_in_workspace(
+        vec![
+            response(
+                "",
+                vec![tool_call(
+                    "call-update-instructions",
+                    "read",
+                    r#"{"replaceProjectInstruction":"instruction-v2"}"#,
+                )],
+            ),
+            response("first turn done", Vec::new()),
+            response("second turn done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+        workspace,
+    );
+
+    start_with_request(&fixture, "project-instructions-turn-1").await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    start_with_request(&fixture, "project-instructions-turn-2").await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    {
+        let requests = fixture.model.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            project_instruction_text(&requests[0]),
+            Some("instruction-v1")
+        );
+        assert_eq!(
+            project_instruction_text(&requests[1]),
+            Some("instruction-v1")
+        );
+        assert_eq!(
+            project_instruction_text(&requests[2]),
+            Some("instruction-v2")
+        );
+    }
+    assert!(
+        fixture
+            .chat
+            .snapshot()
+            .await
+            .expect("chat snapshot")
+            .messages
+            .iter()
+            .all(|message| message.role != Role::System)
+    );
+}
+
+#[tokio::test]
+async fn invalid_project_instructions_fail_before_model_and_leave_no_draft() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions(vec![b'x'; 64 * 1024 + 1]);
+    let mut fixture = runtime_in_workspace(
+        vec![response("recovered", Vec::new())],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+        workspace,
+    );
+
+    start_with_request(&fixture, "project-instructions-invalid").await;
+    let failed = wait_for_terminal(&mut fixture.updates).await;
+    assert!(matches!(
+        failed,
+        TurnOutcome::Failed { ref code, .. } if code == "project_instruction_error"
+    ));
+    assert!(fixture.model.requests.lock().unwrap().is_empty());
+    assert!(
+        fixture
+            .chat
+            .snapshot()
+            .await
+            .expect("chat snapshot")
+            .draft
+            .is_none()
+    );
+
+    fixture.workspace.write_instructions("valid instruction");
+    start_with_request(&fixture, "project-instructions-recovered").await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        project_instruction_text(&requests[0]),
+        Some("valid instruction")
     );
 }
 
@@ -853,6 +1048,28 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
         first_model
             .attributes
             .request_content_bytes
+            .is_some_and(|value| value > 0)
+    );
+    let model_attributes =
+        serde_json::to_value(&first_model.attributes).expect("model trace attributes");
+    assert!(
+        model_attributes["requestEstimatedSystemContextTokens"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    assert!(
+        model_attributes["requestEstimatedConversationTokens"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    assert!(
+        model_attributes["requestEstimatedToolSurfaceTokens"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    assert!(
+        model_attributes["requestEstimatedInputTokens"]
+            .as_u64()
             .is_some_and(|value| value > 0)
     );
 

@@ -44,6 +44,8 @@ export const enUS = {
       appVersion: 'App version', requestMessageCount: 'Request message count', requestSystemMessageCount: 'System message count',
       requestUserMessageCount: 'User message count', requestAssistantMessageCount: 'Assistant message count',
       requestToolMessageCount: 'Tool message count', requestContentBytes: 'Request content size',
+      requestEstimatedSystemContextTokens: 'Estimated system context tokens', requestEstimatedConversationTokens: 'Estimated conversation tokens',
+      requestEstimatedToolSurfaceTokens: 'Estimated tool surface tokens', requestEstimatedInputTokens: 'Estimated input tokens',
       toolDefinitionCount: 'Tool definition count', toolDefinitionBytes: 'Tool definition size', maxOutputTokens: 'Maximum output tokens',
       thinkingMode: 'Thinking mode', responseTextBytes: 'Response text size', responseReasoningBytes: 'Reasoning content size',
       responseToolCallCount: 'Response tool call count', responseToolArgumentsBytes: 'Tool argument size',
@@ -68,6 +70,10 @@ export const enUS = {
     jumpToTurn: 'Jump to turn {{index}}: {{title}}',
     turnPreview: 'Turn {{index}}',
     placeholder: 'Ask anything…', selectModel: 'Select model', noModel: 'No models', send: 'Send', stop: 'Stop generating',
+    contextWindow: 'Context window:', contextUsagePercent: '{{usedPercent}}% used ({{leftPercent}}% left)',
+    contextTokensUsed: '{{used}} / {{total}} tokens used', contextUsageEstimated: 'Estimated from the latest model request',
+    contextUsageUnavailable: 'Context usage unavailable',
+    contextUsageAria: 'Context {{usedPercent}}% used, {{used}} of {{total}} tokens',
     approvalMode: 'Approval mode: {{mode}}', askForApproval: 'Ask for approval', executionPermission: 'Execution permissions',
     askForApprovalDescription: 'Pause before tool calls and wait for you to allow or deny them.',
     startConversation: 'Start a conversation',
@@ -78,6 +84,12 @@ export const enUS = {
   },
   settings: {
     title: 'Settings',
+    contextWindow: {
+      title: 'Context window', description: 'Configure the OpenWork context budget independently from model selection.',
+      sizeLabel: 'Context window size', sizeDescription: 'The token capacity used by context usage and budget displays.',
+      observationOnly: 'This currently controls budget observation only. It does not automatically trim or compact the conversation.',
+      save: 'Save', saved: 'Saved', invalid: 'Enter a positive whole number of tokens.',
+    },
     models: {
       title: 'Model configuration', description: 'Add providers and enabled models; new conversations use the first available model.', providers: 'Model providers',
       addProvider: 'Add provider', empty: 'No model providers yet. Select “Add provider” to configure one.',

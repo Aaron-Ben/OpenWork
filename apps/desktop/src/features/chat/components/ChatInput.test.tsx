@@ -28,14 +28,26 @@ const baseProps = {
 
 describe('ChatInput toolbar', () => {
   it('renders the compact approval, model, and send controls', () => {
-    const markup = renderToStaticMarkup(<ChatInput {...baseProps} />)
+    const markup = renderToStaticMarkup(
+      <ChatInput
+        {...baseProps}
+        contextUsage={{ usedTokens: 66_000, totalTokens: 258_000, estimated: false }}
+      />,
+    )
 
     expect(markup).toContain('询问审批')
     expect(markup).not.toContain('由我审批')
     expect(markup).toContain('aria-label="选择模型"')
     expect(markup).toContain('DeepSeek Chat · Plus')
     expect(markup).toContain('aria-label="发送"')
-    expect(markup).not.toContain('Context Window')
+    expect(markup).toContain('data-context-usage-ring="true"')
+    expect(markup).toContain('role="tooltip"')
+    expect(markup).toContain('上下文窗口')
+    expect(markup).toContain('26% 已用（剩余 74%）')
+    expect(markup).toContain('66k / 258k Tokens 已用')
+    expect(markup).toContain('w-[clamp(104px,20vw,200px)]')
+    expect(markup).not.toContain('w-[clamp(110px,28vw,260px)]')
+    expect(markup).not.toContain('overflow-hidden rounded-[18px]')
     expect(markup).not.toContain('麦克风')
     expect(markup).not.toContain('Demo Provider')
     expect(markup).not.toContain('运行')
@@ -48,6 +60,13 @@ describe('ChatInput toolbar', () => {
     expect(markup).not.toContain('size-10')
     expect(markup).toContain('data-slot="button"')
     expect(markup).toContain('data-motion-component="chat-input"')
+  })
+
+  it('keeps the context affordance available when usage has not been measured', () => {
+    const markup = renderToStaticMarkup(<ChatInput {...baseProps} />)
+
+    expect(markup).toContain('data-context-usage-progress="0"')
+    expect(markup).toContain('暂无上下文用量')
   })
 
   it('replaces the send affordance with a compact stop control while streaming', () => {

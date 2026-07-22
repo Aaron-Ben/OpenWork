@@ -19,12 +19,15 @@ import { useSessionStore } from '../sessions/sessionStore'
 import { EMPTY_RUNTIME_VIEW, useRuntimeStore } from './runtimeStore'
 import { buildTranscript } from './transcript'
 import { useTurnActions } from './useTurn'
+import { contextUsageFromTrace, type ContextUsage } from './contextUsage'
+import { useContextWindowStore } from '../../stores/contextWindowStore'
 
 const EMPTY_MESSAGES: RuntimeStoredMessage[] = []
 
 export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null)
   const [selectedTrace, setSelectedTrace] = useState<{ turnId: string; providerToolCallId?: string } | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const canonical = useSessionStore((state) => sessionId ? state.messagesBySession[sessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
@@ -33,6 +36,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const sessionError = useSessionStore((state) => state.error)
   const reloadSession = useSessionStore((state) => state.reload)
   const providers = useModelStore((state) => state.providers)
+  const contextWindowTokens = useContextWindowStore((state) => state.contextWindowTokens)
   const hasAvailableModel = selectDefaultModel(providers) !== null
   const { startTurn, cancelTurn } = useTurnActions(sessionId)
   const messages = useMemo(() => buildTranscript(canonical, runtime), [canonical, runtime])
@@ -55,6 +59,37 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   }, [providers, session?.defaultModelId])
 
   useEffect(() => setSelectedTrace(null), [sessionId])
+
+  useEffect(() => setContextUsage(null), [sessionId, contextWindowTokens])
+
+  useEffect(() => {
+    if (!sessionId) return
+    let active = true
+    const activeSessionId = sessionId
+    const totalTokens = contextWindowTokens
+
+    async function refreshContextUsage() {
+      try {
+        const summaries = await coreCommands.listTraces(activeSessionId, 1)
+        const latest = summaries[0]
+        if (!latest) return
+        const trace = await coreCommands.getTrace(latest.turnId)
+        const usage = contextUsageFromTrace(trace, totalTokens)
+        if (active && usage) setContextUsage(usage)
+      } catch {
+        // Trace is best-effort diagnostics; unavailable usage must not affect chat.
+      }
+    }
+
+    void refreshContextUsage()
+    const timer = isSending
+      ? window.setInterval(() => void refreshContextUsage(), 1_500)
+      : null
+    return () => {
+      active = false
+      if (timer !== null) window.clearInterval(timer)
+    }
+  }, [canonical.length, contextWindowTokens, isSending, sessionId])
 
   async function send() {
     const text = draft.trim()
@@ -153,6 +188,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           model={sessionModel?.modelId ?? ''}
           modelOptions={sessionModel ? [sessionModel] : []}
           modelSelectionLocked
+          contextUsage={contextUsage}
           value={draft}
           isSending={isSending}
           disabled={!sessionId || !sessionModel}

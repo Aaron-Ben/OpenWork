@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProviderModel } from '../../models/contracts'
+import type { ContextUsage } from '../contextUsage'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
 
 interface ChatInputProps {
   model: string
@@ -19,6 +21,7 @@ interface ChatInputProps {
   onSubmit: () => void
   onCancel?: () => void
   topContent?: ReactNode
+  contextUsage?: ContextUsage | null
 }
 
 export function ChatInput({
@@ -33,6 +36,7 @@ export function ChatInput({
   onSubmit,
   onCancel,
   topContent,
+  contextUsage,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -63,7 +67,7 @@ export function ChatInput({
       ) : null}
       <motion.form
         data-motion-component="chat-input"
-        className="overflow-hidden rounded-[18px] border border-line bg-paper shadow-[0_18px_60px_rgba(31,30,29,0.10)]"
+        className="rounded-[18px] border border-line bg-paper shadow-[0_18px_60px_rgba(31,30,29,0.10)]"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -103,13 +107,15 @@ export function ChatInput({
 
           <div className="min-w-0 flex-1" />
 
+          <ContextUsageIndicator usage={contextUsage} />
+
           <Select
             value={model}
             onValueChange={onModelChange}
             disabled={disabled || modelSelectionLocked || isSending || modelOptions.length === 0}
           >
-            <SelectTrigger className="w-[clamp(110px,28vw,260px)]" aria-label={t('chat.selectModel')}>
-              <SelectValue placeholder={t('chat.noModel')}>
+            <SelectTrigger className="w-[clamp(104px,20vw,200px)] overflow-hidden" aria-label={t('chat.selectModel')}>
+              <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={t('chat.noModel')}>
                 {selectedModel ? formatModelLabel(selectedModel) : undefined}
               </SelectValue>
             </SelectTrigger>

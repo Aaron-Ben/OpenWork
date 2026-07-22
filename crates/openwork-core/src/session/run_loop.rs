@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -19,6 +20,9 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
+use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
+
 use super::{
     ClientRequestId, LiveToolCall, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
     PermissionDecision, PermissionRequest, ResolvedModel, SessionId, SessionPhase, SessionStorage,
@@ -28,6 +32,7 @@ use super::{
 
 pub(super) struct TurnRunRequest {
     pub session_id: SessionId,
+    pub working_directory: PathBuf,
     pub turn_id: TurnId,
     pub client_request_id: ClientRequestId,
     pub input: Vec<ContentBlock>,
@@ -128,19 +133,18 @@ impl TurnRunner {
     }
 
     async fn run_loop(&mut self) -> Result<String, TurnRunError> {
+        self.ensure_not_cancelled()?;
+        let system_context = SystemContextBuilder::new(&self.request.working_directory)
+            .build(self.request.agent.system_prompt())
+            .await?;
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
             self.update(SessionUpdate::PhaseChanged {
                 phase: SessionPhase::RunningModel,
             })
             .await?;
-            self.request
-                .storage
-                .begin_model_call(&self.request.turn_id, model_call_index)
-                .await
-                .map_err(TurnRunError::Persistence)?;
 
-            let completed_model = self.call_model(model_call_index).await?;
+            let completed_model = self.call_model(model_call_index, &system_context).await?;
             let response = completed_model.response;
             let assistant_message = assistant_message(&response);
             self.request
@@ -188,21 +192,28 @@ impl TurnRunner {
     async fn call_model(
         &mut self,
         model_call_index: u32,
+        system_context: &ResolvedSystemContext,
     ) -> Result<CompletedModelCall, TurnRunError> {
-        self.request.chat.begin_draft().await?;
         let request_build_started = Instant::now();
-        let request = self
-            .request
-            .chat
-            .build_request(
-                &self.request.resolved_model.model_name,
-                self.request.agent.system_prompt(),
-                self.request.tools.definitions().to_vec(),
-            )
-            .await?;
+        let conversation = self.request.chat.conversation_view().await?;
+        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
+            &self.request.resolved_model.model_name,
+            system_context,
+            conversation,
+            self.request.tools.definitions(),
+        ))
+        .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        let request = prepared.request;
         let request_build_ms = elapsed_millis_u64(request_build_started);
-        let attributes =
+        self.request
+            .storage
+            .begin_model_call(&self.request.turn_id, model_call_index)
+            .await
+            .map_err(TurnRunError::Persistence)?;
+        self.request.chat.begin_draft().await?;
+        let mut attributes =
             ModelTraceAttributesV1::from_request(model_call_index, request_build_ms, &request);
+        attributes.record_context_budget(prepared.context_budget);
         let options =
             ModelCallOptions::new(format!("{}-model-{model_call_index}", self.request.turn_id));
         let max_transport_attempts = options.max_transport_attempts;
@@ -790,6 +801,8 @@ enum TurnRunError {
     Model(#[from] ModelError),
     #[error("chat state error: {0}")]
     Chat(#[from] ChatStateError),
+    #[error("context build error: {0}")]
+    Context(#[from] SystemContextBuildError),
     #[error("persistence error: {0}")]
     Persistence(String),
     #[error("model protocol error: {0}")]
@@ -821,6 +834,7 @@ impl TurnRunError {
         match self {
             Self::Model(_) => "model_error",
             Self::Chat(_) => "chat_state_error",
+            Self::Context(error) => error.code(),
             Self::Persistence(_) => "persistence_error",
             Self::Protocol(_) => "model_protocol_error",
             Self::PermissionDenied(_) => "permission_denied",
