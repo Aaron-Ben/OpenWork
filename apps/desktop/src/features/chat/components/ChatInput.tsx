@@ -22,6 +22,8 @@ interface ChatInputProps {
   onCancel?: () => void
   topContent?: ReactNode
   contextUsage?: ContextUsage | null
+  contextInspectorOpen?: boolean
+  onInspectContext?: () => void
 }
 
 export function ChatInput({
@@ -37,6 +39,8 @@ export function ChatInput({
   onCancel,
   topContent,
   contextUsage,
+  contextInspectorOpen = false,
+  onInspectContext,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -107,7 +111,11 @@ export function ChatInput({
 
           <div className="min-w-0 flex-1" />
 
-          <ContextUsageIndicator usage={contextUsage} />
+          <ContextUsageIndicator
+            usage={contextUsage}
+            inspectorOpen={contextInspectorOpen}
+            onInspect={onInspectContext}
+          />
 
           <Select
             value={model}

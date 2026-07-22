@@ -5,12 +5,18 @@ import type { ContextUsage } from '../contextUsage'
 
 interface ContextUsageIndicatorProps {
   usage?: ContextUsage | null
+  inspectorOpen?: boolean
+  onInspect?: () => void
 }
 
 const RADIUS = 8
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
-export function ContextUsageIndicator({ usage }: ContextUsageIndicatorProps) {
+export function ContextUsageIndicator({
+  usage,
+  inspectorOpen = false,
+  onInspect,
+}: ContextUsageIndicatorProps) {
   const { t } = useTranslation()
   const tooltipId = useId()
   const usedPercent = usage
@@ -37,14 +43,20 @@ export function ContextUsageIndicator({ usage }: ContextUsageIndicatorProps) {
         total: formatTokenCount(usage.totalTokens),
       })
     : t('chat.contextUsageUnavailable')
+  const actionLabel = onInspect
+    ? `${label}. ${t('chat.contextInspector.open')}`
+    : label
 
   return (
     <div className="group relative shrink-0">
       <button
         type="button"
         className="flex h-8 items-center gap-1.5 rounded-lg px-1.5 text-ink-faint outline-none transition hover:bg-paper-hover hover:text-ink-soft focus-visible:ring-2 focus-visible:ring-clay/35"
-        aria-label={label}
+        aria-label={actionLabel}
         aria-describedby={tooltipId}
+        aria-haspopup={onInspect ? 'dialog' : undefined}
+        aria-expanded={onInspect ? inspectorOpen : undefined}
+        onClick={onInspect}
       >
         <svg
           aria-hidden="true"
@@ -85,7 +97,7 @@ export function ContextUsageIndicator({ usage }: ContextUsageIndicatorProps) {
       <div
         id={tooltipId}
         role="tooltip"
-        className="pointer-events-none invisible absolute bottom-[calc(100%+10px)] left-1/2 z-50 min-w-[220px] -translate-x-1/2 translate-y-1 rounded-xl border border-line bg-paper px-3.5 py-2.5 opacity-0 shadow-[0_14px_36px_rgba(20,20,19,0.16)] transition-[opacity,transform,visibility] duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100"
+        className={`${inspectorOpen ? 'hidden' : ''} pointer-events-none invisible absolute bottom-[calc(100%+10px)] left-1/2 z-50 min-w-[220px] -translate-x-1/2 translate-y-1 rounded-xl border border-line bg-paper px-3.5 py-2.5 opacity-0 shadow-[0_14px_36px_rgba(20,20,19,0.16)] transition-[opacity,transform,visibility] duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100`}
       >
         <div className="text-[11px] text-ink-faint">{t('chat.contextWindow')}</div>
         {usage ? (
@@ -114,6 +126,11 @@ export function ContextUsageIndicator({ usage }: ContextUsageIndicatorProps) {
             {t('chat.contextUsageUnavailable')}
           </div>
         )}
+        {onInspect ? (
+          <div className="mt-1.5 text-[11px] text-ink-faint">
+            {t('chat.contextInspector.openHint')}
+          </div>
+        ) : null}
         <span className="absolute -bottom-[5px] left-1/2 size-2 -translate-x-1/2 rotate-45 border-b border-r border-line bg-paper" />
       </div>
     </div>

@@ -7,6 +7,10 @@ mod provider;
 pub mod session;
 pub mod storage;
 
+pub use context::{
+    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
+    ContextInspectionSystemPart, ContextWindowInspection,
+};
 pub use core::{
     CredentialResolver, EnvironmentCredentialResolver, LoadedSession, OpenWorkCore,
     OpenWorkCoreConfig, OpenWorkCoreError,

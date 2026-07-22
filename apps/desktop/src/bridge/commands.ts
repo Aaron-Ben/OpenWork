@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 import type {
+  RuntimeContextWindowInspection,
   RuntimeLoadedSession,
   RuntimeReapplyFileChangesResult,
   RuntimeSessionInput,
@@ -19,6 +20,8 @@ export const coreCommands = {
     invoke('runtime_session_create', { input }),
   loadSession: (sessionId: string): Promise<RuntimeLoadedSession> =>
     invoke('runtime_session_load', { sessionId }),
+  inspectContextWindow: (sessionId: string): Promise<RuntimeContextWindowInspection> =>
+    invoke('runtime_context_window_inspect', { sessionId }),
   renameSession: (sessionId: string, title: string): Promise<RuntimeSessionRecord> =>
     invoke('runtime_session_rename', { sessionId, title }),
   deleteSession: (sessionId: string): Promise<void> =>

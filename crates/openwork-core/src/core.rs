@@ -1,26 +1,31 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
-use openwork_agent::{AgentBuilder, AgentDefinition};
-use openwork_chat_state::ChatStateHandle;
+use openwork_agent::{Agent, AgentBuilder, AgentDefinition};
+use openwork_chat_state::{ChatStateHandle, ConversationView};
 use openwork_models::ProviderFactory;
-use openwork_models::model::ContentBlock;
+use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
 };
 use openwork_tools::{
-    FileChangeArtifact, FileChangeReapplyError, FileChangeUndoError, PermissionProfile,
-    ReapplyFileChangesResult, ToolSessionContext, UndoFileChangesResult, builtin_registry,
-    reapply_file_changes as reapply_workspace_file_changes,
+    FileChangeArtifact, FileChangeReapplyError, FileChangeUndoError, FinalizedToolset,
+    PermissionProfile, ReapplyFileChangesResult, ToolSessionContext, UndoFileChangesResult,
+    builtin_registry, reapply_file_changes as reapply_workspace_file_changes,
     undo_file_changes as undo_workspace_file_changes,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
+use crate::context::{
+    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
+    ContextInspectionSystemPart, ContextWindowInspection, SystemContextBuilder,
+};
+use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
     ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
@@ -302,6 +307,96 @@ impl OpenWorkCore {
         Ok(LoadedSession { session, messages })
     }
 
+    /// Resolves a read-only preview of the three input regions that would be
+    /// assembled from the session's current authoritative sources.
+    ///
+    /// The preview reads live System Context sources, persisted Conversation,
+    /// and the current Tool Surface. It does not call a provider or persist a
+    /// duplicate request snapshot. An already-running Turn may continue using
+    /// the System Context it resolved at Turn start.
+    pub async fn inspect_context_window(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<ContextWindowInspection, OpenWorkCoreError> {
+        let loaded = self.load_session(session_id).await?;
+        let model_id = loaded
+            .session
+            .default_model_id
+            .as_deref()
+            .ok_or_else(|| OpenWorkCoreError::DefaultModelMissing(session_id.to_string()))?;
+        let model = self
+            .storage
+            .load_model(model_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
+        let working_directory = PathBuf::from(&loaded.session.working_directory);
+        let (agent, tools) = build_default_agent_and_tools(&working_directory)?;
+        let system_context = SystemContextBuilder::new(&working_directory)
+            .build(agent.system_prompt())
+            .await
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+
+        let current_turn_id = loaded
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| message.turn_id.clone());
+        let mut conversation = Vec::with_capacity(loaded.messages.len());
+        let mut inspected_messages = Vec::with_capacity(loaded.messages.len());
+        for message in loaded.messages {
+            if message.role == Role::System {
+                return Err(OpenWorkCoreError::RuntimeComponent(
+                    "persisted system messages are not valid Conversation input".to_string(),
+                ));
+            }
+            conversation.push(Message {
+                role: message.role,
+                content: message.content.clone(),
+            });
+            inspected_messages.push(ContextInspectionMessage {
+                message_id: message.id,
+                turn_id: message.turn_id,
+                role: message.role,
+                content: message.content,
+            });
+        }
+
+        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
+            &model.model_name,
+            &system_context,
+            ConversationView {
+                messages: conversation,
+            },
+            tools.definitions(),
+        ))
+        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let budget = prepared.context_budget;
+
+        Ok(ContextWindowInspection {
+            schema_version: CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION,
+            session_id: loaded.session.id,
+            current_turn_id,
+            resolved_model_name: model.model_name,
+            system_context: system_context
+                .parts()
+                .iter()
+                .map(|part| ContextInspectionSystemPart {
+                    source_key: part.key.clone(),
+                    content: part.content.clone(),
+                })
+                .collect(),
+            conversation: inspected_messages,
+            tool_surface: prepared.request.tools,
+            budget: ContextInspectionBudget {
+                system_context_tokens: budget.system_context_tokens,
+                conversation_tokens: budget.conversation_tokens,
+                tool_surface_tokens: budget.tool_surface_tokens,
+                estimated_input_tokens: budget.estimated_input_tokens,
+                reserved_output_tokens: budget.reserved_output_tokens,
+            },
+        })
+    }
+
     pub async fn rename_session(
         &self,
         session_id: &SessionId,
@@ -542,22 +637,11 @@ impl OpenWorkCore {
         }
         let runtime = provider_runtime(&model, self.credentials.as_ref()).await?;
         let model_port = Arc::from(self.provider_factory.build(&runtime));
-        let agent = AgentBuilder::new(AgentDefinition::default())
-            .build()
-            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let conversation = self.storage.load_messages(session_id).await?;
         let chat = ChatStateHandle::spawn(conversation)
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let tools = builtin_registry()
-            .finalize(
-                agent.toolset_config(),
-                ToolSessionContext::local(
-                    working_directory.clone(),
-                    PermissionProfile::workspace_write(working_directory.clone()),
-                ),
-            )
-            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let (agent, tools) = build_default_agent_and_tools(&working_directory)?;
 
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
@@ -578,6 +662,24 @@ impl OpenWorkCore {
             self.update_tx.clone(),
         ))
     }
+}
+
+fn build_default_agent_and_tools(
+    working_directory: &Path,
+) -> Result<(Agent, FinalizedToolset), OpenWorkCoreError> {
+    let agent = AgentBuilder::new(AgentDefinition::default())
+        .build()
+        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+    let tools = builtin_registry()
+        .finalize(
+            agent.toolset_config(),
+            ToolSessionContext::local(
+                working_directory.to_path_buf(),
+                PermissionProfile::workspace_write(working_directory.to_path_buf()),
+            ),
+        )
+        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+    Ok((agent, tools))
 }
 
 type MessageContentUpdate = (String, Vec<ContentBlock>);

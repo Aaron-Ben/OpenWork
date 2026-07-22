@@ -145,12 +145,31 @@ async fn bootstrapped_core_persists_a_provider_and_creates_a_session_from_its_mo
         .create_session(&SessionInput {
             id: session_id.clone(),
             title: Some("Core host flow".to_string()),
-            working_directory: "/tmp/openwork-core-host-test".to_string(),
+            working_directory: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
             default_model_id: Some(model_id.clone()),
         })
         .await
         .unwrap();
     assert_eq!(session.default_model_id.as_deref(), Some(model_id.as_str()));
+
+    let context = core.inspect_context_window(&session_id).await.unwrap();
+    assert_eq!(context.schema_version, 1);
+    assert_eq!(context.session_id, session_id.to_string());
+    assert_eq!(context.resolved_model_name, model_name);
+    assert_eq!(context.system_context[0].source_key, "core/agent-system");
+    assert!(context.conversation.is_empty());
+    assert!(!context.tool_surface.is_empty());
+    assert_eq!(
+        context.budget.estimated_input_tokens,
+        context
+            .budget
+            .system_context_tokens
+            .saturating_add(context.budget.conversation_tokens)
+            .saturating_add(context.budget.tool_surface_tokens),
+    );
 
     core.delete_session(&session_id).await.unwrap();
     core.delete_provider(&provider.id).await.unwrap();

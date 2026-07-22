@@ -63,10 +63,14 @@ describe('ChatInput toolbar', () => {
   })
 
   it('keeps the context affordance available when usage has not been measured', () => {
-    const markup = renderToStaticMarkup(<ChatInput {...baseProps} />)
+    const markup = renderToStaticMarkup(
+      <ChatInput {...baseProps} contextInspectorOpen onInspectContext={vi.fn()} />,
+    )
 
     expect(markup).toContain('data-context-usage-progress="0"')
     expect(markup).toContain('暂无上下文用量')
+    expect(markup).toContain('aria-haspopup="dialog"')
+    expect(markup).toContain('aria-expanded="true"')
   })
 
   it('replaces the send affordance with a compact stop control while streaming', () => {

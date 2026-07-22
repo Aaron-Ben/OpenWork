@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { AssistantMessage } from './components/AssistantMessage'
 import { ChatInput } from './components/ChatInput'
+import { ContextWindowDrawer } from './components/ContextWindowDrawer'
 import {
   ConversationNavigator,
   getConversationTurns,
@@ -12,7 +13,7 @@ import { ApprovalDialog } from './components/ApprovalDialog'
 import { ToolActivityList } from './components/ToolActivityList'
 import { UserMessage } from './components/UserMessage'
 import { selectDefaultModel, useModelStore } from '../models/modelStore'
-import type { RuntimeStoredMessage } from '../../bridge/compat'
+import type { RuntimeContextWindowInspection, RuntimeStoredMessage } from '../../bridge/compat'
 import { coreCommands } from '../../bridge/commands'
 import { TurnTraceDrawer } from '../traces/components/TurnTraceDrawer'
 import { useSessionStore } from '../sessions/sessionStore'
@@ -21,6 +22,7 @@ import { buildTranscript } from './transcript'
 import { useTurnActions } from './useTurn'
 import { contextUsageFromTrace, type ContextUsage } from './contextUsage'
 import { useContextWindowStore } from '../../stores/contextWindowStore'
+import { resolveErrorMessage } from '../../utils/commandError'
 
 const EMPTY_MESSAGES: RuntimeStoredMessage[] = []
 
@@ -28,6 +30,11 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null)
+  const [contextInspectorOpen, setContextInspectorOpen] = useState(false)
+  const [contextInspection, setContextInspection] = useState<RuntimeContextWindowInspection | null>(null)
+  const [contextInspectionLoading, setContextInspectionLoading] = useState(false)
+  const [contextInspectionError, setContextInspectionError] = useState<string | null>(null)
+  const [contextInspectionRefresh, setContextInspectionRefresh] = useState(0)
   const [selectedTrace, setSelectedTrace] = useState<{ turnId: string; providerToolCallId?: string } | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const canonical = useSessionStore((state) => sessionId ? state.messagesBySession[sessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
@@ -42,6 +49,17 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const messages = useMemo(() => buildTranscript(canonical, runtime), [canonical, runtime])
   const turns = useMemo(() => getConversationTurns(messages), [messages])
   const isSending = runtime.phase !== 'idle'
+  const finishedToolCallCount = runtime.orderedToolCallIds.reduce(
+    (count, id) => count + (runtime.toolCalls[id]?.isError == null ? 0 : 1),
+    0,
+  )
+  const contextInspectionRevision = [
+    canonical.length,
+    canonical[canonical.length - 1]?.id ?? '',
+    runtime.turnId ?? '',
+    runtime.phase,
+    finishedToolCallCount,
+  ].join(':')
   const sessionModel = useMemo(() => {
     if (!session?.defaultModelId) return null
     for (const provider of providers) {
@@ -58,7 +76,12 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     }
   }, [providers, session?.defaultModelId])
 
-  useEffect(() => setSelectedTrace(null), [sessionId])
+  useEffect(() => {
+    setSelectedTrace(null)
+    setContextInspectorOpen(false)
+    setContextInspection(null)
+    setContextInspectionError(null)
+  }, [sessionId])
 
   useEffect(() => setContextUsage(null), [sessionId, contextWindowTokens])
 
@@ -70,6 +93,18 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
     async function refreshContextUsage() {
       try {
+        if (!isSending) {
+          const inspection = await coreCommands.inspectContextWindow(activeSessionId)
+          if (!active) return
+          setContextInspection(inspection)
+          setContextUsage({
+            usedTokens: inspection.budget.estimatedInputTokens,
+            totalTokens,
+            estimated: true,
+          })
+          return
+        }
+
         const summaries = await coreCommands.listTraces(activeSessionId, 1)
         const latest = summaries[0]
         if (!latest) return
@@ -77,7 +112,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         const usage = contextUsageFromTrace(trace, totalTokens)
         if (active && usage) setContextUsage(usage)
       } catch {
-        // Trace is best-effort diagnostics; unavailable usage must not affect chat.
+        // Context usage is observational and must never affect the chat runtime.
       }
     }
 
@@ -90,6 +125,32 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
       if (timer !== null) window.clearInterval(timer)
     }
   }, [canonical.length, contextWindowTokens, isSending, sessionId])
+
+  useEffect(() => {
+    if (!contextInspectorOpen || !sessionId) return
+    let active = true
+    setContextInspectionLoading(true)
+    setContextInspectionError(null)
+    void coreCommands.inspectContextWindow(sessionId)
+      .then((value) => {
+        if (!active) return
+        setContextInspection(value)
+        setContextUsage({
+          usedTokens: value.budget.estimatedInputTokens,
+          totalTokens: contextWindowTokens,
+          estimated: true,
+        })
+      })
+      .catch((reason) => {
+        if (active) setContextInspectionError(resolveErrorMessage(reason))
+      })
+      .finally(() => {
+        if (active) setContextInspectionLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [contextInspectorOpen, contextInspectionRefresh, contextInspectionRevision, contextWindowTokens, sessionId])
 
   async function send() {
     const text = draft.trim()
@@ -170,6 +231,17 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
             onClose={() => setSelectedTrace(null)}
           />
         ) : null}
+        {contextInspectorOpen ? (
+          <ContextWindowDrawer
+            inspection={contextInspection}
+            contextWindowTokens={contextWindowTokens}
+            highlightedTurnId={runtime.turnId}
+            loading={contextInspectionLoading}
+            error={contextInspectionError}
+            onRefresh={() => setContextInspectionRefresh((value) => value + 1)}
+            onClose={() => setContextInspectorOpen(false)}
+          />
+        ) : null}
       </div>
 
       <div>
@@ -189,6 +261,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           modelOptions={sessionModel ? [sessionModel] : []}
           modelSelectionLocked
           contextUsage={contextUsage}
+          contextInspectorOpen={contextInspectorOpen}
           value={draft}
           isSending={isSending}
           disabled={!sessionId || !sessionModel}
@@ -196,6 +269,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           onModelChange={() => undefined}
           onSubmit={() => void send()}
           onCancel={() => void cancelTurn()}
+          onInspectContext={sessionId ? () => setContextInspectorOpen(true) : undefined}
         />
       </div>
     </div>

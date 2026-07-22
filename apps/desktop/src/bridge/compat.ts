@@ -42,6 +42,43 @@ export interface RuntimeLoadedSession {
   messages: RuntimeStoredMessage[]
 }
 
+export interface RuntimeContextInspectionSystemPart {
+  sourceKey: string
+  content: ContentBlock[]
+}
+
+export interface RuntimeContextInspectionMessage {
+  messageId: string
+  turnId: string | null
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: ContentBlock[]
+}
+
+export interface RuntimeToolDefinition {
+  name: string
+  description: string
+  parameters: unknown
+}
+
+export interface RuntimeContextInspectionBudget {
+  systemContextTokens: number
+  conversationTokens: number
+  toolSurfaceTokens: number
+  estimatedInputTokens: number
+  reservedOutputTokens: number | null
+}
+
+export interface RuntimeContextWindowInspection {
+  schemaVersion: number
+  sessionId: string
+  currentTurnId: string | null
+  resolvedModelName: string
+  systemContext: RuntimeContextInspectionSystemPart[]
+  conversation: RuntimeContextInspectionMessage[]
+  toolSurface: RuntimeToolDefinition[]
+  budget: RuntimeContextInspectionBudget
+}
+
 export interface RuntimeTurnAccepted {
   turnId: string
   clientRequestId: string

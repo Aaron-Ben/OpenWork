@@ -1,9 +1,14 @@
 use openwork_models::model::ContentBlock;
 
 mod builder;
+mod inspection;
 mod project_instructions;
 
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
+pub use inspection::{
+    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
+    ContextInspectionSystemPart, ContextWindowInspection,
+};
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 
 /// One independently assembled system-context contribution.
