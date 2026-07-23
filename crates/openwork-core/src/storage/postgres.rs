@@ -8,8 +8,10 @@ use sqlx::{Executor, PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::session::compaction_summary_message;
 use crate::session::{
-    ClientRequestId, ResolvedModel, SessionId, SessionStorage, TurnId, TurnOutcome,
+    ClientRequestId, ConversationCompaction, ResolvedModel, SessionId, SessionStorage, TurnId,
+    TurnOutcome,
 };
 
 const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
@@ -74,6 +76,19 @@ pub struct StoredMessageRecord {
     pub content: Vec<ContentBlock>,
     pub created_at: String,
 }
+
+type ConversationCompactionRow = (
+    String,
+    String,
+    i64,
+    i64,
+    i32,
+    String,
+    String,
+    Option<i64>,
+    Option<i64>,
+    String,
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -324,23 +339,65 @@ impl PostgresStorage {
         &self,
         session_id: &SessionId,
     ) -> Result<Vec<Message>, StorageError> {
-        let rows: Vec<(String, Value)> = sqlx::query_as(
-            "SELECT role, content
+        Ok(self
+            .load_conversation_records(session_id)
+            .await?
+            .into_iter()
+            .map(|record| Message {
+                role: record.role,
+                content: record.content,
+            })
+            .collect())
+    }
+
+    /// Loads the current model-visible Conversation projection. The raw
+    /// transcript remains in `messages`; the latest compaction summary replaces
+    /// only the prefix through its recorded message sequence.
+    pub async fn load_conversation_records(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<StoredMessageRecord>, StorageError> {
+        let compaction = self.load_latest_conversation_compaction(session_id).await?;
+        let through_sequence = compaction
+            .as_ref()
+            .map_or(0, |record| record.through_message_sequence);
+        let rows: Vec<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
+            "SELECT id, turn_id, sequence, role, content,
+                    to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at
              FROM messages
-             WHERE session_id = $1
+             WHERE session_id = $1 AND sequence > $2
              ORDER BY sequence",
         )
         .bind(session_id.as_str())
+        .bind(through_sequence)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter()
-            .map(|(role, content)| {
-                Ok(Message {
-                    role: parse_role(&role)?,
-                    content: serde_json::from_value(content)?,
+        let mut records = Vec::with_capacity(rows.len() + usize::from(compaction.is_some()));
+        if let Some(compaction) = compaction {
+            records.push(StoredMessageRecord {
+                id: compaction.id,
+                turn_id: None,
+                sequence: compaction.through_message_sequence,
+                role: Role::User,
+                content: compaction_summary_message(&compaction.summary).content,
+                created_at: compaction.created_at,
+            });
+        }
+        records.extend(
+            rows.into_iter()
+                .map(|(id, turn_id, sequence, role, content, created_at)| {
+                    Ok(StoredMessageRecord {
+                        id,
+                        turn_id,
+                        sequence,
+                        role: parse_role(&role)?,
+                        content: serde_json::from_value(content)?,
+                        created_at,
+                    })
                 })
-            })
-            .collect()
+                .collect::<Result<Vec<_>, StorageError>>()?,
+        );
+        Ok(records)
     }
 
     pub async fn load_message_records(
@@ -369,6 +426,26 @@ impl PostgresStorage {
                 })
             })
             .collect()
+    }
+
+    pub async fn load_latest_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<ConversationCompaction>, StorageError> {
+        let row: Option<ConversationCompactionRow> = sqlx::query_as(
+            "SELECT id, session_id, sequence, through_message_sequence,
+                    source_message_count, resolved_model_name, summary,
+                    input_tokens, output_tokens,
+                    to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at
+             FROM conversation_compactions
+             WHERE session_id = $1
+             ORDER BY sequence DESC
+             LIMIT 1",
+        )
+        .bind(session_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(conversation_compaction_from_row).transpose()
     }
 
     pub async fn replace_message_contents(
@@ -655,9 +732,163 @@ impl SessionStorage for PostgresStorage {
             .await
             .map_err(|error| error.to_string())
     }
+
+    async fn save_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+        source_message_count: u32,
+        resolved_model_name: &str,
+        summary: &str,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    ) -> Result<ConversationCompaction, String> {
+        self.save_conversation_compaction_inner(
+            session_id,
+            source_message_count,
+            resolved_model_name,
+            summary,
+            input_tokens,
+            output_tokens,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    async fn delete_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+        compaction_id: &str,
+    ) -> Result<(), String> {
+        self.delete_conversation_compaction_inner(session_id, compaction_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl PostgresStorage {
+    async fn save_conversation_compaction_inner(
+        &self,
+        session_id: &SessionId,
+        source_message_count: u32,
+        resolved_model_name: &str,
+        summary: &str,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    ) -> Result<ConversationCompaction, StorageError> {
+        if source_message_count == 0 {
+            return Err(StorageError::InvalidInput(
+                "compaction source message count must be positive".to_string(),
+            ));
+        }
+        if resolved_model_name.trim().is_empty() {
+            return Err(StorageError::InvalidInput(
+                "compaction model name must not be blank".to_string(),
+            ));
+        }
+        let summary = summary.trim();
+        if summary.is_empty() {
+            return Err(StorageError::InvalidInput(
+                "compaction summary must not be blank".to_string(),
+            ));
+        }
+        let source_message_count = i32::try_from(source_message_count).map_err(|_| {
+            StorageError::InvalidInput("compaction source message count overflow".to_string())
+        })?;
+        let input_tokens = optional_token(input_tokens)?;
+        let output_tokens = optional_token(output_tokens)?;
+
+        let mut transaction = self.pool.begin().await?;
+        lock_session(&mut transaction, session_id).await?;
+        let running_turn: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM turns WHERE session_id = $1 AND status = 'running'
+             )",
+        )
+        .bind(session_id.as_str())
+        .fetch_one(&mut *transaction)
+        .await?;
+        if running_turn {
+            return Err(StorageError::InvalidInput(format!(
+                "session has an active turn and cannot be compacted: {session_id}"
+            )));
+        }
+        let through_message_sequence: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(sequence), 0) FROM messages WHERE session_id = $1",
+        )
+        .bind(session_id.as_str())
+        .fetch_one(&mut *transaction)
+        .await?;
+        if through_message_sequence == 0 {
+            return Err(StorageError::InvalidInput(
+                "conversation is empty and cannot be compacted".to_string(),
+            ));
+        }
+        let sequence: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(sequence), 0) + 1
+             FROM conversation_compactions WHERE session_id = $1",
+        )
+        .bind(session_id.as_str())
+        .fetch_one(&mut *transaction)
+        .await?;
+        let id = format!("compaction-{}", Uuid::new_v4().simple());
+        let created_at: String = sqlx::query_scalar(
+            "INSERT INTO conversation_compactions (
+                 id, session_id, sequence, through_message_sequence,
+                 source_message_count, resolved_model_name, summary,
+                 input_tokens, output_tokens
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
+        )
+        .bind(&id)
+        .bind(session_id.as_str())
+        .bind(sequence)
+        .bind(through_message_sequence)
+        .bind(source_message_count)
+        .bind(resolved_model_name)
+        .bind(summary)
+        .bind(input_tokens)
+        .bind(output_tokens)
+        .fetch_one(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+
+        Ok(ConversationCompaction {
+            id,
+            session_id: session_id.to_string(),
+            sequence,
+            through_message_sequence,
+            source_message_count: u32::try_from(source_message_count).map_err(|_| {
+                StorageError::InvalidInput(
+                    "stored compaction source message count is invalid".to_string(),
+                )
+            })?,
+            resolved_model_name: resolved_model_name.to_string(),
+            summary: summary.to_string(),
+            input_tokens: stored_token(input_tokens)?,
+            output_tokens: stored_token(output_tokens)?,
+            created_at,
+        })
+    }
+
+    async fn delete_conversation_compaction_inner(
+        &self,
+        session_id: &SessionId,
+        compaction_id: &str,
+    ) -> Result<(), StorageError> {
+        let result =
+            sqlx::query("DELETE FROM conversation_compactions WHERE id = $1 AND session_id = $2")
+                .bind(compaction_id)
+                .bind(session_id.as_str())
+                .execute(&self.pool)
+                .await?;
+        if result.rows_affected() != 1 {
+            return Err(StorageError::InvalidInput(format!(
+                "conversation compaction not found: {compaction_id}"
+            )));
+        }
+        Ok(())
+    }
+
     async fn begin_turn_inner(
         &self,
         session_id: &SessionId,
@@ -994,6 +1225,49 @@ fn optional_token(value: Option<u64>) -> Result<Option<i64>, StorageError> {
                 .map_err(|_| StorageError::InvalidInput("token count overflow".to_string()))
         })
         .transpose()
+}
+
+fn stored_token(value: Option<i64>) -> Result<Option<u64>, StorageError> {
+    value
+        .map(|value| {
+            u64::try_from(value).map_err(|_| {
+                StorageError::InvalidInput("stored token count is negative".to_string())
+            })
+        })
+        .transpose()
+}
+
+fn conversation_compaction_from_row(
+    row: ConversationCompactionRow,
+) -> Result<ConversationCompaction, StorageError> {
+    let (
+        id,
+        session_id,
+        sequence,
+        through_message_sequence,
+        source_message_count,
+        resolved_model_name,
+        summary,
+        input_tokens,
+        output_tokens,
+        created_at,
+    ) = row;
+    Ok(ConversationCompaction {
+        id,
+        session_id,
+        sequence,
+        through_message_sequence,
+        source_message_count: u32::try_from(source_message_count).map_err(|_| {
+            StorageError::InvalidInput(
+                "stored compaction source message count is invalid".to_string(),
+            )
+        })?,
+        resolved_model_name,
+        summary,
+        input_tokens: stored_token(input_tokens)?,
+        output_tokens: stored_token(output_tokens)?,
+        created_at,
+    })
 }
 
 fn parse_role(value: &str) -> Result<Role, StorageError> {

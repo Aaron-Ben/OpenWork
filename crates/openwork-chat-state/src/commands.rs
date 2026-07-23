@@ -31,6 +31,10 @@ pub(crate) enum ChatStateCommand {
         respond_to: oneshot::Sender<Result<AssistantDraftSnapshot, ChatStateError>>,
     },
     DiscardDraft,
+    ReplaceConversation {
+        messages: Vec<Message>,
+        respond_to: oneshot::Sender<Result<(), ChatStateError>>,
+    },
     ConversationView {
         respond_to: oneshot::Sender<ConversationView>,
     },

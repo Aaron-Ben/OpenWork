@@ -36,6 +36,7 @@ pub fn run() {
             commands::runtime::runtime_session_create,
             commands::runtime::runtime_session_load,
             commands::runtime::runtime_context_window_inspect,
+            commands::runtime::runtime_session_compact,
             commands::runtime::runtime_session_rename,
             commands::runtime::runtime_session_delete,
             commands::runtime::runtime_turn_start,

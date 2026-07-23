@@ -74,6 +74,7 @@ Authoritative design docs: `docs/redesign/` (see `docs/README.md` index). Source
 
 ## Conventions
 
-- Domain vocabulary: Session, Turn, Model Call, Tool Call, Permission, Message, Update, Trace. Do not reintroduce retired terms (`StepId`, `ToolRunId`, `ApprovalId`, `JournalTurnRecorder`, Event Journal).
-- Explicit V1 non-goals — do not add: MCP, Memory, Plan, Skill, Compaction, Artifact, Git/Diff, Worktree, cross-process Turn recovery, Event Journal.
+- Domain vocabulary: Session, Turn, Model Call, Tool Call, Permission, Message, Update, Trace, Compaction. Do not reintroduce retired terms (`StepId`, `ToolRunId`, `ApprovalId`, `JournalTurnRecorder`, Event Journal).
+- Manual Conversation compaction is in V1 scope: it must be explicitly invoked with `/compact`, only run while the Session is idle, and replace only the Conversation projection after success. Do not add automatic thresholds, overflow-triggered compaction/resubmission, lossy fallback, or cross-process compaction replay.
+- Explicit V1 non-goals — do not add: MCP, Memory, Plan, Skill, Artifact, Git/Diff, Worktree, cross-process Turn recovery, Event Journal.
 - Root README is bilingual: when editing `README.md`, mirror changes in `README.en.md`.

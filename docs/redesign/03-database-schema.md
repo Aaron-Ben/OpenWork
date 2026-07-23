@@ -1,14 +1,14 @@
 # OpenWork V1 目标数据库 Schema
 
-> 状态：SQLx 单一干净基线已实施。业务表使用 `provider_credentials`、`models`、`sessions`、`turns`、`messages`、`trace_spans`；当前没有生产数据，因此不再保留旧表回填和 `legacy_*` 兼容路径。
+> 状态：SQLx 单一干净基线已实施。业务表使用 `provider_credentials`、`models`、`sessions`、`turns`、`messages`、`conversation_compactions`、`trace_spans`；当前没有生产数据，因此不再保留旧表回填和 `legacy_*` 兼容路径。
 >
-> 边界：保存模型配置、Session、Turn、完整 Message 和诊断 Trace；不保存可恢复的运行时 Checkpoint。
+> 边界：保存模型配置、Session、Turn、完整原始 Message、当前 Conversation 压缩投影和诊断 Trace；不保存可恢复未完成 Turn 的运行时 Checkpoint。
 >
-> 本文 SQL 使用的名称就是当前物理表名；结构由 `crates/openwork-core/migrations/202607180001_initial_schema.sql` 创建。
+> 本文 SQL 使用的名称就是当前物理表名；干净基线由 `202607180001_initial_schema.sql` 创建，后续结构由同目录中不可变的增量 migration 追加。
 
 ## 1. 结论
 
-V1 收敛为 7 张表：
+V1 当前为 8 张表：
 
 | 表 | 职责 | 是否业务真相 |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ V1 收敛为 7 张表：
 | `sessions` | Session 元数据 | 是 |
 | `turns` | 一次用户运行的状态和汇总 | 是 |
 | `messages` | 模型 Conversation 的完整消息 | 是 |
+| `conversation_compactions` | 当前及历史手动压缩摘要与原始消息截止边界 | 是，Conversation 投影元数据 |
 | `trace_spans` | Model Call/Tool Call 诊断 | 否，best effort |
 
 关系：
@@ -31,6 +32,7 @@ Model
   └── Turn.model_id
 
 Session
+├── Conversation Compaction
 └── Turn
     ├── Message
     └── Trace Span
@@ -48,11 +50,11 @@ tool_runs
 approvals
 runtime_states
 session_updates
-projection_checkpoints
+turn_recovery_checkpoints
 trace_span_events
 ```
 
-“7 张表”是当前功能边界，不是永久架构不变量。Provider Credential 单独成表，是为了避免把加密密文复制到每个 Model 行，并保持凭证轮换的原子性。
+“8 张表”是当前功能边界，不是永久架构不变量。Provider Credential 单独成表，是为了避免把加密密文复制到每个 Model 行，并保持凭证轮换的原子性。
 
 ## 2. 为什么不用 Event Journal
 
@@ -391,7 +393,41 @@ CREATE UNIQUE INDEX uq_messages_tool_result
 - 流式草稿只在完整响应结束后生成 Message；
 - Provider Opaque Block 可以保存，但必须由 `openwork-models` 版本化并限制大小。
 
-## 10. trace_spans
+## 10. conversation_compactions
+
+`conversation_compactions` 不删除或改写 `messages`。每次空闲 Session 手动执行 `/compact` 后，它保存模型生成的摘要及摘要覆盖到的原始 Message sequence。当前模型可见 Conversation 为：
+
+```text
+latest compaction summary
++ messages.sequence > through_message_sequence
+```
+
+没有压缩记录时，模型继续读取全部 `messages`。再次手动压缩时，输入是当前投影（上次摘要加后续消息），新记录成为 latest；旧记录只保留审计信息，不提供 rewind/replay API。
+
+```sql
+CREATE TABLE conversation_compactions (
+    id                          TEXT PRIMARY KEY,
+    session_id                  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sequence                    BIGINT NOT NULL,
+    through_message_sequence    BIGINT NOT NULL,
+    source_message_count        INTEGER NOT NULL,
+    resolved_model_name         TEXT NOT NULL,
+    summary                     TEXT NOT NULL,
+    input_tokens                BIGINT,
+    output_tokens               BIGINT,
+    created_at                  TIMESTAMP WITHOUT TIME ZONE NOT NULL
+                                DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'),
+    CONSTRAINT conversation_compactions_session_sequence
+        UNIQUE (session_id, sequence)
+);
+
+CREATE INDEX idx_conversation_compactions_session_sequence
+    ON conversation_compactions(session_id, sequence DESC);
+```
+
+安装顺序是“验证摘要 → 事务写入 compaction → Chat State 原子替换”。模型调用、摘要验证或数据库写入失败时，Chat State 保持原 Conversation；若最终内存替换失败，Core 尝试删除刚写入的 compaction 作为补偿。该流程不是跨数据库与内存的强事务，也不是未完成 Turn 的恢复机制。
+
+## 11. trace_spans
 
 Turn 行本身是 Trace Root，`trace_spans` 只保存 Model Call 与 Tool Call。
 
@@ -549,7 +585,7 @@ P1 只允许大小、数量、布尔值、闭集枚举和版本信息，例如 m
 
 `attempts[]` 是有界诊断摘要，不是 HTTP Attempt Ledger。它不产生新的表、行或 Span Kind。只有字段已经形成稳定查询语义，并出现跨 Trace 高频筛选、聚合或索引需求时，才允许通过新的 SQLx migration 提升为普通列；不得修改已应用 migration。
 
-## 11. 写入顺序和事务
+## 12. 写入顺序和事务
 
 ### 11.1 开始 Turn
 
@@ -594,7 +630,7 @@ P1 只允许大小、数量、布尔值、闭集枚举和版本信息，例如 m
 
 最终回答本身读取最后一条 Assistant Message，不在 `turns` 重复存一份。
 
-## 12. 启动修正
+## 13. 启动修正
 
 Core 完成 Migration 后、接受新 Turn 前执行：
 
@@ -624,7 +660,7 @@ WHERE status = 'running';
 
 这只是状态与 Conversation 完整性收口，不调度恢复任务，也不读取 Trace 判断工具是否执行过。
 
-## 13. 常用读取
+## 14. 常用读取
 
 Session 列表：
 
@@ -637,7 +673,7 @@ ORDER BY updated_at DESC, id
 LIMIT $1;
 ```
 
-模型 Conversation：
+原始聊天记录：
 
 ```sql
 SELECT id, turn_id, sequence, role, content,
@@ -646,6 +682,8 @@ FROM messages
 WHERE session_id = $1
 ORDER BY sequence;
 ```
+
+模型可见 Conversation 先读取 latest `conversation_compactions` 的 `through_message_sequence`，在内存中放入摘要消息，再追加大于该边界的原始消息。该投影由 `PostgresStorage::load_conversation_records` 统一实现，Desktop 的普通聊天记录仍读取全部 `messages`。
 
 Turn Trace：
 
@@ -656,7 +694,7 @@ WHERE turn_id = $1
 ORDER BY sequence;
 ```
 
-## 14. 开发数据库基线切换
+## 15. 开发数据库基线切换
 
 当前没有生产数据，因此不再把旧 Journal、Provider Registry 或 `schema_migrations` 接入新历史。开发数据库显式删除 volume 后，从 SQLx 基线重新创建：
 
@@ -666,14 +704,16 @@ docker compose up -d postgres
 cargo run -p openwork-core --bin openwork-migrate
 ```
 
-基线版本为 `202607180001_initial_schema.sql`。它只创建当前六张业务表，不创建、回填或归档任何旧表。未来每次结构或数据变化都追加新的 SQLx migration；已经执行的文件保持不可变。
+基线版本为 `202607180001_initial_schema.sql`，手动压缩投影由 `202607230001_add_conversation_compactions.sql` 追加。它们不创建、回填或归档任何旧 Journal 表。未来每次结构或数据变化都追加新的 SQLx migration；已经执行的文件保持不可变。
 
 删除 volume 会清除 Session、Trace、模型设置和加密后的 Provider API Key，必须由开发者显式执行，应用启动不得自动删除未知数据。
 
-## 15. Schema 验收清单
+## 16. Schema 验收清单
 
 - 每个 Turn 在 Session 内 sequence 唯一；
 - 每个 Message 在 Session 内 sequence 唯一；
+- 每个 Conversation Compaction 在 Session 内 sequence 唯一，且只覆盖已存在的原始 Message 前缀；
+- 原始 `messages` 不因压缩删除，模型读取 latest summary 与边界后的消息；
 - Tool Message 必须有 Provider Call ID 和 Tool Name；
 - 一个 Turn 下同一 Provider Tool Call 只有一个 Tool Result；
 - 一个 Session 同时最多一个 `running` Turn；

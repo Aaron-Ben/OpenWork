@@ -10,11 +10,12 @@ use openwork_tools::FinalizedToolset;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use super::compaction::{ConversationCompactionRequest, run_compaction};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
 use super::{
-    ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionId, SessionPhase,
-    SessionRuntimeSnapshot, SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
-    ToolCallId, TraceRecorder, TurnAccepted, TurnId,
+    ClientRequestId, CompactionError, ConversationCompaction, PermissionDecision, ResolvedModel,
+    SessionError, SessionId, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionStorage,
+    SessionUpdate, SessionUpdateEnvelope, ToolCallId, TraceRecorder, TurnAccepted, TurnId,
 };
 
 const COMMAND_BUFFER: usize = 64;
@@ -128,6 +129,15 @@ impl SessionHandle {
         response.await.map_err(|_| SessionError::ActorStopped)?
     }
 
+    pub async fn compact_conversation(&self) -> Result<ConversationCompaction, CompactionError> {
+        let (respond_to, response) = oneshot::channel();
+        self.command_tx
+            .send(SessionCommand::CompactConversation { respond_to })
+            .await
+            .map_err(|_| CompactionError::ActorStopped)?;
+        response.await.map_err(|_| CompactionError::ActorStopped)?
+    }
+
     pub async fn snapshot(&self) -> Result<SessionSnapshot, SessionError> {
         let (respond_to, response) = oneshot::channel();
         self.send(SessionCommand::Snapshot { respond_to }).await?;
@@ -171,6 +181,9 @@ enum SessionCommand {
         tool_call_id: ToolCallId,
         decision: PermissionDecision,
         respond_to: oneshot::Sender<Result<(), SessionError>>,
+    },
+    CompactConversation {
+        respond_to: oneshot::Sender<Result<ConversationCompaction, CompactionError>>,
     },
     Snapshot {
         respond_to: oneshot::Sender<SessionSnapshot>,
@@ -257,7 +270,7 @@ impl SessionActor {
             tokio::select! {
                 command = self.command_rx.recv() => {
                     let Some(command) = command else { break };
-                    self.handle_command(command);
+                    self.handle_command(command).await;
                 }
                 event = self.runner_rx.recv() => {
                     let Some(event) = event else { break };
@@ -270,7 +283,7 @@ impl SessionActor {
         }
     }
 
-    fn handle_command(&mut self, command: SessionCommand) {
+    async fn handle_command(&mut self, command: SessionCommand) {
         match command {
             SessionCommand::StartTurn {
                 turn_id,
@@ -301,6 +314,10 @@ impl SessionActor {
                 respond_to,
             } => {
                 let result = self.resolve_permission(turn_id, tool_call_id, decision);
+                let _ = respond_to.send(result);
+            }
+            SessionCommand::CompactConversation { respond_to } => {
+                let result = self.compact_conversation().await;
                 let _ = respond_to.send(result);
             }
             SessionCommand::Snapshot { respond_to } => {
@@ -384,6 +401,22 @@ impl SessionActor {
         };
         tokio::spawn(run_turn(request));
         Ok(accepted)
+    }
+
+    async fn compact_conversation(&self) -> Result<ConversationCompaction, CompactionError> {
+        if let Some(active) = &self.active_turn {
+            return Err(CompactionError::SessionActive(active.turn_id.clone()));
+        }
+        run_compaction(ConversationCompactionRequest {
+            session_id: self.session_id.clone(),
+            resolved_model_name: self.resolved_model.model_name.clone(),
+            working_directory: self.working_directory.clone(),
+            agent: self.agent.clone(),
+            chat: self.chat.clone(),
+            model: Arc::clone(&self.model),
+            storage: Arc::clone(&self.storage),
+        })
+        .await
     }
 
     fn resolve_permission(

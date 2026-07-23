@@ -68,6 +68,10 @@ export const zhTW = {
     jumpToTurn: '跳至第 {{index}} 輪：{{title}}',
     turnPreview: '第 {{index}} 輪',
     placeholder: '想問些什麼……', selectModel: '選擇模型', noModel: '暫無模型', send: '傳送', stop: '停止生成',
+    commands: {
+      menu: '斜線指令', compacting: '正在壓縮 Conversation',
+      compact: { label: '壓縮 Conversation', description: '摘要目前模型可見的 Conversation，並替換其作用中投影。' },
+    },
     contextWindow: '上下文視窗：', contextUsagePercent: '已使用 {{usedPercent}}%（剩餘 {{leftPercent}}%）',
     contextTokensUsed: '已使用 {{used}} / {{total}} Tokens', contextUsageEstimated: 'Provider 無關估算，不包含協議包裝',
     contextUsageUnavailable: '暫無上下文用量', contextUsageAria: '上下文已使用 {{usedPercent}}%，{{used}} / {{total}} Tokens',
@@ -77,7 +81,7 @@ export const zhTW = {
       refresh: '重新整理上下文預覽', close: '關閉上下文預覽', used: '輸入估算', usage: '視窗使用量',
       messages: '訊息數', tools: '工具數', estimatedTokens: '約 {{count}} Tokens',
       systemContext: 'System Context', systemDescription: '穩定的 Agent 指令與專案層級來源，並保留來源鍵。',
-      conversation: 'Conversation', conversationDescription: '依模型可見順序排列的持久化使用者、助理與工具訊息。',
+      conversation: 'Conversation', conversationDescription: '依請求順序排列的目前模型可見投影；壓縮後顯示摘要及其後的新訊息。',
       toolSurface: 'Tool Surface', toolDescription: '本次呼叫可使用的工具描述與 JSON Schema。',
       currentTurn: '本輪', noConversation: '目前尚無持久化的對話訊息。', noTools: '目前沒有可用工具。',
       providerOverheadNote: 'Token 數量為 Provider 無關的估算，不包含 Provider 協議包裝。執行中的 Turn 可能繼續使用該輪開始時解析的 System Context。',
@@ -101,7 +105,7 @@ export const zhTW = {
     contextWindow: {
       title: '上下文視窗', description: '獨立於模型選擇，設定 OpenWork 使用的上下文預算。',
       sizeLabel: '上下文視窗大小', sizeDescription: '用於上下文用量與預算顯示的 Token 容量，不屬於特定模型。',
-      observationOnly: '目前僅用於預算觀測，不會自動裁剪或壓縮對話。',
+      observationOnly: '目前僅用於預算觀測。OpenWork 不會自動壓縮；需要明確使用 /compact。',
       save: '儲存', saved: '已儲存', invalid: '請輸入大於 0 的整數 Token 數。',
     },
     models: {

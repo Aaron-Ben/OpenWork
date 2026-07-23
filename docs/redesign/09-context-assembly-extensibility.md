@@ -2,7 +2,7 @@
 
 > 状态：当前实现说明、目标治理边界与未来兼容约束。
 >
-> 范围：以 V1 已存在的 Agent System Prompt、Session 根部 `AGENTS.md`、Conversation、Tools、Model Request 和只读预算估算为实现基线；同时定义 Memory、Plan、Skill、Compaction 等能力未来接入哪条物化链，以及压缩/恢复时必须保持的边界。后者是兼容约束，不表示已经实现。
+> 范围：以 V1 已存在的 Agent System Prompt、Session 根部 `AGENTS.md`、Conversation、手动 Compaction、Tools、Model Request 和只读预算估算为实现基线；同时定义 Memory、Plan、Skill 等未来能力接入哪条物化链，以及未来扩展压缩/恢复时必须保持的边界。
 >
 > 源码对照基线：OpenWork 当前工作树、OpenCode `a19b52e85`、grok-build `b189869`，核对于 2026-07-22。
 
@@ -45,7 +45,7 @@ OpenCode V2 和 grok-build 在输入分区上并不冲突，区别主要在所�
 
 OpenWork 当前代码已经完成这一骨架：`SystemContextBuilder`、`ConversationView` 和 `FinalizedToolset` 分别提供三块输入，`ModelRequestBuilder` 在 Core 中集中组装请求。旧的 `ContextBundle`、通用 `ContextKind`、`ModelCallPreparer`、`ModelRequestSpec` 和 `RequestAssembler` 已删除。
 
-本文继续区分“当前已实现”和“目标约束”。后续加入 Memory、Plan、Skill 或 Compaction 时，应扩展对应来源和物化链，而不是把它们全部塞进 Chat State 或 `ModelRequestBuilder`。
+本文继续区分“当前已实现”和“目标约束”。后续加入 Memory、Plan、Skill，或扩展自动压缩与恢复时，应扩展对应来源和物化链，而不是把它们全部塞进 Chat State 或 `ModelRequestBuilder`。
 
 ## 2. 不要混淆两个维度
 
@@ -149,20 +149,19 @@ Agent System Prompt + Project Instructions
 
 ```text
 Committed User / Assistant / Tool Messages
-+ future Synthetic Conversation Items
-+ future Compaction Checkpoint and Recent Tail
++ latest persisted Compaction Summary and post-boundary Messages
++ future typed Synthetic Conversation Items
   -> Chat State（单写与一致性）
   -> ConversationView
 ```
 
-当前 `ConversationView` 就是完整的已提交 Conversation，没有其他投影策略。每次 Model Call 都重新读取，因此前一次调用产生的 Assistant Message 和 Tool Result 会进入下一次调用。
+未压缩时，`ConversationView` 是完整的已提交 Conversation。手动压缩后，它是最新摘要加 `through_message_sequence` 之后的新消息；每次 Model Call 仍重新读取 Chat State 的当前一致视图。
 
-未来加入 synthetic item 或压缩后，这条链可以负责：
+当前这条链已经负责压缩视图原子替换和 Tool Call / Tool Result 基本一致性。未来可以继续加入：
 
-- 区分真实 User Message 和系统生成的 User-role Message；
-- 从 compaction checkpoint、保留的 recent tail 和压缩后的新消息生成当前视图；
-- 保证 Tool Call / Tool Result 配对和顺序一致；
-- 原子安装新的压缩视图。
+- typed synthetic provenance，用结构字段区分真实 User Message 与系统生成的 User-role Message；
+- rewind/replay 所需的 checkpoint 选择，而不只读取 latest；
+- 自动压缩触发与上下文溢出重试。
 
 Chat State 仍不加载 `AGENTS.md`、Memory、Plan 或 Skill 的权威数据，不接收 Model 或 Tool Definitions，也不构造完整 `ModelRequest`。只有当这些功能产生“应当作为 Conversation 发送且需要重放”的条目时，该条目及其 provenance 才进入 Chat State。
 
@@ -410,12 +409,12 @@ struct ConversationView {
 | 边界 | 当前已实现 | 目标中尚未实现 |
 | --- | --- | --- |
 | System Context | Agent System + 根部 `AGENTS.md`，Turn 内复用 | 通用来源生命周期、snapshot/epoch、update/removal |
-| Conversation | 已提交消息的一致 `ConversationView` | synthetic provenance、checkpoint + recent tail 投影、压缩原子替换 |
+| Conversation | 完整消息或 latest summary + post-boundary messages；Chat State 原子替换 | typed synthetic provenance、rewind/replay checkpoint、自动压缩 |
 | Tool Surface | `FinalizedToolset` 同时提供 definitions 与 dispatch | 跨恢复的能力版本；当前不增加空壳 `ToolSurface` 类型 |
 | Request Assembly | Core 集中构造 provider-neutral `ModelRequest` | 无；这个所有权边界保持不变 |
 | Prompt Cache | Turn 内 System 结果复用、请求顺序固定 | 跨 Turn/压缩/恢复的稳定 generation 与字节一致性验证 |
 
-这个表是当前代码与目标架构的分界。后文描述的 provenance、epoch 和 compaction recovery 都不能被当作已经落地的行为。
+这个表是当前代码与目标架构的分界。手动压缩投影已经落地；typed provenance、epoch、自动压缩和 checkpoint replay 仍不能被当作现有行为。
 
 ## 6. 本轮已经完成的概念收敛
 
@@ -580,18 +579,19 @@ Tool Definitions 在 provider-neutral request 中是独立字段，不与 messag
 4. 裁剪或压缩采用明显的低水位/高水位策略，避免每轮改写最早消息；
 5. 来源确实变化时，通过显式 update 或新 generation 变化，不为了 cache 隐藏真实变化。
 
-V1 当前只做到第 2 项和基本确定性顺序。跨 Turn、压缩和恢复的 cache 稳定性要等 source lifecycle 与 compaction 实现后再验证。
+V1 当前做到第 2 项、基本确定性顺序，以及手动压缩后从三条链重新物化请求。跨 Turn generation、自动压缩和恢复的 cache 稳定性仍要等 source lifecycle 落地后验证。
 
 ### 7.4 压缩与恢复
 
-压缩的直接改写对象是 Conversation 物化链，不是完整 Context Window：
+当前只实现空闲 Session 显式 `/compact`。压缩的直接改写对象是 Conversation 物化链，不是完整 Context Window：
 
 ```text
-Full Conversation
-  -> select compaction boundary
-  -> summarize old history
-  -> persist checkpoint + boundary
-  -> atomically install checkpoint + recent tail
+Current ConversationView
+  -> append structured compaction prompt for an auxiliary Model Call
+  -> validate a complete, non-degenerate summary
+  -> persist summary + through_message_sequence
+  -> atomically install one synthetic User-role summary in Chat State
+  -> append later committed Messages as the new tail
   -> new ConversationView
 ```
 
@@ -608,10 +608,11 @@ Tool Capability ─materialize──> FinalizedToolset ────────�
 这意味着：
 
 - 摘要只恢复不可再生的历史语义，不复制 `AGENTS.md`、Tool Definitions 或稳定 Memory baseline；
-- System、Plan、Skill、Memory 和 Tools 分别从自己的权威来源重新物化；
-- 同一轮因超限触发压缩后，如果 System/Tool 来源没有变化，可以复用压缩前已经物化的结果，以保持字节稳定；
-- 跨进程恢复时则从持久化的来源状态和 checkpoint 重建，不把 `ConversationView` 当成所有功能的数据库；
-- Core 的 Compaction/Recovery Coordinator 负责协调，Chat State 只负责 Conversation 的一致快照与原子替换；
+- System Context 与 Tools 继续从自己的权威来源重新物化；Plan、Skill、Memory 当前不存在；
+- 压缩模型调用读取当时的 System Context 与完整当前 Conversation，但不暴露 Tools，也不写 Turn/Trace；
+- 为防止失败 Turn 的残缺工具配对导致 Provider 拒绝，Core 只在摘要调用的临时副本中清除不相邻/重复 Tool Result，并为缺失结果补 `Interrupted` 合成结果；原始记录不改写；
+- PostgreSQL 保留全部原始 `messages`，并以 latest `conversation_compactions` 加边界后的消息重建当前投影；这支持重启后读取当前投影，但不提供历史 checkpoint rewind/replay；
+- Core 的手动 Compaction Coordinator 负责模型调用、验证、持久化和安装，Chat State 只负责 Conversation 的一致快照与原子替换；
 - 最终请求仍由 `ModelRequestBuilder` 构造。
 
 所以“压缩只管 Chat State”只在“被缩短的数据是 Conversation”这一层成立；对下一次调用而言，仍要重新物化 System、Conversation、Tool Surface 三条链。
@@ -625,7 +626,7 @@ Tool Capability ─materialize──> FinalizedToolset ────────�
 | Memory | 稳定用户偏好或长期规则的 baseline | 当前 query-based recall，带 synthetic provenance | Memory search/write tools | Memory service/store |
 | Plan | 稳定的 plan-mode 规则 | 当前计划、进度或提醒，带 synthetic provenance | plan read/update tools | Plan state/store |
 | Skill | skill catalog / 使用规则 | 已加载 skill 内容或 tool result | skill discovery/load tools | Skill registry/files |
-| Compaction | 不存摘要 | checkpoint summary + recent tail | 可选 compaction tool | Conversation log + checkpoint metadata |
+| Compaction | 不存摘要 | latest summary + post-boundary messages | 无；由显式 `/compact` Host Command 触发 | `messages` + `conversation_compactions` |
 | Reminder | 通常不进入稳定 baseline | turn-ephemeral synthetic item | 无 | 产生 reminder 的功能模块 |
 
 这里的关键不是提前决定每个未来类型，而是固定路由规则：
@@ -656,7 +657,8 @@ Tool Capability ─materialize──> FinalizedToolset ────────�
 - Draft 生命周期；
 - User / Assistant / Tool Message；
 - `ConversationView` 一致快照；
-- 未来 Conversation 内 synthetic provenance、compaction checkpoint 投影和原子替换。
+- 压缩摘要的原子替换；
+- 未来 Conversation 内 typed synthetic provenance 和 checkpoint replay。
 
 它不加载 System Context、Memory、Plan 或 Skill 的权威来源，不接收 Model/Tools 来构造完整请求。
 
@@ -682,16 +684,17 @@ Tool Capability ─materialize──> FinalizedToolset ────────�
 
 它不推进 Turn，不执行 Tools，不直接编码 Provider 协议。
 
-### 8.5 `openwork-core` 的未来恢复协调器
+### 8.5 `openwork-core` 的手动压缩协调器
 
-Compaction 真正实现后，Core 应拥有协调流程：
+Core 当前拥有以下手动 Compaction 协调流程：
 
 - 读取稳定的 Conversation snapshot；
 - 调用 summarizer；
-- 持久化 checkpoint 与边界；
+- 验证 finish reason、非空长度和无 Tool Call；
+- 持久化 latest summary 与原始 Message 边界；
 - 请求 Chat State 原子安装压缩后的 Conversation；
-- 重新物化 System、Conversation 和 Tool Surface；
-- 继续通过 `ModelRequestBuilder` 发起调用。
+- 下一次 Context Window Inspection 或普通 Turn 再从各自权威来源物化 System、Conversation 和 Tool Surface；
+- 后续普通 Turn 继续通过 `ModelRequestBuilder` 发起调用。
 
 协调器不应把摘要逻辑、System Source 加载或 Tool Materialization 下沉到 Chat State。
 
@@ -745,9 +748,13 @@ Adapter 不知道 `AGENTS.md` 路径、Chat State 或 System Context 来源。
 
 ### 10.2 Conversation
 
-- Chat State 返回完整已提交 Conversation；
+- Chat State 在未压缩时返回完整已提交 Conversation，压缩后返回摘要加后续新消息；
 - `ConversationView` 不包含 Draft；
 - Assistant Message 和 Tool Result 写入后会进入下一次 Model Call；
+- 无内容的 Conversation 不发起压缩模型调用；
+- 活跃 Turn 存在时拒绝手动压缩；
+- 模型、摘要验证或持久化失败时保留旧 Conversation；
+- 压缩摘要安装后，下一 Turn 只看到 System Context、摘要和新的 User Message，而普通聊天记录仍显示原始消息；
 - Chat State 不接收 Model、System Prompt 或 Tool Definitions。
 
 ### 10.3 Tool Surface
@@ -777,7 +784,7 @@ Adapter 不知道 `AGENTS.md` 路径、Chat State 或 System Context 来源。
 - source 变化或移除时只产生预期 update/new generation，不静默复用旧内容；
 - synthetic User-role item 不会被识别成最后一个真实用户请求；
 - 同一 synthetic item 在 resume/rewind 后不会重复注入；
-- 压缩后 Conversation 变为 checkpoint + recent tail，而 System Context 和 Tool Surface 从各自来源重新物化；
+- 自动压缩后 Conversation 仍遵守 summary + post-boundary tail，且 System Context 和 Tool Surface 从各自来源重新物化；
 - 压缩前后未变化的 System 和 Tool 前缀保持字节一致；
 - Chat State API 仍不接收 Model、System Sources 或 Tool Definitions 来构造完整请求。
 
@@ -788,7 +795,7 @@ Adapter 不知道 `AGENTS.md` 路径、Chat State 或 System Context 来源。
 - Memory；
 - Plan；
 - Skill；
-- Compaction；
+- 自动 Compaction、上下文溢出重试、lossy 降级和 checkpoint rewind/replay；
 - MCP；
 - Plugin；
 - Context Epoch；
@@ -817,16 +824,19 @@ System Materialization
 - `FinalizedToolset` 同时提供模型可见 definitions 与实际 dispatch；
 - `ModelRequestBuilder` 集中组装请求并生成只读预算估算；
 - 预算字段已收敛为 System Context、Conversation、Tool Surface 和总输入；
+- 空闲 Session 可由 `/compact` 显式触发摘要调用，成功后原子替换 Chat State Conversation；
+- `conversation_compactions` 保存 latest summary 的原始消息边界，原始 `messages` 保留给聊天记录；
+- Context Window Inspection 和重启后的 Session Runtime 都读取当前压缩投影；
 - Provider Adapter 继续只负责协议编码。
 
-本轮没有新增 Source Registry、Context Epoch、synthetic message、Compaction 状态机或 `ToolSurface` 空壳类型，也没有改变现有 Session、Tool、Provider 和 Storage 所有权。
+本轮没有新增 Source Registry、Context Epoch、typed synthetic provenance、自动 Compaction 状态机或 `ToolSurface` 空壳类型，也没有改变现有 Session、Tool、Provider 和 Storage 所有权。
 
 未来功能按需求分阶段加入：
 
 1. 第一个需要跨调用追踪的动态 System Source 出现时，引入最小 source lifecycle；
-2. 第一个系统生成且需要持久化/重放的 Conversation item 出现时，引入 synthetic provenance；
-3. 实现 Compaction 时，再加入 checkpoint、Conversation 原子替换和 Core recovery coordinator；
-4. 实现跨进程恢复或稳定 cache generation 时，再持久化 source snapshot/epoch；
+2. 出现多个系统生成 Conversation item 或需要 rewind/replay 时，把当前压缩摘要的文本标记升级为 typed synthetic provenance；
+3. 若未来引入自动 Compaction，再单独增加预算阈值、溢出重试和防重入策略，不复用普通 Turn；
+4. 实现跨进程 Turn 恢复或稳定 cache generation 时，再持久化 source snapshot/epoch；
 5. Memory、Plan、Skill 分别从自己的权威状态向三条链投影，不改回 Chat State 完整请求组装。
 
 最终原则可以压缩为一句话：

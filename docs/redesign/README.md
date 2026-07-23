@@ -40,7 +40,7 @@
 本轮不复制 Grok 的：
 
 - MCP；
-- Compaction；
+- 自动阈值 Compaction、上下文溢出压缩重试、lossy 降级与跨进程压缩回放；
 - Memory；
 - Subagent；
 - Plugin/Hook；
@@ -62,7 +62,7 @@
 10. `Prompt` 只表示 System/User Prompt 等模型指令内容；目标领域中不存在 `PromptId`、Prompt 状态或 `prompts` 表。
 11. 第一阶段不恢复未完成 Turn。启动时只把遗留 `running` 状态标记为 `interrupted`。
 12. Trace 是 best-effort 诊断数据，不能决定业务状态，也不能触发工具重放。
-13. 目标数据库收敛为 7 张表：Provider Credential、Model、Session、Turn、Message、Trace 和 Migration；密文与公开模型配置分离。
+13. 当前数据库为 8 张表：Provider Credential、Model、Session、Turn、Message、Conversation Compaction、Trace 和 Migration；密文与公开模型配置分离。
 14. Desktop 是 Core 的协议客户端：Command 提交意图/读取快照，Event 传递 Live Update，React 不复制 Runtime 状态机。
 
 ## 4. 目标主链路

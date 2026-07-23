@@ -1,8 +1,8 @@
 use openwork_core::{
-    session::TurnId, ClientRequestId, ContextWindowInspection, LoadedSession, OpenWorkCore,
-    PermissionDecision, ReapplyFileChangesResult, SessionId, SessionInput, SessionRecord,
-    SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TraceTurnSummary, TurnAccepted, TurnTrace,
-    UndoFileChangesResult,
+    session::TurnId, ClientRequestId, ContextWindowInspection, ConversationCompaction,
+    LoadedSession, OpenWorkCore, PermissionDecision, ReapplyFileChangesResult, SessionId,
+    SessionInput, SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId,
+    TraceTurnSummary, TurnAccepted, TurnTrace, UndoFileChangesResult,
 };
 use openwork_models::model::ContentBlock;
 
@@ -41,6 +41,16 @@ pub async fn runtime_context_window_inspect(
     session_id: String,
 ) -> Result<ContextWindowInspection, CommandError> {
     core.inspect_context_window(&SessionId::new(session_id))
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_session_compact(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+) -> Result<ConversationCompaction, CommandError> {
+    core.compact_conversation(&SessionId::new(session_id))
         .await
         .map_err(CommandError::from)
 }

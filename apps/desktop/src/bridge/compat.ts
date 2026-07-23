@@ -79,6 +79,19 @@ export interface RuntimeContextWindowInspection {
   budget: RuntimeContextInspectionBudget
 }
 
+export interface RuntimeConversationCompaction {
+  id: string
+  sessionId: string
+  sequence: number
+  throughMessageSequence: number
+  sourceMessageCount: number
+  resolvedModelName: string
+  summary: string
+  inputTokens: number | null
+  outputTokens: number | null
+  createdAt: string
+}
+
 export interface RuntimeTurnAccepted {
   turnId: string
   clientRequestId: string

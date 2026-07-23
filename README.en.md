@@ -199,7 +199,7 @@ Still incomplete:
 - OS-level sandboxing and reliable tool side-effect reconciliation;
 - automated live-provider smoke tests.
 
-The current `0.1.x` scope does not include cross-process unfinished-turn recovery, an Event Journal, checkpoints, memory, MCP, planning, skills, compaction, Git integration, repository-level diffs, or worktrees. The authoritative design documents define the complete boundary.
+Compaction in the current `0.1.x` scope is limited to an explicit `/compact` command on an idle Session; after success it replaces only the Conversation projection. Automatic thresholds, context-overflow compaction and resubmission, lossy fallback, and cross-process compaction replay are excluded. Cross-process unfinished-turn recovery, an Event Journal, general checkpoints, memory, MCP, planning, skills, Git integration, repository-level diffs, and worktrees also remain out of scope. The authoritative design documents define the complete boundary.
 
 ## Documentation
 

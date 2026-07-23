@@ -89,6 +89,19 @@ impl ChatStateHandle {
         self.send(ChatStateCommand::DiscardDraft).await
     }
 
+    /// Atomically replaces the committed Conversation after validating the
+    /// complete replacement. The previous Conversation remains unchanged when
+    /// validation fails.
+    pub async fn replace_conversation(&self, messages: Vec<Message>) -> Result<(), ChatStateError> {
+        let (respond_to, response) = oneshot::channel();
+        self.send(ChatStateCommand::ReplaceConversation {
+            messages,
+            respond_to,
+        })
+        .await?;
+        response.await.map_err(|_| ChatStateError::ActorStopped)?
+    }
+
     pub async fn conversation_view(&self) -> Result<ConversationView, ChatStateError> {
         let (respond_to, response) = oneshot::channel();
         self.send(ChatStateCommand::ConversationView { respond_to })
@@ -144,6 +157,12 @@ async fn run_actor(mut state: ConversationState, mut command_rx: mpsc::Receiver<
                 let _ = respond_to.send(state.finish_draft());
             }
             ChatStateCommand::DiscardDraft => state.discard_draft(),
+            ChatStateCommand::ReplaceConversation {
+                messages,
+                respond_to,
+            } => {
+                let _ = respond_to.send(state.replace_conversation(messages));
+            }
             ChatStateCommand::ConversationView { respond_to } => {
                 let _ = respond_to.send(state.conversation_view());
             }
@@ -215,5 +234,45 @@ mod tests {
         chat.discard_draft().await.expect("discard");
 
         assert!(chat.snapshot().await.expect("snapshot").draft.is_none());
+    }
+
+    #[tokio::test]
+    async fn replaces_the_committed_conversation_atomically() {
+        let chat =
+            ChatStateHandle::spawn(vec![Message::text(Role::User, "old")]).expect("chat state");
+
+        chat.replace_conversation(vec![Message::text(Role::User, "summary")])
+            .await
+            .expect("replacement");
+
+        assert_eq!(
+            chat.snapshot().await.expect("snapshot").messages,
+            [Message::text(Role::User, "summary")]
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_the_previous_conversation_when_replacement_is_invalid() {
+        let chat =
+            ChatStateHandle::spawn(vec![Message::text(Role::User, "old")]).expect("chat state");
+        let invalid = Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "orphan".to_string(),
+                name: "read".to_string(),
+                output: vec![ContentBlock::text("result")],
+                state: ToolResultState::Success,
+                artifacts: Vec::new(),
+            })],
+        };
+
+        assert!(matches!(
+            chat.replace_conversation(vec![invalid]).await,
+            Err(ChatStateError::UnmatchedToolResult(id)) if id == "orphan"
+        ));
+        assert_eq!(
+            chat.snapshot().await.expect("snapshot").messages,
+            [Message::text(Role::User, "old")]
+        );
     }
 }

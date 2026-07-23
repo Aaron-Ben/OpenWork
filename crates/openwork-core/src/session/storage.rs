@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use openwork_models::model::{Message, TokenUsage};
 
-use super::{ClientRequestId, ResolvedModel, SessionId, TurnId, TurnOutcome};
+use super::{
+    ClientRequestId, ConversationCompaction, ResolvedModel, SessionId, TurnId, TurnOutcome,
+};
 
 #[async_trait]
 pub trait SessionStorage: Send + Sync {
@@ -27,6 +29,22 @@ pub trait SessionStorage: Send + Sync {
     async fn append_tool_result(&self, turn_id: &TurnId, message: &Message) -> Result<(), String>;
 
     async fn finish_turn(&self, turn_id: &TurnId, outcome: &TurnOutcome) -> Result<(), String>;
+
+    async fn save_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+        source_message_count: u32,
+        resolved_model_name: &str,
+        summary: &str,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    ) -> Result<ConversationCompaction, String>;
+
+    async fn delete_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+        compaction_id: &str,
+    ) -> Result<(), String>;
 }
 
 #[derive(Debug, Default)]
@@ -71,6 +89,33 @@ impl SessionStorage for NoopSessionStorage {
     }
 
     async fn finish_turn(&self, _turn_id: &TurnId, _outcome: &TurnOutcome) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn save_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+        source_message_count: u32,
+        resolved_model_name: &str,
+        summary: &str,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    ) -> Result<ConversationCompaction, String> {
+        Ok(ConversationCompaction::in_memory(
+            session_id,
+            source_message_count,
+            resolved_model_name,
+            summary,
+            input_tokens,
+            output_tokens,
+        ))
+    }
+
+    async fn delete_conversation_compaction(
+        &self,
+        _session_id: &SessionId,
+        _compaction_id: &str,
+    ) -> Result<(), String> {
         Ok(())
     }
 }

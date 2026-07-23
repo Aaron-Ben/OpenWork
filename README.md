@@ -199,7 +199,7 @@ TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
 - OS 级 Sandbox 和可靠的工具副作用对账；
 - 自动化 Live Provider Smoke Test。
 
-当前 `0.1.x` 不包含跨进程恢复未完成 Turn、Event Journal、Checkpoint、Memory、MCP、Plan、Skill、Compaction、Git 集成、仓库级 Diff 或 Worktree。完整边界以权威设计文档为准。
+当前 `0.1.x` 的 Compaction 范围仅限空闲 Session 中显式调用 `/compact`，成功后只替换 Conversation 投影；不包含自动阈值、上下文溢出压缩重试、lossy 降级或跨进程压缩回放。跨进程恢复未完成 Turn、Event Journal、通用 Checkpoint、Memory、MCP、Plan、Skill、Git 集成、仓库级 Diff 和 Worktree 仍不在范围内。完整边界以权威设计文档为准。
 
 ## 文档
 

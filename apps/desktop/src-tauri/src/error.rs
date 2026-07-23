@@ -1,4 +1,4 @@
-use openwork_core::{OpenWorkCoreError, SessionError, StorageError};
+use openwork_core::{CompactionError, OpenWorkCoreError, SessionError, StorageError};
 use openwork_models::provider::ProviderRepositoryError;
 use serde::Serialize;
 
@@ -89,6 +89,37 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::InternalError,
                 "Session runtime stopped unexpectedly",
             ),
+            OpenWorkCoreError::Compaction(CompactionError::SessionActive(turn_id)) => Self::new(
+                CommandErrorCode::OperationConflict,
+                format!("Session has an active turn and cannot be compacted: {turn_id}"),
+            ),
+            OpenWorkCoreError::Compaction(CompactionError::EmptyConversation) => Self::new(
+                CommandErrorCode::InvalidRequest,
+                "Conversation is empty and cannot be compacted",
+            ),
+            OpenWorkCoreError::Compaction(CompactionError::Model(error))
+            | OpenWorkCoreError::Compaction(CompactionError::Stream(error)) => Self::new(
+                CommandErrorCode::ModelRequestFailed,
+                format!("Conversation compaction model request failed: {error}"),
+            ),
+            OpenWorkCoreError::Compaction(CompactionError::InvalidResponse(message)) => Self::new(
+                CommandErrorCode::ModelRequestFailed,
+                format!("Conversation compaction returned an unusable summary: {message}"),
+            ),
+            OpenWorkCoreError::Compaction(CompactionError::Persistence(_)) => Self::new(
+                CommandErrorCode::DatabaseUnavailable,
+                "Conversation compaction could not be persisted",
+            ),
+            OpenWorkCoreError::Compaction(
+                CompactionError::Context(_) | CompactionError::Request(_),
+            ) => Self::new(CommandErrorCode::ConfigurationInvalid, error.to_string()),
+            OpenWorkCoreError::Compaction(
+                CompactionError::MessageCountOverflow
+                | CompactionError::MissingResponse
+                | CompactionError::DuplicateResponse
+                | CompactionError::ChatState(_)
+                | CompactionError::ActorStopped,
+            ) => Self::new(CommandErrorCode::InternalError, error.to_string()),
             OpenWorkCoreError::Storage(StorageError::InvalidInput(message)) => {
                 Self::new(CommandErrorCode::InvalidRequest, message)
             }
@@ -147,7 +178,7 @@ impl From<OpenWorkCoreError> for CommandError {
 
 #[cfg(test)]
 mod tests {
-    use openwork_core::OpenWorkCoreError;
+    use openwork_core::{CompactionError, OpenWorkCoreError, RuntimeTurnId};
     use openwork_models::provider::ProviderRepositoryError;
 
     use super::{CommandError, CommandErrorCode};
@@ -172,5 +203,32 @@ mod tests {
 
         assert_eq!(error.code, CommandErrorCode::OperationConflict);
         assert_eq!(error.message, "File change has not been undone: change-1");
+    }
+
+    #[test]
+    fn active_session_compaction_is_an_operation_conflict() {
+        let error = CommandError::from(OpenWorkCoreError::Compaction(
+            CompactionError::SessionActive(RuntimeTurnId::new("turn-1")),
+        ));
+
+        assert_eq!(error.code, CommandErrorCode::OperationConflict);
+        assert_eq!(
+            error.message,
+            "Session has an active turn and cannot be compacted: turn-1"
+        );
+    }
+
+    #[test]
+    fn compaction_persistence_details_are_redacted() {
+        let error = CommandError::from(OpenWorkCoreError::Compaction(
+            CompactionError::Persistence("postgres://user:secret@localhost/openwork".to_string()),
+        ));
+
+        assert_eq!(error.code, CommandErrorCode::DatabaseUnavailable);
+        assert_eq!(
+            error.message,
+            "Conversation compaction could not be persisted"
+        );
+        assert!(!error.message.contains("secret"));
     }
 }

@@ -29,6 +29,8 @@ const EMPTY_MESSAGES: RuntimeStoredMessage[] = []
 export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
+  const [isCompacting, setIsCompacting] = useState(false)
+  const [compactionError, setCompactionError] = useState<string | null>(null)
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null)
   const [contextInspectorOpen, setContextInspectorOpen] = useState(false)
   const [contextInspection, setContextInspection] = useState<RuntimeContextWindowInspection | null>(null)
@@ -37,6 +39,8 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const [contextInspectionRefresh, setContextInspectionRefresh] = useState(0)
   const [selectedTrace, setSelectedTrace] = useState<{ turnId: string; providerToolCallId?: string } | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const activeSessionIdRef = useRef(sessionId)
+  activeSessionIdRef.current = sessionId
   const canonical = useSessionStore((state) => sessionId ? state.messagesBySession[sessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
   const runtime = useRuntimeStore((state) => sessionId ? state.bySession[sessionId] ?? EMPTY_RUNTIME_VIEW : EMPTY_RUNTIME_VIEW)
   const session = useSessionStore((state) => sessionId ? state.summaries[sessionId] : undefined)
@@ -81,6 +85,8 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     setContextInspectorOpen(false)
     setContextInspection(null)
     setContextInspectionError(null)
+    setCompactionError(null)
+    setIsCompacting(false)
   }, [sessionId])
 
   useEffect(() => setContextUsage(null), [sessionId, contextWindowTokens])
@@ -154,10 +160,35 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
   async function send() {
     const text = draft.trim()
-    if (!text || isSending || !sessionId) return
+    if (!text || isSending || isCompacting || !sessionId) return
+    if (text.toLowerCase() === '/compact') {
+      await runCompaction()
+      return
+    }
     setDraft('')
     const accepted = await startTurn(text)
     if (!accepted) setDraft(text)
+  }
+
+  async function runCompaction() {
+    if (!sessionId || isSending || isCompacting) return
+    const targetSessionId = sessionId
+    setDraft('')
+    setCompactionError(null)
+    setIsCompacting(true)
+    try {
+      await coreCommands.compactConversation(targetSessionId)
+      if (activeSessionIdRef.current !== targetSessionId) return
+      setContextInspectionError(null)
+      setContextInspectorOpen(true)
+      setContextInspectionRefresh((value) => value + 1)
+    } catch (reason) {
+      if (activeSessionIdRef.current !== targetSessionId) return
+      setCompactionError(resolveErrorMessage(reason))
+      setDraft('/compact')
+    } finally {
+      if (activeSessionIdRef.current === targetSessionId) setIsCompacting(false)
+    }
   }
 
   async function undoFileChanges(changeIds: string[]) {
@@ -250,9 +281,9 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
             {runtime.syncState === 'resyncing' ? t('chat.syncResyncing') : t('chat.syncStale')}
           </p>
         ) : null}
-        {runtime.error || sessionError ? (
+        {compactionError || runtime.error || sessionError ? (
           <p className="mx-auto mb-2 max-w-3xl px-6 text-xs text-status-danger-ink max-[560px]:px-4" role="alert">
-            {runtime.error ?? sessionError}
+            {compactionError ?? runtime.error ?? sessionError}
           </p>
         ) : null}
         <ChatInput
@@ -264,12 +295,16 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           contextInspectorOpen={contextInspectorOpen}
           value={draft}
           isSending={isSending}
+          isCompacting={isCompacting}
           disabled={!sessionId || !sessionModel}
           onValueChange={setDraft}
           onModelChange={() => undefined}
           onSubmit={() => void send()}
           onCancel={() => void cancelTurn()}
           onInspectContext={sessionId ? () => setContextInspectorOpen(true) : undefined}
+          onSlashCommand={(command) => {
+            if (command === 'compact') void runCompaction()
+          }}
         />
       </div>
     </div>

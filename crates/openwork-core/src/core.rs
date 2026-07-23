@@ -28,8 +28,9 @@ use crate::context::{
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
-    ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
-    SessionRuntimeConfig, SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TurnAccepted, TurnId,
+    ClientRequestId, CompactionError, ConversationCompaction, PermissionDecision, ResolvedModel,
+    SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot,
+    SessionUpdateEnvelope, ToolCallId, TurnAccepted, TurnId,
 };
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
@@ -104,6 +105,8 @@ pub enum OpenWorkCoreError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    Compaction(#[from] CompactionError),
     #[error("session not found: {0}")]
     SessionNotFound(String),
     #[error("session has no default model: {0}")]
@@ -336,14 +339,14 @@ impl OpenWorkCore {
             .await
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
 
-        let current_turn_id = loaded
-            .messages
+        let conversation_records = self.storage.load_conversation_records(session_id).await?;
+        let current_turn_id = conversation_records
             .iter()
             .rev()
             .find_map(|message| message.turn_id.clone());
-        let mut conversation = Vec::with_capacity(loaded.messages.len());
-        let mut inspected_messages = Vec::with_capacity(loaded.messages.len());
-        for message in loaded.messages {
+        let mut conversation = Vec::with_capacity(conversation_records.len());
+        let mut inspected_messages = Vec::with_capacity(conversation_records.len());
+        for message in conversation_records {
             if message.role == Role::System {
                 return Err(OpenWorkCoreError::RuntimeComponent(
                     "persisted system messages are not valid Conversation input".to_string(),
@@ -428,6 +431,15 @@ impl OpenWorkCore {
         let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
         Ok(handle.start_turn(client_request_id, input).await?)
+    }
+
+    pub async fn compact_conversation(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<ConversationCompaction, OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        let handle = self.session_handle(session_id).await?;
+        Ok(handle.compact_conversation().await?)
     }
 
     pub async fn undo_file_changes(

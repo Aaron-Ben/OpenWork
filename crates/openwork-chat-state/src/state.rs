@@ -107,6 +107,18 @@ impl ConversationState {
         self.draft = None;
     }
 
+    pub(crate) fn replace_conversation(
+        &mut self,
+        messages: Vec<Message>,
+    ) -> Result<(), ChatStateError> {
+        if self.draft.is_some() {
+            return Err(ChatStateError::DraftAlreadyActive);
+        }
+        let replacement = Self::try_new(messages)?;
+        *self = replacement;
+        Ok(())
+    }
+
     pub(crate) fn conversation_view(&self) -> ConversationView {
         ConversationView {
             messages: self.messages.clone(),

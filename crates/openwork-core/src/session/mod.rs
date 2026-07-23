@@ -1,5 +1,6 @@
 mod actor;
 mod commands;
+mod compaction;
 mod ids;
 mod run_loop;
 mod storage;
@@ -10,6 +11,8 @@ pub use actor::{SessionHandle, SessionRuntimeConfig};
 pub use commands::{
     PermissionDecision, PermissionRequest, ResolvedModel, SessionError, TurnAccepted, TurnOutcome,
 };
+pub(crate) use compaction::compaction_summary_message;
+pub use compaction::{CompactionError, ConversationCompaction};
 pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use storage::{NoopSessionStorage, SessionStorage};
 pub use trace::{

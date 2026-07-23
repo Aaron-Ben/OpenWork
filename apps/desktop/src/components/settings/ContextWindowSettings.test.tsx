@@ -14,6 +14,7 @@ describe('ContextWindowSettings', () => {
     expect(markup).toContain('value="258000"')
     expect(markup).toContain('Tokens')
     expect(markup).toContain('不属于某个模型')
-    expect(markup).toContain('不会自动裁剪或压缩')
+    expect(markup).toContain('不会自动压缩')
+    expect(markup).toContain('/compact')
   })
 })

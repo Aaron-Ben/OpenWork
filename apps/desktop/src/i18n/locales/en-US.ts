@@ -70,6 +70,10 @@ export const enUS = {
     jumpToTurn: 'Jump to turn {{index}}: {{title}}',
     turnPreview: 'Turn {{index}}',
     placeholder: 'Ask anything…', selectModel: 'Select model', noModel: 'No models', send: 'Send', stop: 'Stop generating',
+    commands: {
+      menu: 'Slash commands', compacting: 'Compacting conversation',
+      compact: { label: 'Compact conversation', description: 'Summarize the current model-visible Conversation and replace its active projection.' },
+    },
     contextWindow: 'Context window:', contextUsagePercent: '{{usedPercent}}% used ({{leftPercent}}% left)',
     contextTokensUsed: '{{used}} / {{total}} tokens used', contextUsageEstimated: 'Provider-neutral estimate; protocol framing excluded',
     contextUsageUnavailable: 'Context usage unavailable',
@@ -81,7 +85,7 @@ export const enUS = {
       refresh: 'Refresh context preview', close: 'Close context preview', used: 'Input estimate', usage: 'Window used',
       messages: 'Messages', tools: 'Tools', estimatedTokens: '~{{count}} tokens',
       systemContext: 'System Context', systemDescription: 'Stable agent instructions and project-level sources, with provenance keys.',
-      conversation: 'Conversation', conversationDescription: 'Persisted user, assistant, and tool messages in model-visible order.',
+      conversation: 'Conversation', conversationDescription: 'The current model-visible projection in request order; after compaction this contains the summary and newer messages.',
       toolSurface: 'Tool Surface', toolDescription: 'Tool descriptions and JSON schemas available to this call.',
       currentTurn: 'Current turn', noConversation: 'No persisted conversation messages yet.', noTools: 'No tools are available.',
       providerOverheadNote: 'Token counts are provider-neutral estimates. Provider framing is excluded. A running turn may retain the System Context resolved when that turn started.',
@@ -105,7 +109,7 @@ export const enUS = {
     contextWindow: {
       title: 'Context window', description: 'Configure the OpenWork context budget independently from model selection.',
       sizeLabel: 'Context window size', sizeDescription: 'The token capacity used by context usage and budget displays.',
-      observationOnly: 'This currently controls budget observation only. It does not automatically trim or compact the conversation.',
+      observationOnly: 'This controls budget observation only. OpenWork does not compact automatically; use /compact explicitly.',
       save: 'Save', saved: 'Saved', invalid: 'Enter a positive whole number of tokens.',
     },
     models: {

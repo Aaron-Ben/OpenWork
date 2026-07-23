@@ -88,6 +88,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     assert_eq!(
         business_tables,
         vec![
+            "conversation_compactions",
             "messages",
             "models",
             "provider_credentials",
@@ -108,7 +109,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     .fetch_all(storage.pool())
     .await
     .unwrap();
-    assert_eq!(timestamp_columns.len(), 13);
+    assert_eq!(timestamp_columns.len(), 14);
     assert!(
         timestamp_columns
             .iter()
@@ -128,6 +129,11 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             (
                 202_607_180_003,
                 "store utc naive timestamps".to_string(),
+                true,
+            ),
+            (
+                202_607_230_001,
+                "add conversation compactions".to_string(),
                 true,
             ),
         ]
@@ -248,7 +254,28 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             .collect::<Vec<_>>(),
         vec![Role::User, Role::Assistant, Role::Tool, Role::Assistant]
     );
+    let compacted = storage
+        .save_conversation_compaction(
+            &session_id,
+            4,
+            "deepseek-v4-flash",
+            "# Goal\nContinue the completed file-reading task from a compacted Conversation while preserving the raw transcript for the desktop.",
+            Some(30),
+            Some(9),
+        )
+        .await
+        .unwrap();
+    assert_eq!(compacted.through_message_sequence, 4);
+    assert_eq!(compacted.input_tokens, Some(30));
+    let projected = storage.load_messages(&session_id).await.unwrap();
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].role, Role::User);
+    let ContentBlock::Text(projected_summary) = &projected[0].content[0] else {
+        panic!("projected compaction summary")
+    };
+    assert!(projected_summary.text.contains("<conversation_summary>"));
     let mut records = storage.load_message_records(&session_id).await.unwrap();
+    assert_eq!(records.len(), 4);
     let tool_record = records
         .iter_mut()
         .find(|record| record.role == Role::Tool)
@@ -274,6 +301,52 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         })
         .and_then(|artifact| artifact.payload["undone"].as_bool());
     assert_eq!(undone, Some(true));
+
+    let continuation_turn_id = TurnId::new(unique("turn-after-compaction"));
+    storage
+        .begin_turn(
+            &session_id,
+            &continuation_turn_id,
+            &ClientRequestId::new(unique("request-after-compaction")),
+            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &Message::text(Role::User, "continue from the summary"),
+        )
+        .await
+        .unwrap();
+    storage
+        .append_assistant_message(
+            &continuation_turn_id,
+            &Message::text(Role::Assistant, "continued"),
+            None,
+        )
+        .await
+        .unwrap();
+    storage
+        .finish_turn(
+            &continuation_turn_id,
+            &TurnOutcome::Completed {
+                final_text: "continued".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let projected_with_tail = storage.load_messages(&session_id).await.unwrap();
+    assert_eq!(
+        projected_with_tail
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        vec![Role::User, Role::User, Role::Assistant]
+    );
+    assert_eq!(
+        storage
+            .load_message_records(&session_id)
+            .await
+            .unwrap()
+            .len(),
+        6
+    );
+
     let summary: TurnUsageSummary = sqlx::query_as(
         "SELECT status, model_call_count, tool_call_count,
                 input_tokens, output_tokens, cached_input_tokens,
