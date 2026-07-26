@@ -108,6 +108,9 @@ export const zhCN = {
     noModel: '暂无模型',
     send: '发送',
     stop: '停止生成',
+    loading: '正在加载会话…',
+    loadFailed: '会话加载失败，请重试。',
+    retry: '重试',
     commands: {
       menu: '斜杠命令',
       compacting: '正在压缩 Conversation',
@@ -184,6 +187,10 @@ export const zhCN = {
   },
   settings: {
     title: '设置',
+    general: {
+      title: '通用',
+      description: '外观、上下文窗口与 Trace 内容偏好。',
+    },
     contextWindow: {
       title: '上下文窗口',
       description: '独立于模型选择，配置 OpenWork 使用的上下文预算。',
@@ -258,7 +265,7 @@ export const zhCN = {
     ranCommand: '运行 {{command}}', ranCommandFallback: '运行了命令', editedFile: '编辑 {{name}}',
     wroteFile: '写入 {{name}}', wroteFileFallback: '写入了文件', editedFileFallback: '编辑了文件', readFile: '读取 {{name}}', readFileFallback: '读取了文件',
     listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目录', calledTool: '调用 {{name}}',
-    summarySeparator: '、', stopped: '已停止', output: '输出', shell: 'Shell', copy: '复制',
+    summarySeparator: '、', stopped: '已停止', output: '输出', shell: 'Shell', copy: '复制', copied: '已复制',
     createdFile: '创建了文件', createdNamedFile: '创建 {{name}}', editedOneFile: '编辑了文件', editedFileCount: '编辑了 {{count}} 个文件',
     undo: '撤销', undoing: '正在撤销', undone: '已撤销', undoFailed: '撤销失败：{{message}}',
     reapply: '恢复', reapplying: '正在恢复', reapplyFailed: '恢复失败：{{message}}',

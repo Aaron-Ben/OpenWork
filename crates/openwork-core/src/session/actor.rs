@@ -304,7 +304,8 @@ impl SessionActor {
     ) -> Self {
         Self {
             snapshot: SessionSnapshot {
-                version: 2,
+                // Snapshot V3 adds the `compacting` running phase.
+                version: 3,
                 session_id: config.session_id.clone(),
                 last_update_sequence: 0,
                 runtime: SessionRuntimeSnapshot::Idle,
@@ -695,10 +696,11 @@ impl SessionActor {
 
     fn emit(&mut self, turn_id: TurnId, update: SessionUpdate) {
         let envelope = SessionUpdateEnvelope {
-            // Version 3 adds structured terminal tool artifacts. Version 2
-            // introduced `tool_call_progress`; snapshot version 2 carries the
-            // same artifacts on running tool calls.
-            version: 3,
+            // Version 4 adds the `compacting` phase. Version 3 adds structured
+            // terminal tool artifacts. Version 2 introduced
+            // `tool_call_progress`; snapshot version 2 carries the same
+            // artifacts on running tool calls.
+            version: 4,
             session_id: self.session_id.clone(),
             turn_id,
             sequence: self.next_update_sequence,

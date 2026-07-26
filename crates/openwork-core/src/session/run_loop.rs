@@ -370,6 +370,10 @@ impl TurnRunner {
         system_context: &ResolvedSystemContext,
         trigger: CompactionTrigger,
     ) -> Result<(), TurnRunError> {
+        self.update(SessionUpdate::PhaseChanged {
+            phase: SessionPhase::Compacting,
+        })
+        .await?;
         run_compaction(ConversationCompactionRequest {
             session_id: self.request.session_id.clone(),
             model_id: self.request.resolved_model.model_id.clone(),
@@ -389,7 +393,12 @@ impl TurnRunner {
         })
         .await
         .map(|_| ())
-        .map_err(|error| TurnRunError::Compaction(error.to_string()))
+        .map_err(|error| TurnRunError::Compaction(error.to_string()))?;
+        self.update(SessionUpdate::PhaseChanged {
+            phase: SessionPhase::RunningModel,
+        })
+        .await?;
+        Ok(())
     }
 
     async fn invoke_and_consume_model(

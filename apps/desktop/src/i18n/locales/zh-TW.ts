@@ -80,6 +80,7 @@ export const zhTW = {
     jumpToTurn: '跳至第 {{index}} 輪：{{title}}',
     turnPreview: '第 {{index}} 輪',
     placeholder: '想問些什麼……', selectModel: '選擇模型', noModel: '暫無模型', send: '傳送', stop: '停止生成',
+    loading: '正在載入對話……', loadFailed: '對話載入失敗，請重試。', retry: '重試',
     commands: {
       menu: '斜線指令', compacting: '正在壓縮 Conversation',
       compact: { label: '壓縮 Conversation', description: '摘要目前模型可見的 Conversation，並替換其作用中投影。' },
@@ -124,6 +125,10 @@ export const zhTW = {
   },
   settings: {
     title: '設定',
+    general: {
+      title: '一般',
+      description: '外觀、上下文視窗與 Trace 內容偏好。',
+    },
     contextWindow: {
       title: '上下文視窗', description: '獨立於模型選擇，設定 OpenWork 使用的上下文預算。',
       sizeLabel: '上下文視窗大小', sizeDescription: '用於上下文用量顯示與 Core 取樣前預算判斷的 Token 容量，不屬於特定模型。',
@@ -174,7 +179,7 @@ export const zhTW = {
     ranCommand: '執行 {{command}}', ranCommandFallback: '執行了指令', editedFile: '編輯 {{name}}',
     wroteFile: '寫入 {{name}}', wroteFileFallback: '寫入了檔案', editedFileFallback: '編輯了檔案', readFile: '讀取 {{name}}', readFileFallback: '讀取了檔案',
     listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目錄', calledTool: '呼叫 {{name}}',
-    summarySeparator: '、', stopped: '已停止', output: '輸出', shell: 'Shell', copy: '複製',
+    summarySeparator: '、', stopped: '已停止', output: '輸出', shell: 'Shell', copy: '複製', copied: '已複製',
     createdFile: '建立了檔案', createdNamedFile: '建立 {{name}}', editedOneFile: '編輯了檔案', editedFileCount: '編輯了 {{count}} 個檔案',
     undo: '撤銷', undoing: '正在撤銷', undone: '已撤銷', undoFailed: '撤銷失敗：{{message}}',
     reapply: '恢復', reapplying: '正在恢復', reapplyFailed: '恢復失敗：{{message}}',

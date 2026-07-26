@@ -117,7 +117,7 @@ export function TracePage() {
             </SelectContent>
           </Select>
         </div>
-        {error ? <p className="mt-5 rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
+        {error ? <p role="alert" className="mt-5 rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
         <div className="mt-5">
           <TraceList
             items={visible}

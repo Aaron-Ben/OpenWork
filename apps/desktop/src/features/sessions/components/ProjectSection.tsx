@@ -280,7 +280,7 @@ function SessionItem({ session, active, activity, onSelect, onRename, onDelete }
   }
   return (
     <div className="group relative">
-      <button type="button" onClick={onSelect} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-sans text-sm transition ${active ? 'bg-paper font-medium text-ink shadow-sm' : 'text-ink-soft hover:bg-paper hover:text-ink'}`}>
+      <button type="button" onClick={onSelect} aria-current={active ? 'page' : undefined} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-sans text-sm transition ${active ? 'bg-paper font-medium text-ink shadow-sm' : 'text-ink-soft hover:bg-paper hover:text-ink'}`}>
         <span className="relative shrink-0">
           <MessageSquare size={16} className={active ? 'text-clay' : 'text-ink-faint'} />
           {activity !== 'idle' ? <span className={`absolute -right-1 -top-1 size-2 rounded-full ring-2 ring-paper-hover ${activity === 'waiting_permission' ? 'bg-status-warning' : 'bg-status-success'}`} title={activity === 'waiting_permission' ? t('activity.needsInput') : t('activity.running')} /> : null}

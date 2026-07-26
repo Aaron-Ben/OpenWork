@@ -1,8 +1,9 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
+  Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -360,10 +361,23 @@ function ShellDetailsCard({ activity }: { activity: ToolActivity }) {
   const command = activity.summary
   const output = activity.output
   const isError = activity.state === 'error'
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+  }, [])
 
   async function copyTranscript() {
     const text = output ? `$ ${command}\n${output}` : `$ ${command}`
-    await navigator.clipboard?.writeText(text)
+    try {
+      await navigator.clipboard?.writeText(text)
+    } catch {
+      return
+    }
+    setCopied(true)
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = window.setTimeout(() => setCopied(false), 1_500)
   }
 
   return (
@@ -372,12 +386,12 @@ function ShellDetailsCard({ activity }: { activity: ToolActivity }) {
         <span className="min-w-0 flex-1 text-[11px] text-ink-faint">{t('tool.shell')}</span>
         <button
           type="button"
-          aria-label={t('tool.copy')}
-          title={t('tool.copy')}
+          aria-label={copied ? t('tool.copied') : t('tool.copy')}
+          title={copied ? t('tool.copied') : t('tool.copy')}
           onClick={() => void copyTranscript()}
           className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper-hover hover:text-ink"
         >
-          <Copy size={12} />
+          {copied ? <Check size={12} className="text-status-success" /> : <Copy size={12} />}
         </button>
       </div>
       <div className="max-h-72 overflow-auto px-3 pb-2 pt-0.5 font-mono text-xs leading-relaxed">

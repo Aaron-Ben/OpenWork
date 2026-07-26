@@ -15,6 +15,9 @@ pub enum SessionPhase {
     RunningModel,
     RunningTools,
     WaitingPermission,
+    /// An automatic (threshold or overflow) compaction is summarizing the
+    /// conversation inside the active Turn.
+    Compacting,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

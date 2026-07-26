@@ -272,4 +272,32 @@ describe('buildTranscript', () => {
 
     expect(toolResults).toHaveLength(1)
   })
+
+  it('shows a compacting placeholder while an automatic compaction runs without a draft', () => {
+    const runtime = {
+      ...createSessionRuntimeView(),
+      turnId: 'turn-2',
+      clientRequestId: 'request-2',
+      phase: 'compacting' as const,
+    }
+
+    const result = buildTranscript(canonical, runtime)
+
+    expect(result.map((item) => item.id)).toEqual(['message-1', 'live-turn-2'])
+    expect(result[1].parts).toEqual([])
+    expect(result[1].isStreaming).toBe(true)
+    expect(result[1].isCompacting).toBe(true)
+  })
+
+  it('does not emit a live placeholder when the turn is idle without a draft', () => {
+    const runtime = {
+      ...createSessionRuntimeView(),
+      turnId: 'turn-2',
+      clientRequestId: 'request-2',
+    }
+
+    const result = buildTranscript(canonical, runtime)
+
+    expect(result.map((item) => item.id)).toEqual(['message-1'])
+  })
 })

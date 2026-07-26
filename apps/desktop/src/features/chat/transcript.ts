@@ -97,13 +97,15 @@ export function buildTranscript(
     parts.push({ type: 'text', text: runtime.assistantDraft.text })
   }
   parts.push(...toolParts(runtime, persistedToolResultIds))
-  if (runtime.turnId && parts.length > 0) {
+  const compacting = runtime.phase === 'compacting'
+  if (runtime.turnId && (parts.length > 0 || compacting)) {
     transcript.push({
       id: `live-${runtime.turnId}`,
       turnId: runtime.turnId,
       role: 'assistant',
       parts,
       isStreaming: runtime.phase !== 'idle',
+      isCompacting: compacting,
       requestId: runtime.clientRequestId ?? undefined,
     })
   }

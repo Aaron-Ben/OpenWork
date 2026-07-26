@@ -2,11 +2,12 @@
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
 import type { ContentBlock, ToolResultArtifact } from '../type/parts'
 
-export const RUNTIME_SESSION_UPDATE_VERSION = 3
+export const RUNTIME_SESSION_UPDATE_VERSION = 4
 
 export function supportsRuntimeSessionUpdateVersion(version: number): boolean {
-  // V2 added tool progress and V3 added terminal tool artifacts. Older
-  // versions remain readable during an in-process rolling transition.
+  // V2 added tool progress, V3 added terminal tool artifacts, and V4 added
+  // the compacting phase. Older versions remain readable during an
+  // in-process rolling transition.
   return version >= 1 && version <= RUNTIME_SESSION_UPDATE_VERSION
 }
 
@@ -186,7 +187,7 @@ export type RuntimeTurnOutcome =
 
 export type RuntimeSessionUpdate =
   | { type: 'turn_started'; clientRequestId: string }
-  | { type: 'phase_changed'; phase: 'starting' | 'running_model' | 'running_tools' | 'waiting_permission' }
+  | { type: 'phase_changed'; phase: 'starting' | 'running_model' | 'running_tools' | 'waiting_permission' | 'compacting' }
   | { type: 'text_delta'; delta: string }
   | { type: 'reasoning_delta'; delta: string }
   | { type: 'draft_cleared' }
@@ -229,7 +230,7 @@ export type RuntimeSnapshotState =
       state: 'running'
       turnId: string
       clientRequestId: string
-      phase: 'starting' | 'running_model' | 'running_tools' | 'waiting_permission'
+      phase: 'starting' | 'running_model' | 'running_tools' | 'waiting_permission' | 'compacting'
       draftText: string
       draftReasoning: string
       toolCalls: RuntimeLiveToolCall[]

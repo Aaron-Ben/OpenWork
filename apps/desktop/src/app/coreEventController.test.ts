@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { RuntimeSessionSnapshot, RuntimeSessionUpdateEnvelope } from '../bridge/compat'
+import {
+  RUNTIME_SESSION_UPDATE_VERSION,
+  type RuntimeSessionSnapshot,
+  type RuntimeSessionUpdateEnvelope,
+} from '../bridge/compat'
 import { useRuntimeStore } from '../features/chat/runtimeStore'
 import {
   processSessionUpdate,
@@ -99,6 +103,7 @@ describe('coreEventController', () => {
 
   it('does not apply an unsupported update version and leaves an upgrade error visible', async () => {
     const deps = dependencies()
+    const unsupportedVersion = RUNTIME_SESSION_UPDATE_VERSION + 1
     const snapshot: RuntimeSessionSnapshot = {
       version: 1,
       sessionId: 'session-1',
@@ -107,13 +112,13 @@ describe('coreEventController', () => {
     }
     vi.mocked(deps.loadSnapshot).mockResolvedValue(snapshot)
 
-    await processSessionUpdate({ ...envelope(1, 'ignored'), version: 4 }, deps)
+    await processSessionUpdate({ ...envelope(1, 'ignored'), version: unsupportedVersion }, deps)
 
     expect(deps.replaceSnapshot).toHaveBeenCalledWith(snapshot)
     expect(deps.apply).not.toHaveBeenCalled()
     expect(deps.markSyncFailed).toHaveBeenLastCalledWith(
       'session-1',
-      'Unsupported session update version: 4',
+      `Unsupported session update version: ${unsupportedVersion}`,
     )
   })
 })

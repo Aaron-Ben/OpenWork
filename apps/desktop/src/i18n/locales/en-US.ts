@@ -82,6 +82,7 @@ export const enUS = {
     jumpToTurn: 'Jump to turn {{index}}: {{title}}',
     turnPreview: 'Turn {{index}}',
     placeholder: 'Ask anything…', selectModel: 'Select model', noModel: 'No models', send: 'Send', stop: 'Stop generating',
+    loading: 'Loading conversation…', loadFailed: 'The conversation could not be loaded. Try again.', retry: 'Retry',
     commands: {
       menu: 'Slash commands', compacting: 'Compacting conversation',
       compact: { label: 'Compact conversation', description: 'Summarize the current model-visible Conversation and replace its active projection.' },
@@ -128,6 +129,10 @@ export const enUS = {
   },
   settings: {
     title: 'Settings',
+    general: {
+      title: 'General',
+      description: 'Appearance, context window, and trace content preferences.',
+    },
     contextWindow: {
       title: 'Context window', description: 'Configure the OpenWork context budget independently from model selection.',
       sizeLabel: 'Context window size', sizeDescription: 'The token capacity used by context usage displays and Core preflight budgeting.',
@@ -178,7 +183,7 @@ export const enUS = {
     ranCommand: 'Ran {{command}}', ranCommandFallback: 'Ran a command', editedFile: 'Edited {{name}}',
     wroteFile: 'Wrote {{name}}', wroteFileFallback: 'Wrote a file', editedFileFallback: 'Edited a file', readFile: 'Read {{name}}', readFileFallback: 'Read a file',
     listedDirectory: 'Listed {{name}}', listedDirectoryFallback: 'Listed a directory', calledTool: 'Called {{name}}',
-    summarySeparator: ', ', stopped: 'Stopped', output: 'Output', shell: 'Shell', copy: 'Copy',
+    summarySeparator: ', ', stopped: 'Stopped', output: 'Output', shell: 'Shell', copy: 'Copy', copied: 'Copied',
     createdFile: 'Created file', createdNamedFile: 'Created {{name}}', editedOneFile: 'Edited file', editedFileCount: 'Edited {{count}} files',
     undo: 'Undo', undoing: 'Undoing', undone: 'Undone', undoFailed: 'Undo failed: {{message}}',
     reapply: 'Reapply', reapplying: 'Reapplying', reapplyFailed: 'Reapply failed: {{message}}',

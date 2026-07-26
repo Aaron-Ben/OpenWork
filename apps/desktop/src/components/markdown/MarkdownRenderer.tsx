@@ -1,5 +1,6 @@
-import { memo, useMemo, type ReactNode } from 'react'
-import { Copy } from 'lucide-react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Check, Copy } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 type MarkdownVariant = 'default' | 'document' | 'compact'
 
@@ -302,8 +303,23 @@ function CodeBlock({
   language?: string
   variant: MarkdownVariant
 }) {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  const copiedTimerRef = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+  }, [])
+
   async function copyCode() {
-    await navigator.clipboard?.writeText(code)
+    try {
+      await navigator.clipboard?.writeText(code)
+    } catch {
+      return
+    }
+    setCopied(true)
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = window.setTimeout(() => setCopied(false), 1_500)
   }
 
   return (
@@ -314,12 +330,12 @@ function CodeBlock({
         </span>
         <button
           type="button"
-          aria-label="Copy code"
-          title="Copy code"
+          aria-label={copied ? t('tool.copied') : t('tool.copy')}
+          title={copied ? t('tool.copied') : t('tool.copy')}
           onClick={() => void copyCode()}
           className="grid size-6 shrink-0 place-items-center rounded-md text-paper/45 transition-colors hover:bg-paper/10 hover:text-paper"
         >
-          <Copy size={12} />
+          {copied ? <Check size={12} className="text-status-success" /> : <Copy size={12} />}
         </button>
       </div>
       <pre className={preClass(variant)}>

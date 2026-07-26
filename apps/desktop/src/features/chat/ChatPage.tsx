@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles, SquareTerminal } from 'lucide-react'
+import { LoaderCircle, Sparkles, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { AssistantMessage } from './components/AssistantMessage'
@@ -46,12 +46,14 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const highlightTimerRef = useRef<number | null>(null)
+  const stickToBottomRef = useRef(true)
   const activeSessionIdRef = useRef(sessionId)
   activeSessionIdRef.current = sessionId
   const canonical = useSessionStore((state) => sessionId ? state.messagesBySession[sessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
   const runtime = useRuntimeStore((state) => sessionId ? state.bySession[sessionId] ?? EMPTY_RUNTIME_VIEW : EMPTY_RUNTIME_VIEW)
   const session = useSessionStore((state) => sessionId ? state.summaries[sessionId] : undefined)
   const sessionError = useSessionStore((state) => state.error)
+  const loadState = useSessionStore((state) => sessionId ? state.loadStateBySession[sessionId] : undefined)
   const reloadSession = useSessionStore((state) => state.reload)
   const providers = useModelStore((state) => state.providers)
   const contextWindowTokens = useContextWindowStore((state) => state.contextWindowTokens)
@@ -98,8 +100,21 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     setCompactionError(null)
     setIsCompacting(false)
     setHighlightedMessageId(null)
+    stickToBottomRef.current = true
     if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
   }, [sessionId])
+
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (container && stickToBottomRef.current) container.scrollTop = container.scrollHeight
+  }, [messages])
+
+  function handleTranscriptScroll() {
+    const container = scrollContainerRef.current
+    if (!container) return
+    stickToBottomRef.current =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 80
+  }
 
   useEffect(() => () => {
     if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
@@ -199,6 +214,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
       return
     }
     setDraft('')
+    stickToBottomRef.current = true
     const accepted = await startTurn(text)
     if (!accepted) setDraft(text)
   }
@@ -241,12 +257,36 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="relative min-h-0">
-        <div ref={scrollContainerRef} className="h-full overflow-auto" aria-live="polite">
+        <div ref={scrollContainerRef} className="h-full overflow-auto" onScroll={handleTranscriptScroll}>
           {messages.length === 0 ? (
-            <EmptySessionHero
-              hasAvailableModel={hasAvailableModel}
-              hasSession={Boolean(sessionId)}
-            />
+            sessionId && loadState === 'loading' ? (
+              <div className="grid min-h-full place-items-center px-6 py-14" role="status">
+                <span className="inline-flex items-center gap-2 text-sm text-ink-faint">
+                  <LoaderCircle size={15} className="animate-spin" />
+                  {t('chat.loading')}
+                </span>
+              </div>
+            ) : sessionId && loadState === 'error' ? (
+              <div className="grid min-h-full place-items-center px-6 py-14">
+                <div className="text-center">
+                  <p className="text-sm text-status-danger-ink" role="alert">
+                    {sessionError ?? t('chat.loadFailed')}
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-lg border border-line bg-paper px-4 py-2 text-sm text-ink transition hover:bg-paper-hover"
+                    onClick={() => void reloadSession(sessionId)}
+                  >
+                    {t('chat.retry')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <EmptySessionHero
+                hasAvailableModel={hasAvailableModel}
+                hasSession={Boolean(sessionId)}
+              />
+            )
           ) : (
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
               {messages.map((message) => {
@@ -278,6 +318,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                         parts={message.parts}
                         model={message.model}
                         isStreaming={message.isStreaming}
+                        isCompacting={message.isCompacting}
                         onOpenTrace={openTrace}
                         onUndoFileChanges={undoFileChanges}
                         onReapplyFileChanges={reapplyFileChanges}
@@ -321,6 +362,16 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         {runtime.syncState !== 'current' ? (
           <p className="mx-auto mb-2 max-w-3xl px-6 text-xs text-status-warning-ink max-[560px]:px-4">
             {runtime.syncState === 'resyncing' ? t('chat.syncResyncing') : t('chat.syncStale')}
+          </p>
+        ) : null}
+        {isCompacting || runtime.phase === 'compacting' ? (
+          <p
+            className="mx-auto mb-2 flex max-w-3xl items-center gap-2 px-6 text-xs text-ink-faint max-[560px]:px-4"
+            role="status"
+            data-compacting-indicator="true"
+          >
+            <LoaderCircle size={13} className="animate-spin" />
+            {t('chat.commands.compacting')}
           </p>
         ) : null}
         {compactionError || runtime.error || sessionError ? (
