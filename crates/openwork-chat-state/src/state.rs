@@ -3,23 +3,30 @@ use std::collections::HashSet;
 use openwork_models::model::{ContentBlock, Message, Role};
 use thiserror::Error;
 
-use crate::{AssistantDraftSnapshot, ConversationSnapshot, ConversationView};
+use crate::{
+    AssistantDraftSnapshot, ConversationCompactionView, ConversationItem, ConversationSnapshot,
+    ConversationView,
+};
 
 pub(crate) struct ConversationState {
-    messages: Vec<Message>,
+    items: Vec<ConversationItem>,
     draft: Option<AssistantDraftSnapshot>,
     unresolved_tool_calls: HashSet<String>,
 }
 
 impl ConversationState {
     pub(crate) fn try_new(messages: Vec<Message>) -> Result<Self, ChatStateError> {
+        Self::try_new_items(messages.into_iter().map(ConversationItem::real).collect())
+    }
+
+    pub(crate) fn try_new_items(items: Vec<ConversationItem>) -> Result<Self, ChatStateError> {
         let mut state = Self {
-            messages: Vec::new(),
+            items: Vec::new(),
             draft: None,
             unresolved_tool_calls: HashSet::new(),
         };
-        for message in messages {
-            state.append_existing(message)?;
+        for item in items {
+            state.append_existing(item)?;
         }
         Ok(state)
     }
@@ -35,7 +42,7 @@ impl ConversationState {
             role: Role::User,
             content,
         };
-        self.messages.push(message.clone());
+        self.items.push(ConversationItem::real(message.clone()));
         Ok(message)
     }
 
@@ -47,7 +54,7 @@ impl ConversationState {
             });
         }
         self.register_tool_calls(&message)?;
-        self.messages.push(message);
+        self.items.push(ConversationItem::real(message));
         Ok(())
     }
 
@@ -69,7 +76,7 @@ impl ConversationState {
                 return Err(ChatStateError::UnmatchedToolResult(result.id.clone()));
             }
         }
-        self.messages.push(message);
+        self.items.push(ConversationItem::real(message));
         Ok(())
     }
 
@@ -119,30 +126,64 @@ impl ConversationState {
         Ok(())
     }
 
+    pub(crate) fn replace_items(
+        &mut self,
+        items: Vec<ConversationItem>,
+    ) -> Result<(), ChatStateError> {
+        if self.draft.is_some() {
+            return Err(ChatStateError::DraftAlreadyActive);
+        }
+        let replacement = Self::try_new_items(items)?;
+        *self = replacement;
+        Ok(())
+    }
+
     pub(crate) fn conversation_view(&self) -> ConversationView {
         ConversationView {
-            messages: self.messages.clone(),
+            messages: self.items.iter().map(|item| item.message.clone()).collect(),
+        }
+    }
+
+    pub(crate) fn compaction_view(&self) -> ConversationCompactionView {
+        ConversationCompactionView {
+            items: self.items.clone(),
         }
     }
 
     pub(crate) fn snapshot(&self) -> ConversationSnapshot {
         ConversationSnapshot {
-            messages: self.messages.clone(),
+            messages: self.items.iter().map(|item| item.message.clone()).collect(),
             draft: self.draft.clone(),
         }
     }
 
-    fn append_existing(&mut self, message: Message) -> Result<(), ChatStateError> {
-        match message.role {
+    fn append_existing(&mut self, item: ConversationItem) -> Result<(), ChatStateError> {
+        match item.message.role {
             Role::System => return Err(ChatStateError::PersistedSystemMessage),
             Role::User => {
-                if message.content.is_empty() {
+                if item.message.content.is_empty() {
                     return Err(ChatStateError::EmptyMessage);
                 }
-                self.messages.push(message);
+                self.items.push(item);
             }
-            Role::Assistant => self.append_assistant(message)?,
-            Role::Tool => self.append_tool_result(message)?,
+            Role::Assistant => {
+                self.register_tool_calls(&item.message)?;
+                self.items.push(item);
+            }
+            Role::Tool => {
+                if item.message.content.is_empty() {
+                    return Err(ChatStateError::EmptyMessage);
+                }
+                for block in &item.message.content {
+                    let ContentBlock::ToolResult(result) = block else {
+                        return Err(ChatStateError::InvalidToolMessage);
+                    };
+                    if !self.unresolved_tool_calls.remove(&result.id) {
+                        return Err(ChatStateError::UnmatchedToolResult(result.id.clone()));
+                    }
+                }
+                self.items.push(item);
+            }
         }
         Ok(())
     }

@@ -103,7 +103,9 @@ pub(crate) fn usage_from_openai(value: &Value) -> Option<TokenUsage> {
         cached_input_tokens: usage
             .pointer("/prompt_tokens_details/cached_tokens")
             .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+            .or_else(|| usage.get("prompt_cache_hit_tokens"))
             .and_then(Value::as_u64),
+        cache_creation_input_tokens: None,
         reasoning_tokens: usage
             .pointer("/completion_tokens_details/reasoning_tokens")
             .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))

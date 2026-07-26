@@ -107,6 +107,7 @@ fn merge_usage(value: Option<&Value>, existing: Option<TokenUsage>) -> Option<To
         output_tokens: None,
         total_tokens: None,
         cached_input_tokens: None,
+        cache_creation_input_tokens: None,
         reasoning_tokens: None,
     });
     let input_tokens = value
@@ -128,6 +129,10 @@ fn merge_usage(value: Option<&Value>, existing: Option<TokenUsage>) -> Option<To
             .get("cache_read_input_tokens")
             .and_then(Value::as_u64)
             .or(existing.cached_input_tokens),
+        cache_creation_input_tokens: value
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64)
+            .or(existing.cache_creation_input_tokens),
         reasoning_tokens: None,
     })
 }

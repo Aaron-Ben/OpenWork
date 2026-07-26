@@ -61,6 +61,9 @@ pub(crate) fn encode_request(req: &ModelRequest, stream: bool) -> Result<Value, 
     if let Some(temperature) = req.temperature {
         body["temperature"] = json!(temperature);
     }
+    if let Some(top_p) = req.top_p {
+        body["top_p"] = json!(top_p);
+    }
     if !req.tools.is_empty() {
         body["tools"] = Value::Array(
             req.tools
@@ -193,6 +196,7 @@ mod tests {
                 Message::text(Role::User, "hello"),
             ],
             temperature: Some(0.1),
+            top_p: Some(0.9),
             max_output_tokens: Some(128),
             thinking: None,
             tools: Vec::new(),
@@ -204,6 +208,8 @@ mod tests {
         assert_eq!(body["system"], "You are concise.");
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(body["temperature"].as_f64(), Some(f64::from(0.1_f32)));
+        assert_eq!(body["top_p"].as_f64(), Some(f64::from(0.9_f32)));
         assert_eq!(body["max_tokens"], 128);
     }
 
@@ -213,6 +219,7 @@ mod tests {
             model: "claude-sonnet-4-5".to_string(),
             messages: vec![Message::text(Role::Tool, "tool result")],
             temperature: None,
+            top_p: None,
             max_output_tokens: None,
             thinking: None,
             tools: Vec::new(),
@@ -247,6 +254,7 @@ mod tests {
                 },
             ],
             temperature: None,
+            top_p: None,
             max_output_tokens: Some(1024),
             thinking: None,
             tools: vec![ToolDefinition {
@@ -283,6 +291,7 @@ mod tests {
                 })],
             }],
             temperature: None,
+            top_p: None,
             max_output_tokens: Some(1024),
             thinking: None,
             tools: Vec::new(),

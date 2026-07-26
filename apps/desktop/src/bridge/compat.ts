@@ -66,6 +66,7 @@ export interface RuntimeContextInspectionBudget {
   toolSurfaceTokens: number
   estimatedInputTokens: number
   reservedOutputTokens: number | null
+  autoCompactionThresholdPercent: number
 }
 
 export interface RuntimeContextWindowInspection {
@@ -84,12 +85,67 @@ export interface RuntimeConversationCompaction {
   sessionId: string
   sequence: number
   throughMessageSequence: number
+  replacedThroughMessageSequence: number
   sourceMessageCount: number
+  checkpointFormatVersion: number
+  kind: 'manual' | 'threshold' | 'overflow' | 'rewind'
+  summaryFormatVersion: number
+  lastUserMessageId: string | null
+  lastUserMessageSequence: number | null
   resolvedModelName: string
   summary: string
+  runtimeState: RuntimeCompactionState
+  runtimeReminderFormatVersion: number
+  runtimeReminder: string
+  triggerTurnId: string | null
+  parentCompactionId: string | null
   inputTokens: number | null
   outputTokens: number | null
   createdAt: string
+}
+
+export interface RuntimeCompactionStateEntry {
+  schemaVersion: number
+  value: unknown
+}
+
+export interface RuntimeCompactionStateWarning {
+  contributorKey: string
+  code: string
+}
+
+export interface RuntimeCompactionState {
+  schemaVersion: number
+  editedPaths: string[]
+  extensions: Record<string, RuntimeCompactionStateEntry>
+  warnings: RuntimeCompactionStateWarning[]
+}
+
+export type RuntimeConversationProjectionSelector =
+  | { type: 'latest' }
+  | { type: 'compaction'; compactionId: string }
+  | { type: 'through_message'; sequence: number }
+
+export interface RuntimeConversationProjection {
+  selector: RuntimeConversationProjectionSelector
+  checkpointId: string | null
+  throughMessageSequence: number
+  messages: RuntimeStoredMessage[]
+}
+
+export interface RuntimeConversationTranscriptQuery {
+  compactionId?: string | null
+  afterSequence?: number | null
+  limit?: number | null
+}
+
+export interface RuntimeConversationTranscriptPage {
+  sessionId: string
+  compactionId: string
+  throughMessageSequence: number
+  messages: RuntimeStoredMessage[]
+  nextAfterSequence: number | null
+  hasMore: boolean
 }
 
 export interface RuntimeTurnAccepted {
@@ -194,12 +250,15 @@ export interface RuntimeSessionSnapshot {
 }
 
 export interface RuntimeTraceSummary {
-  turnId: string
+  traceId: string
+  /** 手动压缩与 rewind 没有 Turn，这两个字段为空，调用计数为 0。 */
+  turnId: string | null
   sessionId: string
-  turnSequence: number
+  turnSequence: number | null
   status: string
   resolvedModelName: string
   modelCallCount: number
+  modelSubmissionCount: number
   toolCallCount: number
   spanCount: number
   startedAt: string
@@ -208,10 +267,11 @@ export interface RuntimeTraceSummary {
 
 export interface RuntimeTraceSpan {
   id: string
-  turnId: string
+  traceId: string
+  sessionId: string
+  turnId: string | null
   parentSpanId: string | null
-  sequence: number
-  kind: 'model_call' | 'tool_call'
+  kind: 'model_call' | 'tool_call' | 'compaction'
   name: string
   status: string
   modelId: string | null
@@ -226,6 +286,7 @@ export interface RuntimeTraceSpan {
   cachedInputTokens: number | null
   reasoningTokens: number | null
   totalTokens: number | null
+  responseMessageId: string | null
   permissionWaitMs: number | null
   startedAt: string
   endedAt: string | null
@@ -249,4 +310,23 @@ export interface RuntimeTurnTrace {
   summary: RuntimeTraceSummary
   spans: RuntimeTraceSpan[]
   completeness: RuntimeTraceCompleteness
+}
+
+export type RuntimeTracePayloadSlot =
+  | 'request'
+  | 'system_context'
+  | 'tool_definitions'
+  | 'response'
+
+export type RuntimeTraceContentPolicy = 'full' | 'compaction_only' | 'off'
+
+export interface RuntimeTraceSpanPayload {
+  spanId: string
+  slot: RuntimeTracePayloadSlot
+  body: unknown
+  byteSize: number
+  truncated: boolean
+  originalByteSize: number | null
+  /** Retained only for the hand-written host contract; the UI intentionally does not display it. */
+  redactedCount: number
 }

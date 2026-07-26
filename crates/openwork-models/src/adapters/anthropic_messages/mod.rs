@@ -1,5 +1,5 @@
 mod request;
-mod response;
+pub(crate) mod response;
 mod stream;
 
 use crate::model::{ModelError, ModelRequest, ModelStream};

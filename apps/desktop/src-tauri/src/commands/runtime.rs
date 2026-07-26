@@ -1,8 +1,11 @@
 use openwork_core::{
     session::TurnId, ClientRequestId, ContextWindowInspection, ConversationCompaction,
-    LoadedSession, OpenWorkCore, PermissionDecision, ReapplyFileChangesResult, SessionId,
-    SessionInput, SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId,
-    TraceTurnSummary, TurnAccepted, TurnTrace, UndoFileChangesResult,
+    ConversationProjectionRecord, ConversationProjectionSelector, ConversationTranscriptPage,
+    ConversationTranscriptQuery, LoadedSession, OpenWorkCore, PermissionDecision,
+    ReapplyFileChangesResult, SessionId, SessionInput, SessionRecord, SessionSnapshot,
+    SessionUpdateEnvelope, ToolCallId, TraceContentPolicy, TracePayloadSlot,
+    TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted, TurnTrace,
+    UndoFileChangesResult,
 };
 use openwork_models::model::ContentBlock;
 
@@ -56,6 +59,49 @@ pub async fn runtime_session_compact(
 }
 
 #[tauri::command]
+pub async fn runtime_session_rewind(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    compaction_id: String,
+) -> Result<ConversationCompaction, CommandError> {
+    core.rewind_conversation(&SessionId::new(session_id), &compaction_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_compaction_list(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+) -> Result<Vec<ConversationCompaction>, CommandError> {
+    core.list_conversation_compactions(&SessionId::new(session_id))
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_conversation_replay(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    selector: ConversationProjectionSelector,
+) -> Result<ConversationProjectionRecord, CommandError> {
+    core.replay_conversation(&SessionId::new(session_id), selector)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_compaction_transcript_read(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    query: ConversationTranscriptQuery,
+) -> Result<ConversationTranscriptPage, CommandError> {
+    core.read_compaction_transcript(&SessionId::new(session_id), query)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn runtime_session_rename(
     core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
@@ -82,14 +128,23 @@ pub async fn runtime_turn_start(
     session_id: String,
     client_request_id: String,
     text: String,
+    context_window_tokens: Option<u64>,
 ) -> Result<TurnAccepted, CommandError> {
     let session_id = SessionId::new(session_id);
-    core.start_turn(
-        &session_id,
-        ClientRequestId::new(client_request_id),
-        vec![ContentBlock::text(text)],
-    )
-    .await
+    let client_request_id = ClientRequestId::new(client_request_id);
+    let input = vec![ContentBlock::text(text)];
+    match context_window_tokens {
+        Some(context_window_tokens) => {
+            core.start_turn_with_context_window(
+                &session_id,
+                client_request_id,
+                input,
+                context_window_tokens,
+            )
+            .await
+        }
+        None => core.start_turn(&session_id, client_request_id, input).await,
+    }
     .map_err(CommandError::from)
 }
 
@@ -187,6 +242,48 @@ pub async fn runtime_trace_get(
     turn_id: String,
 ) -> Result<TurnTrace, CommandError> {
     core.get_trace(&TurnId::new(turn_id))
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_trace_get_by_id(
+    core: tauri::State<'_, OpenWorkCore>,
+    trace_id: String,
+) -> Result<TurnTrace, CommandError> {
+    core.get_trace_by_id(&trace_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_trace_payload_get(
+    core: tauri::State<'_, OpenWorkCore>,
+    span_id: String,
+    slot: TracePayloadSlot,
+) -> Result<Option<TraceSpanPayloadRecord>, CommandError> {
+    core.get_span_payload(&span_id, slot)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn runtime_trace_content_policy_set(
+    core: tauri::State<'_, OpenWorkCore>,
+    policy: TraceContentPolicy,
+) -> TraceContentPolicy {
+    core.set_trace_content_policy(policy)
+}
+
+/// Compaction Spans for one Session, newest first. Manual compactions have no
+/// Turn and never appear in `runtime_trace_get`.
+#[tauri::command]
+pub async fn runtime_trace_compactions(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    limit: i64,
+) -> Result<Vec<TraceSpanRecord>, CommandError> {
+    core.list_compaction_spans(&SessionId::new(session_id), limit)
         .await
         .map_err(CommandError::from)
 }

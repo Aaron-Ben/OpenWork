@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import { AppearanceSettings } from '../settings/AppearanceSettings'
 import { ContextWindowSettings } from '../settings/ContextWindowSettings'
+import { TraceContentSettings } from '../settings/TraceContentSettings'
 import { useCoreEventBridge } from '../../app/useCoreEventBridge'
 import { shouldCollapseSidebar, useNavigationStore } from '../../app/navigationStore'
 import { resyncSessionView } from '../../app/coreEventController'
@@ -83,11 +84,13 @@ export function AppShell() {
               ? activeSessionTitle
               : view === 'traces'
                 ? t('activity.title')
-              : view === 'settings-models'
-                ? t('settings.models.title')
-                : view === 'settings-context'
-                  ? t('settings.contextWindow.title')
-                : t('settings.appearance.title')
+                : view === 'settings-models'
+                  ? t('settings.models.title')
+                  : view === 'settings-context'
+                    ? t('settings.contextWindow.title')
+                    : view === 'settings-trace'
+                      ? t('settings.traceContent.title')
+                      : t('settings.appearance.title')
           }
           kind={view === 'chat' ? 'session' : view === 'traces' ? 'activity' : 'settings'}
           sidebarExpanded={sidebarOpen}
@@ -107,6 +110,10 @@ export function AppShell() {
           ) : view === 'settings-context' ? (
             <div className="h-full overflow-auto bg-paper">
               <ContextWindowSettings />
+            </div>
+          ) : view === 'settings-trace' ? (
+            <div className="h-full overflow-auto bg-paper">
+              <TraceContentSettings />
             </div>
           ) : (
             <div className="h-full overflow-auto bg-paper">

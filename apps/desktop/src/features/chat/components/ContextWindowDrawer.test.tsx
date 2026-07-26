@@ -5,7 +5,7 @@ import type { RuntimeContextWindowInspection } from '../../../bridge/compat'
 import { ContextWindowDrawer } from './ContextWindowDrawer'
 
 const inspection: RuntimeContextWindowInspection = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   sessionId: 'session-1',
   currentTurnId: 'turn-2',
   resolvedModelName: 'example-model',
@@ -55,6 +55,7 @@ const inspection: RuntimeContextWindowInspection = {
     toolSurfaceTokens: 50,
     estimatedInputTokens: 350,
     reservedOutputTokens: null,
+    autoCompactionThresholdPercent: 85,
   },
 }
 
@@ -62,6 +63,7 @@ describe('ContextWindowDrawer', () => {
   it('shows the three input regions and marks messages from the current turn', () => {
     const markup = renderToStaticMarkup(
       <ContextWindowDrawer
+        sessionId="session-1"
         inspection={inspection}
         contextWindowTokens={1_000}
         highlightedTurnId="turn-2"
@@ -82,6 +84,7 @@ describe('ContextWindowDrawer', () => {
     expect(markup).toContain('read_file')
     expect(markup).toContain('350 / 1k')
     expect(markup).toContain('35%')
+    expect(markup).toContain('85%')
     // tool blocks render with their name, state badge, and payload
     expect(markup).toContain('write_file')
     expect(markup).toContain('success')

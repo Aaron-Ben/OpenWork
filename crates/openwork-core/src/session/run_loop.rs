@@ -1,13 +1,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use futures_util::StreamExt;
 use openwork_agent::Agent;
 use openwork_chat_state::{ChatStateError, ChatStateHandle};
 use openwork_models::model::{
-    ContentBlock, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelResponse,
-    Role, ToolCallBlock, ToolResultBlock, ToolResultState,
+    ContentBlock, DeliveryState, Message, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent,
+    ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
     FinalizedToolset, PolicyDecision, ToolCallContext as RuntimeToolCallContext,
@@ -23,11 +24,15 @@ use uuid::Uuid;
 use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 
+use super::compaction::{
+    AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
+};
 use super::{
-    ClientRequestId, LiveToolCall, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
-    PermissionDecision, PermissionRequest, ResolvedModel, SessionId, SessionPhase, SessionStorage,
-    SessionUpdate, ToolCallId, ToolCallStarted, ToolCallTraceGuard, ToolProgressUpdate,
-    ToolTraceAttributesV1, TraceRecorder, TraceStatus, TurnId, TurnOutcome,
+    ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
+    ModelTraceAttributesV1, PermissionDecision, PermissionRequest, ResolvedModel, SessionId,
+    SessionPhase, SessionStorage, SessionUpdate, ToolCallId, ToolCallStarted, ToolCallTraceGuard,
+    ToolProgressUpdate, ToolTraceAttributesV1, TracePayloads, TraceRecorder, TraceStatus, TurnId,
+    TurnOutcome,
 };
 
 pub(super) struct TurnRunRequest {
@@ -42,6 +47,9 @@ pub(super) struct TurnRunRequest {
     pub model: Arc<dyn ModelPort>,
     pub tools: Arc<FinalizedToolset>,
     pub storage: Arc<dyn SessionStorage>,
+    pub compaction_state: Arc<CompactionStateCollector>,
+    pub compaction_policy: AutomaticCompactionPolicy,
+    pub reload_required: Arc<AtomicBool>,
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
     pub events: mpsc::Sender<RunnerEvent>,
@@ -69,7 +77,7 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
     let mut runner = TurnRunner {
         request,
         repeated_tool: None,
-        next_trace_sequence: 1,
+        last_model_call: None,
     };
 
     let outcome = match runner.begin().await {
@@ -99,12 +107,22 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
 struct TurnRunner {
     request: TurnRunRequest,
     repeated_tool: Option<(String, String, usize)>,
-    next_trace_sequence: i64,
+    /// The most recent Model Call submission. An overflow compaction is caused
+    /// by a Model Call that already failed, so its Span and input estimate are
+    /// no longer reachable through the call's return value.
+    last_model_call: Option<SubmittedModelCall>,
+}
+
+#[derive(Debug, Clone)]
+struct SubmittedModelCall {
+    trace_span_id: String,
+    estimated_input_tokens: u64,
 }
 
 struct CompletedModelCall {
     response: ModelResponse,
     trace_span_id: String,
+    trace: ModelCallTraceGuard,
 }
 
 impl TurnRunner {
@@ -144,14 +162,55 @@ impl TurnRunner {
             })
             .await?;
 
-            let completed_model = self.call_model(model_call_index, &system_context).await?;
-            let response = completed_model.response;
+            let threshold_estimate = self
+                .threshold_estimate_before_sampling(&system_context)
+                .await?;
+            let compacted_before_sampling = match threshold_estimate {
+                Some(estimated_input_tokens) => {
+                    self.compact(
+                        &system_context,
+                        CompactionTrigger::Threshold {
+                            turn_id: self.request.turn_id.clone(),
+                            policy: self.request.compaction_policy,
+                            estimated_input_tokens,
+                        },
+                    )
+                    .await?;
+                    true
+                }
+                None => false,
+            };
+            let completed_model = match self.call_model(model_call_index, 1, &system_context).await
+            {
+                Ok(completed) => completed,
+                Err(error) if !compacted_before_sampling && is_safe_context_overflow(&error) => {
+                    self.update(SessionUpdate::DraftCleared).await?;
+                    let trigger = self.overflow_trigger(&error);
+                    self.compact(&system_context, trigger).await?;
+                    self.call_model(model_call_index, 2, &system_context)
+                        .await?
+                }
+                Err(error) => return Err(error),
+            };
+            let CompletedModelCall {
+                response,
+                trace_span_id,
+                trace: model_trace,
+            } = completed_model;
             let assistant_message = assistant_message(&response);
-            self.request
+            let response_message_id = match self
+                .request
                 .storage
                 .append_assistant_message(&self.request.turn_id, &assistant_message, response.usage)
                 .await
-                .map_err(TurnRunError::Persistence)?;
+            {
+                Ok(message_id) => message_id,
+                Err(message) => {
+                    model_trace.finish_success(&response);
+                    return Err(TurnRunError::Persistence(message));
+                }
+            };
+            model_trace.finish_success_with_message(&response, response_message_id);
             self.request
                 .chat
                 .append_assistant(assistant_message)
@@ -167,14 +226,11 @@ impl TurnRunner {
             })
             .await?;
             for (index, tool_call) in response.tool_calls.iter().enumerate() {
-                if let Err(error) = self
-                    .run_tool_call(tool_call, &completed_model.trace_span_id)
-                    .await
-                {
+                if let Err(error) = self.run_tool_call(tool_call, &trace_span_id).await {
                     for pending in response.tool_calls.iter().skip(index + 1) {
                         self.append_cancelled_tool_result(
                             pending,
-                            &completed_model.trace_span_id,
+                            &trace_span_id,
                             "tool was not executed because the turn already terminated",
                         )
                         .await?;
@@ -192,6 +248,7 @@ impl TurnRunner {
     async fn call_model(
         &mut self,
         model_call_index: u32,
+        submission_attempt: u8,
         system_context: &ResolvedSystemContext,
     ) -> Result<CompletedModelCall, TurnRunError> {
         let request_build_started = Instant::now();
@@ -207,43 +264,50 @@ impl TurnRunner {
         let request_build_ms = elapsed_millis_u64(request_build_started);
         self.request
             .storage
-            .begin_model_call(&self.request.turn_id, model_call_index)
+            .begin_model_call(&self.request.turn_id, model_call_index, submission_attempt)
             .await
             .map_err(TurnRunError::Persistence)?;
         self.request.chat.begin_draft().await?;
         let mut attributes =
             ModelTraceAttributesV1::from_request(model_call_index, request_build_ms, &request);
         attributes.record_context_budget(prepared.context_budget);
-        let options =
-            ModelCallOptions::new(format!("{}-model-{model_call_index}", self.request.turn_id));
+        let options = ModelCallOptions::new(format!(
+            "{}-model-{model_call_index}-submission-{submission_attempt}",
+            self.request.turn_id
+        ));
         let max_transport_attempts = options.max_transport_attempts;
         let mut model_trace = ModelCallTraceGuard::start(
             Arc::clone(&self.request.trace),
             ModelCallStarted {
-                span_id: trace_id("model"),
-                turn_id: self.request.turn_id.clone(),
-                sequence: self.allocate_trace_sequence(),
+                span_id: span_id("model"),
+                trace_id: self.trace_id().to_string(),
+                session_id: self.request.session_id.clone(),
+                turn_id: Some(self.request.turn_id.clone()),
+                parent_span_id: None,
                 model_id: self.request.resolved_model.model_id.clone(),
                 resolved_model_name: self.request.resolved_model.model_name.clone(),
                 started_at: OffsetDateTime::now_utc(),
                 attributes,
+                payloads: TracePayloads::for_model_call(&request, system_context),
             },
             self.request.cancel.clone(),
             max_transport_attempts,
         );
         let trace_span_id = model_trace.span_id().to_string();
+        self.last_model_call = Some(SubmittedModelCall {
+            trace_span_id: trace_span_id.clone(),
+            estimated_input_tokens: prepared.context_budget.estimated_input_tokens,
+        });
         let options = options.with_transport_observer(model_trace.transport_observer());
         let result = self
             .invoke_and_consume_model(request, options, &mut model_trace)
             .await;
         match result {
-            Ok(response) => {
-                model_trace.finish_success(&response);
-                Ok(CompletedModelCall {
-                    response,
-                    trace_span_id,
-                })
-            }
+            Ok(response) => Ok(CompletedModelCall {
+                response,
+                trace_span_id,
+                trace: model_trace,
+            }),
             Err(error) => {
                 let trace_model_error = match &error {
                     TurnRunError::Model(error) => Some(error.clone()),
@@ -263,6 +327,69 @@ impl TurnRunner {
                 Err(error)
             }
         }
+    }
+
+    /// The pre-sampling input estimate when it has reached the compaction
+    /// threshold, `None` otherwise. The estimate is returned rather than a bare
+    /// bool so the compaction Span can record what actually tripped it.
+    async fn threshold_estimate_before_sampling(
+        &self,
+        system_context: &ResolvedSystemContext,
+    ) -> Result<Option<u64>, TurnRunError> {
+        let conversation = self.request.chat.conversation_view().await?;
+        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
+            &self.request.resolved_model.model_name,
+            system_context,
+            conversation,
+            self.request.tools.definitions(),
+        ))
+        .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        let estimated_input_tokens = prepared.context_budget.estimated_input_tokens;
+        Ok(self
+            .request
+            .compaction_policy
+            .should_compact(estimated_input_tokens)
+            .then_some(estimated_input_tokens))
+    }
+
+    /// Build the trigger for a compaction forced by a context overflow, keeping
+    /// the failed Model Call Span and its input estimate as the recorded cause.
+    fn overflow_trigger(&self, error: &TurnRunError) -> CompactionTrigger {
+        let submitted = self.last_model_call.clone();
+        CompactionTrigger::Overflow {
+            turn_id: self.request.turn_id.clone(),
+            policy: self.request.compaction_policy,
+            estimated_input_tokens: submitted.as_ref().map(|call| call.estimated_input_tokens),
+            model_span_id: submitted.map(|call| call.trace_span_id),
+            error_code: error.code().to_string(),
+        }
+    }
+
+    async fn compact(
+        &mut self,
+        system_context: &ResolvedSystemContext,
+        trigger: CompactionTrigger,
+    ) -> Result<(), TurnRunError> {
+        run_compaction(ConversationCompactionRequest {
+            session_id: self.request.session_id.clone(),
+            model_id: self.request.resolved_model.model_id.clone(),
+            resolved_model_name: self.request.resolved_model.model_name.clone(),
+            working_directory: self.request.working_directory.clone(),
+            agent: self.request.agent.clone(),
+            chat: self.request.chat.clone(),
+            model: Arc::clone(&self.request.model),
+            storage: Arc::clone(&self.request.storage),
+            state_collector: Arc::clone(&self.request.compaction_state),
+            reload_required: Arc::clone(&self.request.reload_required),
+            trigger,
+            system_context: Some(system_context.clone()),
+            trace: Arc::clone(&self.request.trace),
+            trace_id: self.trace_id().to_string(),
+            cancellation: self.request.cancel.clone(),
+        })
+        .await
+        .map(|_| ())
+        .map_err(|error| TurnRunError::Compaction(error.to_string()))
     }
 
     async fn invoke_and_consume_model(
@@ -286,6 +413,7 @@ impl TurnRunner {
             }
         };
         let mut completed = None;
+        let mut semantic_output_emitted = false;
 
         loop {
             let next = tokio::select! {
@@ -300,12 +428,18 @@ impl TurnRunner {
                 Ok(event) => event,
                 Err(error) => {
                     self.request.chat.discard_draft().await?;
-                    return Err(TurnRunError::Model(error));
+                    return Err(TurnRunError::Model(if semantic_output_emitted {
+                        error.with_delivery(DeliveryState::SemanticOutputEmitted)
+                    } else {
+                        error
+                    }));
                 }
             };
             if is_first_semantic_event(&event) {
+                semantic_output_emitted = true;
                 model_trace.record_first_semantic_event();
             }
+            model_trace.record_response_event(&event);
             match event {
                 ModelEvent::TextDelta { delta, .. } => {
                     self.request.chat.apply_text_delta(&delta).await?;
@@ -352,14 +486,9 @@ impl TurnRunner {
         self.ensure_not_cancelled()?;
         let tool_call_id = ToolCallId::generate();
         let mut tool_trace = self.start_tool_trace(call, parent_span_id);
-        let parse_started = Instant::now();
         let input: serde_json::Value = match serde_json::from_str(&call.input) {
-            Ok(input) => {
-                tool_trace.record_input_shape(&input);
-                input
-            }
+            Ok(input) => input,
             Err(error) => {
-                tool_trace.record_validation_ms(elapsed_millis_u64(parse_started));
                 let input = serde_json::Value::Null;
                 self.start_live_tool(call, &tool_call_id, input.clone())
                     .await?;
@@ -373,25 +502,17 @@ impl TurnRunner {
                     .await;
             }
         };
-        let parse_ms = elapsed_millis_u64(parse_started);
         self.start_live_tool(call, &tool_call_id, input.clone())
             .await?;
 
         let invocation = ToolInvocation::new(&call.name, input.clone());
-        let schema_validation_started = Instant::now();
         let resolved_tool_name = match self.request.tools.validate(&invocation) {
             Ok(definition) => {
-                tool_trace.record_validation_ms(
-                    parse_ms.saturating_add(elapsed_millis_u64(schema_validation_started)),
-                );
                 let name = definition.id.to_string();
                 tool_trace.set_resolved_tool_name(&name);
                 name
             }
             Err(error) => {
-                tool_trace.record_validation_ms(
-                    parse_ms.saturating_add(elapsed_millis_u64(schema_validation_started)),
-                );
                 let code = match error {
                     ToolValidationError::UnknownTool(_) => ToolErrorCode::ToolNotFound,
                     ToolValidationError::InvalidInput(_) => ToolErrorCode::InvalidArguments,
@@ -515,7 +636,6 @@ impl TurnRunner {
                         progress_open = false;
                         continue;
                     };
-                    tool_trace.record_progress_event();
                     self.update(SessionUpdate::ToolCallProgress {
                         tool_call_id: tool_call_id.clone(),
                         progress: tool_progress_update(progress),
@@ -526,7 +646,6 @@ impl TurnRunner {
         };
         tool_trace.record_execution_ms(elapsed_millis_u64(execution_started));
         while let Ok(progress) = progress_rx.try_recv() {
-            tool_trace.record_progress_event();
             self.update(SessionUpdate::ToolCallProgress {
                 tool_call_id: tool_call_id.clone(),
                 progress: tool_progress_update(progress),
@@ -550,23 +669,22 @@ impl TurnRunner {
         ToolCallTraceGuard::start(
             Arc::clone(&self.request.trace),
             ToolCallStarted {
-                span_id: trace_id("tool"),
+                span_id: span_id("tool"),
+                trace_id: self.trace_id().to_string(),
                 turn_id: self.request.turn_id.clone(),
                 parent_span_id: parent_span_id.to_string(),
-                sequence: self.allocate_trace_sequence(),
                 provider_call_id: call.id.clone(),
                 requested_tool_name: call.name.clone(),
                 started_at: OffsetDateTime::now_utc(),
-                attributes: ToolTraceAttributesV1::new(&call.input),
+                attributes: ToolTraceAttributesV1::new(),
             },
             self.request.cancel.clone(),
         )
     }
 
-    fn allocate_trace_sequence(&mut self) -> i64 {
-        let sequence = self.next_trace_sequence;
-        self.next_trace_sequence = self.next_trace_sequence.saturating_add(1);
-        sequence
+    /// 一个 Turn 的全部 Span 共享一个 Trace 根，直接复用 Turn 的标识。
+    fn trace_id(&self) -> &str {
+        self.request.turn_id.as_str()
     }
 
     async fn start_live_tool(
@@ -598,10 +716,7 @@ impl TurnRunner {
     ) -> Result<(), TurnRunError> {
         let tool_call_id = ToolCallId::generate();
         let mut tool_trace = self.start_tool_trace(call, parent_span_id);
-        let validation_started = Instant::now();
         let input = serde_json::from_str(&call.input).unwrap_or(serde_json::Value::Null);
-        tool_trace.record_input_shape(&input);
-        tool_trace.record_validation_ms(elapsed_millis_u64(validation_started));
         tool_trace.record_permission_decision("cancelled", "system");
         self.start_live_tool(call, &tool_call_id, input).await?;
         let result = ToolResult::cancelled(reason);
@@ -617,17 +732,15 @@ impl TurnRunner {
         tool_trace: ToolCallTraceGuard,
     ) -> Result<(), TurnRunError> {
         let message = tool_result_message(call, &result);
-        let persistence_started = Instant::now();
         let persisted = self
             .request
             .storage
             .append_tool_result(&self.request.turn_id, &message)
             .await;
-        let persistence_ms = elapsed_millis_u64(persistence_started);
         match persisted {
-            Ok(()) => tool_trace.finish_result(&result, true, persistence_ms, None),
+            Ok(()) => tool_trace.finish_result(&result, true),
             Err(message) => {
-                tool_trace.finish_result(&result, false, persistence_ms, Some("persistence_error"));
+                tool_trace.finish_result(&result, false);
                 return Err(TurnRunError::Persistence(message));
             }
         }
@@ -783,7 +896,20 @@ fn trace_status_for_error(error: &TurnRunError) -> TraceStatus {
     }
 }
 
-fn trace_id(kind: &str) -> String {
+fn is_safe_context_overflow(error: &TurnRunError) -> bool {
+    matches!(
+        error,
+        TurnRunError::Model(ModelError {
+            kind: ModelErrorCode::ContextOverflow,
+            delivery: DeliveryState::NotSent
+                | DeliveryState::PossiblySent
+                | DeliveryState::AcceptedNoSemanticOutput,
+            ..
+        })
+    )
+}
+
+fn span_id(kind: &str) -> String {
     format!("span-{kind}-{}", Uuid::new_v4().simple())
 }
 
@@ -807,6 +933,8 @@ enum TurnRunError {
     Persistence(String),
     #[error("model protocol error: {0}")]
     Protocol(String),
+    #[error("conversation compaction failed: {0}")]
+    Compaction(String),
     #[error("permission denied: {0}")]
     PermissionDenied(String),
     #[error("doom loop detected: {0}")]
@@ -837,11 +965,39 @@ impl TurnRunError {
             Self::Context(error) => error.code(),
             Self::Persistence(_) => "persistence_error",
             Self::Protocol(_) => "model_protocol_error",
+            Self::Compaction(_) => "compaction_error",
             Self::PermissionDenied(_) => "permission_denied",
             Self::DoomLoop(_) => "doom_loop",
             Self::MaxModelCalls(_) => "max_model_calls",
             Self::Cancelled => "cancelled",
             Self::ActorStopped => "actor_stopped",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use openwork_models::model::{
+        DeliveryState, ModelError, ModelErrorCode, ModelFailurePhase, RetryHint,
+    };
+
+    use super::{TurnRunError, is_safe_context_overflow};
+
+    #[test]
+    fn only_context_overflow_without_semantic_output_can_compact_and_resubmit() {
+        let safe = TurnRunError::Model(ModelError::context_overflow("too large"));
+        assert!(is_safe_context_overflow(&safe));
+
+        let emitted = TurnRunError::Model(ModelError::new(
+            ModelErrorCode::ContextOverflow,
+            ModelFailurePhase::StreamDecode,
+            DeliveryState::SemanticOutputEmitted,
+            RetryHint::CallerDecision,
+            "too large after output",
+        ));
+        assert!(!is_safe_context_overflow(&emitted));
+
+        let invalid = TurnRunError::Model(ModelError::invalid_request("bad request"));
+        assert!(!is_safe_context_overflow(&invalid));
     }
 }

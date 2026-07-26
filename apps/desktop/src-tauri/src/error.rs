@@ -85,9 +85,17 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::InvalidRequest,
                 "Turn input must not be empty",
             ),
+            OpenWorkCoreError::Session(SessionError::InvalidContextWindowTokens) => Self::new(
+                CommandErrorCode::InvalidRequest,
+                "Context window token capacity must be positive",
+            ),
             OpenWorkCoreError::Session(SessionError::ActorStopped) => Self::new(
                 CommandErrorCode::InternalError,
                 "Session runtime stopped unexpectedly",
+            ),
+            OpenWorkCoreError::Session(SessionError::ReloadRequired) => Self::new(
+                CommandErrorCode::OperationConflict,
+                "Session Conversation changed durably but could not be installed in memory; reload the Session",
             ),
             OpenWorkCoreError::Compaction(CompactionError::SessionActive(turn_id)) => Self::new(
                 CommandErrorCode::OperationConflict,
@@ -96,6 +104,10 @@ impl From<OpenWorkCoreError> for CommandError {
             OpenWorkCoreError::Compaction(CompactionError::EmptyConversation) => Self::new(
                 CommandErrorCode::InvalidRequest,
                 "Conversation is empty and cannot be compacted",
+            ),
+            OpenWorkCoreError::Compaction(CompactionError::MissingLastUser) => Self::new(
+                CommandErrorCode::InvalidRequest,
+                "Conversation has no real user request to preserve",
             ),
             OpenWorkCoreError::Compaction(CompactionError::Model(error))
             | OpenWorkCoreError::Compaction(CompactionError::Stream(error)) => Self::new(
@@ -106,6 +118,10 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::ModelRequestFailed,
                 format!("Conversation compaction returned an unusable summary: {message}"),
             ),
+            OpenWorkCoreError::Compaction(
+                CompactionError::SummaryAttemptTimeout { .. }
+                | CompactionError::SummaryRetriesExhausted { .. },
+            ) => Self::new(CommandErrorCode::ModelRequestFailed, error.to_string()),
             OpenWorkCoreError::Compaction(CompactionError::Persistence(_)) => Self::new(
                 CommandErrorCode::DatabaseUnavailable,
                 "Conversation compaction could not be persisted",
@@ -118,6 +134,7 @@ impl From<OpenWorkCoreError> for CommandError {
                 | CompactionError::MissingResponse
                 | CompactionError::DuplicateResponse
                 | CompactionError::ChatState(_)
+                | CompactionError::State(_)
                 | CompactionError::ActorStopped,
             ) => Self::new(CommandErrorCode::InternalError, error.to_string()),
             OpenWorkCoreError::Storage(StorageError::InvalidInput(message)) => {
@@ -130,6 +147,10 @@ impl From<OpenWorkCoreError> for CommandError {
             OpenWorkCoreError::Storage(StorageError::TurnNotFound(id)) => Self::new(
                 CommandErrorCode::TurnNotFound,
                 format!("Turn not found: {id}"),
+            ),
+            OpenWorkCoreError::Storage(StorageError::TraceNotFound(id)) => Self::new(
+                CommandErrorCode::InvalidRequest,
+                format!("Trace not found: {id}"),
             ),
             OpenWorkCoreError::Storage(StorageError::Database(_))
             | OpenWorkCoreError::Provider(ProviderRepositoryError::Persistence { .. }) => {
@@ -216,6 +237,19 @@ mod tests {
             error.message,
             "Session has an active turn and cannot be compacted: turn-1"
         );
+    }
+
+    #[test]
+    fn exhausted_summary_retries_are_a_model_request_failure() {
+        let error = CommandError::from(OpenWorkCoreError::Compaction(
+            CompactionError::SummaryRetriesExhausted {
+                attempts: 3,
+                last_error: "summary was invalid".to_string(),
+            },
+        ));
+
+        assert_eq!(error.code, CommandErrorCode::ModelRequestFailed);
+        assert!(error.message.contains("after 3 attempts"));
     }
 
     #[test]

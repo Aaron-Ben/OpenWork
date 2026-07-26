@@ -14,6 +14,8 @@ pub struct ModelRequest {
     pub model: String,
     pub messages: Vec<Message>,
     pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
     pub max_output_tokens: Option<u32>,
     pub thinking: Option<ThinkingConfig>,
     #[serde(default)]
@@ -26,6 +28,7 @@ impl ModelRequest {
             model: model.into(),
             messages: vec![Message::text(Role::User, prompt)],
             temperature: None,
+            top_p: None,
             max_output_tokens: None,
             thinking: None,
             tools: Vec::new(),

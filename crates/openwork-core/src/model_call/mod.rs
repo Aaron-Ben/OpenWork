@@ -8,7 +8,7 @@ use crate::context::ResolvedSystemContext;
 
 mod budget;
 
-pub(crate) use budget::ContextBudgetEstimate;
+pub(crate) use budget::{ContextBudgetEstimate, estimate_conversation_tokens};
 
 /// The three materialized input regions plus the resolved model for one call.
 pub(crate) struct ModelRequestInput<'a> {
@@ -66,6 +66,7 @@ impl ModelRequestBuilder {
                 model: input.model.to_string(),
                 messages,
                 temperature: None,
+                top_p: None,
                 max_output_tokens,
                 thinking: None,
                 tools: input.tool_definitions.to_vec(),

@@ -248,7 +248,7 @@ impl ProviderRepository for PostgresProviderRepository {
                 api_key_encrypted = COALESCE($5, api_key_encrypted),
                 enabled = $6,
                 config = $7,
-                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
              WHERE provider_id = $1",
         )
         .bind(id)
@@ -333,7 +333,7 @@ async fn replace_models(
                 credential_ref = EXCLUDED.credential_ref,
                 enabled = EXCLUDED.enabled,
                 config = EXCLUDED.config,
-                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'",
+                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'",
         )
         .bind(id)
         .bind(display_name)
@@ -454,15 +454,8 @@ fn model_record_id(provider_id: &str, model_id: &str) -> String {
 }
 
 fn parse_provider_kind(value: &str) -> Result<ProviderKind, ProviderRepositoryError> {
-    match value {
-        "openai" => Ok(ProviderKind::Openai),
-        "anthropic" => Ok(ProviderKind::Anthropic),
-        "deepseek" => Ok(ProviderKind::Deepseek),
-        "kimi" => Ok(ProviderKind::Kimi),
-        "qwen" => Ok(ProviderKind::Qwen),
-        "glm" => Ok(ProviderKind::Glm),
-        _ => Err(invalid_stored_value("provider_credentials.provider_kind")),
-    }
+    ProviderKind::parse(value)
+        .ok_or_else(|| invalid_stored_value("provider_credentials.provider_kind"))
 }
 
 fn parse_model_tier(value: &str) -> Result<ModelTier, ProviderRepositoryError> {

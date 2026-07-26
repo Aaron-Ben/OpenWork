@@ -23,7 +23,7 @@ pub(crate) fn classify(
     match dialect {
         ErrorDialect::OpenAi => classify_openai(status, code, retry_after_ms),
         ErrorDialect::Anthropic => classify_anthropic(status, code, retry_after_ms),
-        ErrorDialect::DeepSeek => classify_deepseek(status, retry_after_ms),
+        ErrorDialect::DeepSeek => classify_deepseek(status, code, retry_after_ms),
         ErrorDialect::Kimi => classify_kimi(status, code, retry_after_ms),
         ErrorDialect::Qwen => classify_qwen(code, retry_after_ms),
         ErrorDialect::Glm => classify_glm(code, retry_after_ms),
@@ -42,6 +42,9 @@ fn classify_openai(
     retry_after_ms: Option<u64>,
 ) -> Option<(ModelErrorCode, RetryHint)> {
     match code {
+        Some("context_length_exceeded") => {
+            Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision))
+        }
         Some("insufficient_quota") | Some("billing_hard_limit_reached") => {
             Some((ModelErrorCode::QuotaExhausted, RetryHint::Never))
         }
@@ -63,13 +66,14 @@ fn classify_anthropic(
     retry_after_ms: Option<u64>,
 ) -> Option<(ModelErrorCode, RetryHint)> {
     match code {
+        Some("request_too_large") => {
+            Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision))
+        }
         Some("authentication_error") => Some((ModelErrorCode::Authentication, RetryHint::Never)),
         Some("billing_error") => Some((ModelErrorCode::QuotaExhausted, RetryHint::Never)),
         Some("permission_error") => Some((ModelErrorCode::PermissionDenied, RetryHint::Never)),
         Some("not_found_error") => Some((ModelErrorCode::ModelNotFound, RetryHint::Never)),
-        Some("invalid_request_error") | Some("request_too_large") => {
-            Some((ModelErrorCode::InvalidRequest, RetryHint::Never))
-        }
+        Some("invalid_request_error") => Some((ModelErrorCode::InvalidRequest, RetryHint::Never)),
         Some("rate_limit_error") => Some((ModelErrorCode::RateLimited, retry_hint(retry_after_ms))),
         Some("overloaded_error") => Some((ModelErrorCode::Overloaded, retry_hint(retry_after_ms))),
         Some("api_error") | Some("timeout_error") => {
@@ -84,8 +88,12 @@ fn classify_anthropic(
 
 fn classify_deepseek(
     status: StatusCode,
+    code: Option<&str>,
     retry_after_ms: Option<u64>,
 ) -> Option<(ModelErrorCode, RetryHint)> {
+    if matches!(code, Some("context_length_exceeded")) {
+        return Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision));
+    }
     match status {
         StatusCode::PAYMENT_REQUIRED => Some((ModelErrorCode::QuotaExhausted, RetryHint::Never)),
         StatusCode::TOO_MANY_REQUESTS => {
@@ -105,6 +113,9 @@ fn classify_kimi(
     retry_after_ms: Option<u64>,
 ) -> Option<(ModelErrorCode, RetryHint)> {
     match code {
+        Some("exceeded_model_token_limit") | Some("context_length_exceeded") => {
+            Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision))
+        }
         Some("exceeded_current_quota_error") => {
             Some((ModelErrorCode::QuotaExhausted, RetryHint::Never))
         }
@@ -134,6 +145,9 @@ fn classify_qwen(
     retry_after_ms: Option<u64>,
 ) -> Option<(ModelErrorCode, RetryHint)> {
     match code {
+        Some("InvalidParameter.InputTooLong") | Some("context_length_exceeded") => {
+            Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision))
+        }
         Some("Arrearage")
         | Some("CommodityNotPurchased")
         | Some("PrepaidBillOverdue")
@@ -164,7 +178,8 @@ fn classify_glm(
             Some((ModelErrorCode::Authentication, RetryHint::Never))
         }
         Some("1113") => Some((ModelErrorCode::QuotaExhausted, RetryHint::Never)),
-        Some("1210") | Some("1213") | Some("1214") | Some("1215") | Some("1261") => {
+        Some("1215") => Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision)),
+        Some("1210") | Some("1213") | Some("1214") | Some("1261") => {
             Some((ModelErrorCode::InvalidRequest, RetryHint::Never))
         }
         Some("1211") => Some((ModelErrorCode::ModelNotFound, RetryHint::Never)),
@@ -180,5 +195,39 @@ fn classify_glm(
             Some((ModelErrorCode::ServerError, RetryHint::Backoff))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reqwest::StatusCode;
+
+    use super::{ErrorDialect, classify};
+    use crate::model::{ModelErrorCode, RetryHint};
+
+    #[test]
+    fn maps_only_explicit_context_overflow_codes() {
+        for (dialect, code) in [
+            (ErrorDialect::OpenAi, "context_length_exceeded"),
+            (ErrorDialect::Anthropic, "request_too_large"),
+            (ErrorDialect::DeepSeek, "context_length_exceeded"),
+            (ErrorDialect::Kimi, "exceeded_model_token_limit"),
+            (ErrorDialect::Qwen, "InvalidParameter.InputTooLong"),
+            (ErrorDialect::Glm, "1215"),
+        ] {
+            assert_eq!(
+                classify(dialect, StatusCode::BAD_REQUEST, Some(code), None),
+                Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision))
+            );
+        }
+        assert_ne!(
+            classify(
+                ErrorDialect::OpenAi,
+                StatusCode::BAD_REQUEST,
+                Some("invalid_prompt"),
+                None,
+            ),
+            Some((ModelErrorCode::ContextOverflow, RetryHint::CallerDecision))
+        );
     }
 }

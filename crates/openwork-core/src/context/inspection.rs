@@ -1,7 +1,7 @@
 use openwork_models::model::{ContentBlock, Role, ToolDefinition};
 use serde::{Deserialize, Serialize};
 
-pub const CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION: u32 = 1;
+pub const CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION: u32 = 2;
 
 /// A read-only preview of the three materialized regions resolved from current sources.
 ///
@@ -45,4 +45,5 @@ pub struct ContextInspectionBudget {
     pub tool_surface_tokens: u64,
     pub estimated_input_tokens: u64,
     pub reserved_output_tokens: Option<u32>,
+    pub auto_compaction_threshold_percent: u8,
 }

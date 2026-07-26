@@ -30,6 +30,18 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openai" => Some(Self::Openai),
+            "glm" => Some(Self::Glm),
+            "kimi" => Some(Self::Kimi),
+            "deepseek" => Some(Self::Deepseek),
+            "qwen" => Some(Self::Qwen),
+            "anthropic" => Some(Self::Anthropic),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Openai => "openai",

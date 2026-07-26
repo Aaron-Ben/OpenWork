@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use openwork_agent::Agent;
@@ -10,12 +11,16 @@ use openwork_tools::FinalizedToolset;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use super::compaction::{ConversationCompactionRequest, run_compaction};
+use super::compaction::{
+    AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest,
+    ConversationRewindRequest, new_trace_id, rewind_conversation, run_compaction,
+};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
 use super::{
-    ClientRequestId, CompactionError, ConversationCompaction, PermissionDecision, ResolvedModel,
-    SessionError, SessionId, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionStorage,
-    SessionUpdate, SessionUpdateEnvelope, ToolCallId, TraceRecorder, TurnAccepted, TurnId,
+    ClientRequestId, CompactionError, CompactionStateCollector, ConversationCompaction,
+    PermissionDecision, ResolvedModel, SessionError, SessionId, SessionPhase,
+    SessionRuntimeSnapshot, SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
+    ToolCallId, TraceRecorder, TurnAccepted, TurnId,
 };
 
 const COMMAND_BUFFER: usize = 64;
@@ -32,6 +37,7 @@ pub struct SessionRuntimeConfig {
     pub model: Arc<dyn ModelPort>,
     pub tools: Arc<FinalizedToolset>,
     pub storage: Arc<dyn SessionStorage>,
+    pub compaction_state: Arc<CompactionStateCollector>,
     pub trace: Arc<dyn TraceRecorder>,
 }
 
@@ -40,6 +46,7 @@ pub struct SessionHandle {
     session_id: SessionId,
     command_tx: mpsc::Sender<SessionCommand>,
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
+    reload_required: Arc<AtomicBool>,
 }
 
 impl SessionHandle {
@@ -62,8 +69,10 @@ impl SessionHandle {
         let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
         let (runner_tx, runner_rx) = mpsc::channel(RUNNER_EVENT_BUFFER);
         let (update_tx, _) = broadcast::channel(UPDATE_BROADCAST_CAPACITY);
+        let reload_required = Arc::new(AtomicBool::new(false));
         let actor = SessionActor::new(
             config,
+            Arc::clone(&reload_required),
             command_rx,
             runner_tx,
             runner_rx,
@@ -75,11 +84,16 @@ impl SessionHandle {
             session_id,
             command_tx,
             update_tx,
+            reload_required,
         }
     }
 
     pub fn session_id(&self) -> &SessionId {
         &self.session_id
+    }
+
+    pub fn requires_reload(&self) -> bool {
+        self.reload_required.load(Ordering::Acquire)
     }
 
     pub fn subscribe_updates(&self) -> broadcast::Receiver<SessionUpdateEnvelope> {
@@ -91,11 +105,39 @@ impl SessionHandle {
         client_request_id: ClientRequestId,
         input: Vec<ContentBlock>,
     ) -> Result<TurnAccepted, SessionError> {
+        self.start_turn_with_policy(
+            client_request_id,
+            input,
+            AutomaticCompactionPolicy::default(),
+        )
+        .await
+    }
+
+    pub async fn start_turn_with_context_window(
+        &self,
+        client_request_id: ClientRequestId,
+        input: Vec<ContentBlock>,
+        context_window_tokens: u64,
+    ) -> Result<TurnAccepted, SessionError> {
+        let compaction_policy =
+            AutomaticCompactionPolicy::for_context_window(context_window_tokens)
+                .ok_or(SessionError::InvalidContextWindowTokens)?;
+        self.start_turn_with_policy(client_request_id, input, compaction_policy)
+            .await
+    }
+
+    async fn start_turn_with_policy(
+        &self,
+        client_request_id: ClientRequestId,
+        input: Vec<ContentBlock>,
+        compaction_policy: AutomaticCompactionPolicy,
+    ) -> Result<TurnAccepted, SessionError> {
         let (respond_to, response) = oneshot::channel();
         self.send(SessionCommand::StartTurn {
             turn_id: TurnId::generate(),
             client_request_id,
             input,
+            compaction_policy,
             respond_to,
         })
         .await?;
@@ -138,6 +180,21 @@ impl SessionHandle {
         response.await.map_err(|_| CompactionError::ActorStopped)?
     }
 
+    pub async fn rewind_conversation(
+        &self,
+        compaction_id: String,
+    ) -> Result<ConversationCompaction, CompactionError> {
+        let (respond_to, response) = oneshot::channel();
+        self.command_tx
+            .send(SessionCommand::RewindConversation {
+                compaction_id,
+                respond_to,
+            })
+            .await
+            .map_err(|_| CompactionError::ActorStopped)?;
+        response.await.map_err(|_| CompactionError::ActorStopped)?
+    }
+
     pub async fn snapshot(&self) -> Result<SessionSnapshot, SessionError> {
         let (respond_to, response) = oneshot::channel();
         self.send(SessionCommand::Snapshot { respond_to }).await?;
@@ -170,6 +227,7 @@ enum SessionCommand {
         turn_id: TurnId,
         client_request_id: ClientRequestId,
         input: Vec<ContentBlock>,
+        compaction_policy: AutomaticCompactionPolicy,
         respond_to: oneshot::Sender<Result<TurnAccepted, SessionError>>,
     },
     CancelTurn {
@@ -183,6 +241,10 @@ enum SessionCommand {
         respond_to: oneshot::Sender<Result<(), SessionError>>,
     },
     CompactConversation {
+        respond_to: oneshot::Sender<Result<ConversationCompaction, CompactionError>>,
+    },
+    RewindConversation {
+        compaction_id: String,
         respond_to: oneshot::Sender<Result<ConversationCompaction, CompactionError>>,
     },
     Snapshot {
@@ -215,6 +277,8 @@ struct SessionActor {
     model: Arc<dyn ModelPort>,
     tools: Arc<FinalizedToolset>,
     storage: Arc<dyn SessionStorage>,
+    compaction_state: Arc<CompactionStateCollector>,
+    reload_required: Arc<AtomicBool>,
     trace: Arc<dyn TraceRecorder>,
     command_rx: mpsc::Receiver<SessionCommand>,
     runner_tx: mpsc::Sender<RunnerEvent>,
@@ -231,6 +295,7 @@ struct SessionActor {
 impl SessionActor {
     fn new(
         config: SessionRuntimeConfig,
+        reload_required: Arc<AtomicBool>,
         command_rx: mpsc::Receiver<SessionCommand>,
         runner_tx: mpsc::Sender<RunnerEvent>,
         runner_rx: mpsc::Receiver<RunnerEvent>,
@@ -252,6 +317,8 @@ impl SessionActor {
             model: config.model,
             tools: config.tools,
             storage: config.storage,
+            compaction_state: config.compaction_state,
+            reload_required,
             trace: config.trace,
             command_rx,
             runner_tx,
@@ -289,9 +356,10 @@ impl SessionActor {
                 turn_id,
                 client_request_id,
                 input,
+                compaction_policy,
                 respond_to,
             } => {
-                let result = self.start_turn(turn_id, client_request_id, input);
+                let result = self.start_turn(turn_id, client_request_id, input, compaction_policy);
                 let _ = respond_to.send(result);
             }
             SessionCommand::CancelTurn {
@@ -320,6 +388,13 @@ impl SessionActor {
                 let result = self.compact_conversation().await;
                 let _ = respond_to.send(result);
             }
+            SessionCommand::RewindConversation {
+                compaction_id,
+                respond_to,
+            } => {
+                let result = self.rewind_conversation(&compaction_id).await;
+                let _ = respond_to.send(result);
+            }
             SessionCommand::Snapshot { respond_to } => {
                 let _ = respond_to.send(self.snapshot.clone());
             }
@@ -343,9 +418,13 @@ impl SessionActor {
         turn_id: TurnId,
         client_request_id: ClientRequestId,
         input: Vec<ContentBlock>,
+        compaction_policy: AutomaticCompactionPolicy,
     ) -> Result<TurnAccepted, SessionError> {
         if input.is_empty() {
             return Err(SessionError::EmptyInput);
+        }
+        if self.reload_required.load(Ordering::Acquire) {
+            return Err(SessionError::ReloadRequired);
         }
         if let Some(accepted) = self.accepted_requests.get(&client_request_id) {
             return Ok(accepted.clone());
@@ -395,6 +474,9 @@ impl SessionActor {
             model: Arc::clone(&self.model),
             tools: Arc::clone(&self.tools),
             storage: Arc::clone(&self.storage),
+            compaction_state: Arc::clone(&self.compaction_state),
+            compaction_policy,
+            reload_required: Arc::clone(&self.reload_required),
             trace: Arc::clone(&self.trace),
             cancel,
             events: self.runner_tx.clone(),
@@ -407,16 +489,48 @@ impl SessionActor {
         if let Some(active) = &self.active_turn {
             return Err(CompactionError::SessionActive(active.turn_id.clone()));
         }
-        run_compaction(ConversationCompactionRequest {
+        let result = run_compaction(ConversationCompactionRequest {
             session_id: self.session_id.clone(),
+            model_id: self.resolved_model.model_id.clone(),
             resolved_model_name: self.resolved_model.model_name.clone(),
             working_directory: self.working_directory.clone(),
             agent: self.agent.clone(),
             chat: self.chat.clone(),
             model: Arc::clone(&self.model),
             storage: Arc::clone(&self.storage),
+            state_collector: Arc::clone(&self.compaction_state),
+            reload_required: Arc::clone(&self.reload_required),
+            trigger: CompactionTrigger::Manual,
+            system_context: None,
+            trace: Arc::clone(&self.trace),
+            trace_id: new_trace_id(),
+            cancellation: CancellationToken::new(),
         })
-        .await
+        .await;
+        let _ = self.trace.flush_session(&self.session_id).await;
+        result
+    }
+
+    async fn rewind_conversation(
+        &self,
+        compaction_id: &str,
+    ) -> Result<ConversationCompaction, CompactionError> {
+        if let Some(active) = &self.active_turn {
+            return Err(CompactionError::SessionActive(active.turn_id.clone()));
+        }
+        let result = rewind_conversation(ConversationRewindRequest {
+            session_id: &self.session_id,
+            compaction_id,
+            resolved_model_name: &self.resolved_model.model_name,
+            chat: &self.chat,
+            storage: self.storage.as_ref(),
+            state_collector: self.compaction_state.as_ref(),
+            reload_required: self.reload_required.as_ref(),
+            trace: Arc::clone(&self.trace),
+        })
+        .await;
+        let _ = self.trace.flush_session(&self.session_id).await;
+        result
     }
 
     fn resolve_permission(

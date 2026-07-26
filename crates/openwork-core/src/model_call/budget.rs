@@ -11,8 +11,9 @@ const ESTIMATED_BYTES_PER_TOKEN: u64 = 4;
 
 /// Provider-neutral, preflight estimate of the three materialized input regions.
 ///
-/// This is accounting only. Without authoritative model context-window
-/// metadata it must not trigger truncation, summarization, or rejection.
+/// Core uses this provider-neutral estimate both for inspection and for the
+/// application-configured pre-sampling compaction threshold. It excludes
+/// provider framing and never performs truncation or rejection by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ContextBudgetEstimate {
     pub(crate) system_context_tokens: u64,
@@ -60,6 +61,22 @@ impl ContextBudgetEstimate {
             reserved_output_tokens,
         })
     }
+}
+
+/// Measure the conversation region on its own, on the same basis
+/// [`ContextBudgetEstimate::measure`] uses.
+///
+/// Compaction only ever replaces the conversation, so a before/after pair
+/// measured this way isolates what the compaction actually reclaimed from
+/// unrelated System Context or tool-surface drift.
+pub(crate) fn estimate_conversation_tokens(
+    conversation: &ConversationView,
+) -> Result<u64, ContextBudgetError> {
+    let mut bytes = 0_u64;
+    for message in &conversation.messages {
+        bytes = bytes.saturating_add(serialized_bytes(&message.content)?);
+    }
+    Ok(estimate_tokens(bytes))
 }
 
 fn serialized_bytes(value: &impl Serialize) -> Result<u64, ContextBudgetError> {

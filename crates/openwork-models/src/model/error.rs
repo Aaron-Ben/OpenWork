@@ -7,6 +7,7 @@ pub enum ModelErrorCode {
     Authentication,
     PermissionDenied,
     InvalidRequest,
+    ContextOverflow,
     ModelNotFound,
     CapabilityUnsupported,
     RateLimited,
@@ -112,6 +113,16 @@ impl ModelError {
             DeliveryState::NotSent,
             RetryHint::Never,
             format!("invalid provider request: {}", message.into()),
+        )
+    }
+
+    pub fn context_overflow(message: impl Into<String>) -> Self {
+        Self::new(
+            ModelErrorCode::ContextOverflow,
+            ModelFailurePhase::ResponseHeaders,
+            DeliveryState::AcceptedNoSemanticOutput,
+            RetryHint::CallerDecision,
+            message,
         )
     }
 

@@ -54,5 +54,9 @@ pub struct TokenUsage {
     pub output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
     pub cached_input_tokens: Option<u64>,
+    /// Anthropic reports cache writes outside both `input_tokens` and
+    /// `cache_read_input_tokens`; preserve that distinct usage bucket instead
+    /// of folding it into either count.
+    pub cache_creation_input_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
 }

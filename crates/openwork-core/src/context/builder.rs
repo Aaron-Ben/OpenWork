@@ -5,6 +5,7 @@ use thiserror::Error;
 
 use super::{
     ProjectInstructionError, ProjectInstructionLoader, ResolvedSystemContext, SystemContextPart,
+    UserProjectContextError, UserProjectContextLoader,
 };
 
 /// Explicitly coordinates the context sources used to start one Turn.
@@ -12,12 +13,15 @@ use super::{
 /// This is intentionally concrete: new sources are added here when their
 /// domain implementation exists, without introducing a registry ahead of need.
 pub(crate) struct SystemContextBuilder {
+    user_project_context: UserProjectContextLoader,
     project_instructions: ProjectInstructionLoader,
 }
 
 impl SystemContextBuilder {
     pub(crate) fn new(working_directory: impl Into<PathBuf>) -> Self {
+        let working_directory = working_directory.into();
         Self {
+            user_project_context: UserProjectContextLoader::new(working_directory.clone()),
             project_instructions: ProjectInstructionLoader::new(working_directory),
         }
     }
@@ -30,6 +34,7 @@ impl SystemContextBuilder {
             "core/agent-system",
             vec![ContentBlock::text(agent_system_prompt)],
         )];
+        parts.push(self.user_project_context.load().await?);
         if let Some(project_instructions) = self.project_instructions.load().await? {
             parts.push(project_instructions);
         }
@@ -40,12 +45,15 @@ impl SystemContextBuilder {
 #[derive(Debug, Error)]
 pub(crate) enum SystemContextBuildError {
     #[error(transparent)]
+    UserProjectContext(#[from] UserProjectContextError),
+    #[error(transparent)]
     ProjectInstruction(#[from] ProjectInstructionError),
 }
 
 impl SystemContextBuildError {
     pub(crate) fn code(&self) -> &'static str {
         match self {
+            Self::UserProjectContext(_) => "user_project_context_error",
             Self::ProjectInstruction(_) => "project_instruction_error",
         }
     }
@@ -90,9 +98,10 @@ mod tests {
             .await
             .expect("context");
 
-        assert_eq!(context.parts().len(), 2);
+        assert_eq!(context.parts().len(), 3);
         assert_eq!(context.parts()[0].key, "core/agent-system");
-        assert_eq!(context.parts()[1].key, "project/AGENTS.md");
+        assert_eq!(context.parts()[1].key, "runtime/user-project-context");
+        assert_eq!(context.parts()[2].key, "project/AGENTS.md");
     }
 
     #[tokio::test]
@@ -104,7 +113,8 @@ mod tests {
             .await
             .expect("context");
 
-        assert_eq!(context.parts().len(), 1);
+        assert_eq!(context.parts().len(), 2);
         assert_eq!(context.parts()[0].key, "core/agent-system");
+        assert_eq!(context.parts()[1].key, "runtime/user-project-context");
     }
 }

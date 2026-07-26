@@ -23,8 +23,13 @@ import { useTurnActions } from './useTurn'
 import { contextUsageFromTrace, type ContextUsage } from './contextUsage'
 import { useContextWindowStore } from '../../stores/contextWindowStore'
 import { resolveErrorMessage } from '../../utils/commandError'
+import { useNavigationStore } from '../../app/navigationStore'
 
 const EMPTY_MESSAGES: RuntimeStoredMessage[] = []
+
+export function isManualCompactionDraft(value: string): boolean {
+  return value.trim().toLowerCase() === '/compact'
+}
 
 export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const { t } = useTranslation()
@@ -38,7 +43,9 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const [contextInspectionError, setContextInspectionError] = useState<string | null>(null)
   const [contextInspectionRefresh, setContextInspectionRefresh] = useState(0)
   const [selectedTrace, setSelectedTrace] = useState<{ turnId: string; providerToolCallId?: string } | null>(null)
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const highlightTimerRef = useRef<number | null>(null)
   const activeSessionIdRef = useRef(sessionId)
   activeSessionIdRef.current = sessionId
   const canonical = useSessionStore((state) => sessionId ? state.messagesBySession[sessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
@@ -48,6 +55,9 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const reloadSession = useSessionStore((state) => state.reload)
   const providers = useModelStore((state) => state.providers)
   const contextWindowTokens = useContextWindowStore((state) => state.contextWindowTokens)
+  const messageFocus = useNavigationStore((state) => state.messageFocus)
+  const clearMessageFocus = useNavigationStore((state) => state.clearMessageFocus)
+  const requestMessageFocus = useNavigationStore((state) => state.requestMessageFocus)
   const hasAvailableModel = selectDefaultModel(providers) !== null
   const { startTurn, cancelTurn } = useTurnActions(sessionId)
   const messages = useMemo(() => buildTranscript(canonical, runtime), [canonical, runtime])
@@ -87,9 +97,31 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     setContextInspectionError(null)
     setCompactionError(null)
     setIsCompacting(false)
+    setHighlightedMessageId(null)
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
   }, [sessionId])
 
+  useEffect(() => () => {
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
+  }, [])
+
   useEffect(() => setContextUsage(null), [sessionId, contextWindowTokens])
+
+  useEffect(() => {
+    if (!messageFocus || messageFocus.sessionId !== sessionId) return
+    const message = scrollContainerRef.current?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(messageFocus.messageId)}"]`,
+    )
+    if (!message) return
+    message.scrollIntoView({ block: 'center' })
+    setHighlightedMessageId(messageFocus.messageId)
+    clearMessageFocus(messageFocus.requestId)
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((current) => current === messageFocus.messageId ? null : current)
+      highlightTimerRef.current = null
+    }, 2_500)
+  }, [canonical, clearMessageFocus, messageFocus, sessionId])
 
   useEffect(() => {
     if (!sessionId) return
@@ -111,10 +143,11 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           return
         }
 
-        const summaries = await coreCommands.listTraces(activeSessionId, 1)
-        const latest = summaries[0]
-        if (!latest) return
-        const trace = await coreCommands.getTrace(latest.turnId)
+        // 列表现在也包含无 Turn 的压缩 Trace，用量只能从有 Turn 的那条读取。
+        const summaries = await coreCommands.listTraces(activeSessionId, 8)
+        const latestTurnId = summaries.find((summary) => summary.turnId)?.turnId
+        if (!latestTurnId) return
+        const trace = await coreCommands.getTrace(latestTurnId)
         const usage = contextUsageFromTrace(trace, totalTokens)
         if (active && usage) setContextUsage(usage)
       } catch {
@@ -161,7 +194,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   async function send() {
     const text = draft.trim()
     if (!text || isSending || isCompacting || !sessionId) return
-    if (text.toLowerCase() === '/compact') {
+    if (isManualCompactionDraft(text)) {
       await runCompaction()
       return
     }
@@ -226,6 +259,9 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                     key={message.id}
                     data-message-id={message.id}
                     data-turn-id={message.role === 'user' ? message.turnId ?? message.id : undefined}
+                    className={highlightedMessageId === message.id
+                      ? 'rounded-xl bg-clay-soft ring-2 ring-clay/45 transition-colors'
+                      : 'rounded-xl transition-colors'}
                   >
                     {message.role === 'user' ? (
                       <UserMessage parts={message.parts} />
@@ -257,18 +293,24 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         <ConversationNavigator turns={turns} scrollContainerRef={scrollContainerRef} />
         {selectedTrace ? (
           <TurnTraceDrawer
-            turnId={selectedTrace.turnId}
+            source={{ kind: 'turn', turnId: selectedTrace.turnId }}
             initialProviderCallId={selectedTrace.providerToolCallId}
+            onOpenMessage={(targetSessionId, messageId) => {
+              requestMessageFocus(targetSessionId, messageId)
+              setSelectedTrace(null)
+            }}
             onClose={() => setSelectedTrace(null)}
           />
         ) : null}
-        {contextInspectorOpen ? (
+        {contextInspectorOpen && sessionId ? (
           <ContextWindowDrawer
+            sessionId={sessionId}
             inspection={contextInspection}
             contextWindowTokens={contextWindowTokens}
             highlightedTurnId={runtime.turnId}
             loading={contextInspectionLoading}
             error={contextInspectionError}
+            refreshToken={contextInspectionRefresh}
             onRefresh={() => setContextInspectionRefresh((value) => value + 1)}
             onClose={() => setContextInspectorOpen(false)}
           />

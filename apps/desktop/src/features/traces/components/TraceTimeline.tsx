@@ -1,4 +1,4 @@
-import { Bot, Wrench } from 'lucide-react'
+import { Bot, Minimize2, Wrench } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -27,7 +27,7 @@ export function TraceTimeline({ spans, selectedSpanId, onSelect }: TraceTimeline
 
   return (
     <div data-trace-waterfall="true" role="list" aria-label={t('activity.timeline')} className="grid gap-3">
-      {tree.models.map((node) => (
+      {tree.roots.map((node) => (
         <div key={node.span.id} className="grid gap-px">
           <TraceRow
             span={node.span}
@@ -96,6 +96,8 @@ function TraceRow({
       <span className={`size-1.5 shrink-0 rounded-full ${spanStatusDot(span.status)}`} />
       {span.kind === 'model_call' ? (
         <Bot size={13} className="shrink-0 text-ink-faint" />
+      ) : span.kind === 'compaction' ? (
+        <Minimize2 size={13} className="shrink-0 text-ink-faint" />
       ) : (
         <Wrench size={13} className="shrink-0 text-ink-faint" />
       )}
@@ -106,7 +108,9 @@ function TraceRow({
       >
         {span.kind === 'model_call'
           ? span.resolvedModelName ?? t('activity.modelCall')
-          : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
+          : span.kind === 'compaction'
+            ? t('activity.compaction')
+            : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
       </span>
       <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-faint">
         {row ? formatDuration(row.durationMs) : '—'}
@@ -115,7 +119,11 @@ function TraceRow({
         <span className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-paper-hover">
           <span
             className={`block h-full rounded-full ${
-              span.kind === 'model_call' ? 'bg-trace-bar-model' : 'bg-trace-bar-tool'
+              span.kind === 'model_call'
+                ? 'bg-trace-bar-model'
+                : span.kind === 'compaction'
+                  ? 'bg-status-warning-ink'
+                  : 'bg-trace-bar-tool'
             }`}
             style={{ marginLeft: `${row.leftPercent}%`, width: `${row.widthPercent}%` }}
           />

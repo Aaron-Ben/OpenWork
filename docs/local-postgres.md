@@ -9,7 +9,7 @@ Last reviewed: 2026-07-18
 The migration baseline lives at:
 
 ```text
-crates/openwork-core/migrations/202607180001_initial_schema.sql
+crates/openwork-core/migrations/<initial schema>.sql
 ```
 
 SQLx records applied versions and checksums in `_sqlx_migrations`. Do not edit a migration after it has been applied; add a new migration file for every later schema change.

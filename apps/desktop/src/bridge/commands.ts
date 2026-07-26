@@ -2,6 +2,10 @@ import { invoke } from '@tauri-apps/api/core'
 
 import type {
   RuntimeConversationCompaction,
+  RuntimeConversationProjection,
+  RuntimeConversationProjectionSelector,
+  RuntimeConversationTranscriptPage,
+  RuntimeConversationTranscriptQuery,
   RuntimeContextWindowInspection,
   RuntimeLoadedSession,
   RuntimeReapplyFileChangesResult,
@@ -9,6 +13,10 @@ import type {
   RuntimeSessionRecord,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
+  RuntimeTraceContentPolicy,
+  RuntimeTracePayloadSlot,
+  RuntimeTraceSpan,
+  RuntimeTraceSpanPayload,
   RuntimeTraceSummary,
   RuntimeTurnTrace,
   RuntimeTurnAccepted,
@@ -25,6 +33,23 @@ export const coreCommands = {
     invoke('runtime_context_window_inspect', { sessionId }),
   compactConversation: (sessionId: string): Promise<RuntimeConversationCompaction> =>
     invoke('runtime_session_compact', { sessionId }),
+  rewindConversation: (
+    sessionId: string,
+    compactionId: string,
+  ): Promise<RuntimeConversationCompaction> =>
+    invoke('runtime_session_rewind', { sessionId, compactionId }),
+  listCompactions: (sessionId: string): Promise<RuntimeConversationCompaction[]> =>
+    invoke('runtime_compaction_list', { sessionId }),
+  replayConversation: (
+    sessionId: string,
+    selector: RuntimeConversationProjectionSelector,
+  ): Promise<RuntimeConversationProjection> =>
+    invoke('runtime_conversation_replay', { sessionId, selector }),
+  readCompactionTranscript: (
+    sessionId: string,
+    query: RuntimeConversationTranscriptQuery = {},
+  ): Promise<RuntimeConversationTranscriptPage> =>
+    invoke('runtime_compaction_transcript_read', { sessionId, query }),
   renameSession: (sessionId: string, title: string): Promise<RuntimeSessionRecord> =>
     invoke('runtime_session_rename', { sessionId, title }),
   deleteSession: (sessionId: string): Promise<void> =>
@@ -33,8 +58,9 @@ export const coreCommands = {
     sessionId: string,
     clientRequestId: string,
     text: string,
+    contextWindowTokens: number,
   ): Promise<RuntimeTurnAccepted> =>
-    invoke('runtime_turn_start', { sessionId, clientRequestId, text }),
+    invoke('runtime_turn_start', { sessionId, clientRequestId, text, contextWindowTokens }),
   cancelTurn: (sessionId: string, turnId: string): Promise<boolean> =>
     invoke('runtime_turn_cancel', { sessionId, turnId }),
   undoFileChanges: (
@@ -65,4 +91,17 @@ export const coreCommands = {
     invoke('runtime_trace_list', { sessionId, limit }),
   getTrace: (turnId: string): Promise<RuntimeTurnTrace> =>
     invoke('runtime_trace_get', { turnId }),
+  getTraceById: (traceId: string): Promise<RuntimeTurnTrace> =>
+    invoke('runtime_trace_get_by_id', { traceId }),
+  getSpanPayload: (
+    spanId: string,
+    slot: RuntimeTracePayloadSlot,
+  ): Promise<RuntimeTraceSpanPayload | null> =>
+    invoke('runtime_trace_payload_get', { spanId, slot }),
+  setTraceContentPolicy: (
+    policy: RuntimeTraceContentPolicy,
+  ): Promise<RuntimeTraceContentPolicy> =>
+    invoke('runtime_trace_content_policy_set', { policy }),
+  listCompactionSpans: (sessionId: string, limit = 50): Promise<RuntimeTraceSpan[]> =>
+    invoke('runtime_trace_compactions', { sessionId, limit }),
 }
