@@ -36,6 +36,11 @@ pub fn run() {
             commands::runtime::runtime_session_create,
             commands::runtime::runtime_session_load,
             commands::runtime::runtime_context_window_inspect,
+            commands::runtime::runtime_session_compact,
+            commands::runtime::runtime_session_rewind,
+            commands::runtime::runtime_compaction_list,
+            commands::runtime::runtime_conversation_replay,
+            commands::runtime::runtime_compaction_transcript_read,
             commands::runtime::runtime_session_rename,
             commands::runtime::runtime_session_delete,
             commands::runtime::runtime_turn_start,
@@ -47,6 +52,10 @@ pub fn run() {
             commands::runtime::runtime_update_replay,
             commands::runtime::runtime_trace_list,
             commands::runtime::runtime_trace_get,
+            commands::runtime::runtime_trace_get_by_id,
+            commands::runtime::runtime_trace_payload_get,
+            commands::runtime::runtime_trace_content_policy_set,
+            commands::runtime::runtime_trace_compactions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

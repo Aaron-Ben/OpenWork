@@ -80,6 +80,25 @@ describe('ChatInput toolbar', () => {
     expect(markup).not.toContain('Streaming')
   })
 
+  it('shows the compact command when the input starts with a slash', () => {
+    const markup = renderToStaticMarkup(
+      <ChatInput {...baseProps} value="/" onSlashCommand={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-slash-command-menu="true"')
+    expect(markup).toContain('data-slash-command="compact"')
+    expect(markup).toContain('压缩 Conversation')
+    expect(markup).toContain('aria-expanded="true"')
+  })
+
+  it('disables editing and shows progress while compacting', () => {
+    const markup = renderToStaticMarkup(<ChatInput {...baseProps} isCompacting />)
+
+    expect(markup).toContain('aria-label="正在压缩 Conversation"')
+    expect(markup).toContain('disabled=""')
+    expect(markup).not.toContain('aria-label="停止生成"')
+  })
+
   it('renders pending approval content immediately above the input form', () => {
     const markup = renderToStaticMarkup(
       <ChatInput

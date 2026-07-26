@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bot, CircleGauge, PanelLeftClose, Palette, Settings as SettingsIcon } from 'lucide-react'
+import { Activity, ArrowLeft, Bot, PanelLeftClose, Settings as SettingsIcon, SlidersHorizontal } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -53,8 +53,8 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           <SettingsNavItem active={view === 'settings-models'} icon={<Bot size={18} />} onClick={() => onNavigate('settings-models')}>
             {t('settings.models.title')}
           </SettingsNavItem>
-          <SettingsNavItem active={view === 'settings-context'} icon={<CircleGauge size={18} />} onClick={() => onNavigate('settings-context')}>
-            {t('settings.contextWindow.title')}
+          <SettingsNavItem active={view === 'settings-general'} icon={<SlidersHorizontal size={18} />} onClick={() => onNavigate('settings-general')}>
+            {t('settings.general.title')}
           </SettingsNavItem>
           <SettingsNavItem
             active={view === 'traces'}
@@ -63,9 +63,6 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
             onClick={() => onNavigate('traces')}
           >
             {t('activity.navigation')}
-          </SettingsNavItem>
-          <SettingsNavItem active={view === 'settings-appearance'} icon={<Palette size={18} />} onClick={() => onNavigate('settings-appearance')}>
-            {t('settings.appearance.title')}
           </SettingsNavItem>
         </nav>
       </motion.aside>
@@ -136,6 +133,7 @@ function SettingsNavItem({ active, activity = false, icon, children, onClick }: 
       type="button"
       variant="ghost"
       data-activity-navigation={activity || undefined}
+      aria-current={active ? 'page' : undefined}
       className={`mb-1 h-10 w-full justify-start rounded-xl px-3 ${active ? 'bg-paper text-ink shadow-sm' : ''}`}
       onClick={onClick}
     >

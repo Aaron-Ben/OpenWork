@@ -17,6 +17,9 @@ pub(crate) fn encode_request(req: &ModelRequest, stream: bool) -> Result<Value, 
     if let Some(temperature) = req.temperature {
         body["temperature"] = json!(temperature);
     }
+    if let Some(top_p) = req.top_p {
+        body["top_p"] = json!(top_p);
+    }
     if let Some(max_tokens) = req.max_output_tokens {
         body["max_output_tokens"] = json!(max_tokens);
     }
@@ -145,6 +148,7 @@ mod tests {
             model: "gpt-4.1".to_string(),
             messages: vec![Message::text(Role::User, "hello")],
             temperature: Some(0.2),
+            top_p: Some(0.8),
             max_output_tokens: Some(128),
             thinking: None,
             tools: Vec::new(),
@@ -152,6 +156,8 @@ mod tests {
         let body = encode_request(&req, false).unwrap();
         assert_eq!(body["model"], "gpt-4.1");
         assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(body["temperature"].as_f64(), Some(f64::from(0.2_f32)));
+        assert_eq!(body["top_p"].as_f64(), Some(f64::from(0.8_f32)));
         assert_eq!(body["max_output_tokens"], 128);
         assert!(body.get("reasoning").is_none());
     }
@@ -182,6 +188,7 @@ mod tests {
                 },
             ],
             temperature: None,
+            top_p: None,
             max_output_tokens: None,
             thinking: None,
             tools: vec![ToolDefinition {

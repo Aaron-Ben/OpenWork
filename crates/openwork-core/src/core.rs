@@ -28,26 +28,31 @@ use crate::context::{
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
-    ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
-    SessionRuntimeConfig, SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TurnAccepted, TurnId,
+    COMPACTION_TRANSCRIPT_TOOL_NAME, ClientRequestId, CompactionError, CompactionStateCollector,
+    ConversationCompaction, ConversationTranscriptTool, PermissionDecision, ResolvedModel,
+    SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot, SessionStorage,
+    SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy, TracePayloadSlot,
+    TurnAccepted, TurnId,
 };
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
     PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
-    TraceTurnSummary, TurnTrace,
+    TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
 };
 
 const CORE_UPDATE_BROADCAST_CAPACITY: usize = 4096;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OpenWorkCoreConfig {
     pub database_url: Option<String>,
+    pub trace_content: TraceContentConfig,
 }
 
 impl OpenWorkCoreConfig {
     pub fn from_env_or_local() -> Self {
         Self {
             database_url: std::env::var("DATABASE_URL").ok(),
+            trace_content: TraceContentConfig::default(),
         }
     }
 }
@@ -104,6 +109,8 @@ pub enum OpenWorkCoreError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    Compaction(#[from] CompactionError),
     #[error("session not found: {0}")]
     SessionNotFound(String),
     #[error("session has no default model: {0}")]
@@ -165,28 +172,41 @@ impl OpenWorkCore {
         let credentials: Arc<dyn CredentialResolver> = Arc::new(ProviderCredentialResolver {
             providers: Arc::clone(&providers),
         });
-        Self::from_storage_parts(storage, credentials, Some(providers)).await
+        Self::from_storage_parts(storage, credentials, Some(providers), config.trace_content).await
     }
 
     pub async fn from_storage(storage: Arc<PostgresStorage>) -> Result<Self, OpenWorkCoreError> {
-        Self::from_storage_parts(storage, Arc::new(EnvironmentCredentialResolver), None).await
+        Self::from_storage_parts(
+            storage,
+            Arc::new(EnvironmentCredentialResolver),
+            None,
+            TraceContentConfig::default(),
+        )
+        .await
     }
 
     pub async fn from_storage_with_credentials(
         storage: Arc<PostgresStorage>,
         credentials: Arc<dyn CredentialResolver>,
     ) -> Result<Self, OpenWorkCoreError> {
-        Self::from_storage_parts(storage, credentials, None).await
+        Self::from_storage_parts(storage, credentials, None, TraceContentConfig::default()).await
     }
 
     async fn from_storage_parts(
         storage: Arc<PostgresStorage>,
         credentials: Arc<dyn CredentialResolver>,
         providers: Option<Arc<dyn ProviderRepository>>,
+        trace_content: TraceContentConfig,
     ) -> Result<Self, OpenWorkCoreError> {
         storage.migrate().await?;
         storage.mark_running_interrupted().await?;
-        let trace = Arc::new(PostgresTraceRecorder::spawn(storage.pool().clone()));
+        storage
+            .purge_expired_trace_payloads(trace_content.retention_days())
+            .await?;
+        let trace = Arc::new(PostgresTraceRecorder::spawn_with_content_config(
+            storage.pool().clone(),
+            trace_content,
+        ));
         let (update_tx, _) = broadcast::channel(CORE_UPDATE_BROADCAST_CAPACITY);
         Ok(Self {
             storage,
@@ -330,20 +350,21 @@ impl OpenWorkCore {
             .await?
             .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools) = build_default_agent_and_tools(&working_directory)?;
+        let (agent, tools) =
+            build_default_agent_and_tools(session_id, &working_directory, self.storage.clone())?;
         let system_context = SystemContextBuilder::new(&working_directory)
             .build(agent.system_prompt())
             .await
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
 
-        let current_turn_id = loaded
-            .messages
+        let conversation_records = self.storage.load_conversation_records(session_id).await?;
+        let current_turn_id = conversation_records
             .iter()
             .rev()
             .find_map(|message| message.turn_id.clone());
-        let mut conversation = Vec::with_capacity(loaded.messages.len());
-        let mut inspected_messages = Vec::with_capacity(loaded.messages.len());
-        for message in loaded.messages {
+        let mut conversation = Vec::with_capacity(conversation_records.len());
+        let mut inspected_messages = Vec::with_capacity(conversation_records.len());
+        for message in conversation_records {
             if message.role == Role::System {
                 return Err(OpenWorkCoreError::RuntimeComponent(
                     "persisted system messages are not valid Conversation input".to_string(),
@@ -393,6 +414,8 @@ impl OpenWorkCore {
                 tool_surface_tokens: budget.tool_surface_tokens,
                 estimated_input_tokens: budget.estimated_input_tokens,
                 reserved_output_tokens: budget.reserved_output_tokens,
+                auto_compaction_threshold_percent:
+                    crate::session::DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT,
             },
         })
     }
@@ -428,6 +451,73 @@ impl OpenWorkCore {
         let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
         Ok(handle.start_turn(client_request_id, input).await?)
+    }
+
+    pub async fn start_turn_with_context_window(
+        &self,
+        session_id: &SessionId,
+        client_request_id: ClientRequestId,
+        input: Vec<ContentBlock>,
+        context_window_tokens: u64,
+    ) -> Result<TurnAccepted, OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        let handle = self.session_handle(session_id).await?;
+        Ok(handle
+            .start_turn_with_context_window(client_request_id, input, context_window_tokens)
+            .await?)
+    }
+
+    pub async fn compact_conversation(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<ConversationCompaction, OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        let handle = self.session_handle(session_id).await?;
+        Ok(handle.compact_conversation().await?)
+    }
+
+    pub async fn list_conversation_compactions(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<ConversationCompaction>, OpenWorkCoreError> {
+        Ok(self
+            .storage
+            .list_conversation_compactions(session_id)
+            .await?)
+    }
+
+    pub async fn replay_conversation(
+        &self,
+        session_id: &SessionId,
+        selector: crate::session::ConversationProjectionSelector,
+    ) -> Result<crate::storage::ConversationProjectionRecord, OpenWorkCoreError> {
+        Ok(self
+            .storage
+            .replay_conversation(session_id, selector)
+            .await?)
+    }
+
+    pub async fn read_compaction_transcript(
+        &self,
+        session_id: &SessionId,
+        query: crate::storage::ConversationTranscriptQuery,
+    ) -> Result<crate::storage::ConversationTranscriptPage, OpenWorkCoreError> {
+        Ok(self
+            .storage
+            .read_compaction_transcript(session_id, query)
+            .await?)
+    }
+
+    pub async fn rewind_conversation(
+        &self,
+        session_id: &SessionId,
+        compaction_id: &str,
+    ) -> Result<ConversationCompaction, OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        let handle = self.session_handle(session_id).await?;
+        Ok(handle
+            .rewind_conversation(compaction_id.to_string())
+            .await?)
     }
 
     pub async fn undo_file_changes(
@@ -582,17 +672,76 @@ impl OpenWorkCore {
         Ok(self.storage.get_trace(turn_id).await?)
     }
 
+    pub async fn get_trace_by_id(&self, trace_id: &str) -> Result<TurnTrace, OpenWorkCoreError> {
+        Ok(self.storage.get_trace_by_id(trace_id).await?)
+    }
+
+    pub async fn get_span_payload(
+        &self,
+        span_id: &str,
+        slot: TracePayloadSlot,
+    ) -> Result<Option<TraceSpanPayloadRecord>, OpenWorkCoreError> {
+        Ok(self.storage.get_span_payload(span_id, slot).await?)
+    }
+
+    pub fn trace_content_policy(&self) -> TraceContentPolicy {
+        self.trace.content_policy()
+    }
+
+    pub fn set_trace_content_policy(&self, policy: TraceContentPolicy) -> TraceContentPolicy {
+        self.trace.set_content_policy(policy);
+        self.trace.content_policy()
+    }
+
+    /// Compaction Spans for a Session, newest first. Manual compactions have no
+    /// Turn and are only reachable here.
+    pub async fn list_compaction_spans(
+        &self,
+        session_id: &SessionId,
+        limit: i64,
+    ) -> Result<Vec<TraceSpanRecord>, OpenWorkCoreError> {
+        Ok(self
+            .storage
+            .list_compaction_spans(session_id, limit)
+            .await?)
+    }
+
     async fn session_handle(
         &self,
         session_id: &SessionId,
     ) -> Result<SessionHandle, OpenWorkCoreError> {
-        if let Some(handle) = self.sessions.read().await.get(session_id).cloned() {
-            return Ok(handle);
+        let existing = self.sessions.read().await.get(session_id).cloned();
+        if let Some(handle) = existing {
+            if !handle.requires_reload() {
+                return Ok(handle);
+            }
+            if matches!(
+                handle.snapshot().await,
+                Ok(SessionSnapshot {
+                    runtime: crate::session::SessionRuntimeSnapshot::Running { .. },
+                    ..
+                })
+            ) {
+                return Ok(handle);
+            }
         }
 
         let _creation = self.session_creation.lock().await;
-        if let Some(handle) = self.sessions.read().await.get(session_id).cloned() {
-            return Ok(handle);
+        let existing = self.sessions.read().await.get(session_id).cloned();
+        if let Some(handle) = existing {
+            if !handle.requires_reload() {
+                return Ok(handle);
+            }
+            if matches!(
+                handle.snapshot().await,
+                Ok(SessionSnapshot {
+                    runtime: crate::session::SessionRuntimeSnapshot::Running { .. },
+                    ..
+                })
+            ) {
+                return Ok(handle);
+            }
+            self.sessions.write().await.remove(session_id);
         }
 
         let handle = self.build_session_handle(session_id).await?;
@@ -637,11 +786,12 @@ impl OpenWorkCore {
         }
         let runtime = provider_runtime(&model, self.credentials.as_ref()).await?;
         let model_port = Arc::from(self.provider_factory.build(&runtime));
-        let conversation = self.storage.load_messages(session_id).await?;
-        let chat = ChatStateHandle::spawn(conversation)
+        let conversation = self.storage.load_conversation_items(session_id).await?;
+        let chat = ChatStateHandle::spawn_items(conversation)
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools) = build_default_agent_and_tools(&working_directory)?;
+        let (agent, tools) =
+            build_default_agent_and_tools(session_id, &working_directory, self.storage.clone())?;
 
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
@@ -657,6 +807,7 @@ impl OpenWorkCore {
                 model: model_port,
                 tools: Arc::new(tools),
                 storage: self.storage.clone(),
+                compaction_state: Arc::new(CompactionStateCollector::default()),
                 trace: self.trace.clone(),
             },
             self.update_tx.clone(),
@@ -665,12 +816,19 @@ impl OpenWorkCore {
 }
 
 fn build_default_agent_and_tools(
+    session_id: &SessionId,
     working_directory: &Path,
+    storage: Arc<dyn SessionStorage>,
 ) -> Result<(Agent, FinalizedToolset), OpenWorkCoreError> {
-    let agent = AgentBuilder::new(AgentDefinition::default())
+    let mut definition = AgentDefinition::default();
+    definition
+        .tool_names
+        .push(COMPACTION_TRANSCRIPT_TOOL_NAME.to_string());
+    let agent = AgentBuilder::new(definition)
         .build()
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
     let tools = builtin_registry()
+        .register(ConversationTranscriptTool::new(session_id.clone(), storage))
         .finalize(
             agent.toolset_config(),
             ToolSessionContext::local(
@@ -869,6 +1027,21 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn default_runtime_exposes_checkpoint_bounded_history_readback() {
+        let (_, tools) = build_default_agent_and_tools(
+            &SessionId::new("session-history-tool"),
+            Path::new("/tmp"),
+            Arc::new(crate::session::NoopSessionStorage),
+        )
+        .expect("default toolset");
+
+        let definition = tools
+            .resolve(COMPACTION_TRANSCRIPT_TOOL_NAME)
+            .expect("conversation history tool");
+        assert_eq!(definition.risk_hint, openwork_tools::ToolRisk::ReadOnly);
+    }
+
     fn change(change_id: &str) -> FileChangeArtifact {
         FileChangeArtifact {
             change_id: change_id.to_string(),
@@ -919,7 +1092,7 @@ mod tests {
         assert_eq!(updates.len(), 1);
 
         let ContentBlock::ToolResult(result) = &records[0].content[0] else {
-            panic!("tool result");
+            std::panic::panic_any("tool result")
         };
         let states = result
             .artifacts

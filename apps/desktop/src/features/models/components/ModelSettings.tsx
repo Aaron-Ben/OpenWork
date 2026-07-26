@@ -121,7 +121,7 @@ export function ModelSettings() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <IconButton title={t("settings.models.test")} onClick={() => void handleTest(provider)}>
+                    <IconButton title={t("settings.models.test")} disabled={testState === "loading"} onClick={() => void handleTest(provider)}>
                       {testState === "loading" ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
                     </IconButton>
                     <IconButton title={t("settings.models.edit")} onClick={() => openEdit(provider)}>
@@ -134,7 +134,7 @@ export function ModelSettings() {
                 </div>
 
                 {testState && testState !== "loading" ? (
-                  <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${providerTestResultStyle(testState.success)}`}>
+                  <div role="status" className={`mt-3 rounded-lg border px-3 py-2 text-xs ${providerTestResultStyle(testState.success)}`}>
                     {testState.success ? (
                       <span className="flex items-center gap-1">
                         <Check size={13} /> {testState.message}

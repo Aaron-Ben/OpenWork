@@ -4,15 +4,16 @@ import type { RuntimeTraceSpan, RuntimeTurnTrace } from '../../bridge/compat'
 import { contextUsageFromTrace } from './contextUsage'
 
 function modelSpan(
-  sequence: number,
+  order: number,
   inputTokens: number | null,
   estimatedInputTokens?: number,
 ): RuntimeTraceSpan {
   return {
-    id: `model-${sequence}`,
+    id: `model-${order}`,
+    traceId: 'turn-1',
+    sessionId: 'session-1',
     turnId: 'turn-1',
     parentSpanId: null,
-    sequence,
     kind: 'model_call',
     name: 'model',
     status: 'succeeded',
@@ -28,9 +29,10 @@ function modelSpan(
     cachedInputTokens: null,
     reasoningTokens: null,
     totalTokens: null,
+    responseMessageId: null,
     permissionWaitMs: null,
-    startedAt: '2026-07-22T00:00:00Z',
-    endedAt: '2026-07-22T00:00:01Z',
+    startedAt: `2026-07-22T00:00:0${order}Z`,
+    endedAt: `2026-07-22T00:00:0${order + 1}Z`,
     errorCode: null,
     errorMessage: null,
     attributes: estimatedInputTokens === undefined
@@ -42,12 +44,14 @@ function modelSpan(
 function trace(spans: RuntimeTraceSpan[]): RuntimeTurnTrace {
   return {
     summary: {
+      traceId: 'turn-1',
       turnId: 'turn-1',
       sessionId: 'session-1',
       turnSequence: 1,
       status: 'completed',
       resolvedModelName: 'deepseek-v4-flash',
       modelCallCount: spans.filter((span) => span.kind === 'model_call').length,
+      modelSubmissionCount: spans.filter((span) => span.kind === 'model_call').length,
       toolCallCount: spans.filter((span) => span.kind === 'tool_call').length,
       spanCount: spans.length,
       startedAt: '2026-07-22T00:00:00Z',

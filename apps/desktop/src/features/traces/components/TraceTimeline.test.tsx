@@ -5,21 +5,32 @@ import type { RuntimeTraceSpan } from '../../../bridge/compat'
 import { TraceTimeline } from './TraceTimeline'
 
 const model: RuntimeTraceSpan = {
-  id: 'model-1', turnId: 'turn-1', parentSpanId: null, sequence: 1, kind: 'model_call', name: 'model',
+  id: 'model-1', traceId: 'turn-1', sessionId: 'session-1', turnId: 'turn-1', parentSpanId: null, kind: 'model_call', name: 'model',
   status: 'succeeded', modelId: 'model-1', resolvedModelName: 'deepseek-v4-flash', providerRequestId: 'req-1',
   providerCallId: null, requestedToolName: null, resolvedToolName: null, attemptCount: 2, inputTokens: 10,
   outputTokens: 20, cachedInputTokens: 1, reasoningTokens: 4, totalTokens: 30,
+  responseMessageId: null,
   permissionWaitMs: null, startedAt: '2026-07-18T00:00:00.000Z',
   endedAt: '2026-07-18T00:00:02.000Z', errorCode: null, errorMessage: null, attributes: {},
 }
 
 const tool: RuntimeTraceSpan = {
-  ...model, id: 'tool-1', parentSpanId: 'model-1', sequence: 2, kind: 'tool_call', name: 'read', modelId: null,
+  ...model, id: 'tool-1', parentSpanId: 'model-1', kind: 'tool_call', name: 'read', modelId: null,
   resolvedModelName: null, providerRequestId: null, providerCallId: 'call-1', requestedToolName: 'read',
   resolvedToolName: 'read_file', attemptCount: null, inputTokens: null, outputTokens: null,
-  cachedInputTokens: null, reasoningTokens: null, totalTokens: null, permissionWaitMs: 120,
+  cachedInputTokens: null, reasoningTokens: null, totalTokens: null, responseMessageId: null, permissionWaitMs: 120,
   startedAt: '2026-07-18T00:00:00.500Z',
   endedAt: '2026-07-18T00:00:01.000Z',
+}
+
+const compaction: RuntimeTraceSpan = {
+  ...model,
+  id: 'compaction-1',
+  kind: 'compaction',
+  name: 'session.compact',
+  startedAt: '2026-07-18T00:00:00.250Z',
+  endedAt: '2026-07-18T00:00:00.750Z',
+  attributes: { trigger: 'threshold' },
 }
 
 describe('TraceTimeline', () => {
@@ -35,5 +46,14 @@ describe('TraceTimeline', () => {
     expect(markup).toContain('data-span-id="tool-1"')
     expect(markup).toContain('margin-left:25%')
     expect(markup).toContain('width:25%')
+  })
+
+  it('renders compaction as a first-class timeline operation', () => {
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={[compaction, model]} selectedSpanId="compaction-1" onSelect={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-span-id="compaction-1"')
+    expect(markup).toContain('Conversation 压缩')
   })
 })

@@ -19,7 +19,7 @@
   <p>
     <a href="README.md">简体中文</a> ·
     <a href="docs/README.md">Documentation</a> ·
-    <a href="docs/redesign/README.md">Architecture</a> ·
+    <a href="docs/README.md">Architecture</a> ·
     <a href="https://github.com/Aaron-Ben/OpenWork/issues">Issues</a>
   </p>
 </div>
@@ -139,7 +139,7 @@ Key architecture invariants:
 | `crates/openwork-chat-state` | Single-writer conversation actor and model-request snapshots |
 | `crates/openwork-models` | Model protocols, provider adapters, HTTP/SSE transport, and error classification |
 | `crates/openwork-tools` | Tool catalog, permission policy, file/process execution, and structured file-change results |
-| `docs/redesign` | Authoritative architecture, implementation status, and explicitly deferred work |
+| `docs` | Authoritative design docs, one per feature, each with its own acceptance checklist |
 
 Dependencies remain one-way: `openwork-models` is the foundation; `openwork-tools` and `openwork-chat-state` depend on its model contracts; `openwork-agent` depends on the tool contract; `openwork-core` composes the runtime; and Tauri sits at the outer host boundary.
 
@@ -199,17 +199,20 @@ Still incomplete:
 - OS-level sandboxing and reliable tool side-effect reconciliation;
 - automated live-provider smoke tests.
 
-The current `0.1.x` scope does not include cross-process unfinished-turn recovery, an Event Journal, checkpoints, memory, MCP, planning, skills, compaction, Git integration, repository-level diffs, or worktrees. The authoritative design documents define the complete boundary.
+The current `0.1.x` scope supports explicit `/compact` on an idle Session and preflight compaction before each provider submission when the provider-neutral estimate reaches the default 85% of the application context-window budget. Threshold compaction and an explicit `ContextOverflow` before semantic output share a limit of one compaction per logical Model Call; fuzzy error matching, lossy input degradation, and tool replay remain excluded. A summary call is attempted at most three times with a timeout per attempt; successful compaction produces a versioned structured summary, a frozen runtime reminder, and a reconstructible Conversation checkpoint. PostgreSQL reconstructs the latest Conversation after restart, supports read-only checkpoint replay and durable rewind, and exposes checkpoint-bounded raw-message pagination through the Host API and the read-only `conversation_history` tool; readback never executes a tool. This is not unfinished-Turn recovery. Failure classification and automatic suppression, cross-process unfinished-Turn recovery, an Event Journal, memory, MCP, planning, skills, Git integration, repository-level diffs, worktrees, and background-task recovery remain out of scope. The authoritative design documents define the complete boundary.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [Runtime redesign and current status](docs/redesign/README.md)
-- [Project structure](docs/redesign/01-project-structure.md)
-- [Session runtime and event model](docs/redesign/02-event-update-model.md)
-- [PostgreSQL schema](docs/redesign/03-database-schema.md)
-- [Trace design V0.1](docs/redesign/04-trace-design.md)
-- [Desktop frontend architecture](docs/redesign/06-frontend-architecture.md)
+- [Documentation index](docs/README.md)
+- [Architecture and dependency direction](docs/architecture.md)
+- [Session runtime](docs/session-runtime.md)
+- [Context window layering](docs/context-window.md)
+- [Compaction](docs/compaction.md)
+- [Trace](docs/trace.md)
+- [Tools](docs/tools.md)
+- [Data model](docs/data-model.md)
+- [Desktop](docs/desktop.md)
 - [Local PostgreSQL and SQLx migrations](docs/local-postgres.md)
 
 Found a bug or want to discuss the design? Open a [GitHub Issue](https://github.com/Aaron-Ben/OpenWork/issues).

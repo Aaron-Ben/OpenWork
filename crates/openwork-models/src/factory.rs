@@ -58,6 +58,7 @@ impl ProviderFactory {
                     model: model.to_string(),
                     messages: vec![Message::text(Role::User, "ping")],
                     temperature: None,
+                    top_p: None,
                     max_output_tokens: Some(16),
                     thinking: None,
                     tools: Vec::new(),

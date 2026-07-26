@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef } from 'react'
-import { ChevronRight, Layers3, MessageSquareText, Paperclip, RefreshCw, Wrench, X } from 'lucide-react'
+import { ChevronRight, History, Layers3, MessageSquareText, Paperclip, RefreshCw, Wrench, X } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -8,32 +8,40 @@ import type {
   RuntimeContextWindowInspection,
 } from '../../../bridge/compat'
 import { MarkdownRenderer } from '../../../components/markdown/MarkdownRenderer'
+import { CompactionHistoryList } from '../../traces/components/CompactionHistoryList'
+import { useCompactionHistory } from '../../traces/useCompactionHistory'
 import type { ContentBlock } from '../../../type/parts'
 import { extractText } from '../../../type/parts'
 import { formatTokenCount } from './ContextUsageIndicator'
 
 interface ContextWindowDrawerProps {
+  sessionId: string
   inspection: RuntimeContextWindowInspection | null
   contextWindowTokens: number
   highlightedTurnId?: string | null
   loading: boolean
   error: string | null
+  /** Incremented by the drawer's refresh control; also reloads compaction history. */
+  refreshToken?: number
   onRefresh: () => void
   onClose: () => void
 }
 
 export function ContextWindowDrawer({
+  sessionId,
   inspection,
   contextWindowTokens,
   highlightedTurnId,
   loading,
   error,
+  refreshToken,
   onRefresh,
   onClose,
 }: ContextWindowDrawerProps) {
   const { t } = useTranslation()
   const drawerRef = useRef<HTMLElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
+  const compactionHistory = useCompactionHistory(sessionId, refreshToken)
 
   useEffect(() => {
     previousFocus.current = document.activeElement as HTMLElement | null
@@ -95,12 +103,16 @@ export function ContextWindowDrawer({
           </div>
 
           {inspection ? (
-            <div className="mt-4 grid grid-cols-2 gap-2 min-[520px]:grid-cols-4">
+            <div className="mt-4 grid grid-cols-2 gap-2 min-[520px]:grid-cols-5">
               <BudgetStat
                 label={t('chat.contextInspector.used')}
                 value={`${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}`}
               />
               <BudgetStat label={t('chat.contextInspector.usage')} value={`${usedPercent}%`} />
+              <BudgetStat
+                label={t('chat.contextInspector.autoCompact')}
+                value={`${inspection.budget.autoCompactionThresholdPercent}%`}
+              />
               <BudgetStat
                 label={t('chat.contextInspector.messages')}
                 value={String(inspection.conversation.length)}
@@ -200,6 +212,18 @@ export function ContextWindowDrawer({
                 )}
               </ContextSection>
 
+              <ContextSection
+                icon={<History size={16} />}
+                title={t('chat.compactionHistory.title')}
+                description={t('chat.compactionHistory.description')}
+              >
+                <CompactionHistoryList
+                  items={compactionHistory.items}
+                  loading={compactionHistory.loading}
+                  error={compactionHistory.error}
+                />
+              </ContextSection>
+
               <p className="rounded-xl border border-line bg-surface/50 px-3 py-2.5 text-[11px] leading-5 text-ink-faint">
                 {t('chat.contextInspector.providerOverheadNote')}
               </p>
@@ -230,7 +254,8 @@ function ContextSection({
   icon: React.ReactNode
   title: string
   description: string
-  tokens: number
+  /** Omitted for sections that are not a materialized input region. */
+  tokens?: number
   children: React.ReactNode
 }) {
   const { t } = useTranslation()
@@ -243,9 +268,11 @@ function ContextSection({
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-ink">{title}</h3>
-            <span className="shrink-0 font-mono text-[11px] text-ink-faint">
-              {t('chat.contextInspector.estimatedTokens', { count: formatTokenCount(tokens) })}
-            </span>
+            {tokens == null ? null : (
+              <span className="shrink-0 font-mono text-[11px] text-ink-faint">
+                {t('chat.contextInspector.estimatedTokens', { count: formatTokenCount(tokens) })}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-[11px] leading-5 text-ink-faint">{description}</p>
         </div>

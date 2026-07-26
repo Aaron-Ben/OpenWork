@@ -19,7 +19,7 @@
   <p>
     <a href="README.en.md">English</a> ·
     <a href="docs/README.md">文档</a> ·
-    <a href="docs/redesign/README.md">架构</a> ·
+    <a href="docs/README.md">架构</a> ·
     <a href="https://github.com/Aaron-Ben/OpenWork/issues">Issues</a>
   </p>
 </div>
@@ -139,7 +139,7 @@ flowchart LR
 | `crates/openwork-chat-state` | Conversation 单写者 Actor 与模型请求快照 |
 | `crates/openwork-models` | 模型协议、Provider Adapter、HTTP/SSE Transport 与错误分类 |
 | `crates/openwork-tools` | Tool Catalog、权限策略、文件/进程执行与结构化文件变更结果 |
-| `docs/redesign` | 当前权威架构、实施状态和明确暂缓项 |
+| `docs` | 按功能拆分的权威设计文档，每篇自带验收清单 |
 
 依赖保持单向：`openwork-models` 位于底层，`openwork-tools` 与 `openwork-chat-state` 依赖模型契约，`openwork-agent` 依赖工具契约，`openwork-core` 组合所有运行时能力，Tauri 位于最外层 Host 边界。
 
@@ -199,17 +199,20 @@ TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
 - OS 级 Sandbox 和可靠的工具副作用对账；
 - 自动化 Live Provider Smoke Test。
 
-当前 `0.1.x` 不包含跨进程恢复未完成 Turn、Event Journal、Checkpoint、Memory、MCP、Plan、Skill、Compaction、Git 集成、仓库级 Diff 或 Worktree。完整边界以权威设计文档为准。
+当前 `0.1.x` 支持空闲 Session 中显式调用 `/compact`，也会在每次 Provider submission 前按应用配置的上下文窗口做预算估算，达到默认 85% 时提前压缩。阈值压缩与明确 `ContextOverflow` 且尚未产生语义输出时的补救共享“每个逻辑 Model Call 最多压缩一次”的边界；不做错误文本模糊匹配、lossy 输入降级或工具重放。摘要调用最多重试三次，每次有独立超时；压缩会生成版本化结构摘要、冻结的运行状态提醒和可重建的 Conversation checkpoint。PostgreSQL 可在重启后重建 latest Conversation，支持 checkpoint 只读 replay、durable rewind，也可通过 Host API 或 `conversation_history` 只读工具分页回读 checkpoint 边界内的原始消息；回读不执行工具。这不等于恢复未完成 Turn。失败分类与自动 suppression、跨进程恢复未完成 Turn、Event Journal、Memory、MCP、Plan、Skill、Git 集成、仓库级 Diff、Worktree 和后台任务恢复仍不在范围内。完整边界以权威设计文档为准。
 
 ## 文档
 
 - [文档索引](docs/README.md)
-- [Runtime 重构与当前状态](docs/redesign/README.md)
-- [项目结构](docs/redesign/01-project-structure.md)
-- [Session Runtime 与事件模型](docs/redesign/02-event-update-model.md)
-- [PostgreSQL Schema](docs/redesign/03-database-schema.md)
-- [Trace 设计 V0.1](docs/redesign/04-trace-design.md)
-- [Desktop 前端架构](docs/redesign/06-frontend-architecture.md)
+- [文档索引](docs/README.md)
+- [架构与依赖方向](docs/architecture.md)
+- [Session 运行时](docs/session-runtime.md)
+- [上下文窗口分层](docs/context-window.md)
+- [压缩](docs/compaction.md)
+- [Trace](docs/trace.md)
+- [工具](docs/tools.md)
+- [数据模型](docs/data-model.md)
+- [桌面端](docs/desktop.md)
 - [本地 PostgreSQL 与 SQLx Migration](docs/local-postgres.md)
 
 发现问题或希望讨论设计时，请提交 [GitHub Issue](https://github.com/Aaron-Ben/OpenWork/issues)。

@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 
 import { coreCommands } from '../../bridge/commands'
+import { useContextWindowStore } from '../../stores/contextWindowStore'
 import { resolveErrorMessage } from '../../utils/commandError'
 import { useRuntimeStore } from './runtimeStore'
 
@@ -14,7 +15,12 @@ export function useTurnActions(sessionId: string | null) {
     const clientRequestId = nextClientRequestId()
     if (!useRuntimeStore.getState().beginTurn(sessionId, clientRequestId, text)) return false
     try {
-      const accepted = await coreCommands.startTurn(sessionId, clientRequestId, text.trim())
+      const accepted = await coreCommands.startTurn(
+        sessionId,
+        clientRequestId,
+        text.trim(),
+        useContextWindowStore.getState().contextWindowTokens,
+      )
       useRuntimeStore.getState().acceptTurn(sessionId, clientRequestId, accepted.turnId)
       return true
     } catch (error) {

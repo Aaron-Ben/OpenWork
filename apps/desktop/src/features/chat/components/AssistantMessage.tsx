@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { MarkdownRenderer } from '../../../components/markdown/MarkdownRenderer'
@@ -9,6 +10,7 @@ import { ToolActivityList } from './ToolActivityList'
 interface AssistantMessageProps {
   parts: ContentBlock[]
   isStreaming?: boolean
+  isCompacting?: boolean
   model?: string
   onOpenTrace?: (providerToolCallId?: string) => void
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
@@ -19,6 +21,7 @@ interface AssistantMessageProps {
 export const AssistantMessage = memo(function AssistantMessage({
   parts,
   isStreaming = false,
+  isCompacting = false,
   model,
   onOpenTrace,
   onUndoFileChanges,
@@ -48,7 +51,10 @@ export const AssistantMessage = memo(function AssistantMessage({
             renderMessagePart(part, index, isStreaming, hasContent, documentLayout),
           )}
           {parts.length === 0 && isStreaming ? (
-            <span className="text-sm text-ink-faint">{t('chat.waiting')}</span>
+            <span className="inline-flex items-center gap-2 text-sm text-ink-faint">
+              {isCompacting ? <LoaderCircle size={14} className="animate-spin" /> : null}
+              {isCompacting ? t('chat.commands.compacting') : t('chat.waiting')}
+            </span>
           ) : null}
         </div>
       ) : null}

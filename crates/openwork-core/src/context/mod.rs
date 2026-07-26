@@ -1,8 +1,10 @@
 use openwork_models::model::ContentBlock;
+use serde::Serialize;
 
 mod builder;
 mod inspection;
 mod project_instructions;
+mod user_project;
 
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
 pub use inspection::{
@@ -10,9 +12,11 @@ pub use inspection::{
     ContextInspectionSystemPart, ContextWindowInspection,
 };
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
+use user_project::{UserProjectContextError, UserProjectContextLoader};
 
 /// One independently assembled system-context contribution.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SystemContextPart {
     pub(crate) key: String,
     pub(crate) content: Vec<ContentBlock>,

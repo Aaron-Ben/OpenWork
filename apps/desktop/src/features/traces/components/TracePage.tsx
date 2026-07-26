@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import type { RuntimeTraceSummary } from '../../../bridge/compat'
 import { resolveErrorMessage } from '../../../utils/commandError'
 import { useSessionStore } from '../../sessions/sessionStore'
+import { useNavigationStore } from '../../../app/navigationStore'
+import { useProjectStore } from '../../../stores/projectStore'
 import {
   buildTraceListItems,
   filterTraceListItems,
@@ -24,12 +26,16 @@ export function TracePage() {
   const [summaries, setSummaries] = useState<RuntimeTraceSummary[]>([])
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<TraceStatusFilter>('all')
-  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null)
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null)
   const [limit, setLimit] = useState(100)
   const [now, setNow] = useState(() => Date.now())
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const sessions = useSessionStore((state) => state.summaries)
+  const selectSession = useSessionStore((state) => state.select)
+  const navigate = useNavigationStore((state) => state.navigate)
+  const requestMessageFocus = useNavigationStore((state) => state.requestMessageFocus)
+  const openDirectory = useProjectStore((state) => state.openDirectory)
 
   const load = useCallback(async (nextLimit = limit, silently = false) => {
     if (!silently) setIsLoading(true)
@@ -69,9 +75,17 @@ export function TracePage() {
   const items = useMemo(() => buildTraceListItems(summaries, context, now), [context, now, summaries])
   const visible = useMemo(() => filterTraceListItems(items, query, status), [items, query, status])
   const selected = useMemo(
-    () => items.find((item) => item.turnId === selectedTurnId) ?? null,
-    [items, selectedTurnId],
+    () => items.find((item) => item.traceId === selectedTraceId) ?? null,
+    [items, selectedTraceId],
   )
+
+  const openMessage = useCallback(async (sessionId: string, messageId: string) => {
+    const session = sessions[sessionId]
+    if (session) openDirectory(session.workingDirectory)
+    await selectSession(sessionId)
+    requestMessageFocus(sessionId, messageId)
+    navigate('chat')
+  }, [navigate, openDirectory, requestMessageFocus, selectSession, sessions])
 
   return (
     <div className="relative h-full overflow-auto bg-paper">
@@ -103,12 +117,12 @@ export function TracePage() {
             </SelectContent>
           </Select>
         </div>
-        {error ? <p className="mt-5 rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
+        {error ? <p role="alert" className="mt-5 rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
         <div className="mt-5">
           <TraceList
             items={visible}
             loading={isLoading}
-            onOpen={(item) => setSelectedTurnId(item.turnId)}
+            onOpen={(item) => setSelectedTraceId(item.traceId)}
           />
         </div>
         {summaries.length === limit && limit < 500 ? (
@@ -119,9 +133,12 @@ export function TracePage() {
       </div>
       {selected ? (
         <TurnTraceDrawer
-          turnId={selected.turnId}
+          source={selected.turnId
+            ? { kind: 'turn', turnId: selected.turnId }
+            : { kind: 'trace', traceId: selected.traceId }}
           summary={selected}
-          onClose={() => setSelectedTurnId(null)}
+          onOpenMessage={(sessionId, messageId) => void openMessage(sessionId, messageId)}
+          onClose={() => setSelectedTraceId(null)}
         />
       ) : null}
     </div>

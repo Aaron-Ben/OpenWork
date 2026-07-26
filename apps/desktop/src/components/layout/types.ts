@@ -1,2 +1,4 @@
-export type SettingsView = 'settings-models' | 'settings-context' | 'settings-appearance'
+export type SettingsView =
+  | 'settings-models'
+  | 'settings-general'
 export type AppView = 'chat' | 'traces' | SettingsView

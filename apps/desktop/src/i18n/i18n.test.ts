@@ -22,6 +22,7 @@ describe('i18n', () => {
   it('loads the shell and settings translations', () => {
     expect(i18n.t('sidebar.newSession')).toBe('创建会话')
     expect(i18n.t('settings.models.title')).toBe('模型配置')
+    expect(i18n.t('settings.general.title')).toBe('通用')
     expect(i18n.t('settings.contextWindow.title')).toBe('上下文窗口')
     expect(i18n.t('settings.appearance.system')).toBe('跟随系统')
     expect(i18n.t('activity.title')).toBe('运行记录')
@@ -39,33 +40,43 @@ describe('i18n', () => {
     expect(keyPaths(enUS).sort()).toEqual(expected)
   })
 
-  it('localizes every trace attribute and attempt detail in all supported languages', () => {
+  it('localizes every trace attribute and detail section in all supported languages', () => {
     for (const language of supportedLanguages) {
       const translate = i18n.getFixedT(language)
       for (const key of TRACE_ATTRIBUTE_KEYS) {
         const path = `activity.traceFields.${key}`
         expect(translate(path)).not.toBe(path)
       }
-      for (const key of ['errorCode', 'providerRequestId', 'retryDelayMs'] as const) {
-        const path = `activity.traceFields.${key}`
-        expect(translate(path)).not.toBe(path)
-      }
       for (const value of [
         'started', 'failed', 'succeeded', 'tool_use', 'stream_decode',
-        'semantic_output_emitted', 'allow', 'policy', 'enabled', 'true', 'false',
+        'semantic_output_emitted', 'allow', 'policy', 'auto', 'enabled', 'true', 'false',
+        'degenerate', 'deterministic', 'input_overflow', 'transient', 'timeout',
       ] as const) {
         const path = `activity.traceValues.${value}`
         expect(translate(path)).not.toBe(path)
       }
-      expect(translate('activity.transportAttemptSummary', {
-        index: 2,
-        status: translate('activity.traceValues.succeeded'),
-        duration: '80 ms',
-      })).not.toContain('activity.transportAttemptSummary')
+      expect(translate('activity.traceDetails')).not.toBe('activity.traceDetails')
+      for (const slot of ['request', 'system_context', 'tool_definitions', 'response'] as const) {
+        const path = `activity.payloads.slots.${slot}`
+        expect(translate(path)).not.toBe(path)
+      }
+      expect(translate('activity.payloads.truncated')).not.toBe('activity.payloads.truncated')
+      expect(translate('activity.payloads.missing')).not.toBe('activity.payloads.missing')
+      expect(translate('settings.traceContent.sourceWarning')).not.toBe('settings.traceContent.sourceWarning')
     }
 
     expect(i18n.getFixedT('zh-CN')('activity.traceFields.requestBuildMs')).toBe('请求构建耗时')
     expect(i18n.getFixedT('zh-TW')('activity.traceFields.requestBuildMs')).toBe('請求建置耗時')
     expect(i18n.getFixedT('en-US')('activity.traceFields.requestBuildMs')).toBe('Request build time')
+  })
+
+  it('does not keep trace field labels outside the frontend attribute whitelist', () => {
+    const allowed = new Set<string>(TRACE_ATTRIBUTE_KEYS)
+    for (const resource of [zhCN, zhTW, enUS]) {
+      const extras = Object.keys(resource.activity.traceFields)
+        .filter((key) => !allowed.has(key))
+        .sort()
+      expect(extras).toEqual([])
+    }
   })
 })

@@ -8,6 +8,7 @@ export interface ChatItem {
   parts: ContentBlock[]
   model?: string
   isStreaming?: boolean
+  isCompacting?: boolean
   requestId?: string
   fileChangePresentation?: 'activity' | 'summary'
 }

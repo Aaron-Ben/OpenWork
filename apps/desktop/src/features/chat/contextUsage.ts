@@ -14,9 +14,14 @@ export function contextUsageFromTrace(
   if (normalizedTotal === null) return null
 
   const latestModelCall = trace.spans
-    .filter((span) => span.kind === 'model_call')
+    .filter((span) => span.kind === 'model_call' && span.parentSpanId === null)
     .reduce<(typeof trace.spans)[number] | null>(
-      (latest, span) => latest === null || span.sequence > latest.sequence ? span : latest,
+      (latest, span) => {
+        if (latest === null) return span
+        const byTime = Date.parse(span.startedAt) - Date.parse(latest.startedAt)
+        if (Number.isFinite(byTime) && byTime !== 0) return byTime > 0 ? span : latest
+        return span.id.localeCompare(latest.id) > 0 ? span : latest
+      },
       null,
     )
   if (!latestModelCall) return null

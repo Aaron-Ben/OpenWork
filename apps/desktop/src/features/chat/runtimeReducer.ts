@@ -16,6 +16,7 @@ export type SessionRuntimePhase =
   | 'running_model'
   | 'running_tools'
   | 'waiting_permission'
+  | 'compacting'
 
 export interface PendingUserMessage {
   id: string

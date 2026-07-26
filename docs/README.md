@@ -1,41 +1,46 @@
-# OpenWork 文档索引
+# OpenWork 文档
 
-Last reviewed: 2026-07-21
+一个功能一篇文档。每篇描述**这个功能是什么、边界在哪、怎么验收**，不记录迁移过程。
 
-## 当前权威文档
+## 索引
 
-重构后的项目结构、运行时、数据库、Trace 和 Desktop 只以以下文档为准：
+| 文档 | 内容 |
+|---|---|
+| [architecture.md](architecture.md) | crate 划分、依赖方向、核心不变量、领域词汇 |
+| [session-runtime.md](session-runtime.md) | Session/Turn 状态机、Agent Loop、Tool Call 生命周期、Update 协议、中断语义 |
+| [context-window.md](context-window.md) | 三条物化链（System Context / Conversation / Tool Surface）、组装边界、预算估算 |
+| [compaction.md](compaction.md) | 四类压缩触发、摘要格式与重试、运行状态、checkpoint、三类恢复 |
+| [trace.md](trace.md) | 质量追踪：内容、token 口径、标注；三层标识、Span 语义、完整度派生 |
+| [tools.md](tools.md) | 工具四层契约、权限两分、路径安全、七个内置工具 |
+| [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
+| [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
+| [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |
 
-- [redesign/README.md](redesign/README.md)：范围、实施状态、明确非目标和已知暂缓项；
-- [redesign/01-project-structure.md](redesign/01-project-structure.md)：五个 Rust crate、模块职责和依赖方向；
-- [redesign/02-event-update-model.md](redesign/02-event-update-model.md)：Session、Turn、Model Call、Tool Call、Permission 和 Live Update；
-- [redesign/03-database-schema.md](redesign/03-database-schema.md)：SQLx 干净基线与六张业务表；
-- [redesign/04-trace-design.md](redesign/04-trace-design.md)：OpenWork Trace 设计 V0.1，定义 Turn 下的 Model Call/Tool Call Trace 与降级边界；
-- [redesign/05-refactor-roadmap.md](redesign/05-refactor-roadmap.md)：迁移结果、验收 Gate 和未关闭项；
-- [redesign/06-frontend-architecture.md](redesign/06-frontend-architecture.md)：Tauri/React 边界、Runtime Store、Trace 页面与暂缓的 Host Contract 生成。
-- [redesign/07-tool-runtime-design.md](redesign/07-tool-runtime-design.md)：Tool Contract、Tool Set、Session/Call Context 和不可变 `FinalizedToolset`；
-- [redesign/08-builtin-tools-upgrade-design.md](redesign/08-builtin-tools-upgrade-design.md)：内建工具的安全、资源、取消、进度和文件变更语义；
-- [redesign/09-context-assembly-extensibility.md](redesign/09-context-assembly-extensibility.md)：System Context、Conversation、Tool Surface 三条物化链，集中请求组装，以及来源生命周期、synthetic provenance、压缩恢复与 Prompt Cache 稳定性边界。
+规范类文档在 [`.claude/rules/`](../.claude/rules/)：目前有 [database.md](../.claude/rules/database.md)（时间字段与迁移规范）。
 
-本地数据库启动、迁移、检查和重建见 [local-postgres.md](local-postgres.md)。
+## 事实来源
 
-## 当前实施边界
+| 问题 | 看哪里 |
+|---|---|
+| 当前实际是什么 | 源码 + `crates/openwork-core/migrations/` |
+| 应该是什么、为什么 | 本目录 |
+| 怎么跑起来、有哪些命令 | 仓库根 [AGENTS.md](../AGENTS.md) |
 
-- `openwork-core` 是唯一 Session Runtime 和组合入口；
-- 一次用户输入对应一个 Turn，工具结果由同一 Agent Loop 送入下一次 Model Call；
-- PostgreSQL 使用 SQLx migration，不保留 Event Journal、旧表回填或 `legacy_*` 路径；
-- 未完成 Turn 在启动时标记为 `interrupted`，不自动恢复或重放工具；
-- Trace 是 best-effort 诊断数据，不参与业务推进；
-- Desktop 通过 Tauri Command/Event 使用 Core，不复制后端状态机。
+文档描述目标状态。**代码与目标有差距时，各篇的"尚未实施"小节会明确列出**——按文档写新代码，不要照抄尚未收敛的现状。
 
-原重构完成定义中的已知暂缓项仍只有两组：Rust → TypeScript Host Contract/Drift Check，以及 Trace 关闭入口/完整降级验收。它们保留在 `docs/redesign/` 的完成标准中，但当前不实施。
+## 阅读顺序
 
-2026-07-19 实施了 Trace 语义增强：保留 PostgreSQL 领域 Trace，补真实重试、Model/Tool 分段耗时、版本化 P0/P1 形状属性和 Trace Completeness；Rust `tracing` 与 OpenTelemetry/OTLP 仍只作为未来可选旁路。权威契约见 [redesign/04-trace-design.md](redesign/04-trace-design.md)，实施状态见 [redesign/05-refactor-roadmap.md](redesign/05-refactor-roadmap.md)。
+第一次接触这个项目：
+
+1. [architecture.md](architecture.md) —— 建立词汇和边界
+2. [session-runtime.md](session-runtime.md) —— 一次请求怎么跑完
+3. [context-window.md](context-window.md) —— 模型每次看到什么
+4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [trace.md](trace.md)
 
 ## 维护原则
 
-- 源码和 SQLx migration 回答“当前实际是什么”；
-- `docs/redesign/` 同时记录目标、已实施结果和明确暂缓项，不再建立平行蓝图；
-- 领域词汇统一使用 Session、Turn、Model Call、Tool Call、Permission、Message、Update 和 Trace；
-- 修改根目录 README 时同步检查 `README.md` 与 `README.en.md`；
-- 本轮不引入跨进程 Turn 恢复、Event Journal、Memory、MCP、Skill、Plan、Compaction、Artifact、Git/Diff 或 Worktree 能力。
+- **一个功能一篇文档。** 新增能力时先判断它属于哪一篇，只有当它拥有独立的生命周期、失败语义和验收标准时才新开一篇。
+- **每篇自带验收清单。** 没有验收标准的设计描述等于没有约束力。
+- **不写迁移叙事。** "以前是什么样"属于 git 历史，不属于文档。
+- 领域词汇统一：Session、Turn、Model Call、Tool Call、Permission、Message、Update、Trace、Compaction。
+- 修改根目录 README 时同步检查 `README.md` 与 `README.en.md`。

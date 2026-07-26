@@ -29,6 +29,9 @@ pub(crate) fn encode_request(
     if let Some(temperature) = req.temperature {
         body.insert("temperature".to_string(), json!(temperature));
     }
+    if let Some(top_p) = req.top_p {
+        body.insert("top_p".to_string(), json!(top_p));
+    }
     if let Some(max_tokens) = req.max_output_tokens {
         let field = if dialect == OpenAiChatDialect::Kimi {
             "max_completion_tokens"
@@ -78,6 +81,7 @@ pub(crate) fn validate_extra_body(extra: &Map<String, Value>) -> Result<(), Mode
         "tool_choice",
         "stream",
         "temperature",
+        "top_p",
         "max_tokens",
         "max_completion_tokens",
     ];
@@ -287,7 +291,8 @@ mod tests {
         let req = ModelRequest {
             model: "qwen-plus".to_string(),
             messages: vec![Message::text(Role::User, "hello")],
-            temperature: None,
+            temperature: Some(0.2),
+            top_p: Some(0.8),
             max_output_tokens: Some(64),
             thinking: None,
             tools: Vec::new(),
@@ -297,6 +302,8 @@ mod tests {
 
         assert_eq!(body["model"], "qwen-plus");
         assert_eq!(body["messages"][0]["content"], "hello");
+        assert_eq!(body["temperature"].as_f64(), Some(f64::from(0.2_f32)));
+        assert_eq!(body["top_p"].as_f64(), Some(f64::from(0.8_f32)));
         assert_eq!(body["max_tokens"], 64);
     }
 
@@ -321,6 +328,7 @@ mod tests {
             model: "deepseek-v4-pro".to_string(),
             messages: vec![Message::assistant_with_thinking("answer", "reasoning")],
             temperature: None,
+            top_p: None,
             max_output_tokens: None,
             thinking: None,
             tools: Vec::new(),
@@ -387,6 +395,7 @@ mod tests {
                 ],
             }],
             temperature: None,
+            top_p: None,
             max_output_tokens: None,
             thinking: None,
             tools: Vec::new(),

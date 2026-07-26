@@ -9,9 +9,12 @@ use futures_util::stream;
 use openwork_agent::{AgentBuilder, AgentDefinition};
 use openwork_chat_state::ChatStateHandle;
 use openwork_core::session::{
-    ClientRequestId, PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
+    ClientRequestId, CompactionError, CompactionRuntimeState, CompactionStateCollector,
+    ConversationCompaction, ConversationCompactionKind, NewConversationCompaction,
+    PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
     SessionRuntimeConfig, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
-    ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TurnId, TurnOutcome,
+    ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId,
+    TurnOutcome,
 };
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
@@ -28,8 +31,9 @@ use uuid::Uuid;
 
 #[derive(Default)]
 struct ModelState {
-    responses: Mutex<VecDeque<ModelResponse>>,
+    outcomes: Mutex<VecDeque<Result<ModelResponse, ModelError>>>,
     requests: Mutex<Vec<ModelRequest>>,
+    model_attempt_ids: Mutex<Vec<String>>,
 }
 
 struct FakeModel {
@@ -44,14 +48,32 @@ impl ModelPort for FakeModel {
         options: ModelCallOptions,
     ) -> Result<ModelStream, ModelError> {
         self.state.requests.lock().unwrap().push(request);
-        let response = self
+        self.state
+            .model_attempt_ids
+            .lock()
+            .unwrap()
+            .push(options.model_attempt_id.clone());
+        let outcome = self
             .state
-            .responses
+            .outcomes
             .lock()
             .unwrap()
             .pop_front()
             .ok_or_else(|| ModelError::protocol("fake model has no response"))?;
         options.observe_transport(1, ModelTransportSignalKind::Started);
+        let response = match outcome {
+            Ok(response) => response,
+            Err(error) => {
+                options.observe_transport(
+                    1,
+                    ModelTransportSignalKind::Failed {
+                        error: error.clone(),
+                        retry_delay_ms: None,
+                    },
+                );
+                return Err(error);
+            }
+        };
         options.observe_transport(
             1,
             ModelTransportSignalKind::Succeeded {
@@ -141,8 +163,11 @@ impl Tool for FakeTool {
 #[derive(Default)]
 struct RecordingStorage {
     events: Mutex<Vec<String>>,
+    model_submissions: Mutex<Vec<(u32, u8)>>,
     fail_assistant: bool,
     fail_tool_result: AtomicBool,
+    fail_compaction: AtomicBool,
+    compactions: Mutex<Vec<ConversationCompaction>>,
 }
 
 #[async_trait]
@@ -163,7 +188,12 @@ impl SessionStorage for RecordingStorage {
         &self,
         _turn_id: &TurnId,
         model_call_index: u32,
+        submission_attempt: u8,
     ) -> Result<(), String> {
+        self.model_submissions
+            .lock()
+            .unwrap()
+            .push((model_call_index, submission_attempt));
         self.events
             .lock()
             .unwrap()
@@ -176,12 +206,12 @@ impl SessionStorage for RecordingStorage {
         _turn_id: &TurnId,
         _message: &Message,
         _usage: Option<TokenUsage>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         self.events.lock().unwrap().push("assistant".to_string());
         if self.fail_assistant {
             Err("assistant write failed".to_string())
         } else {
-            Ok(())
+            Ok("msg-recording".to_string())
         }
     }
 
@@ -200,6 +230,99 @@ impl SessionStorage for RecordingStorage {
 
     async fn finish_turn(&self, _turn_id: &TurnId, _outcome: &TurnOutcome) -> Result<(), String> {
         self.events.lock().unwrap().push("finish_turn".to_string());
+        Ok(())
+    }
+
+    async fn save_conversation_compaction(
+        &self,
+        session_id: &SessionId,
+        input: NewConversationCompaction,
+    ) -> Result<ConversationCompaction, String> {
+        self.events.lock().unwrap().push("compaction".to_string());
+        if self.fail_compaction.load(Ordering::Relaxed) {
+            return Err("compaction write failed".to_string());
+        }
+        let mut compactions = self.compactions.lock().unwrap();
+        let sequence = i64::try_from(compactions.len() + 1).unwrap();
+        let compaction = ConversationCompaction {
+            id: format!("compaction-{sequence}"),
+            session_id: session_id.to_string(),
+            sequence,
+            through_message_sequence: i64::from(input.source_message_count),
+            replaced_through_message_sequence: i64::from(input.source_message_count),
+            source_message_count: input.source_message_count,
+            checkpoint_format_version: 1,
+            kind: input.kind,
+            summary_format_version: 1,
+            last_user_message_id: input
+                .last_user_message_id
+                .or_else(|| Some("fake-user".to_string())),
+            last_user_message_sequence: input.last_user_message_sequence.or(Some(1)),
+            resolved_model_name: input.resolved_model_name,
+            summary: input.summary,
+            runtime_state: input.runtime_state,
+            runtime_reminder_format_version: 1,
+            runtime_reminder: input.runtime_reminder,
+            trigger_turn_id: input.trigger_turn_id.map(|turn_id| turn_id.to_string()),
+            parent_compaction_id: None,
+            input_tokens: input.input_tokens,
+            output_tokens: input.output_tokens,
+            created_at: "2026-07-23T00:00:00Z".to_string(),
+        };
+        compactions.push(compaction.clone());
+        Ok(compaction)
+    }
+
+    async fn load_compaction_source_messages(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Vec<Message>, String> {
+        Ok(Vec::new())
+    }
+
+    async fn load_latest_compaction_runtime_state(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Option<CompactionRuntimeState>, String> {
+        Ok(self
+            .compactions
+            .lock()
+            .unwrap()
+            .last()
+            .map(|compaction| compaction.runtime_state.clone()))
+    }
+
+    async fn rewind_conversation_compaction(
+        &self,
+        _session_id: &SessionId,
+        _compaction_id: &str,
+        _runtime_state: CompactionRuntimeState,
+        _runtime_reminder: String,
+    ) -> Result<ConversationCompaction, String> {
+        Err("rewind is not supported by this recording storage".to_string())
+    }
+
+    async fn load_compaction_last_user_message(
+        &self,
+        _session_id: &SessionId,
+        _compaction_id: &str,
+    ) -> Result<Message, String> {
+        Err("checkpoint user lookup is not supported by this recording storage".to_string())
+    }
+
+    async fn delete_conversation_compaction(
+        &self,
+        _session_id: &SessionId,
+        compaction_id: &str,
+    ) -> Result<(), String> {
+        let mut compactions = self.compactions.lock().unwrap();
+        let Some(index) = compactions
+            .iter()
+            .position(|compaction| compaction.id == compaction_id)
+        else {
+            return Err("compaction not found".to_string());
+        };
+        compactions.remove(index);
         Ok(())
     }
 }
@@ -270,8 +393,8 @@ fn runtime(
     permission_mode: PermissionMode,
     fail_assistant: bool,
 ) -> RuntimeFixture {
-    runtime_in_workspace(
-        responses,
+    runtime_with_outcomes_in_workspace(
+        responses.into_iter().map(Ok).collect(),
         tool_results,
         permission_mode,
         fail_assistant,
@@ -286,14 +409,46 @@ fn runtime_in_workspace(
     fail_assistant: bool,
     workspace: TestWorkspace,
 ) -> RuntimeFixture {
+    runtime_with_outcomes_in_workspace(
+        responses.into_iter().map(Ok).collect(),
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        workspace,
+    )
+}
+
+fn runtime_with_outcomes(
+    outcomes: Vec<Result<ModelResponse, ModelError>>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+) -> RuntimeFixture {
+    runtime_with_outcomes_in_workspace(
+        outcomes,
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        TestWorkspace::new(),
+    )
+}
+
+fn runtime_with_outcomes_in_workspace(
+    outcomes: Vec<Result<ModelResponse, ModelError>>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    workspace: TestWorkspace,
+) -> RuntimeFixture {
     let working_directory = workspace.path().to_path_buf();
     let mut definition = AgentDefinition::default();
     definition.policy.permission_mode = permission_mode;
     let agent = AgentBuilder::new(definition).build().expect("agent");
     let chat = ChatStateHandle::spawn(Vec::new()).expect("chat");
     let model = Arc::new(ModelState {
-        responses: Mutex::new(responses.into()),
+        outcomes: Mutex::new(outcomes.into()),
         requests: Mutex::new(Vec::new()),
+        model_attempt_ids: Mutex::new(Vec::new()),
     });
     let tools = Arc::new(ToolState {
         invocations: Mutex::new(Vec::new()),
@@ -301,8 +456,11 @@ fn runtime_in_workspace(
     });
     let storage = Arc::new(RecordingStorage {
         events: Mutex::new(Vec::new()),
+        model_submissions: Mutex::new(Vec::new()),
         fail_assistant,
         fail_tool_result: AtomicBool::new(false),
+        fail_compaction: AtomicBool::new(false),
+        compactions: Mutex::new(Vec::new()),
     });
     let trace = Arc::new(RecordingTrace::default());
     let registry = AgentDefinition::default().tool_names.into_iter().fold(
@@ -344,6 +502,7 @@ fn runtime_in_workspace(
             }),
             tools: Arc::new(toolset),
             storage: storage.clone(),
+            compaction_state: Arc::new(CompactionStateCollector::default()),
             trace: trace.clone(),
         },
         global_update_tx,
@@ -396,6 +555,22 @@ fn response(text: &str, tool_calls: Vec<ToolCallBlock>) -> ModelResponse {
     }
 }
 
+fn compaction_summary() -> &'static str {
+    concat!(
+        "<conversation_summary format_version=\"1\">\n",
+        "## 1. Primary Request and Intent\nImplement conversation compaction while retaining the durable raw transcript and continuing the same task safely after the projection changes. The request requires deterministic reconstruction rather than deletion of prior messages.\n",
+        "## 2. Key Technical Concepts\nConversation projection, durable checkpoint, synthetic provenance, stable system reminder, PostgreSQL boundary, and exact user-message replay are the relevant concepts.\n",
+        "## 3. Files and Code Sections\nThe session actor, chat state, compaction coordinator, PostgreSQL storage implementation, context builder, desktop command bridge, and their focused tests are in scope.\n",
+        "## 4. Errors and Fixes\nThe earlier turn completed without an error. Any compaction failure must preserve the old Conversation and must not install a partial checkpoint.\n",
+        "## 5. Problem Solving and Decisions\nKeep System Context independent, retain raw messages, install a typed compacted projection, and validate the summary structure before persistence.\n",
+        "## 6. User Messages and Constraints\nThe user requested implementation without committing changes and excluded plan, memory, todo, subagent, and MCP runtime features.\n",
+        "## 7. Pending Tasks\nVerify the active projection, persistence fields, restart reconstruction, overflow resubmission, rewind behavior, and desktop contract.\n",
+        "## 8. Current Work\nThe first normal model turn completed and the runtime is now generating a manual checkpoint from the current visible Conversation.\n",
+        "## 9. Next Safe Action\nInstall the validated checkpoint atomically, then wait for the next real user request before starting another ordinary model call.\n",
+        "</conversation_summary>"
+    )
+}
+
 fn tool_call(id: &str, name: &str, input: &str) -> ToolCallBlock {
     ToolCallBlock {
         id: id.to_string(),
@@ -426,7 +601,7 @@ fn project_instruction_text(request: &ModelRequest) -> Option<&str> {
         .messages
         .iter()
         .filter(|message| message.role == Role::System)
-        .nth(1)
+        .next_back()
         .and_then(|message| message.content.first())
         .and_then(|block| match block {
             ContentBlock::Text(text) => Some(text.text.as_str()),
@@ -502,17 +677,35 @@ async fn no_tool_turn_completes_after_one_model_call() {
             .iter()
             .map(|message| message.role)
             .collect::<Vec<_>>(),
-        [Role::System, Role::User]
+        [Role::System, Role::System, Role::User]
     );
     assert_eq!(requests[0].temperature, None);
     assert_eq!(requests[0].max_output_tokens, None);
     assert_eq!(requests[0].thinking, None);
+    let submitted_messages = requests[0].messages.clone();
     drop(requests);
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
     assert_eq!(
         *fixture.storage.events.lock().unwrap(),
         ["begin_turn", "model_1", "assistant", "finish_turn"]
     );
+    let signals = fixture.trace.signals.lock().unwrap();
+    let finished = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ModelCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("model call trace");
+    assert_eq!(
+        finished.started.payloads.request,
+        Some(serde_json::to_value(submitted_messages).unwrap())
+    );
+    assert_eq!(
+        finished.response_message_id.as_deref(),
+        Some("msg-recording")
+    );
+    assert!(finished.response_payload.is_none());
 }
 
 #[tokio::test]
@@ -993,6 +1186,597 @@ async fn duplicate_client_request_is_idempotent_and_a_different_turn_is_busy() {
 }
 
 #[tokio::test]
+async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_active_projection() {
+    let mut fixture = runtime(
+        vec![
+            response("first answer", Vec::new()),
+            response(compaction_summary(), Vec::new()),
+            response("continued", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+
+    let compaction = fixture
+        .handle
+        .compact_conversation()
+        .await
+        .expect("compaction");
+
+    assert_eq!(compaction.source_message_count, 2);
+    assert_eq!(compaction.summary, compaction_summary());
+    {
+        let signals = fixture.trace.signals.lock().unwrap();
+        let compact_trace = signals
+            .iter()
+            .find_map(|signal| match signal {
+                TraceSignal::CompactionFinished(finished) => Some(finished),
+                _ => None,
+            })
+            .expect("manual compaction trace");
+        assert_eq!(compact_trace.started.session_id.as_str(), "session-test");
+        assert!(compact_trace.started.turn_id.is_none());
+        assert_eq!(compact_trace.status, TraceStatus::Succeeded);
+        assert_eq!(compact_trace.attempt_count, Some(1));
+        assert_eq!(compact_trace.attributes.trigger, "manual");
+        assert_eq!(compact_trace.attributes.source_message_count, Some(2));
+        assert!(compact_trace.attributes.prepare_ms.is_some());
+        assert_eq!(
+            compact_trace.attributes.summary_max_output_tokens,
+            Some(4_096)
+        );
+        assert_eq!(
+            compact_trace
+                .attributes
+                .summary_estimated_tool_surface_tokens,
+            Some(0)
+        );
+        assert!(
+            compact_trace
+                .attributes
+                .summary_estimated_system_context_tokens
+                .is_some()
+        );
+        assert!(
+            compact_trace
+                .attributes
+                .summary_estimated_conversation_tokens
+                .is_some()
+        );
+        assert_eq!(
+            compact_trace.attributes.checkpoint_id.as_deref(),
+            Some(compaction.id.as_str())
+        );
+        let summary_trace = signals
+            .iter()
+            .find_map(|signal| match signal {
+                TraceSignal::ModelCallFinished(finished)
+                    if finished.started.parent_span_id.as_deref()
+                        == Some(compact_trace.started.span_id.as_str()) =>
+                {
+                    Some(finished)
+                }
+                _ => None,
+            })
+            .expect("summary child model trace");
+        assert_eq!(
+            summary_trace.started.trace_id,
+            compact_trace.started.trace_id
+        );
+        assert!(summary_trace.started.turn_id.is_none());
+        assert_eq!(summary_trace.status, TraceStatus::Succeeded);
+        assert!(summary_trace.started.payloads.request.is_some());
+        assert!(summary_trace.response_payload.is_some());
+        assert!(summary_trace.response_message_id.is_none());
+        assert_eq!(
+            summary_trace.provider_request_id.as_deref(),
+            Some("request")
+        );
+        assert!(
+            serde_json::to_value(&summary_trace.attributes)
+                .expect("summary attributes serialize")
+                .get("summaryAttemptOutcome")
+                .is_none()
+        );
+        assert!(
+            serde_json::to_value(&compact_trace.attributes)
+                .expect("compaction attributes serialize")
+                .get("attemptRollup")
+                .is_none()
+        );
+        // A manual compaction is not measured against a window, so no policy or
+        // trigger estimate is attributed to it — but the reclaim still is.
+        assert_eq!(compact_trace.attributes.context_window_tokens, None);
+        assert_eq!(
+            compact_trace.attributes.trigger_estimated_input_tokens,
+            None
+        );
+        assert!(!compact_trace.started.trace_id.is_empty());
+        let before = compact_trace
+            .attributes
+            .conversation_tokens_before
+            .expect("pre-compaction conversation estimate");
+        let after = compact_trace
+            .attributes
+            .conversation_tokens_after
+            .expect("post-install conversation estimate");
+        assert_eq!(
+            compact_trace.attributes.reclaimed_conversation_tokens,
+            Some(before.saturating_sub(after))
+        );
+    }
+    let snapshot = fixture.chat.snapshot().await.expect("chat snapshot");
+    assert_eq!(snapshot.messages.len(), 3);
+    assert_eq!(snapshot.messages[0].role, Role::User);
+    let ContentBlock::Text(last_user_block) = &snapshot.messages[0].content[0] else {
+        panic!("expected replayed user text")
+    };
+    assert_eq!(last_user_block.text, "do the task");
+    let ContentBlock::Text(summary_block) = &snapshot.messages[1].content[0] else {
+        panic!("expected compacted summary text")
+    };
+    assert!(
+        summary_block
+            .text
+            .contains("<conversation_summary format_version=\"1\">")
+    );
+    assert!(summary_block.text.contains(compaction_summary()));
+
+    {
+        let requests = fixture.model.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1]
+                .messages
+                .iter()
+                .map(|message| message.role)
+                .collect::<Vec<_>>(),
+            [
+                Role::System,
+                Role::System,
+                Role::User,
+                Role::Assistant,
+                Role::User
+            ]
+        );
+        assert!(requests[1].tools.is_empty());
+        assert_eq!(requests[1].max_output_tokens, Some(4_096));
+        let ContentBlock::Text(prompt) = requests[1]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .first()
+            .unwrap()
+        else {
+            panic!("expected compaction prompt")
+        };
+        assert!(prompt.text.contains("durable continuation summary"));
+    }
+
+    start_with_request(&fixture, "continue-after-compaction").await;
+    wait_for_terminal(&mut fixture.updates).await;
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(
+        requests[2]
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        [
+            Role::System,
+            Role::System,
+            Role::User,
+            Role::User,
+            Role::User,
+            Role::User
+        ]
+    );
+    let ContentBlock::Text(projected_summary) = &requests[2].messages[3].content[0] else {
+        panic!("expected projected summary")
+    };
+    assert!(projected_summary.text.contains(compaction_summary()));
+}
+
+#[tokio::test]
+async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
+    let mut fixture = runtime_with_outcomes(
+        vec![
+            Err(ModelError::context_overflow(
+                "input exceeds the model context window",
+            )),
+            Ok(response(compaction_summary(), Vec::new())),
+            Ok(response("recovered after compaction", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+
+    let turn_id = start(&fixture).await;
+    assert_eq!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed {
+            final_text: "recovered after compaction".to_string()
+        }
+    );
+
+    let compactions = fixture.storage.compactions.lock().unwrap();
+    assert_eq!(compactions.len(), 1);
+    assert_eq!(compactions[0].kind, ConversationCompactionKind::Overflow);
+    assert_eq!(
+        compactions[0].trigger_turn_id.as_deref(),
+        Some(turn_id.as_str())
+    );
+    drop(compactions);
+
+    let attempt_ids = fixture.model.model_attempt_ids.lock().unwrap();
+    assert_eq!(attempt_ids.len(), 3);
+    assert_ne!(attempt_ids[0], attempt_ids[2]);
+    assert!(attempt_ids[0].ends_with("submission-1"));
+    assert!(attempt_ids[2].ends_with("submission-2"));
+    drop(attempt_ids);
+
+    assert_eq!(
+        *fixture.storage.model_submissions.lock().unwrap(),
+        [(1, 1), (1, 2)]
+    );
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let finished_kinds = signals
+        .iter()
+        .filter_map(|signal| match signal {
+            TraceSignal::ModelCallFinished(finished) => {
+                assert_eq!(finished.started.trace_id, turn_id.as_str());
+                Some(if finished.started.parent_span_id.is_some() {
+                    "summary"
+                } else {
+                    "model"
+                })
+            }
+            TraceSignal::CompactionFinished(finished) => {
+                assert_eq!(finished.attributes.trigger, "overflow");
+                assert_eq!(finished.started.turn_id.as_ref(), Some(&turn_id));
+                assert_eq!(finished.started.trace_id, turn_id.as_str());
+                Some("compaction")
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(finished_kinds, ["model", "summary", "compaction", "model"]);
+    drop(signals);
+
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(!requests[0].tools.is_empty());
+    assert!(requests[1].tools.is_empty());
+    assert!(!requests[2].tools.is_empty());
+    assert_eq!(
+        requests[2]
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        [
+            Role::System,
+            Role::System,
+            Role::User,
+            Role::User,
+            Role::User
+        ]
+    );
+}
+
+#[tokio::test]
+async fn context_budget_threshold_compacts_before_the_first_provider_submission() {
+    let mut fixture = runtime(
+        vec![
+            response(compaction_summary(), Vec::new()),
+            response("continued after threshold compaction", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+    let accepted = fixture
+        .handle
+        .start_turn_with_context_window(
+            ClientRequestId::new("threshold-request"),
+            vec![ContentBlock::text("do the task")],
+            1,
+        )
+        .await
+        .expect("turn accepted");
+    assert_eq!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed {
+            final_text: "continued after threshold compaction".to_string()
+        }
+    );
+
+    let compactions = fixture.storage.compactions.lock().unwrap();
+    assert_eq!(compactions.len(), 1);
+    assert_eq!(compactions[0].kind, ConversationCompactionKind::Threshold);
+    assert_eq!(
+        compactions[0].trigger_turn_id.as_deref(),
+        Some(accepted.turn_id.as_str())
+    );
+    drop(compactions);
+
+    assert_eq!(*fixture.storage.model_submissions.lock().unwrap(), [(1, 1)]);
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].tools.is_empty());
+    assert!(!requests[1].tools.is_empty());
+    let post_compaction_messages = requests[1].messages.clone();
+    drop(requests);
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let finished_kinds = signals
+        .iter()
+        .filter_map(|signal| match signal {
+            TraceSignal::CompactionFinished(finished) => {
+                assert_eq!(finished.attributes.trigger, "threshold");
+                assert_eq!(finished.started.turn_id.as_ref(), Some(&accepted.turn_id));
+                assert_eq!(finished.started.trace_id, accepted.turn_id.as_str());
+                Some("compaction")
+            }
+            TraceSignal::ModelCallFinished(finished) => {
+                assert_eq!(finished.started.trace_id, accepted.turn_id.as_str());
+                Some(if finished.started.parent_span_id.is_some() {
+                    "summary"
+                } else {
+                    "model"
+                })
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(finished_kinds, ["summary", "compaction", "model"]);
+    let resumed_model = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ModelCallFinished(finished)
+                if finished.started.parent_span_id.is_none() =>
+            {
+                Some(finished)
+            }
+            _ => None,
+        })
+        .expect("post-compaction model trace");
+    assert_eq!(
+        resumed_model.started.payloads.request,
+        Some(serde_json::to_value(post_compaction_messages).unwrap())
+    );
+}
+
+#[tokio::test]
+async fn compacted_tool_turn_records_the_seven_documented_spans() {
+    let mut fixture = runtime(
+        vec![
+            response(compaction_summary(), Vec::new()),
+            response(
+                "",
+                vec![
+                    tool_call("call-1", "read", r#"{"path":"README.md"}"#),
+                    tool_call("call-2", "glob", r#"{"pattern":"docs/*.md"}"#),
+                    tool_call("call-3", "grep", r#"{"query":"trace_id"}"#),
+                ],
+            ),
+            response("done after tools", Vec::new()),
+        ],
+        vec![
+            ToolResult::succeeded("readme"),
+            ToolResult::succeeded("agents"),
+            ToolResult::succeeded("trace docs"),
+        ],
+        PermissionMode::NeverAsk,
+        false,
+    );
+    fixture
+        .chat
+        .append_user(vec![ContentBlock::text("x".repeat(50_000))])
+        .await
+        .expect("large prior user message");
+    fixture
+        .chat
+        .append_assistant(Message::text(Role::Assistant, "prior work completed"))
+        .await
+        .expect("prior assistant message");
+
+    let accepted = fixture
+        .handle
+        .start_turn_with_context_window(
+            ClientRequestId::new("seven-span-threshold-request"),
+            vec![ContentBlock::text("inspect the project")],
+            10_000,
+        )
+        .await
+        .expect("turn accepted");
+    assert_eq!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed {
+            final_text: "done after tools".to_string()
+        }
+    );
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let finished_kinds = signals
+        .iter()
+        .filter_map(|signal| match signal {
+            TraceSignal::CompactionFinished(finished) => {
+                assert_eq!(finished.started.trace_id, accepted.turn_id.as_str());
+                Some("compaction")
+            }
+            TraceSignal::ModelCallFinished(finished) => {
+                assert_eq!(finished.started.trace_id, accepted.turn_id.as_str());
+                Some(if finished.started.parent_span_id.is_some() {
+                    "summary"
+                } else {
+                    "model"
+                })
+            }
+            TraceSignal::ToolCallFinished(finished) => {
+                assert_eq!(finished.started.trace_id, accepted.turn_id.as_str());
+                Some("tool")
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(finished_kinds.len(), 7);
+    assert_eq!(
+        finished_kinds,
+        [
+            "summary",
+            "compaction",
+            "model",
+            "tool",
+            "tool",
+            "tool",
+            "model"
+        ]
+    );
+    assert_eq!(
+        *fixture.storage.model_submissions.lock().unwrap(),
+        [(1, 1), (2, 1)]
+    );
+}
+
+#[tokio::test]
+async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget() {
+    let mut fixture = runtime_with_outcomes(
+        vec![
+            Ok(response(compaction_summary(), Vec::new())),
+            Err(ModelError::context_overflow(
+                "provider still rejected the compacted request",
+            )),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+
+    fixture
+        .handle
+        .start_turn_with_context_window(
+            ClientRequestId::new("threshold-overflow-request"),
+            vec![ContentBlock::text("do the task")],
+            1,
+        )
+        .await
+        .expect("turn accepted");
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Failed { .. }
+    ));
+
+    assert_eq!(fixture.storage.compactions.lock().unwrap().len(), 1);
+    assert_eq!(fixture.model.requests.lock().unwrap().len(), 2);
+    assert_eq!(*fixture.storage.model_submissions.lock().unwrap(), [(1, 1)]);
+}
+
+#[tokio::test]
+async fn manual_compaction_is_rejected_while_a_turn_is_active() {
+    let mut fixture = runtime(
+        vec![response(
+            "",
+            vec![tool_call("call-1", "read", r#"{"path":"a"}"#)],
+        )],
+        Vec::new(),
+        PermissionMode::Ask,
+        false,
+    );
+    let active_turn = start(&fixture).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+
+    assert!(matches!(
+        fixture.handle.compact_conversation().await,
+        Err(CompactionError::SessionActive(id)) if id == active_turn
+    ));
+
+    fixture
+        .handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::Deny)
+        .await
+        .expect("cleanup permission");
+    wait_for_terminal(&mut fixture.updates).await;
+}
+
+#[tokio::test]
+async fn failed_compaction_persistence_keeps_the_previous_conversation() {
+    let mut fixture = runtime(
+        vec![
+            response("first answer", Vec::new()),
+            response(compaction_summary(), Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+    let before = fixture.chat.snapshot().await.expect("before");
+    fixture
+        .storage
+        .fail_compaction
+        .store(true, Ordering::Relaxed);
+
+    assert!(matches!(
+        fixture.handle.compact_conversation().await,
+        Err(CompactionError::Persistence(message)) if message.contains("write failed")
+    ));
+    assert_eq!(fixture.chat.snapshot().await.expect("after"), before);
+    assert!(fixture.storage.compactions.lock().unwrap().is_empty());
+    let signals = fixture.trace.signals.lock().unwrap();
+    let compact_trace = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::CompactionFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("failed compaction trace");
+    assert_eq!(compact_trace.status, TraceStatus::Failed);
+    assert_eq!(
+        compact_trace.error_code.as_deref(),
+        Some("persistence_error")
+    );
+    assert_eq!(compact_trace.attempt_count, Some(1));
+    assert!(compact_trace.attributes.checkpoint_id.is_none());
+}
+
+#[tokio::test]
+async fn empty_conversation_is_not_sent_to_the_compaction_model() {
+    let fixture = runtime(
+        vec![response(compaction_summary(), Vec::new())],
+        Vec::new(),
+        PermissionMode::NeverAsk,
+        false,
+    );
+
+    assert!(matches!(
+        fixture.handle.compact_conversation().await,
+        Err(CompactionError::EmptyConversation)
+    ));
+    assert!(fixture.model.requests.lock().unwrap().is_empty());
+    let signals = fixture.trace.signals.lock().unwrap();
+    let compact_trace = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::CompactionFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("empty compaction trace");
+    assert_eq!(
+        compact_trace.error_code.as_deref(),
+        Some("empty_conversation")
+    );
+    assert_eq!(compact_trace.attempt_count, Some(0));
+}
+
+#[tokio::test]
 async fn runtime_records_versioned_model_and_tool_trace_attributes() {
     let mut fixture = runtime(
         vec![
@@ -1016,7 +1800,9 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
     let first_model = signals
         .iter()
         .find_map(|signal| match signal {
-            TraceSignal::ModelCallFinished(finished) if finished.started.sequence == 1 => {
+            TraceSignal::ModelCallFinished(finished)
+                if finished.attributes.model_call_index == 1 =>
+            {
                 Some(finished)
             }
             _ => None,
@@ -1037,21 +1823,39 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
         first_model.attributes.actual_model.as_deref(),
         Some("test-model")
     );
-    assert_eq!(first_model.attributes.attempts.len(), 1);
+    assert!(
+        serde_json::to_value(&first_model.attributes)
+            .expect("model trace attributes")
+            .get("attempts")
+            .is_none()
+    );
     assert!(first_model.attributes.ttft_ms.is_some());
     assert_eq!(
         first_model.attributes.delivery_state.as_deref(),
         Some("semantic_output_emitted")
     );
-    assert_eq!(first_model.attributes.request_message_count, Some(2));
+    assert_eq!(first_model.attributes.request_message_count, Some(3));
     assert!(
         first_model
             .attributes
-            .request_content_bytes
-            .is_some_and(|value| value > 0)
+            .tool_definition_count
+            .is_some_and(|count| count > 0)
     );
     let model_attributes =
         serde_json::to_value(&first_model.attributes).expect("model trace attributes");
+    for removed in [
+        "requestSystemMessageCount",
+        "requestUserMessageCount",
+        "requestAssistantMessageCount",
+        "requestToolMessageCount",
+        "requestContentBytes",
+        "toolDefinitionBytes",
+        "responseTextBytes",
+        "responseReasoningBytes",
+        "responseToolArgumentsBytes",
+    ] {
+        assert!(model_attributes.get(removed).is_none());
+    }
     assert!(
         model_attributes["requestEstimatedSystemContextTokens"]
             .as_u64()
@@ -1091,11 +1895,16 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
         Some("policy")
     );
     assert_eq!(tool.attributes.result_persisted, Some(true));
-    assert_eq!(
-        tool.attributes.output_bytes,
-        Some("file contents".len() as u64)
-    );
     assert_eq!(tool.attributes.artifact_count, Some(0));
+    let tool_attributes = serde_json::to_value(&tool.attributes).expect("tool trace attributes");
+    for removed in [
+        "inputBytes",
+        "outputBytes",
+        "outputLines",
+        "inputTopLevelKeyCount",
+    ] {
+        assert!(tool_attributes.get(removed).is_none());
+    }
 }
 
 #[tokio::test]
@@ -1129,8 +1938,11 @@ async fn tool_trace_records_result_persistence_failure_without_changing_tool_sta
         .expect("terminal tool trace");
     assert_eq!(tool.status.as_str(), "succeeded");
     assert_eq!(tool.attributes.result_persisted, Some(false));
-    assert_eq!(
-        tool.attributes.result_persist_error_code.as_deref(),
-        Some("persistence_error")
+    assert!(tool.response_payload.is_some());
+    assert!(
+        serde_json::to_value(&tool.attributes)
+            .expect("tool trace attributes")
+            .get("resultPersistErrorCode")
+            .is_none()
     );
 }

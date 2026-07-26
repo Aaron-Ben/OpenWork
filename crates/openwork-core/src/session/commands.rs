@@ -87,4 +87,10 @@ pub enum SessionError {
     PermissionNotPending(ToolCallId),
     #[error("turn input must not be empty")]
     EmptyInput,
+    #[error("context window token capacity must be positive")]
+    InvalidContextWindowTokens,
+    #[error(
+        "session Conversation checkpoint changed but the in-memory projection could not be installed; reload the Session"
+    )]
+    ReloadRequired,
 }

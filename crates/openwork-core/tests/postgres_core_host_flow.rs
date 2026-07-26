@@ -20,6 +20,7 @@ async fn stored_deepseek_v4_flash_completes_a_real_turn() {
     std::env::var(API_KEY_ENCRYPTION_KEY_ENV).expect(API_KEY_ENCRYPTION_KEY_ENV);
     let core = OpenWorkCore::bootstrap(OpenWorkCoreConfig {
         database_url: Some(database_url),
+        ..OpenWorkCoreConfig::default()
     })
     .await
     .unwrap();
@@ -109,6 +110,7 @@ async fn bootstrapped_core_persists_a_provider_and_creates_a_session_from_its_mo
 
     let core = OpenWorkCore::bootstrap(OpenWorkCoreConfig {
         database_url: Some(database_url),
+        ..OpenWorkCoreConfig::default()
     })
     .await
     .unwrap();
@@ -156,7 +158,8 @@ async fn bootstrapped_core_persists_a_provider_and_creates_a_session_from_its_mo
     assert_eq!(session.default_model_id.as_deref(), Some(model_id.as_str()));
 
     let context = core.inspect_context_window(&session_id).await.unwrap();
-    assert_eq!(context.schema_version, 1);
+    assert_eq!(context.schema_version, 2);
+    assert_eq!(context.budget.auto_compaction_threshold_percent, 85);
     assert_eq!(context.session_id, session_id.to_string());
     assert_eq!(context.resolved_model_name, model_name);
     assert_eq!(context.system_context[0].source_key, "core/agent-system");
