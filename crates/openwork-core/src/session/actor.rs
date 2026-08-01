@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
 use openwork_models::model::{ContentBlock, ModelPort};
-use openwork_tools::FinalizedToolset;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use openwork_tools::{FinalizedToolset, PermissionMode};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::compaction::{
@@ -39,6 +39,7 @@ pub struct SessionRuntimeConfig {
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
     pub trace: Arc<dyn TraceRecorder>,
+    pub permission_mode: PermissionMode,
 }
 
 #[derive(Clone)]
@@ -171,6 +172,16 @@ impl SessionHandle {
         response.await.map_err(|_| SessionError::ActorStopped)?
     }
 
+    pub async fn set_permission_mode(
+        &self,
+        mode: PermissionMode,
+    ) -> Result<PermissionMode, SessionError> {
+        let (respond_to, response) = oneshot::channel();
+        self.send(SessionCommand::SetPermissionMode { mode, respond_to })
+            .await?;
+        response.await.map_err(|_| SessionError::ActorStopped)
+    }
+
     pub async fn compact_conversation(&self) -> Result<ConversationCompaction, CompactionError> {
         let (respond_to, response) = oneshot::channel();
         self.command_tx
@@ -240,6 +251,10 @@ enum SessionCommand {
         decision: PermissionDecision,
         respond_to: oneshot::Sender<Result<(), SessionError>>,
     },
+    SetPermissionMode {
+        mode: PermissionMode,
+        respond_to: oneshot::Sender<PermissionMode>,
+    },
     CompactConversation {
         respond_to: oneshot::Sender<Result<ConversationCompaction, CompactionError>>,
     },
@@ -290,6 +305,7 @@ struct SessionActor {
     snapshot: SessionSnapshot,
     active_turn: Option<ActiveTurn>,
     accepted_requests: HashMap<ClientRequestId, TurnAccepted>,
+    permission_mode_tx: watch::Sender<PermissionMode>,
 }
 
 impl SessionActor {
@@ -302,12 +318,14 @@ impl SessionActor {
         update_tx: broadcast::Sender<SessionUpdateEnvelope>,
         global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
     ) -> Self {
+        let (permission_mode_tx, _) = watch::channel(config.permission_mode);
         Self {
             snapshot: SessionSnapshot {
-                // Snapshot V3 adds the `compacting` running phase.
-                version: 3,
+                // Snapshot V4 adds the in-memory permission mode.
+                version: 4,
                 session_id: config.session_id.clone(),
                 last_update_sequence: 0,
+                permission_mode: config.permission_mode,
                 runtime: SessionRuntimeSnapshot::Idle,
             },
             session_id: config.session_id,
@@ -330,6 +348,7 @@ impl SessionActor {
             next_update_sequence: 1,
             active_turn: None,
             accepted_requests: HashMap::new(),
+            permission_mode_tx,
         }
     }
 
@@ -384,6 +403,11 @@ impl SessionActor {
             } => {
                 let result = self.resolve_permission(turn_id, tool_call_id, decision);
                 let _ = respond_to.send(result);
+            }
+            SessionCommand::SetPermissionMode { mode, respond_to } => {
+                self.snapshot.permission_mode = mode;
+                self.permission_mode_tx.send_replace(mode);
+                let _ = respond_to.send(mode);
             }
             SessionCommand::CompactConversation { respond_to } => {
                 let result = self.compact_conversation().await;
@@ -481,6 +505,7 @@ impl SessionActor {
             trace: Arc::clone(&self.trace),
             cancel,
             events: self.runner_tx.clone(),
+            permission_mode: self.permission_mode_tx.subscribe(),
         };
         tokio::spawn(run_turn(request));
         Ok(accepted)
@@ -696,11 +721,12 @@ impl SessionActor {
 
     fn emit(&mut self, turn_id: TurnId, update: SessionUpdate) {
         let envelope = SessionUpdateEnvelope {
-            // Version 4 adds the `compacting` phase. Version 3 adds structured
+            // Version 5 adds the structured permission card. Version 4 adds
+            // the `compacting` phase. Version 3 adds structured
             // terminal tool artifacts. Version 2 introduced
             // `tool_call_progress`; snapshot version 2 carries the same
             // artifacts on running tool calls.
-            version: 4,
+            version: 5,
             session_id: self.session_id.clone(),
             turn_id,
             sequence: self.next_update_sequence,

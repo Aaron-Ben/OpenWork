@@ -1,5 +1,6 @@
 import type {
   RuntimeLiveToolCall,
+  RuntimePermissionMode,
   RuntimePermissionRequest,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
@@ -43,6 +44,7 @@ export interface SessionRuntimeView {
   toolCalls: Record<string, RuntimeLiveToolCall>
   orderedToolCallIds: string[]
   pendingPermission: RuntimePermissionRequest | null
+  permissionMode: RuntimePermissionMode
   terminal: RuntimeTurnOutcome | null
   syncState: 'current' | 'stale' | 'resyncing'
   error: string | null
@@ -59,6 +61,7 @@ export function createSessionRuntimeView(): SessionRuntimeView {
     toolCalls: {},
     orderedToolCallIds: [],
     pendingPermission: null,
+    permissionMode: 'default',
     terminal: null,
     syncState: 'current',
     error: null,
@@ -212,6 +215,7 @@ export function runtimeViewFromSnapshot(snapshot: RuntimeSessionSnapshot): Sessi
   const base = {
     ...createSessionRuntimeView(),
     lastSequence: snapshot.lastUpdateSequence,
+    permissionMode: snapshot.permissionMode,
     syncState: 'current' as const,
   }
   const { runtime } = snapshot

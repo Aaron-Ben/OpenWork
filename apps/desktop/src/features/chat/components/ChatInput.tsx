@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProviderModel } from '../../models/contracts'
+import type { RuntimePermissionMode } from '../../../bridge/compat'
 import type { ContextUsage } from '../contextUsage'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 
@@ -13,12 +14,14 @@ interface ChatInputProps {
   model: string
   modelOptions: ProviderModel[]
   modelSelectionLocked?: boolean
+  permissionMode: RuntimePermissionMode
   value: string
   isSending: boolean
   isCompacting?: boolean
   disabled?: boolean
   onValueChange: (value: string) => void
   onModelChange: (model: string) => void
+  onPermissionModeChange: (mode: RuntimePermissionMode) => void
   onSubmit: () => void
   onCancel?: () => void
   topContent?: ReactNode
@@ -34,12 +37,14 @@ export function ChatInput({
   model,
   modelOptions,
   modelSelectionLocked = false,
+  permissionMode,
   value,
   isSending,
   isCompacting = false,
   disabled = false,
   onValueChange,
   onModelChange,
+  onPermissionModeChange,
   onSubmit,
   onCancel,
   topContent,
@@ -168,14 +173,26 @@ export function ChatInput({
         <div className="mx-5 border-t border-line" />
 
         <div className="flex min-h-12 items-center gap-2 px-4 py-1 sm:px-5">
-          <div
-            className="flex h-8 items-center gap-2 px-1.5 text-sm font-medium text-ink-faint"
-            aria-label={t('chat.approvalMode', { mode: t('chat.askForApproval') })}
-            title={t('chat.askForApprovalDescription')}
+          <Select
+            value={permissionMode}
+            onValueChange={(mode) => onPermissionModeChange(mode as RuntimePermissionMode)}
+            disabled={disabled || isSending || isCompacting}
           >
-            <ShieldCheck size={17} strokeWidth={1.8} />
-            <span className="max-[420px]:hidden">{t('chat.askForApproval')}</span>
-          </div>
+            <SelectTrigger
+              className="w-[clamp(96px,18vw,180px)] overflow-hidden"
+              aria-label={t('chat.permissionMode')}
+              title={t(`chat.permissionModes.${permissionMode}Description`)}
+            >
+              <ShieldCheck size={17} strokeWidth={1.8} className="shrink-0 text-ink-faint" />
+              <SelectValue>
+                {t(`chat.permissionModes.${permissionMode}`)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent side="top" align="start">
+              <SelectItem value="default">{t('chat.permissionModes.default')}</SelectItem>
+              <SelectItem value="accept_edits">{t('chat.permissionModes.accept_edits')}</SelectItem>
+            </SelectContent>
+          </Select>
 
           <div className="min-w-0 flex-1" />
 

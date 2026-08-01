@@ -1,7 +1,7 @@
 use openwork_core::{
     session::TurnId, ClientRequestId, ContextWindowInspection, ConversationCompaction,
     ConversationProjectionRecord, ConversationProjectionSelector, ConversationTranscriptPage,
-    ConversationTranscriptQuery, LoadedSession, OpenWorkCore, PermissionDecision,
+    ConversationTranscriptQuery, LoadedSession, OpenWorkCore, PermissionDecision, PermissionMode,
     ReapplyFileChangesResult, SessionId, SessionInput, SessionRecord, SessionSnapshot,
     SessionUpdateEnvelope, ToolCallId, TraceContentPolicy, TracePayloadSlot,
     TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted, TurnTrace,
@@ -201,6 +201,17 @@ pub async fn runtime_permission_resolve(
     )
     .await
     .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn runtime_permission_mode_set(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    mode: PermissionMode,
+) -> Result<PermissionMode, CommandError> {
+    core.set_permission_mode(&SessionId::new(session_id), mode)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

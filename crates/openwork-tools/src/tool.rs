@@ -4,8 +4,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::{
-    ToolCallContext, ToolDefinition, ToolExecutionError, ToolId, ToolResult, ToolRisk,
-    ToolSessionContext,
+    InvocationAnalysis, ToolCallContext, ToolDefinition, ToolExecutionError, ToolId, ToolResult,
+    ToolRisk, ToolSessionContext,
 };
 
 pub trait ToolOutput: Send + 'static {
@@ -42,6 +42,14 @@ pub trait Tool: Send + Sync + 'static {
     fn description(&self) -> &'static str;
     fn risk(&self) -> ToolRisk;
 
+    fn permission_analysis(
+        &self,
+        _session: &ToolSessionContext,
+        _input: &Self::Input,
+    ) -> InvocationAnalysis {
+        InvocationAnalysis::unparsed(self.id().to_string())
+    }
+
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -55,6 +63,11 @@ pub(crate) trait DynTool: Send + Sync {
     fn id(&self) -> ToolId;
     fn definition(&self) -> Result<ToolDefinition, String>;
     fn validate(&self, input: &Value) -> Result<(), String>;
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Value,
+    ) -> Result<InvocationAnalysis, String>;
 
     async fn call(
         &self,
@@ -100,6 +113,16 @@ impl<T: Tool> DynTool for ToolAdapter<T> {
         serde_json::from_value::<T::Input>(input.clone())
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Value,
+    ) -> Result<InvocationAnalysis, String> {
+        let input =
+            serde_json::from_value::<T::Input>(input.clone()).map_err(|error| error.to_string())?;
+        Ok(self.inner.permission_analysis(session, &input))
     }
 
     async fn call(

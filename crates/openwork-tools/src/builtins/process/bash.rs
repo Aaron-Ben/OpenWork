@@ -6,10 +6,11 @@ use serde::Deserialize;
 
 use crate::builtins::truncate_output;
 use crate::context::PathIntent;
-use crate::policy::{AccessKind, NetworkMode};
+use crate::permission::analyze_bash;
+use crate::policy::AccessKind;
 use crate::{
-    ProcessRequest, ProcessStatus, Tool, ToolCallContext, ToolErrorCode, ToolExecutionError,
-    ToolId, ToolResult, ToolRisk, ToolSessionContext,
+    InvocationAnalysis, ProcessRequest, ProcessStatus, Tool, ToolCallContext, ToolErrorCode,
+    ToolExecutionError, ToolId, ToolResult, ToolRisk, ToolSessionContext,
 };
 
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
@@ -46,6 +47,14 @@ impl Tool for BashTool {
         ToolRisk::ProcessExecution
     }
 
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Self::Input,
+    ) -> InvocationAnalysis {
+        analyze_bash(&input.command, &session.working_directory)
+    }
+
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -55,19 +64,6 @@ impl Tool for BashTool {
         let working_directory = session
             .resolve_path(".", AccessKind::Read, PathIntent::MustExist)
             .await?;
-        let mut environment = session.environment.as_ref().clone();
-        environment.insert(
-            "OPENWORK_NETWORK_MODE".to_string(),
-            match session.permissions.network {
-                NetworkMode::Restricted => "restricted",
-                NetworkMode::Enabled => "enabled",
-            }
-            .to_string(),
-        );
-        // SECURITY LIMITATION: `OPENWORK_NETWORK_MODE` is advisory metadata only.
-        // This backend does not yet enforce an operating-system-level filesystem
-        // or network sandbox, nor can it reliably inspect shell redirections.
-        // Keep the explicit terminal warning below until a sandbox backend exists.
         let timeout_ms = input.timeout_ms.clamp(1, MAX_TIMEOUT_MS);
         let output = session
             .process_backend
@@ -76,9 +72,8 @@ impl Tool for BashTool {
                     program: "sh".to_string(),
                     arguments: vec!["-c".to_string(), input.command],
                     working_directory: working_directory.as_path().to_path_buf(),
-                    environment,
+                    environment: session.environment.as_ref().clone(),
                     timeout: Duration::from_millis(timeout_ms),
-                    network_mode: session.permissions.network,
                 },
                 &call,
             )
@@ -95,14 +90,6 @@ impl Tool for BashTool {
             }
             combined.push_str("[stderr]\n");
             combined.push_str(&stderr);
-        }
-        if session.permissions.network == NetworkMode::Restricted
-            && !output.network_restriction_enforced
-        {
-            if !combined.is_empty() {
-                combined.push('\n');
-            }
-            combined.push_str("[network restriction requested but not enforced by this backend]");
         }
         let footer = match output.status {
             ProcessStatus::Exited { exit_code } => format!(
@@ -143,12 +130,46 @@ mod tests {
     fn session() -> ToolSessionContext {
         ToolSessionContext::local(
             std::env::temp_dir(),
-            PermissionProfile::danger_full_access(),
+            PermissionProfile::from_builtin_rules(std::env::temp_dir()),
         )
     }
 
     fn call(id: &str) -> ToolCallContext {
         ToolCallContext::new(ToolCallId::new(id), CancellationToken::new())
+    }
+
+    /// permissions.md §1.4 / 验收 74: this project enforces no network or
+    /// sandbox boundary and must therefore make no claim about one. A
+    /// permanently-untrue "not enforced" disclaimer only trains users to
+    /// ignore the surrounding text.
+    #[tokio::test]
+    async fn acc_74_bash_output_makes_no_network_or_sandbox_claim() {
+        let result = BashTool
+            .execute(
+                &session(),
+                call("no-network-claim"),
+                BashInput {
+                    command: "printf hello".to_string(),
+                    timeout_ms: 1_000,
+                },
+            )
+            .await
+            .expect("printf should complete")
+            .into_tool_result();
+
+        let text = result.text_content().to_lowercase();
+        for marker in [
+            "network",
+            "sandbox",
+            "restricted",
+            "not enforced",
+            "isolation",
+        ] {
+            assert!(
+                !text.contains(marker),
+                "bash output must not mention {marker:?}: {text}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -191,34 +212,6 @@ mod tests {
             Some(ToolErrorCode::Timeout)
         );
         assert!(result.text_content().contains("before-timeout"));
-    }
-
-    #[tokio::test]
-    async fn restricted_network_mode_reports_missing_enforcement() {
-        let working_directory = std::env::temp_dir();
-        let session = ToolSessionContext::local(
-            working_directory.clone(),
-            PermissionProfile::workspace_write(working_directory),
-        );
-
-        let result = BashTool
-            .execute(
-                &session,
-                call("network-enforcement"),
-                BashInput {
-                    command: "printf ok".to_string(),
-                    timeout_ms: 1_000,
-                },
-            )
-            .await
-            .expect("completed command")
-            .into_tool_result();
-
-        assert!(
-            result
-                .text_content()
-                .contains("network restriction requested but not enforced")
-        );
     }
 
     #[tokio::test]

@@ -40,3 +40,5 @@ regex = "1"
 schemars = "1"
 sha2 = "0.10"
 tokio-util = { version = "0.7", features = ["rt"] }
+tree-sitter = "0.25.10"
+tree-sitter-bash = "0.25.1"

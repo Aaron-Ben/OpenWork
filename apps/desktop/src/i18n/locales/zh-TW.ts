@@ -117,6 +117,12 @@ export const zhTW = {
     },
     approvalMode: '審批模式：{{mode}}', askForApproval: '詢問審批', executionPermission: '執行權限',
     askForApprovalDescription: '工具呼叫前暫停，等待你確認允許或拒絕。',
+    permissionMode: '權限模式',
+    permissionModes: {
+      default: '預設', accept_edits: '自動接受檔案改動',
+      defaultDescription: '自動讀取工作區檔案；一般寫入與任何指令仍需審批，受保護中繼資料仍會拒絕。',
+      accept_editsDescription: '額外允許檔案工具寫入工作區內非敏感路徑；指令仍需審批。',
+    },
     startConversation: '開始對話', createSession: '建立對話',
     noSessionHelp: '點選專案右側的新增按鈕，開始使用 OpenWork。',
     readyHelp: '開始新的程式開發對話。OpenWork 已準備好協助你建置、除錯及梳理專案。',
@@ -172,6 +178,15 @@ export const zhTW = {
   tool: {
     thinking: '思考中', thought: '思考過程', running: '執行中', done: '已完成', result: '結果', error: '錯誤', input: '輸入',
     content: '內容', noInput: '無輸入', waitingApproval: '等待審批', processing: '處理中……', allow: '允許', reject: '拒絕',
+    permission: {
+      title: '即將執行 {{count}} 項操作', raw: '原文', allowOnce: '允許一次',
+      read: '讀取 {{path}}', write: '寫入 {{path}}', exec: '執行 {{command}}',
+      trustedProgram: '執行（信任該程式）：{{program}}', outsideWorkspace: '工作區外',
+      unknownEffects: '無法可靠推斷效果', unparsedWarning: '此呼叫無法可靠拆分；請按完整原文判斷。',
+      allowedByBuiltin: '內建規則已放行', allowedByMode: '目前模式已放行',
+      explicitAsk: '明確規則要求審批', sensitivePath: '受保護位置，目前模式無法覆蓋',
+      noRuleCovers: '無規則覆蓋', unparsed: '無法可靠判定', deniedByRule: '規則拒絕',
+    },
     allowBash: '允許執行 Bash 指令', allowWrite: '允許寫入 {{name}}', allowWriteFile: '允許寫入檔案',
     allowRead: '允許讀取 {{name}}', allowReadFile: '允許讀取檔案', allowList: '允許列出 {{name}}',
     allowListDirectory: '允許列出目錄', allowTool: '允許工具 {{name}}',

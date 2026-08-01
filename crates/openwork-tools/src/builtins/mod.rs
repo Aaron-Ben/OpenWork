@@ -36,7 +36,7 @@ mod tests {
                 &ToolsetConfig::from_names(names),
                 ToolSessionContext::local(
                     std::env::temp_dir(),
-                    PermissionProfile::danger_full_access(),
+                    PermissionProfile::from_builtin_rules(std::env::temp_dir()),
                 ),
             )
             .expect("builtin toolset");

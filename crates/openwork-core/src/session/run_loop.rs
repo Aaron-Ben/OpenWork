@@ -11,13 +11,13 @@ use openwork_models::model::{
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
-    FinalizedToolset, PolicyDecision, ToolCallContext as RuntimeToolCallContext,
+    Authorization, FinalizedToolset, PermissionMode, ToolCallContext as RuntimeToolCallContext,
     ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation,
     ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent, ToolResultStatus,
     ToolValidationError,
 };
 use time::OffsetDateTime;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -53,6 +53,7 @@ pub(super) struct TurnRunRequest {
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
     pub events: mpsc::Sender<RunnerEvent>,
+    pub permission_mode: watch::Receiver<PermissionMode>,
 }
 
 pub(super) enum RunnerEvent {
@@ -545,24 +546,41 @@ impl TurnRunner {
             return Err(TurnRunError::DoomLoop(call.name.clone()));
         }
 
-        match self
-            .request
-            .tools
-            .authorize(&invocation, self.request.agent.policy().permission_mode)
-        {
-            PolicyDecision::Allow => {
+        let permission_mode = *self.request.permission_mode.borrow();
+        let permit = match self.request.tools.authorize(&invocation, permission_mode) {
+            Authorization::Allow { permit } => {
                 tool_trace.record_permission_policy("allow");
                 tool_trace.record_permission_decision("allow", "policy");
+                permit
             }
-            PolicyDecision::Deny { reason } => {
+            Authorization::Deny {
+                reason,
+                rule_id,
+                silent,
+            } => {
                 tool_trace.record_permission_policy("deny");
-                tool_trace.record_permission_decision("deny", "policy");
+                // permissions.md §7: built-in denials are sourced to `builtin`,
+                // everything else to the rule that produced them.
+                tool_trace
+                    .record_permission_decision("deny", if silent { "builtin" } else { "rule" });
+                // TODO(P2): permissions.md §7 also requires `permissionRuleId`
+                // and `permissionRuleScope` on the span; the trace attribute
+                // does not exist yet.
+                let _ = rule_id;
                 let result = ToolResult::denied(reason.clone());
                 self.append_tool_result(call, tool_call_id, result, tool_trace)
                     .await?;
-                return Err(TurnRunError::PermissionDenied(reason));
+                return Ok(());
             }
-            PolicyDecision::Ask { reason } => {
+            Authorization::Unavailable { code, message } => {
+                // Not a permission verdict — the call could not be judged at
+                // all, so it must not read as "a rule closed this path".
+                let result = ToolResult::failed(code, message, false);
+                return self
+                    .append_tool_result(call, tool_call_id, result, tool_trace)
+                    .await;
+            }
+            Authorization::Ask { card, permit } => {
                 tool_trace.record_permission_policy("ask");
                 let request = PermissionRequest {
                     session_id: self.request.session_id.clone(),
@@ -570,8 +588,7 @@ impl TurnRunner {
                     tool_call_id: tool_call_id.clone(),
                     provider_call_id: call.id.clone(),
                     tool_name: resolved_tool_name.clone(),
-                    input,
-                    reason,
+                    card,
                 };
                 let (respond_to, decision) = oneshot::channel();
                 if self
@@ -624,8 +641,9 @@ impl TurnRunner {
                     ));
                 }
                 tool_trace.record_permission_decision("allow", "user");
+                permit
             }
-        }
+        };
 
         let (progress_tx, mut progress_rx) = mpsc::channel(64);
         let call_context = RuntimeToolCallContext::new(
@@ -635,7 +653,7 @@ impl TurnRunner {
         .with_progress_sender(progress_tx);
         let tools = Arc::clone(&self.request.tools);
         let execution_started = Instant::now();
-        let mut execution = Box::pin(tools.call(call_context, invocation));
+        let mut execution = Box::pin(tools.call(call_context, invocation, permit));
         let mut progress_open = true;
         let result = loop {
             tokio::select! {

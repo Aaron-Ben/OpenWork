@@ -4,7 +4,8 @@ use serde::Deserialize;
 
 use crate::policy::AccessKind;
 use crate::{
-    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AnalysisUnit, Effect, InvocationAnalysis, TextToolOutput, Tool, ToolCallContext,
+    ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
 use crate::context::PathIntent;
@@ -46,10 +47,25 @@ impl Tool for ListTool {
         ToolRisk::ReadOnly
     }
 
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Self::Input,
+    ) -> InvocationAnalysis {
+        let display = format!("list {}", input.path);
+        InvocationAnalysis::new(
+            display.clone(),
+            vec![AnalysisUnit::new(
+                display,
+                vec![Effect::read(session.normalize_effect_path(&input.path))],
+            )],
+        )
+    }
+
     async fn execute(
         &self,
         session: &ToolSessionContext,
-        _call: ToolCallContext,
+        call: ToolCallContext,
         input: ListInput,
     ) -> Result<TextToolOutput, ToolExecutionError> {
         if input.limit == 0 || input.limit > MAX_LIMIT {
@@ -58,7 +74,7 @@ impl Tool for ListTool {
             )));
         }
         let resolved = session
-            .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
+            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
             .await?;
         let mut names = session
             .filesystem
@@ -129,7 +145,7 @@ mod tests {
         }
         let session = ToolSessionContext::local(
             workspace.path().to_path_buf(),
-            PermissionProfile::workspace_write(workspace.path().to_path_buf()),
+            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
         );
 
         let result = ListTool

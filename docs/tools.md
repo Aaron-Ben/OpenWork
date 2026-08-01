@@ -89,7 +89,7 @@ Tools 可以依赖 `ToolSessionContext`，但**不能反向依赖 `openwork-core
 - 单元测试不需要访问真实工作目录；
 - **路径检查可以在唯一入口强制执行**；
 - 进程表、kill、timeout 和取消语义集中管理；
-- 将来接入沙箱时不需要改每个工具。
+- 进程启动方式集中在一处，替换实现不必改每个工具。
 
 ## 5. 第四层：调用级上下文
 
@@ -153,11 +153,11 @@ Deny  → 返回 denied，不调用工具
 
 ### 7.2 执行期强制 —— Tools 负责
 
-目标路径是否在允许范围内、是否允许写保护目录、是否允许网络、进程参数是否合法、symlink 是否越界。
+目标路径是否在允许范围内、是否允许写保护目录、进程参数是否合法、symlink 是否越界。
 
 > **用户选择 `Allow` 不能绕过这些边界。**
 
-分工：`Tool::risk()` 用于 Core 的**用户决策**，`ToolSessionContext.permissions` 用于**执行期强制检查**。没有 OS 级沙箱。
+分工：工具声明它这次会产生什么**效果**，权限系统按效果决定问不问（[permissions.md §2](permissions.md)）；`ToolSessionContext` 负责**执行期强制检查**。没有 OS 级隔离，且不做。
 
 ## 8. 路径安全
 
@@ -199,9 +199,11 @@ async fn resolve_path(&self, input: &str,
 
 因此：
 
-- 语法预检属于 defense-in-depth；
-- 真正的文件与网络限制**必须由进程 Backend 的操作系统沙箱强制**；
-- 在强制沙箱实现前，`bash` 保持高风险审批，**文案不得声称已完全限制写入或网络**。
+- 语法预检**不是安全边界**，它挡不住变量展开、符号链接、子进程自身的写入与网络访问；
+- 能真正强制这条边界的只有操作系统级隔离，而本项目**不做**（[permissions.md §1.4](permissions.md)）；
+- 因此 `bash` 只在两种情况下自动执行：命令通过**只读判定**（程序 + 参数子集的封闭白名单，[permissions.md §2.3](permissions.md)），或在 `acceptEdits` 下命中**文件系统命令闸门**（[permissions.md §4.8](permissions.md)）。**其余一律逐次确认**，审批卡片就是它的边界（[permissions.md §5](permissions.md)）；
+- 上述两条自动放行路径的边界是判定表本身的正确性，因此它们必须在 Trace 中留下可反查的来源（[permissions.md §7](permissions.md)）；
+- 任何情况下**文案不得声称已限制写入或网络**。
 
 ## 9. 内置工具
 
@@ -268,7 +270,7 @@ pub enum EntryKind { File, Directory, Symlink, Other }
 - timeout 或取消：终止**整个进程组**，返回终止前已收集的部分输出；
 - 结果明确区分 `exited` / `timed_out` / `cancelled`，`spawn_failed` 是独立错误类型。
 
-**网络模式**：`NetworkMode::Restricted` 只有在 Backend 已应用平台级限制时才表示强制隔离。实施前可以保留该枚举用于策略决策，但**结果或日志必须说明 enforcement 状态**，不能只靠环境变量宣称网络已被限制。
+**网络**：不管控，也不声称（[permissions.md §1.4](permissions.md)）。没有隔离手段就没有可强制的网络边界，因此不设网络相关环境变量，结果里也不附网络注解——一个恒为“未强制”的免责声明只会训练用户忽略它。
 
 ## 10. 结果、进度与文件变更
 

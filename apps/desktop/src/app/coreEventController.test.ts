@@ -81,6 +81,7 @@ describe('coreEventController', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 4,
+      permissionMode: 'default',
       runtime: {
         state: 'running',
         turnId: 'turn-1',
@@ -108,6 +109,7 @@ describe('coreEventController', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 0,
+      permissionMode: 'default',
       runtime: { state: 'idle' },
     }
     vi.mocked(deps.loadSnapshot).mockResolvedValue(snapshot)

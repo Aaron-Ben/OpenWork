@@ -74,7 +74,7 @@ Message/ContentBlock、Model Request/Response/Event、`ModelPort` trait、各 Pr
 4. **模型总是用户显式选择**（`providerId + model`），没有自动选择或跨模型 fallback。
 5. **Trace 是 best-effort** —— Trace/队列/数据库失败不得让 Turn 失败。正文写入失败时 Span 本身仍须落库。
 6. **同一份内容只有一个权威副本** —— `messages` 已有的内容，Trace 只留指针不复制。
-7. **权限 `Allow` 不能绕过 `ToolSessionContext` 的路径/进程边界。** 没有 OS 级沙箱。
+7. **权限 `Allow` 不能绕过 `ToolSessionContext` 的路径边界**——对六个文件工具成立。`bash` 没有执行期边界，审批即边界，见 [permissions.md §1.2](permissions.md)。
 
 ## 4. 对外 API
 

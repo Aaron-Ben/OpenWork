@@ -136,10 +136,6 @@ impl ProcessBackend for TokioProcessBackend {
             stderr: stderr?,
             status,
             elapsed: started.elapsed(),
-            // SECURITY TODO: the Tokio backend currently launches the host shell
-            // directly. `request.network_mode` is policy intent, not an enforced
-            // OS filesystem/network sandbox, so this must remain false.
-            network_restriction_enforced: false,
         })
     }
 }
@@ -277,7 +273,6 @@ mod tests {
 
     use super::*;
     use crate::ToolCallId;
-    use crate::policy::NetworkMode;
 
     #[cfg(unix)]
     #[tokio::test]
@@ -290,7 +285,6 @@ mod tests {
             working_directory: std::env::temp_dir(),
             environment: HashMap::new(),
             timeout: Duration::from_secs(60),
-            network_mode: NetworkMode::Enabled,
         };
         let started = Instant::now();
         let task = tokio::spawn(async move { TokioProcessBackend.run(request, &call).await });
@@ -314,7 +308,6 @@ mod tests {
             working_directory: std::env::temp_dir(),
             environment: HashMap::new(),
             timeout: Duration::from_millis(50),
-            network_mode: NetworkMode::Enabled,
         };
 
         let output = TokioProcessBackend
@@ -337,7 +330,6 @@ mod tests {
             working_directory: std::env::temp_dir(),
             environment: HashMap::new(),
             timeout: Duration::from_secs(5),
-            network_mode: NetworkMode::Enabled,
         };
 
         let output = TokioProcessBackend

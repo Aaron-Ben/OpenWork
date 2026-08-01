@@ -6,7 +6,8 @@ use serde::Deserialize;
 use crate::builtins::truncate_output;
 use crate::policy::AccessKind;
 use crate::{
-    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AnalysisUnit, Effect, InvocationAnalysis, TextToolOutput, Tool, ToolCallContext,
+    ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
 use crate::context::PathIntent;
@@ -48,6 +49,21 @@ impl Tool for GlobTool {
         ToolRisk::ReadOnly
     }
 
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Self::Input,
+    ) -> InvocationAnalysis {
+        let display = format!("glob {} in {}", input.pattern, input.path);
+        InvocationAnalysis::new(
+            display.clone(),
+            vec![AnalysisUnit::new(
+                display,
+                vec![Effect::read(session.normalize_effect_path(&input.path))],
+            )],
+        )
+    }
+
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -66,7 +82,7 @@ impl Tool for GlobTool {
             ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
         })?;
         let root = session
-            .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
+            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
             .await?;
         let mut files = session
             .filesystem
@@ -152,7 +168,7 @@ mod tests {
         }
         let session = ToolSessionContext::local(
             workspace.path().to_path_buf(),
-            PermissionProfile::workspace_write(workspace.path().to_path_buf()),
+            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
         );
 
         let result = GlobTool
@@ -186,7 +202,7 @@ mod tests {
         std::fs::write(workspace.path().join("a.rs"), "fixture").expect("write fixture");
         let session = ToolSessionContext::local(
             workspace.path().to_path_buf(),
-            PermissionProfile::workspace_write(workspace.path().to_path_buf()),
+            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
         );
         let cancel = CancellationToken::new();
         cancel.cancel();

@@ -1,114 +1,80 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import {
-  Check,
-  FileText,
-  FolderTree,
-  Pencil,
-  ShieldAlert,
-  Terminal,
-  X,
-} from 'lucide-react'
+import { Check, FileText, Pencil, ShieldAlert, Terminal, X } from 'lucide-react'
 
+import type {
+  RuntimeEffectDisplay,
+  RuntimePermissionRequest,
+  RuntimeUnitVerdict,
+} from '../../../bridge/compat'
 import { useRuntimeStore } from '../runtimeStore'
 import { useTurnActions } from '../useTurn'
 
-interface ToolDetails {
-  primary: string
-  content?: string
-}
+function effectLabel(t: TFunction, display: RuntimeEffectDisplay): string {
+  if (display.certainty === 'trusted_program') {
+    return t('tool.permission.trustedProgram', { program: display.program })
+  }
 
-function extractDetails(toolName: string, input: unknown): ToolDetails {
-  const obj = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
-  switch (toolName) {
-    case 'bash':
-      return { primary: typeof obj.command === 'string' ? obj.command : '' }
-    case 'write':
-      return {
-        primary: typeof obj.path === 'string' ? obj.path : '',
-        content: typeof obj.content === 'string' ? obj.content : '',
-      }
+  switch (display.effect.kind) {
     case 'read':
-    case 'list':
-      return { primary: typeof obj.path === 'string' ? obj.path : '' }
-    default:
-      return { primary: typeof input === 'string' ? input : safeStringify(input) }
-  }
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
-function titleFor(t: TFunction, toolName: string, primary: string): string {
-  const fileName = primary ? primary.split('/').pop() || primary : ''
-  switch (toolName) {
-    case 'bash':
-      return t('tool.allowBash')
+      return t('tool.permission.read', { path: display.effect.path })
     case 'write':
-      return fileName ? t('tool.allowWrite', { name: fileName }) : t('tool.allowWriteFile')
-    case 'read':
-      return fileName ? t('tool.allowRead', { name: fileName }) : t('tool.allowReadFile')
-    case 'list':
-      return fileName ? t('tool.allowList', { name: fileName }) : t('tool.allowListDirectory')
-    default:
-      return t('tool.allowTool', { name: toolName })
+      return t('tool.permission.write', { path: display.effect.path })
+    case 'exec':
+      return t('tool.permission.exec', {
+        command: [display.effect.program, ...display.effect.args].join(' '),
+      })
   }
 }
 
-/// 输入框上方的权限卡片。Permission 属于对应 Session Runtime，直到 Core 事件确认已处理。
-export function ApprovalDialog({ sessionId }: { sessionId: string | null }) {
+function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
+  if (verdict.decision === 'deny') return t('tool.permission.deniedByRule')
+  if (verdict.decision === 'allow') {
+    return verdict.source === 'mode'
+      ? t('tool.permission.allowedByMode')
+      : t('tool.permission.allowedByBuiltin')
+  }
+  switch (verdict.source) {
+    case 'explicit_rule':
+      return t('tool.permission.explicitAsk')
+    case 'builtin_sensitive':
+      return t('tool.permission.sensitivePath')
+    case 'unparsed':
+      return t('tool.permission.unparsed')
+    case 'no_rule_covers':
+      return t('tool.permission.noRuleCovers')
+  }
+}
+
+function EffectRow({ display }: { display: RuntimeEffectDisplay }) {
   const { t } = useTranslation()
-  const current = useRuntimeStore((state) =>
-    sessionId ? state.bySession[sessionId]?.pendingPermission ?? null : null,
+  const Icon = display.certainty === 'trusted_program'
+    ? Terminal
+    : display.effect.kind === 'write'
+      ? Pencil
+      : FileText
+  return (
+    <li className="flex min-w-0 items-start gap-2 text-xs text-ink-soft">
+      <Icon className="mt-0.5 size-3.5 shrink-0 text-ink-faint" />
+      <span className="break-all font-mono">{effectLabel(t, display)}</span>
+    </li>
   )
-  const { resolvePermission } = useTurnActions(sessionId)
-  const [resolving, setResolving] = useState(false)
+}
+
+export function ApprovalCardView({
+  request,
+  resolving,
+  onResolve,
+}: {
+  request: RuntimePermissionRequest
+  resolving: boolean
+  onResolve: (allow: boolean) => void
+}) {
+  const { t } = useTranslation()
   const titleRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (current) titleRef.current?.focus()
-  }, [current])
-
-  async function resolve(allow: boolean) {
-    if (!current || resolving) return
-    setResolving(true)
-    try {
-      await resolvePermission(allow)
-    } finally {
-      setResolving(false)
-    }
-  }
-
-  if (!current) return null
-
-  const meta = (() => {
-    switch (current.toolName) {
-      case 'bash':
-        return { icon: Terminal, label: 'Bash', color: 'text-clay' }
-      case 'write':
-        return { icon: Pencil, label: 'Write', color: 'text-status-success' }
-      case 'read':
-        return { icon: FileText, label: 'Read', color: 'text-ink-soft' }
-      case 'list':
-        return { icon: FolderTree, label: 'List', color: 'text-ink-soft' }
-      default:
-        return { icon: ShieldAlert, label: current.toolName, color: 'text-ink-faint' }
-    }
-  })()
-  const Icon = meta.icon
-
-  const details = extractDetails(current.toolName, current.input)
-  const title = titleFor(t, current.toolName, details.primary)
-  const showPath = Boolean(details.primary) && current.toolName !== 'bash'
-  const showTerminal = current.toolName === 'bash' && Boolean(details.primary)
-  const showContent =
-    current.toolName === 'write' && typeof details.content === 'string' && details.content.length > 0
+  useEffect(() => titleRef.current?.focus(), [request.toolCallId])
 
   return (
     <div
@@ -120,73 +86,84 @@ export function ApprovalDialog({ sessionId }: { sessionId: string | null }) {
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()
-          void resolve(false)
+          onResolve(false)
         }
       }}
     >
-      {/* Header */}
       <div className="flex items-center gap-3 bg-clay-soft px-4 py-3">
         <div className="grid size-8 place-items-center rounded-lg bg-paper shadow-sm ring-1 ring-clay-soft">
-          <Icon className={meta.color} size={18} />
+          <ShieldAlert className="text-clay" size={18} />
         </div>
         <div ref={titleRef} id="permission-title" tabIndex={-1} className="min-w-0 flex-1 outline-none">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 break-words text-sm font-semibold text-ink">{title}</span>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clay-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-clay">
-              <span className="size-1.5 animate-pulse rounded-full bg-clay" />
-              {t('tool.waitingApproval')}
-            </span>
+          <div className="text-sm font-semibold text-ink">
+            {t('tool.permission.title', { count: request.card.units.length })}
           </div>
+          <div className="mt-0.5 text-xs text-clay">{t('tool.waitingApproval')}</div>
         </div>
       </div>
 
-      {/* Tool details */}
-      <div className="space-y-2 border-t border-clay-soft px-4 py-3">
-        {showPath && (
-          <div className="flex items-center gap-2 rounded-lg bg-paper-hover px-3 py-2 font-mono text-xs text-ink-soft">
-            <FileText className="size-3.5 flex-shrink-0 text-ink-faint" />
-            <span className="truncate">{details.primary}</span>
-          </div>
-        )}
+      <ol className="space-y-2 border-t border-clay-soft px-4 py-3">
+        {request.card.units.map((unit, index) => (
+          <li
+            key={`${index}-${unit.display}`}
+            data-permission-unit="true"
+            className="rounded-lg bg-paper-hover px-3 py-2.5"
+          >
+            <div className="flex items-start gap-2">
+              <span className="shrink-0 text-xs font-semibold text-ink-faint">{index + 1}.</span>
+              <code className="min-w-0 flex-1 whitespace-pre-wrap break-words text-xs font-semibold text-ink">
+                {unit.display}
+              </code>
+              {unit.outsideWorkspace ? (
+                <span className="shrink-0 rounded-full bg-status-warning-soft px-2 py-0.5 text-[10px] font-medium text-status-warning-ink">
+                  {t('tool.permission.outsideWorkspace')}
+                </span>
+              ) : null}
+            </div>
+            <ul className="mt-2 space-y-1 pl-5">
+              {unit.effects.map((effect, effectIndex) => (
+                <EffectRow key={effectIndex} display={effect} />
+              ))}
+              {unit.effects.length === 0 ? (
+                <li className="text-xs text-status-warning-ink">{t('tool.permission.unknownEffects')}</li>
+              ) : null}
+            </ul>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-5 text-[11px] text-ink-faint">
+              <span>{verdictLabel(t, unit.verdict)}</span>
+              {unit.verdict.ruleId ? <code>{unit.verdict.ruleId}</code> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
 
-        {showTerminal && (
-          <div className="overflow-x-auto rounded-lg bg-ink px-3 py-2.5">
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-tight text-paper">
-              <span className="select-none text-clay">$ </span>
-              {details.primary}
-            </pre>
-          </div>
-        )}
+      {request.card.unparsed ? (
+        <div className="mx-4 mb-3 rounded-lg bg-status-warning-soft px-3 py-2 text-xs text-status-warning-ink">
+          {t('tool.permission.unparsedWarning')}
+        </div>
+      ) : null}
 
-        {showContent && (
-          <pre className="max-h-52 overflow-auto rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] leading-tight text-paper">
-            {details.content}
-          </pre>
-        )}
-
-        {!showPath && !showTerminal && !showContent && (
-          <pre className="overflow-auto rounded-lg bg-paper-hover px-3 py-2 font-mono text-xs text-ink-soft">
-            {details.primary || t('tool.noInput')}
-          </pre>
-        )}
+      <div className="border-t border-clay-soft px-4 py-3">
+        <div className="mb-1 text-[11px] font-medium text-ink-faint">{t('tool.permission.raw')}</div>
+        <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] leading-relaxed text-paper">
+          {request.card.raw}
+        </pre>
       </div>
 
-      {/* Action buttons */}
       <div className="flex items-center gap-2 border-t border-clay-soft bg-paper-hover px-4 py-3">
         <button
           type="button"
           disabled={resolving}
-          onClick={() => void resolve(true)}
+          onClick={() => onResolve(true)}
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-ink px-3.5 py-1.5 text-sm font-medium text-paper transition hover:bg-ink-soft disabled:opacity-50"
         >
           <Check size={14} />
-          {resolving ? t('tool.processing') : t('tool.allow')}
+          {resolving ? t('tool.processing') : t('tool.permission.allowOnce')}
         </button>
         <div className="flex-1" />
         <button
           type="button"
           disabled={resolving}
-          onClick={() => void resolve(false)}
+          onClick={() => onResolve(false)}
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-status-danger-border bg-paper px-3.5 py-1.5 text-sm font-medium text-status-danger-ink transition hover:bg-status-danger-soft disabled:opacity-50"
         >
           <X size={14} />
@@ -194,5 +171,28 @@ export function ApprovalDialog({ sessionId }: { sessionId: string | null }) {
         </button>
       </div>
     </div>
+  )
+}
+
+/// 输入框上方的权限卡片。Permission 属于对应 Session Runtime，直到 Core 事件确认已处理。
+export function ApprovalDialog({ sessionId }: { sessionId: string | null }) {
+  const current = useRuntimeStore((state) =>
+    sessionId ? state.bySession[sessionId]?.pendingPermission ?? null : null,
+  )
+  const { resolvePermission } = useTurnActions(sessionId)
+  const [resolving, setResolving] = useState(false)
+
+  if (!current) return null
+
+  return (
+    <ApprovalCardView
+      request={current}
+      resolving={resolving}
+      onResolve={(allow) => {
+        if (resolving) return
+        setResolving(true)
+        void resolvePermission(allow).finally(() => setResolving(false))
+      }}
+    />
   )
 }

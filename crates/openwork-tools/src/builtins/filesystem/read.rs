@@ -4,7 +4,8 @@ use serde::Deserialize;
 
 use crate::policy::AccessKind;
 use crate::{
-    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AnalysisUnit, Effect, InvocationAnalysis, TextToolOutput, Tool, ToolCallContext,
+    ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
 use crate::context::PathIntent;
@@ -45,10 +46,25 @@ impl Tool for ReadTool {
         ToolRisk::ReadOnly
     }
 
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Self::Input,
+    ) -> InvocationAnalysis {
+        let display = format!("read {}", input.path);
+        InvocationAnalysis::new(
+            display.clone(),
+            vec![AnalysisUnit::new(
+                display,
+                vec![Effect::read(session.normalize_effect_path(&input.path))],
+            )],
+        )
+    }
+
     async fn execute(
         &self,
         session: &ToolSessionContext,
-        _call: ToolCallContext,
+        call: ToolCallContext,
         input: ReadInput,
     ) -> Result<TextToolOutput, ToolExecutionError> {
         if input
@@ -60,7 +76,7 @@ impl Tool for ReadTool {
             )));
         }
         let resolved = session
-            .resolve_path(&input.path, AccessKind::Read, PathIntent::MustExist)
+            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
             .await?;
         let content = session
             .filesystem
@@ -118,7 +134,7 @@ mod tests {
 
         let session = ToolSessionContext::local(
             workspace.clone(),
-            PermissionProfile::workspace_write(workspace),
+            PermissionProfile::from_builtin_rules(workspace),
         );
         let error = ReadTool
             .execute(
@@ -148,7 +164,7 @@ mod tests {
 
         let session = ToolSessionContext::local(
             workspace.clone(),
-            PermissionProfile::workspace_write(workspace),
+            PermissionProfile::from_builtin_rules(workspace),
         );
         let result = ReadTool
             .execute(
@@ -179,7 +195,7 @@ mod tests {
             .expect("write fixture");
         let session = ToolSessionContext::local(
             workspace.path().to_path_buf(),
-            PermissionProfile::workspace_write(workspace.path().to_path_buf()),
+            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
         );
 
         let result = ReadTool

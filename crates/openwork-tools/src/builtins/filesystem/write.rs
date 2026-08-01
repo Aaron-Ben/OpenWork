@@ -7,8 +7,9 @@ use serde::Deserialize;
 
 use crate::policy::AccessKind;
 use crate::{
-    AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, Tool, ToolCallContext,
-    ToolExecutionError, ToolId, ToolResult, ToolRisk, ToolSessionContext,
+    AnalysisUnit, AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, Effect,
+    InvocationAnalysis, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolResult, ToolRisk,
+    ToolSessionContext,
 };
 
 use crate::context::PathIntent;
@@ -44,6 +45,21 @@ impl Tool for WriteTool {
         ToolRisk::WorkspaceMutation
     }
 
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Self::Input,
+    ) -> InvocationAnalysis {
+        let display = format!("write {}", input.path);
+        InvocationAnalysis::new(
+            display.clone(),
+            vec![AnalysisUnit::new(
+                display,
+                vec![Effect::write(session.normalize_effect_path(&input.path))],
+            )],
+        )
+    }
+
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -58,7 +74,7 @@ impl Tool for WriteTool {
             )));
         }
         let resolved = session
-            .resolve_path(&input.path, AccessKind::Write, PathIntent::MayCreate)
+            .resolve_tool_path(&input.path, AccessKind::Write, PathIntent::MayCreate, &call)
             .await?;
         if let Some(parent) = resolved.as_path().parent() {
             session
@@ -70,7 +86,7 @@ impl Tool for WriteTool {
                 })?;
         }
         let resolved = session
-            .resolve_path(&input.path, AccessKind::Write, PathIntent::MayCreate)
+            .resolve_tool_path(&input.path, AccessKind::Write, PathIntent::MayCreate, &call)
             .await?;
         let _write_guard = session.lock_for_write(&resolved).await;
         let before = match session
@@ -141,10 +157,7 @@ mod tests {
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{
-        FileSystemMode, FileSystemPermissions, NetworkMode, PermissionProfile, ToolCallId,
-        ToolErrorCode,
-    };
+    use crate::{PermissionProfile, ToolCallId, ToolErrorCode};
 
     #[tokio::test]
     async fn rejects_new_file_through_symlink_outside_workspace() {
@@ -157,15 +170,7 @@ mod tests {
 
         let session = ToolSessionContext::local(
             workspace.clone(),
-            PermissionProfile {
-                filesystem: FileSystemPermissions {
-                    mode: FileSystemMode::WorkspaceWrite,
-                    read_roots: vec![workspace.clone()],
-                    write_roots: vec![workspace],
-                    protected_names: vec![".git".to_string()],
-                },
-                network: NetworkMode::Restricted,
-            },
+            PermissionProfile::from_builtin_rules(workspace),
         );
         let error = WriteTool
             .execute(
@@ -192,7 +197,7 @@ mod tests {
 
         let session = ToolSessionContext::local(
             workspace.clone(),
-            PermissionProfile::workspace_write(workspace.clone()),
+            PermissionProfile::from_builtin_rules(workspace.clone()),
         );
         let error = WriteTool
             .execute(
@@ -223,15 +228,7 @@ mod tests {
 
         let session = ToolSessionContext::local(
             workspace.clone(),
-            PermissionProfile {
-                filesystem: FileSystemPermissions {
-                    mode: FileSystemMode::WorkspaceWrite,
-                    read_roots: vec![workspace.clone()],
-                    write_roots: vec![workspace],
-                    protected_names: vec![".git".to_string()],
-                },
-                network: NetworkMode::Restricted,
-            },
+            PermissionProfile::from_builtin_rules(workspace),
         );
         let error = WriteTool
             .execute(

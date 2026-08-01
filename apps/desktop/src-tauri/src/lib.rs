@@ -48,6 +48,7 @@ pub fn run() {
             commands::runtime::runtime_file_changes_undo,
             commands::runtime::runtime_file_changes_reapply,
             commands::runtime::runtime_permission_resolve,
+            commands::runtime::runtime_permission_mode_set,
             commands::runtime::runtime_session_snapshot,
             commands::runtime::runtime_update_replay,
             commands::runtime::runtime_trace_list,

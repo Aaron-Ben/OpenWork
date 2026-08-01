@@ -6,6 +6,7 @@ mod context;
 mod definition;
 mod file_change;
 mod invocation;
+mod permission;
 pub mod policy;
 mod progress;
 mod registry;
@@ -26,10 +27,12 @@ pub use file_change::{
     reapply_file_changes, undo_file_changes,
 };
 pub use invocation::ToolInvocation;
-pub use policy::{
-    AccessKind, FileSystemMode, FileSystemPermissions, NetworkMode, PermissionMode,
-    PermissionProfile, PolicyDecision,
+pub use permission::{
+    AnalysisUnit, ApprovalCard, AskSource, Authorization, CardUnit, DecisionSource, Effect,
+    EffectDisplay, ExecPattern, ExecutionPermit, InvocationAnalysis, PathPattern, PermissionEngine,
+    PermissionMode, Rule, RuleBehavior, RuleId, RulePattern, RuleScope, UnitVerdict,
 };
+pub use policy::{AccessKind, PermissionProfile};
 pub use progress::ToolProgress;
 pub use registry::{
     FinalizedToolset, ToolRegistryBuilder, ToolRegistryError, ToolValidationError, ToolsetConfig,

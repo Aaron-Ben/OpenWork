@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use openwork_tools::{
-    FileChangeArtifact, FileChangeKind, FileChangeUndoError, PermissionProfile, ToolCallContext,
-    ToolCallId, ToolInvocation, ToolResult, ToolSessionContext, ToolsetConfig, builtin_registry,
-    reapply_file_changes, undo_file_changes,
+    Authorization, FileChangeArtifact, FileChangeKind, FileChangeUndoError, PermissionMode,
+    PermissionProfile, ToolCallContext, ToolCallId, ToolInvocation, ToolResult, ToolSessionContext,
+    ToolsetConfig, builtin_registry, reapply_file_changes, undo_file_changes,
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -39,7 +39,7 @@ impl Drop for TestDirectory {
 fn session(root: &Path) -> ToolSessionContext {
     ToolSessionContext::local(
         root.to_path_buf(),
-        PermissionProfile::workspace_write(root.to_path_buf()),
+        PermissionProfile::from_builtin_rules(root.to_path_buf()),
     )
 }
 
@@ -49,10 +49,19 @@ async fn call(
     name: &str,
     input: Value,
 ) -> ToolResult {
+    let invocation = ToolInvocation::new(name, input);
+    let permit = match toolset.authorize(&invocation, PermissionMode::AcceptEdits) {
+        Authorization::Allow { permit } | Authorization::Ask { permit, .. } => permit,
+        Authorization::Deny { reason, .. } => panic!("test invocation denied: {reason}"),
+        Authorization::Unavailable { message, .. } => {
+            panic!("test invocation could not be judged: {message}")
+        }
+    };
     toolset
         .call(
             ToolCallContext::new(ToolCallId::new(id), CancellationToken::new()),
-            ToolInvocation::new(name, input),
+            invocation,
+            permit,
         )
         .await
 }

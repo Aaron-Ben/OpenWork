@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use openwork_models::model::ToolResultArtifact;
+use openwork_tools::PermissionMode;
 
 use super::{
     ClientRequestId, PermissionDecision, PermissionRequest, SessionId, ToolCallId, TurnId,
@@ -76,6 +77,7 @@ pub struct SessionSnapshot {
     pub version: u16,
     pub session_id: SessionId,
     pub last_update_sequence: u64,
+    pub permission_mode: PermissionMode,
     pub runtime: SessionRuntimeSnapshot,
 }
 

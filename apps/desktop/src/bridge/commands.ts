@@ -8,6 +8,7 @@ import type {
   RuntimeConversationTranscriptQuery,
   RuntimeContextWindowInspection,
   RuntimeLoadedSession,
+  RuntimePermissionMode,
   RuntimeReapplyFileChangesResult,
   RuntimeSessionInput,
   RuntimeSessionRecord,
@@ -80,6 +81,11 @@ export const coreCommands = {
     allow: boolean,
   ): Promise<void> =>
     invoke('runtime_permission_resolve', { sessionId, turnId, toolCallId, allow }),
+  setPermissionMode: (
+    sessionId: string,
+    mode: RuntimePermissionMode,
+  ): Promise<RuntimePermissionMode> =>
+    invoke('runtime_permission_mode_set', { sessionId, mode }),
   snapshot: (sessionId: string): Promise<RuntimeSessionSnapshot> =>
     invoke('runtime_session_snapshot', { sessionId }),
   replayUpdates: (

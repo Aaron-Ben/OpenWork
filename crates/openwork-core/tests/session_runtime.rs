@@ -19,11 +19,12 @@ use openwork_core::session::{
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, TokenUsage,
-    ToolCallBlock, ToolCallState, ToolResultArtifact,
+    ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultState,
 };
 use openwork_tools::{
-    PermissionMode, PermissionProfile, Tool, ToolCallContext, ToolExecutionError, ToolId,
-    ToolInvocation, ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
+    AnalysisUnit, Effect, InvocationAnalysis, PermissionMode, PermissionProfile, Tool,
+    ToolCallContext, ToolExecutionError, ToolId, ToolInvocation,
+    ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
     ToolSessionContext,
 };
 use tokio::sync::broadcast;
@@ -121,6 +122,27 @@ impl Tool for FakeTool {
 
     fn risk(&self) -> ToolRisk {
         self.risk
+    }
+
+    fn permission_analysis(
+        &self,
+        session: &ToolSessionContext,
+        input: &Self::Input,
+    ) -> InvocationAnalysis {
+        let raw = self.id.to_string();
+        let path = input
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("fixture");
+        let effect = match self.risk {
+            ToolRisk::ReadOnly => Effect::read(session.normalize_effect_path(path)),
+            ToolRisk::WorkspaceMutation => Effect::write(session.normalize_effect_path(path)),
+            ToolRisk::ProcessExecution => Effect::Exec {
+                program: raw.clone(),
+                args: Vec::new(),
+            },
+        };
+        InvocationAnalysis::new(raw.clone(), vec![AnalysisUnit::new(raw, vec![effect])])
     }
 
     async fn execute(
@@ -441,9 +463,9 @@ fn runtime_with_outcomes_in_workspace(
     workspace: TestWorkspace,
 ) -> RuntimeFixture {
     let working_directory = workspace.path().to_path_buf();
-    let mut definition = AgentDefinition::default();
-    definition.policy.permission_mode = permission_mode;
-    let agent = AgentBuilder::new(definition).build().expect("agent");
+    let agent = AgentBuilder::new(AgentDefinition::default())
+        .build()
+        .expect("agent");
     let chat = ChatStateHandle::spawn(Vec::new()).expect("chat");
     let model = Arc::new(ModelState {
         outcomes: Mutex::new(outcomes.into()),
@@ -485,7 +507,7 @@ fn runtime_with_outcomes_in_workspace(
             agent.toolset_config(),
             ToolSessionContext::local(
                 working_directory.clone(),
-                PermissionProfile::danger_full_access(),
+                PermissionProfile::from_builtin_rules(working_directory.clone()),
             ),
         )
         .expect("toolset");
@@ -504,6 +526,7 @@ fn runtime_with_outcomes_in_workspace(
             storage: storage.clone(),
             compaction_state: Arc::new(CompactionStateCollector::default()),
             trace: trace.clone(),
+            permission_mode,
         },
         global_update_tx,
     );
@@ -526,7 +549,7 @@ async fn session_actor_forwards_updates_to_the_core_global_bus() {
     let mut fixture = runtime(
         vec![response("done", Vec::new())],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
 
@@ -534,6 +557,81 @@ async fn session_actor_forwards_updates_to_the_core_global_bus() {
     let outcome = wait_for_terminal(&mut fixture.global_updates).await;
 
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+}
+
+#[tokio::test]
+async fn acc_13_permission_mode_is_in_memory_and_reflected_in_snapshots() {
+    let fixture = runtime(
+        vec![response("done", Vec::new())],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    let files_before = fs::read_dir(fixture.workspace.path())
+        .expect("workspace before mode change")
+        .count();
+
+    assert_eq!(
+        fixture
+            .handle
+            .snapshot()
+            .await
+            .expect("default snapshot")
+            .permission_mode,
+        PermissionMode::Default
+    );
+    assert_eq!(
+        fixture
+            .handle
+            .set_permission_mode(PermissionMode::AcceptEdits)
+            .await
+            .expect("set permission mode"),
+        PermissionMode::AcceptEdits
+    );
+    assert_eq!(
+        fixture
+            .handle
+            .snapshot()
+            .await
+            .expect("updated snapshot")
+            .permission_mode,
+        PermissionMode::AcceptEdits
+    );
+    assert_eq!(
+        fs::read_dir(fixture.workspace.path())
+            .expect("workspace after mode change")
+            .count(),
+        files_before,
+        "changing permission mode must not write a file"
+    );
+}
+
+#[tokio::test]
+async fn permission_mode_change_controls_subsequent_tool_authorization() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call("call-1", "write", r#"{"path":"README.md"}"#)],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    fixture
+        .handle
+        .set_permission_mode(PermissionMode::AcceptEdits)
+        .await
+        .expect("set permission mode");
+    start(&fixture).await;
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 1);
 }
 
 fn response(text: &str, tool_calls: Vec<ToolCallBlock>) -> ModelResponse {
@@ -657,7 +755,7 @@ async fn no_tool_turn_completes_after_one_model_call() {
     let mut fixture = runtime(
         vec![response("done", Vec::new())],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -726,7 +824,7 @@ async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
             response("second turn done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
         workspace,
     );
@@ -777,7 +875,7 @@ async fn invalid_project_instructions_fail_before_model_and_leave_no_draft() {
     let mut fixture = runtime_in_workspace(
         vec![response("recovered", Vec::new())],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
         workspace,
     );
@@ -819,12 +917,12 @@ async fn tool_result_is_in_the_next_model_request() {
         vec![
             response(
                 "",
-                vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
+                vec![tool_call("call-1", "write", r#"{"path":"README.md"}"#)],
             ),
             response("final", Vec::new()),
         ],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -875,7 +973,7 @@ async fn tool_result_artifacts_are_persisted_in_messages_and_forwarded_live() {
             response("final", Vec::new()),
         ],
         vec![result],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -921,7 +1019,7 @@ async fn tool_progress_is_forwarded_before_the_terminal_tool_update() {
             response("final", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -960,7 +1058,7 @@ async fn cancelling_a_turn_cancels_the_active_tool_call() {
             vec![tool_call("call-1", "read", r#"{"waitForCancel":true}"#)],
         )],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     let turn_id = start(&fixture).await;
@@ -987,7 +1085,7 @@ async fn unknown_tool_becomes_a_result_and_the_model_continues() {
             response("recovered", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1006,12 +1104,12 @@ async fn permission_allow_executes_the_tool_and_finishes() {
         vec![
             response(
                 "",
-                vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
+                vec![tool_call("call-1", "write", r#"{"path":"README.md"}"#)],
             ),
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Ask,
+        PermissionMode::Default,
         false,
     );
     start(&fixture).await;
@@ -1037,7 +1135,7 @@ async fn permission_deny_writes_a_tool_result_without_execution() {
             vec![tool_call("call-1", "bash", r#"{"command":"pwd"}"#)],
         )],
         Vec::new(),
-        PermissionMode::Ask,
+        PermissionMode::Default,
         false,
     );
     start(&fixture).await;
@@ -1063,6 +1161,37 @@ async fn permission_deny_writes_a_tool_result_without_execution() {
 }
 
 #[tokio::test]
+async fn acc_57_rule_deny_returns_a_tool_result_and_the_turn_continues() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call("call-1", "write", r#"{"path":".git/config"}"#)],
+            ),
+            response("continued", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    start(&fixture).await;
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { final_text } if final_text == "continued"
+    ));
+    assert!(fixture.tools.invocations.lock().unwrap().is_empty());
+    assert_eq!(fixture.model.requests.lock().unwrap().len(), 2);
+    let snapshot = fixture.chat.snapshot().await.expect("chat snapshot");
+    assert!(snapshot.messages.iter().any(|message| {
+        message.role == Role::Tool
+            && message.content.iter().any(|block| {
+                matches!(block, ContentBlock::ToolResult(result) if result.state == ToolResultState::Denied)
+            })
+    }));
+}
+
+#[tokio::test]
 async fn assistant_persistence_failure_prevents_tool_execution() {
     let mut fixture = runtime(
         vec![response(
@@ -1070,7 +1199,7 @@ async fn assistant_persistence_failure_prevents_tool_execution() {
             vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
         )],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         true,
     );
     start(&fixture).await;
@@ -1097,7 +1226,7 @@ async fn tool_failure_is_returned_to_the_model_instead_of_stopping_the_loop() {
             "not found",
             false,
         )],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1124,7 +1253,7 @@ async fn multiple_tool_results_keep_provider_order_in_the_next_request() {
             response("done", Vec::new()),
         ],
         vec![ToolResult::succeeded("a"), ToolResult::succeeded("b")],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1145,14 +1274,72 @@ async fn multiple_tool_results_keep_provider_order_in_the_next_request() {
 }
 
 #[tokio::test]
+async fn acc_58_multiple_permission_requests_are_presented_serially() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![
+                    tool_call("call-1", "bash", r#"{"command":"cargo test"}"#),
+                    tool_call("call-2", "bash", r#"{"command":"cargo clippy"}"#),
+                ],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+
+    let (turn_id, first_tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+    let snapshot = fixture.handle.snapshot().await.expect("waiting snapshot");
+    assert!(matches!(
+        snapshot.runtime,
+        openwork_core::session::SessionRuntimeSnapshot::Running {
+            pending_permission: Some(request),
+            ..
+        } if request.tool_call_id == first_tool_call_id
+    ));
+    fixture
+        .handle
+        .resolve_permission(
+            turn_id.clone(),
+            first_tool_call_id.clone(),
+            PermissionDecision::Allow,
+        )
+        .await
+        .expect("first permission");
+
+    let (second_turn_id, second_tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+    assert_eq!(second_turn_id, turn_id);
+    assert_ne!(second_tool_call_id, first_tool_call_id);
+    fixture
+        .handle
+        .resolve_permission(
+            second_turn_id,
+            second_tool_call_id,
+            PermissionDecision::Allow,
+        )
+        .await
+        .expect("second permission");
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn duplicate_client_request_is_idempotent_and_a_different_turn_is_busy() {
     let mut fixture = runtime(
         vec![response(
             "",
-            vec![tool_call("call-1", "read", r#"{"path":"a"}"#)],
+            vec![tool_call("call-1", "write", r#"{"path":"a"}"#)],
         )],
         Vec::new(),
-        PermissionMode::Ask,
+        PermissionMode::Default,
         false,
     );
     let first_turn = start(&fixture).await;
@@ -1194,7 +1381,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
             response("continued", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1392,7 +1579,7 @@ async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
             Ok(response("recovered after compaction", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
 
@@ -1478,7 +1665,7 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
             response("continued after threshold compaction", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     let accepted = fixture
@@ -1573,7 +1760,7 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
             ToolResult::succeeded("agents"),
             ToolResult::succeeded("trace docs"),
         ],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     fixture
@@ -1655,7 +1842,7 @@ async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget(
             )),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
 
@@ -1683,10 +1870,10 @@ async fn manual_compaction_is_rejected_while_a_turn_is_active() {
     let mut fixture = runtime(
         vec![response(
             "",
-            vec![tool_call("call-1", "read", r#"{"path":"a"}"#)],
+            vec![tool_call("call-1", "write", r#"{"path":"a"}"#)],
         )],
         Vec::new(),
-        PermissionMode::Ask,
+        PermissionMode::Default,
         false,
     );
     let active_turn = start(&fixture).await;
@@ -1713,7 +1900,7 @@ async fn failed_compaction_persistence_keeps_the_previous_conversation() {
             response(compaction_summary(), Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1752,7 +1939,7 @@ async fn empty_conversation_is_not_sent_to_the_compaction_model() {
     let fixture = runtime(
         vec![response(compaction_summary(), Vec::new())],
         Vec::new(),
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
 
@@ -1787,7 +1974,7 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
             response("done", Vec::new()),
         ],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1915,7 +2102,7 @@ async fn tool_trace_records_result_persistence_failure_without_changing_tool_sta
             vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
         )],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::NeverAsk,
+        PermissionMode::AcceptEdits,
         false,
     );
     fixture

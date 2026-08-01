@@ -13,8 +13,9 @@ use openwork_models::provider::{
 };
 use openwork_tools::{
     FileChangeArtifact, FileChangeReapplyError, FileChangeUndoError, FinalizedToolset,
-    PermissionProfile, ReapplyFileChangesResult, ToolSessionContext, UndoFileChangesResult,
-    builtin_registry, reapply_file_changes as reapply_workspace_file_changes,
+    PermissionMode, PermissionProfile, ReapplyFileChangesResult, ToolSessionContext,
+    UndoFileChangesResult, builtin_registry,
+    reapply_file_changes as reapply_workspace_file_changes,
     undo_file_changes as undo_workspace_file_changes,
 };
 use serde::{Deserialize, Serialize};
@@ -557,7 +558,7 @@ impl OpenWorkCore {
         let changes = select_file_changes(&records, &change_ids)?;
         let context = ToolSessionContext::local(
             PathBuf::from(&session.working_directory),
-            PermissionProfile::workspace_write(PathBuf::from(&session.working_directory)),
+            PermissionProfile::from_builtin_rules(PathBuf::from(&session.working_directory)),
         );
         let result = undo_workspace_file_changes(&context, &changes).await?;
         let updates = mark_file_changes_undone(&mut records, &change_ids)?;
@@ -604,7 +605,7 @@ impl OpenWorkCore {
         let changes = select_undone_file_changes(&records, &change_ids)?;
         let context = ToolSessionContext::local(
             PathBuf::from(&session.working_directory),
-            PermissionProfile::workspace_write(PathBuf::from(&session.working_directory)),
+            PermissionProfile::from_builtin_rules(PathBuf::from(&session.working_directory)),
         );
         let result = reapply_workspace_file_changes(&context, &changes).await?;
         let updates = mark_file_changes_reapplied(&mut records, &change_ids)?;
@@ -635,6 +636,15 @@ impl OpenWorkCore {
             .resolve_permission(turn_id, tool_call_id, decision)
             .await?;
         Ok(())
+    }
+
+    pub async fn set_permission_mode(
+        &self,
+        session_id: &SessionId,
+        mode: PermissionMode,
+    ) -> Result<PermissionMode, OpenWorkCoreError> {
+        let handle = self.session_handle(session_id).await?;
+        Ok(handle.set_permission_mode(mode).await?)
     }
 
     pub fn subscribe_updates(&self) -> broadcast::Receiver<SessionUpdateEnvelope> {
@@ -728,23 +738,29 @@ impl OpenWorkCore {
 
         let _creation = self.session_creation.lock().await;
         let existing = self.sessions.read().await.get(session_id).cloned();
+        let mut permission_mode = PermissionMode::Default;
         if let Some(handle) = existing {
             if !handle.requires_reload() {
                 return Ok(handle);
             }
-            if matches!(
-                handle.snapshot().await,
-                Ok(SessionSnapshot {
-                    runtime: crate::session::SessionRuntimeSnapshot::Running { .. },
-                    ..
-                })
-            ) {
-                return Ok(handle);
+            if let Ok(snapshot) = handle.snapshot().await {
+                if matches!(
+                    snapshot,
+                    SessionSnapshot {
+                        runtime: crate::session::SessionRuntimeSnapshot::Running { .. },
+                        ..
+                    }
+                ) {
+                    return Ok(handle);
+                }
+                permission_mode = snapshot.permission_mode;
             }
             self.sessions.write().await.remove(session_id);
         }
 
-        let handle = self.build_session_handle(session_id).await?;
+        let handle = self
+            .build_session_handle(session_id, permission_mode)
+            .await?;
         self.sessions
             .write()
             .await
@@ -769,6 +785,7 @@ impl OpenWorkCore {
     async fn build_session_handle(
         &self,
         session_id: &SessionId,
+        permission_mode: PermissionMode,
     ) -> Result<SessionHandle, OpenWorkCoreError> {
         let loaded = self.load_session(session_id).await?;
         let model_id = loaded
@@ -809,6 +826,7 @@ impl OpenWorkCore {
                 storage: self.storage.clone(),
                 compaction_state: Arc::new(CompactionStateCollector::default()),
                 trace: self.trace.clone(),
+                permission_mode,
             },
             self.update_tx.clone(),
         ))
@@ -833,7 +851,7 @@ fn build_default_agent_and_tools(
             agent.toolset_config(),
             ToolSessionContext::local(
                 working_directory.to_path_buf(),
-                PermissionProfile::workspace_write(working_directory.to_path_buf()),
+                PermissionProfile::from_builtin_rules(working_directory.to_path_buf()),
             ),
         )
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;

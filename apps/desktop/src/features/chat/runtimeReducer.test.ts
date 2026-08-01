@@ -88,8 +88,19 @@ describe('runtimeReducer', () => {
           toolCallId: 'tool-1',
           providerCallId: 'call-1',
           toolName: 'read',
-          input: { path: '/repo/README.md' },
-          reason: 'needs permission',
+          card: {
+            units: [{
+              display: 'read /repo/README.md',
+              effects: [{
+                certainty: 'inferred',
+                effect: { kind: 'read', path: '/repo/README.md' },
+              }],
+              verdict: { decision: 'ask', source: 'no_rule_covers', ruleId: null },
+              outsideWorkspace: false,
+            }],
+            raw: 'read /repo/README.md',
+            unparsed: false,
+          },
         },
       }),
     )
@@ -202,6 +213,7 @@ describe('runtimeReducer', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 8,
+      permissionMode: 'accept_edits',
       runtime: {
         state: 'running',
         turnId: 'turn-8',
@@ -220,6 +232,7 @@ describe('runtimeReducer', () => {
       clientRequestId: 'request-8',
       phase: 'running_tools',
       assistantDraft: { turnId: 'turn-8', text: 'answer', reasoning: 'thought' },
+      permissionMode: 'accept_edits',
       syncState: 'current',
     })
   })

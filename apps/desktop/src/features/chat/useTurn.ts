@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 
 import { coreCommands } from '../../bridge/commands'
+import type { RuntimePermissionMode } from '../../bridge/compat'
 import { useContextWindowStore } from '../../stores/contextWindowStore'
 import { resolveErrorMessage } from '../../utils/commandError'
 import { useRuntimeStore } from './runtimeStore'
@@ -63,5 +64,17 @@ export function useTurnActions(sessionId: string | null) {
     }
   }, [sessionId])
 
-  return { startTurn, cancelTurn, resolvePermission }
+  const setPermissionMode = useCallback(async (mode: RuntimePermissionMode) => {
+    if (!sessionId) return false
+    try {
+      const applied = await coreCommands.setPermissionMode(sessionId, mode)
+      useRuntimeStore.getState().setPermissionMode(sessionId, applied)
+      return true
+    } catch (error) {
+      useRuntimeStore.getState().setError(sessionId, resolveErrorMessage(error))
+      return false
+    }
+  }, [sessionId])
+
+  return { startTurn, cancelTurn, resolvePermission, setPermissionMode }
 }

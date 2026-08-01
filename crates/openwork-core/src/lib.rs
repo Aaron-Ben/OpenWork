@@ -17,7 +17,7 @@ pub use core::{
 };
 pub use openwork_models::provider::ApiCredential as ModelCredential;
 pub use openwork_models::provider::{ProviderInput, ProviderProfile};
-pub use openwork_tools::{ReapplyFileChangesResult, UndoFileChangesResult};
+pub use openwork_tools::{PermissionMode, ReapplyFileChangesResult, UndoFileChangesResult};
 pub use provider::{ProviderIndex, ProviderPreset, ProviderPresetModel, ProviderTestResult};
 pub use session::{
     ClientRequestId, CompactionAttemptOutcome, CompactionError, CompactionFinished,

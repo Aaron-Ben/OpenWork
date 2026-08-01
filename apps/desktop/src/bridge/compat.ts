@@ -2,11 +2,12 @@
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
 import type { ContentBlock, ToolResultArtifact } from '../type/parts'
 
-export const RUNTIME_SESSION_UPDATE_VERSION = 4
+export const RUNTIME_SESSION_UPDATE_VERSION = 5
 
 export function supportsRuntimeSessionUpdateVersion(version: number): boolean {
-  // V2 added tool progress, V3 added terminal tool artifacts, and V4 added
-  // the compacting phase. Older versions remain readable during an
+  // V2 added tool progress, V3 added terminal tool artifacts, V4 added the
+  // compacting phase, and V5 added structured permission cards. Older
+  // versions remain readable during an
   // in-process rolling transition.
   return version >= 1 && version <= RUNTIME_SESSION_UPDATE_VERSION
 }
@@ -154,14 +155,46 @@ export interface RuntimeTurnAccepted {
   clientRequestId: string
 }
 
+export type RuntimePermissionMode = 'default' | 'accept_edits'
+
+export type RuntimePermissionEffect =
+  | { kind: 'read'; path: string }
+  | { kind: 'write'; path: string }
+  | { kind: 'exec'; program: string; args: string[] }
+
+export type RuntimeEffectDisplay =
+  | { certainty: 'inferred'; effect: RuntimePermissionEffect }
+  | { certainty: 'trusted_program'; program: string }
+
+export type RuntimeUnitVerdict =
+  | { decision: 'allow'; source: 'builtin' | 'mode'; ruleId: string | null }
+  | {
+      decision: 'ask'
+      source: 'explicit_rule' | 'builtin_sensitive' | 'no_rule_covers' | 'unparsed'
+      ruleId: string | null
+    }
+  | { decision: 'deny'; ruleId: string; silent: boolean }
+
+export interface RuntimePermissionCardUnit {
+  display: string
+  effects: RuntimeEffectDisplay[]
+  verdict: RuntimeUnitVerdict
+  outsideWorkspace: boolean
+}
+
+export interface RuntimeApprovalCard {
+  units: RuntimePermissionCardUnit[]
+  raw: string
+  unparsed: boolean
+}
+
 export interface RuntimePermissionRequest {
   sessionId: string
   turnId: string
   toolCallId: string
   providerCallId: string
   toolName: string
-  input: unknown
-  reason: string
+  card: RuntimeApprovalCard
 }
 
 export interface RuntimeLiveToolCall {
@@ -247,6 +280,7 @@ export interface RuntimeSessionSnapshot {
   version: number
   sessionId: string
   lastUpdateSequence: number
+  permissionMode: RuntimePermissionMode
   runtime: RuntimeSnapshotState
 }
 

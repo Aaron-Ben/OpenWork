@@ -1,6 +1,5 @@
-use openwork_tools::ToolResultStatus;
+use openwork_tools::{ApprovalCard, ToolResultStatus};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 
 use super::{ClientRequestId, SessionId, ToolCallId, TurnId};
@@ -42,8 +41,7 @@ pub struct PermissionRequest {
     pub tool_call_id: ToolCallId,
     pub provider_call_id: String,
     pub tool_name: String,
-    pub input: Value,
-    pub reason: String,
+    pub card: ApprovalCard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

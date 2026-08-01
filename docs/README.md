@@ -12,6 +12,7 @@
 | [compaction.md](compaction.md) | 四类压缩触发、摘要格式与重试、运行状态、checkpoint、三类恢复 |
 | [trace.md](trace.md) | 质量追踪：内容、token 口径、标注；三层标识、Span 语义、完整度派生 |
 | [tools.md](tools.md) | 工具四层契约、权限两分、路径安全、七个内置工具 |
+| [permissions.md](permissions.md) | 效果模型、只读判定、`default` / `acceptEdits` 两模式、规则语言、命令解析、审批卡片、权限配置文件 |
 | [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
 | [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |

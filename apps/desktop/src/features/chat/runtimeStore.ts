@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type {
+  RuntimePermissionMode,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
 } from '../../bridge/compat'
@@ -28,6 +29,7 @@ interface RuntimeStoreState {
   markResyncing: (sessionId: string) => void
   markSyncFailed: (sessionId: string, message: string) => void
   setError: (sessionId: string, message: string | null) => void
+  setPermissionMode: (sessionId: string, mode: RuntimePermissionMode) => void
   reconcileCanonical: (sessionId: string) => void
   clearSession: (sessionId: string) => void
 }
@@ -163,6 +165,15 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
       bySession: {
         ...state.bySession,
         [sessionId]: { ...viewFor(state, sessionId), error: message },
+      },
+    }))
+  },
+
+  setPermissionMode: (sessionId, mode) => {
+    set((state) => ({
+      bySession: {
+        ...state.bySession,
+        [sessionId]: { ...viewFor(state, sessionId), permissionMode: mode },
       },
     }))
   },

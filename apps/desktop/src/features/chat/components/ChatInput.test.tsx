@@ -21,8 +21,10 @@ const baseProps = {
   ],
   value: 'Explain this repository',
   isSending: false,
+  permissionMode: 'default' as const,
   onValueChange: vi.fn(),
   onModelChange: vi.fn(),
+  onPermissionModeChange: vi.fn(),
   onSubmit: vi.fn(),
 }
 
@@ -35,8 +37,8 @@ describe('ChatInput toolbar', () => {
       />,
     )
 
-    expect(markup).toContain('询问审批')
-    expect(markup).not.toContain('由我审批')
+    expect(markup).toContain('默认')
+    expect(markup).toContain('aria-label="权限模式"')
     expect(markup).toContain('aria-label="选择模型"')
     expect(markup).toContain('DeepSeek Chat · Plus')
     expect(markup).toContain('aria-label="发送"')
@@ -60,6 +62,15 @@ describe('ChatInput toolbar', () => {
     expect(markup).not.toContain('size-10')
     expect(markup).toContain('data-slot="button"')
     expect(markup).toContain('data-motion-component="chat-input"')
+  })
+
+  it('shows the session permission mode selected by Core', () => {
+    const markup = renderToStaticMarkup(
+      <ChatInput {...baseProps} permissionMode="accept_edits" />,
+    )
+
+    expect(markup).toContain('自动接受文件改动')
+    expect(markup).toContain('命令仍需审批')
   })
 
   it('keeps the context affordance available when usage has not been measured', () => {

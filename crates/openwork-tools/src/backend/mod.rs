@@ -6,7 +6,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::policy::NetworkMode;
 use crate::{ToolCallContext, ToolExecutionError};
 
 mod filesystem;
@@ -74,7 +73,6 @@ pub struct ProcessRequest {
     pub working_directory: PathBuf,
     pub environment: HashMap<String, String>,
     pub timeout: Duration,
-    pub network_mode: NetworkMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +95,6 @@ pub struct ProcessOutput {
     pub stderr: CapturedOutput,
     pub status: ProcessStatus,
     pub elapsed: Duration,
-    pub network_restriction_enforced: bool,
 }
 
 #[async_trait]

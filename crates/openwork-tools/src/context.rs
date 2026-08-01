@@ -9,10 +9,8 @@ use tokio::sync::{Mutex, OwnedMutexGuard, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::{AsyncFileSystem, LocalFileSystem, ProcessBackend, TokioProcessBackend};
-use crate::policy::{
-    AccessKind, FileSystemMode, PermissionProfile, lexical_normalize, path_is_within,
-};
-use crate::{ToolExecutionError, ToolProgress};
+use crate::policy::{AccessKind, PermissionProfile, lexical_normalize, path_is_within};
+use crate::{ExecutionPermit, ToolExecutionError, ToolProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolCallId(String);
@@ -33,6 +31,7 @@ pub struct ToolCallContext {
     pub cancel: CancellationToken,
     pub deadline: Option<Instant>,
     progress: Option<mpsc::Sender<ToolProgress>>,
+    execution_permit: Option<ExecutionPermit>,
 }
 
 impl ToolCallContext {
@@ -42,6 +41,7 @@ impl ToolCallContext {
             cancel,
             deadline: None,
             progress: None,
+            execution_permit: None,
         }
     }
 
@@ -53,6 +53,15 @@ impl ToolCallContext {
     pub fn with_progress_sender(mut self, progress: mpsc::Sender<ToolProgress>) -> Self {
         self.progress = Some(progress);
         self
+    }
+
+    pub fn with_execution_permit(mut self, permit: ExecutionPermit) -> Self {
+        self.execution_permit = Some(permit);
+        self
+    }
+
+    pub(crate) fn execution_permit(&self) -> Option<&ExecutionPermit> {
+        self.execution_permit.as_ref()
     }
 
     /// Reports live progress without applying backpressure to tool execution.
@@ -94,6 +103,16 @@ impl CheckedPath {
 }
 
 impl ToolSessionContext {
+    pub fn normalize_effect_path(&self, input: &str) -> PathBuf {
+        let requested = Path::new(input);
+        let unresolved = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else {
+            self.working_directory.join(requested)
+        };
+        lexical_normalize(&unresolved)
+    }
+
     pub fn local(working_directory: PathBuf, permissions: PermissionProfile) -> Self {
         Self::new(
             working_directory,
@@ -122,7 +141,7 @@ impl ToolSessionContext {
     }
 
     pub(crate) fn check_path(&self, path: &Path, kind: AccessKind) -> Result<(), String> {
-        self.permissions.allows(path, kind)
+        self.permissions.allows_baseline(path, kind)
     }
 
     pub(crate) async fn resolve_path(
@@ -131,6 +150,27 @@ impl ToolSessionContext {
         kind: AccessKind,
         intent: PathIntent,
     ) -> Result<CheckedPath, ToolExecutionError> {
+        self.resolve_path_inner(input, kind, intent, None).await
+    }
+
+    pub(crate) async fn resolve_tool_path(
+        &self,
+        input: &str,
+        kind: AccessKind,
+        intent: PathIntent,
+        call: &ToolCallContext,
+    ) -> Result<CheckedPath, ToolExecutionError> {
+        self.resolve_path_inner(input, kind, intent, call.execution_permit())
+            .await
+    }
+
+    async fn resolve_path_inner(
+        &self,
+        input: &str,
+        kind: AccessKind,
+        intent: PathIntent,
+        permit: Option<&ExecutionPermit>,
+    ) -> Result<CheckedPath, ToolExecutionError> {
         let requested = Path::new(input);
         let unresolved = if requested.is_absolute() {
             requested.to_path_buf()
@@ -138,8 +178,23 @@ impl ToolSessionContext {
             self.working_directory.join(requested)
         };
         let lexical = lexical_normalize(&unresolved);
-        self.check_path(&lexical, kind)
-            .map_err(ToolExecutionError::denied)?;
+        let baseline_allowed = self.check_path(&lexical, kind).is_ok();
+        if self.permissions.hard_denies(&lexical, kind) {
+            return Err(ToolExecutionError::denied(format!(
+                "write access denied for protected metadata path: {}",
+                lexical.display()
+            )));
+        }
+        if !baseline_allowed && !permit.is_some_and(|permit| permit.permits_path(&lexical, kind)) {
+            return Err(ToolExecutionError::denied(format!(
+                "{} access denied without an execution permit: {}",
+                match kind {
+                    AccessKind::Read => "read",
+                    AccessKind::Write => "write",
+                },
+                lexical.display()
+            )));
+        }
 
         let actual = match intent {
             PathIntent::MustExist => {
@@ -156,7 +211,8 @@ impl ToolSessionContext {
             PathIntent::MayCreate => self.resolve_creatable_path(&lexical).await?,
         };
 
-        self.check_canonical_path(&actual, kind).await?;
+        self.check_canonical_path(&lexical, &actual, kind, baseline_allowed)
+            .await?;
         Ok(CheckedPath { actual })
     }
 
@@ -235,33 +291,35 @@ impl ToolSessionContext {
 
     async fn check_canonical_path(
         &self,
+        requested: &Path,
         actual: &Path,
         kind: AccessKind,
+        baseline_allowed: bool,
     ) -> Result<(), ToolExecutionError> {
-        if self.permissions.filesystem.mode == FileSystemMode::DangerFullAccess {
-            return Ok(());
-        }
-        if kind == AccessKind::Write && self.permissions.is_protected(actual) {
+        let root = self.permissions.workspace();
+        let canonical_root = self.filesystem.canonicalize(root).await.map_err(|error| {
+            ToolExecutionError::denied(format!(
+                "failed to resolve permitted root {}: {error}",
+                root.display()
+            ))
+        })?;
+        if self.permissions.hard_denies(actual, kind)
+            || self
+                .permissions
+                .hard_denies_resolved(actual, &canonical_root, kind)
+        {
             return Err(ToolExecutionError::denied(format!(
                 "write access denied for protected metadata path: {}",
                 actual.display()
             )));
         }
 
-        let roots = match kind {
-            AccessKind::Read => &self.permissions.filesystem.read_roots,
-            AccessKind::Write => &self.permissions.filesystem.write_roots,
-        };
-        for root in roots {
-            let canonical_root = self.filesystem.canonicalize(root).await.map_err(|error| {
-                ToolExecutionError::denied(format!(
-                    "failed to resolve permitted root {}: {error}",
-                    root.display()
-                ))
-            })?;
-            if path_is_within(actual, &canonical_root) {
-                return Ok(());
-            }
+        if !baseline_allowed && !path_is_within(requested, self.permissions.workspace()) {
+            return Ok(());
+        }
+
+        if path_is_within(actual, &canonical_root) {
+            return Ok(());
         }
 
         Err(ToolExecutionError::denied(format!(

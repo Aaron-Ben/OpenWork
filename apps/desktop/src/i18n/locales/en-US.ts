@@ -121,6 +121,12 @@ export const enUS = {
     },
     approvalMode: 'Approval mode: {{mode}}', askForApproval: 'Ask for approval', executionPermission: 'Execution permissions',
     askForApprovalDescription: 'Pause before tool calls and wait for you to allow or deny them.',
+    permissionMode: 'Permission mode',
+    permissionModes: {
+      default: 'Default', accept_edits: 'Accept edits',
+      defaultDescription: 'Read workspace files automatically; ask before ordinary writes and every command. Protected metadata stays denied.',
+      accept_editsDescription: 'Also allow non-sensitive workspace writes by file tools; commands still require approval.',
+    },
     startConversation: 'Start a conversation',
     createSession: 'New conversation', noSessionHelp: 'Use the new-conversation button beside a project to start using OpenWork.',
     readyHelp: 'Start a new coding conversation. OpenWork is ready to help you build, debug, and understand your project.',
@@ -176,6 +182,15 @@ export const enUS = {
   tool: {
     thinking: 'Thinking', thought: 'Thought', running: 'Running', done: 'Done', result: 'Result', error: 'Error', input: 'Input', content: 'Content',
     noInput: 'No input', waitingApproval: 'Waiting for approval', processing: 'Processing…', allow: 'Allow', reject: 'Deny',
+    permission: {
+      title: '{{count}} operations require approval', raw: 'Original input', allowOnce: 'Allow once',
+      read: 'Read {{path}}', write: 'Write {{path}}', exec: 'Execute {{command}}',
+      trustedProgram: 'Execute (trust this program): {{program}}', outsideWorkspace: 'Outside workspace',
+      unknownEffects: 'Effects could not be inferred reliably', unparsedWarning: 'This call could not be split reliably. Review the full original input.',
+      allowedByBuiltin: 'Allowed by built-in rule', allowedByMode: 'Allowed by current mode',
+      explicitAsk: 'Explicit rule requires approval', sensitivePath: 'Protected location; the current mode cannot override this',
+      noRuleCovers: 'No rule covers this', unparsed: 'Could not determine safely', deniedByRule: 'Denied by rule',
+    },
     allowBash: 'Allow Bash command', allowWrite: 'Allow writing {{name}}', allowWriteFile: 'Allow writing file',
     allowRead: 'Allow reading {{name}}', allowReadFile: 'Allow reading file', allowList: 'Allow listing {{name}}',
     allowListDirectory: 'Allow listing directory', allowTool: 'Allow tool {{name}}',

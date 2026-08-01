@@ -61,7 +61,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const clearMessageFocus = useNavigationStore((state) => state.clearMessageFocus)
   const requestMessageFocus = useNavigationStore((state) => state.requestMessageFocus)
   const hasAvailableModel = selectDefaultModel(providers) !== null
-  const { startTurn, cancelTurn } = useTurnActions(sessionId)
+  const { startTurn, cancelTurn, setPermissionMode } = useTurnActions(sessionId)
   const messages = useMemo(() => buildTranscript(canonical, runtime), [canonical, runtime])
   const turns = useMemo(() => getConversationTurns(messages), [messages])
   const isSending = runtime.phase !== 'idle'
@@ -384,6 +384,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           model={sessionModel?.modelId ?? ''}
           modelOptions={sessionModel ? [sessionModel] : []}
           modelSelectionLocked
+          permissionMode={runtime.permissionMode}
           contextUsage={contextUsage}
           contextInspectorOpen={contextInspectorOpen}
           value={draft}
@@ -392,6 +393,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           disabled={!sessionId || !sessionModel}
           onValueChange={setDraft}
           onModelChange={() => undefined}
+          onPermissionModeChange={(mode) => void setPermissionMode(mode)}
           onSubmit={() => void send()}
           onCancel={() => void cancelTurn()}
           onInspectContext={sessionId ? () => setContextInspectorOpen(true) : undefined}

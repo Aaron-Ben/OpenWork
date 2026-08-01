@@ -4,11 +4,10 @@ use std::sync::Arc;
 use openwork_models::model::ToolDefinition as ModelToolDefinition;
 use thiserror::Error;
 
-use crate::policy::evaluate;
 use crate::tool::{DynTool, ToolAdapter};
 use crate::{
-    PermissionMode, PolicyDecision, Tool, ToolCallContext, ToolDefinition, ToolErrorCode, ToolId,
-    ToolInvocation, ToolResult, ToolSessionContext,
+    Authorization, PermissionEngine, PermissionMode, Tool, ToolCallContext, ToolDefinition,
+    ToolErrorCode, ToolId, ToolInvocation, ToolResult, ToolSessionContext,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +94,7 @@ impl ToolRegistryBuilder {
         Ok(FinalizedToolset {
             definitions,
             tools,
+            permission: PermissionEngine::for_workspace(&session.working_directory),
             session: Arc::new(session),
         })
     }
@@ -108,6 +108,7 @@ struct FinalizedEntry {
 pub struct FinalizedToolset {
     definitions: Vec<ModelToolDefinition>,
     tools: HashMap<ToolId, FinalizedEntry>,
+    permission: PermissionEngine,
     session: Arc<ToolSessionContext>,
 }
 
@@ -135,16 +136,48 @@ impl FinalizedToolset {
         Ok(&entry.definition)
     }
 
-    pub fn authorize(&self, invocation: &ToolInvocation, mode: PermissionMode) -> PolicyDecision {
-        match self.validate(invocation) {
-            Ok(definition) => evaluate(mode, definition.risk_hint),
-            Err(error) => PolicyDecision::Deny {
-                reason: error.to_string(),
+    /// Judges a call against the permission rules.
+    ///
+    /// Anything that prevents a judgement from being made at all — unknown
+    /// tool, malformed input, failure to extract effects — comes back as
+    /// [`Authorization::Unavailable`], never as a `Deny`. Only a rule may
+    /// produce a `Deny`, because the two carry different instructions to the
+    /// model: a rule denial means "this path is closed, try another approach"
+    /// while a malformed call means "fix the call" (permissions.md §5.4).
+    pub fn authorize(&self, invocation: &ToolInvocation, mode: PermissionMode) -> Authorization {
+        let entry = match self.tools.get(invocation.name.as_str()) {
+            Some(entry) => entry,
+            None => {
+                return Authorization::Unavailable {
+                    code: ToolErrorCode::ToolNotFound,
+                    message: ToolValidationError::UnknownTool(invocation.name.clone()).to_string(),
+                };
+            }
+        };
+        if let Err(error) = entry.tool.validate(&invocation.input) {
+            return Authorization::Unavailable {
+                code: ToolErrorCode::InvalidArguments,
+                message: ToolValidationError::InvalidInput(error).to_string(),
+            };
+        }
+        match entry
+            .tool
+            .permission_analysis(&self.session, &invocation.input)
+        {
+            Ok(analysis) => self.permission.authorize(mode, &analysis),
+            Err(error) => Authorization::Unavailable {
+                code: ToolErrorCode::ExecutionFailed,
+                message: error.to_string(),
             },
         }
     }
 
-    pub async fn call(&self, call: ToolCallContext, invocation: ToolInvocation) -> ToolResult {
+    pub async fn call(
+        &self,
+        call: ToolCallContext,
+        invocation: ToolInvocation,
+        permit: crate::ExecutionPermit,
+    ) -> ToolResult {
         let Some(entry) = self.tools.get(invocation.name.as_str()) else {
             return ToolResult::failed(
                 ToolErrorCode::ToolNotFound,
@@ -152,7 +185,14 @@ impl FinalizedToolset {
                 false,
             );
         };
-        entry.tool.call(&self.session, call, invocation.input).await
+        entry
+            .tool
+            .call(
+                &self.session,
+                call.with_execution_permit(permit),
+                invocation.input,
+            )
+            .await
     }
 }
 
@@ -241,7 +281,7 @@ mod tests {
     fn session() -> ToolSessionContext {
         ToolSessionContext::local(
             std::env::temp_dir(),
-            PermissionProfile::danger_full_access(),
+            PermissionProfile::from_builtin_rules(std::env::temp_dir()),
         )
     }
 
@@ -254,10 +294,19 @@ mod tests {
 
         assert_eq!(toolset.definitions().len(), 1);
         assert_eq!(toolset.definitions()[0].name, "echo");
+        let invocation = ToolInvocation::new("echo", json!({"text": "hello"}));
+        let permit = match toolset.authorize(&invocation, PermissionMode::Default) {
+            Authorization::Allow { permit } | Authorization::Ask { permit, .. } => permit,
+            Authorization::Deny { reason, .. } => panic!("echo denied: {reason}"),
+            Authorization::Unavailable { message, .. } => {
+                panic!("echo could not be judged: {message}")
+            }
+        };
         let result = toolset
             .call(
                 ToolCallContext::new(ToolCallId::new("call-1"), CancellationToken::new()),
-                ToolInvocation::new("echo", json!({"text": "hello"})),
+                invocation,
+                permit.clone(),
             )
             .await;
         assert_eq!(result.text_content(), "hello");
@@ -265,6 +314,7 @@ mod tests {
             .call(
                 ToolCallContext::new(ToolCallId::new("call-2"), CancellationToken::new()),
                 ToolInvocation::new("missing", json!({})),
+                permit,
             )
             .await;
         assert_eq!(
