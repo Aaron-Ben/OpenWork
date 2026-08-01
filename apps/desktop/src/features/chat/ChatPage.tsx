@@ -63,6 +63,14 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const hasAvailableModel = selectDefaultModel(providers) !== null
   const { startTurn, cancelTurn, setPermissionMode } = useTurnActions(sessionId)
   const messages = useMemo(() => buildTranscript(canonical, runtime), [canonical, runtime])
+  const contextBreakdown = useMemo(() => {
+    if (!contextInspection) return null
+    return {
+      messagesTokens: contextInspection.budget.conversationTokens,
+      systemPromptTokens: contextInspection.budget.systemContextTokens,
+      systemToolsTokens: contextInspection.budget.toolSurfaceTokens,
+    }
+  }, [contextInspection])
   const turns = useMemo(() => getConversationTurns(messages), [messages])
   const isSending = runtime.phase !== 'idle'
   const finishedToolCallCount = runtime.orderedToolCallIds.reduce(
@@ -288,7 +296,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
               />
             )
           ) : (
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
+            <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
               {messages.map((message) => {
                 const openTrace = message.turnId
                   ? (providerToolCallId?: string) => setSelectedTrace({ turnId: message.turnId!, providerToolCallId })
@@ -360,13 +368,13 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
       <div>
         {runtime.syncState !== 'current' ? (
-          <p className="mx-auto mb-2 max-w-3xl px-6 text-xs text-status-warning-ink max-[560px]:px-4">
+          <p className="mx-auto mb-2 max-w-4xl px-6 text-xs text-status-warning-ink max-[560px]:px-4">
             {runtime.syncState === 'resyncing' ? t('chat.syncResyncing') : t('chat.syncStale')}
           </p>
         ) : null}
         {isCompacting || runtime.phase === 'compacting' ? (
           <p
-            className="mx-auto mb-2 flex max-w-3xl items-center gap-2 px-6 text-xs text-ink-faint max-[560px]:px-4"
+            className="mx-auto mb-2 flex max-w-4xl items-center gap-2 px-6 text-xs text-ink-faint max-[560px]:px-4"
             role="status"
             data-compacting-indicator="true"
           >
@@ -375,7 +383,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           </p>
         ) : null}
         {compactionError || runtime.error || sessionError ? (
-          <p className="mx-auto mb-2 max-w-3xl px-6 text-xs text-status-danger-ink max-[560px]:px-4" role="alert">
+          <p className="mx-auto mb-2 max-w-4xl px-6 text-xs text-status-danger-ink max-[560px]:px-4" role="alert">
             {compactionError ?? runtime.error ?? sessionError}
           </p>
         ) : null}
@@ -386,6 +394,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           modelSelectionLocked
           permissionMode={runtime.permissionMode}
           contextUsage={contextUsage}
+          contextBreakdown={contextBreakdown}
           contextInspectorOpen={contextInspectorOpen}
           value={draft}
           isSending={isSending}

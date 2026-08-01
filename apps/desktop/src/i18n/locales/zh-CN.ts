@@ -133,6 +133,13 @@ export const zhCN = {
     contextUsageEstimated: 'Provider 无关估算，不包含协议包装',
     contextUsageUnavailable: '暂无上下文用量',
     contextUsageAria: '上下文已使用 {{usedPercent}}%，{{used}} / {{total}} Tokens',
+    contextPanel: {
+      title: '上下文窗口',
+      expand: '展开上下文分类', collapse: '收起上下文分类',
+      messages: '消息', systemPrompt: '系统提示', systemTools: '系统工具',
+      breakdownUnavailable: '下次上下文刷新后显示分类。',
+      details: '详情',
+    },
     contextInspector: {
       title: '上下文窗口内容',
       previewDescription: '按照当前来源重建 System Context、Conversation 与 Tool Surface 预览。',

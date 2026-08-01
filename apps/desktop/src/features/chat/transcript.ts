@@ -38,13 +38,25 @@ function resultState(toolCall: RuntimeLiveToolCall): ToolResultState {
   return 'success'
 }
 
+function liveToolResultPart(toolCall: RuntimeLiveToolCall): ContentBlock | null {
+  if (toolCall.output == null) return null
+  return {
+    type: 'tool_result',
+    id: toolCall.providerCallId,
+    name: toolCall.name,
+    output: [{ type: 'text', text: toolCall.output }],
+    state: resultState(toolCall),
+    ...(toolCall.artifacts?.length ? { artifacts: toolCall.artifacts } : {}),
+  }
+}
+
 function toolParts(
   runtime: SessionRuntimeView,
-  persistedToolResultIds: ReadonlySet<string>,
+  representedToolCallIds: ReadonlySet<string>,
 ): ContentBlock[] {
   return runtime.orderedToolCallIds.flatMap((id) => {
     const toolCall = runtime.toolCalls[id]
-    if (!toolCall || persistedToolResultIds.has(toolCall.providerCallId)) return []
+    if (!toolCall || representedToolCallIds.has(toolCall.providerCallId)) return []
     const parts: ContentBlock[] = [{
       type: 'tool_call',
       id: toolCall.providerCallId,
@@ -52,17 +64,35 @@ function toolParts(
       input: safeStringify(toolCall.input),
       state: toolCall.isError == null ? 'submitted' : 'finished',
     }]
-    if (toolCall.output != null) {
-      parts.push({
-        type: 'tool_result',
-        id: toolCall.providerCallId,
-        name: toolCall.name,
-        output: [{ type: 'text', text: toolCall.output }],
-        state: resultState(toolCall),
-        ...(toolCall.artifacts?.length ? { artifacts: toolCall.artifacts } : {}),
-      })
-    }
+    const result = liveToolResultPart(toolCall)
+    if (result) parts.push(result)
     return parts
+  })
+}
+
+function attachLiveResultsToCanonicalCalls(
+  transcript: ChatItem[],
+  runtime: SessionRuntimeView,
+  persistedToolResultIds: ReadonlySet<string>,
+): ChatItem[] {
+  const liveByProviderCallId = new Map(
+    runtime.orderedToolCallIds.flatMap((id) => {
+      const toolCall = runtime.toolCalls[id]
+      return toolCall ? [[toolCall.providerCallId, toolCall] as const] : []
+    }),
+  )
+
+  return transcript.map((message) => {
+    if (message.role !== 'assistant' || message.turnId !== runtime.turnId) return message
+    const liveResults = message.parts.flatMap((part) => {
+      if (part.type !== 'tool_call' || persistedToolResultIds.has(part.id)) return []
+      const toolCall = liveByProviderCallId.get(part.id)
+      const result = toolCall ? liveToolResultPart(toolCall) : null
+      return result ? [result] : []
+    })
+    return liveResults.length > 0
+      ? { ...message, parts: [...message.parts, ...liveResults] }
+      : message
   })
 }
 
@@ -70,12 +100,28 @@ export function buildTranscript(
   messages: RuntimeStoredMessage[],
   runtime: SessionRuntimeView,
 ): ChatItem[] {
-  const transcript = canonicalItems(messages)
+  let transcript = canonicalItems(messages)
+  const persistedToolCallIds = new Set(
+    messages.flatMap((message) =>
+      message.turnId === runtime.turnId
+        ? message.content.flatMap((part) => part.type === 'tool_call' ? [part.id] : [])
+        : [],
+    ),
+  )
   const persistedToolResultIds = new Set(
     messages.flatMap((message) => message.content.flatMap((part) =>
       part.type === 'tool_result' ? [part.id] : [],
     )),
   )
+  transcript = attachLiveResultsToCanonicalCalls(
+    transcript,
+    runtime,
+    persistedToolResultIds,
+  )
+  const representedToolCallIds = new Set([
+    ...persistedToolCallIds,
+    ...persistedToolResultIds,
+  ])
   const canonicalTurnIds = new Set(
     messages.filter((message) => message.role === 'user').map((message) => message.turnId),
   )
@@ -96,7 +142,7 @@ export function buildTranscript(
   if (runtime.assistantDraft?.text) {
     parts.push({ type: 'text', text: runtime.assistantDraft.text })
   }
-  parts.push(...toolParts(runtime, persistedToolResultIds))
+  parts.push(...toolParts(runtime, representedToolCallIds))
   const compacting = runtime.phase === 'compacting'
   if (runtime.turnId && (parts.length > 0 || compacting)) {
     transcript.push({

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProviderModel } from '../../models/contracts'
 import type { RuntimePermissionMode } from '../../../bridge/compat'
-import type { ContextUsage } from '../contextUsage'
+import type { ContextUsage, ContextUsageBreakdown } from '../contextUsage'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 
 interface ChatInputProps {
@@ -26,6 +26,7 @@ interface ChatInputProps {
   onCancel?: () => void
   topContent?: ReactNode
   contextUsage?: ContextUsage | null
+  contextBreakdown?: ContextUsageBreakdown | null
   contextInspectorOpen?: boolean
   onInspectContext?: () => void
   onSlashCommand?: (command: ChatSlashCommand) => void
@@ -49,6 +50,7 @@ export function ChatInput({
   onCancel,
   topContent,
   contextUsage,
+  contextBreakdown,
   contextInspectorOpen = false,
   onInspectContext,
   onSlashCommand,
@@ -110,7 +112,7 @@ export function ChatInput({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 pb-7 max-[560px]:px-4">
+    <div className="mx-auto w-full max-w-4xl px-6 pb-7 max-[560px]:px-4">
       {topContent ? (
         <div data-chat-input-top-content="true" className="mb-3">
           {topContent}
@@ -198,6 +200,7 @@ export function ChatInput({
 
           <ContextUsageIndicator
             usage={contextUsage}
+            breakdown={contextBreakdown}
             inspectorOpen={contextInspectorOpen}
             onInspect={onInspectContext}
           />

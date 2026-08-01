@@ -43,6 +43,9 @@ function modelRecordId(providerId: string, modelId: string): string {
   return `model:${providerId}:${modelId}`
 }
 
+let reloadRequestSequence = 0
+const latestReloadRequestBySession = new Map<string, number>()
+
 export const useSessionStore = create<SessionStoreState>((set, get) => ({
   summaries: {},
   orderedSessionIds: [],
@@ -101,11 +104,14 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   },
 
   reload: async (sessionId) => {
+    const requestSequence = ++reloadRequestSequence
+    latestReloadRequestBySession.set(sessionId, requestSequence)
     set((state) => ({
       loadStateBySession: { ...state.loadStateBySession, [sessionId]: 'loading' },
     }))
     try {
       const loaded = await coreCommands.loadSession(sessionId)
+      if (latestReloadRequestBySession.get(sessionId) !== requestSequence) return false
       set((state) => ({
         summaries: { ...state.summaries, [sessionId]: loaded.session },
         orderedSessionIds: state.orderedSessionIds.includes(sessionId)
@@ -117,11 +123,16 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       }))
       return true
     } catch (error) {
+      if (latestReloadRequestBySession.get(sessionId) !== requestSequence) return false
       set((state) => ({
         loadStateBySession: { ...state.loadStateBySession, [sessionId]: 'error' },
         error: resolveErrorMessage(error),
       }))
       return false
+    } finally {
+      if (latestReloadRequestBySession.get(sessionId) === requestSequence) {
+        latestReloadRequestBySession.delete(sessionId)
+      }
     }
   },
 

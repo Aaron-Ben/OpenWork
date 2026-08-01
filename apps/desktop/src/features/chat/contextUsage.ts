@@ -6,6 +6,13 @@ export interface ContextUsage {
   estimated: boolean
 }
 
+/** Token split of the model-visible input regions, from the last context inspection. */
+export interface ContextUsageBreakdown {
+  messagesTokens: number
+  systemPromptTokens: number
+  systemToolsTokens: number
+}
+
 export function contextUsageFromTrace(
   trace: RuntimeTurnTrace,
   totalTokens: number,

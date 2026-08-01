@@ -1,10 +1,12 @@
-import { useId } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type { ContextUsage } from '../contextUsage'
+import type { ContextUsage, ContextUsageBreakdown } from '../contextUsage'
 
 interface ContextUsageIndicatorProps {
   usage?: ContextUsage | null
+  breakdown?: ContextUsageBreakdown | null
   inspectorOpen?: boolean
   onInspect?: () => void
 }
@@ -14,16 +16,32 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 export function ContextUsageIndicator({
   usage,
+  breakdown,
   inspectorOpen = false,
   onInspect,
 }: ContextUsageIndicatorProps) {
   const { t } = useTranslation()
-  const tooltipId = useId()
-  const usedPercent = usage
-    ? Math.min(100, Math.max(0, Math.round((usage.usedTokens / usage.totalTokens) * 100)))
-    : 0
-  const leftPercent = 100 - usedPercent
-  const progressOffset = CIRCUMFERENCE * (1 - usedPercent / 100)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const panelVisible = panelOpen && !inspectorOpen
+
+  useEffect(() => {
+    if (!panelVisible) return
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setPanelOpen(false)
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setPanelOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [panelVisible])
+
+  const usedPercent = usage ? usagePercent(usage) : 0
   const tone = !usage
     ? 'text-ink-faint'
     : usedPercent >= 90
@@ -31,11 +49,6 @@ export function ContextUsageIndicator({
       : usedPercent >= 75
         ? 'text-status-warning-ink'
         : 'text-ink-faint'
-  const barTone = usedPercent >= 90
-    ? 'bg-status-danger'
-    : usedPercent >= 75
-      ? 'bg-status-warning'
-      : 'bg-clay'
   const label = usage
     ? t('chat.contextUsageAria', {
         usedPercent,
@@ -43,20 +56,16 @@ export function ContextUsageIndicator({
         total: formatTokenCount(usage.totalTokens),
       })
     : t('chat.contextUsageUnavailable')
-  const actionLabel = onInspect
-    ? `${label}. ${t('chat.contextInspector.open')}`
-    : label
 
   return (
-    <div className="group relative shrink-0">
+    <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
         className="flex h-8 items-center gap-1.5 rounded-lg px-1.5 text-ink-faint outline-none transition hover:bg-paper-hover hover:text-ink-soft focus-visible:ring-2 focus-visible:ring-clay/35"
-        aria-label={actionLabel}
-        aria-describedby={tooltipId}
-        aria-haspopup={onInspect ? 'dialog' : undefined}
-        aria-expanded={onInspect ? inspectorOpen : undefined}
-        onClick={onInspect}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={panelVisible}
+        onClick={() => setPanelOpen((open) => !open)}
       >
         <svg
           aria-hidden="true"
@@ -82,7 +91,7 @@ export function ContextUsageIndicator({
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeDasharray={CIRCUMFERENCE}
-            strokeDashoffset={progressOffset}
+            strokeDashoffset={CIRCUMFERENCE * (1 - usedPercent / 100)}
             className="transition-[stroke-dashoffset] duration-300"
             data-context-usage-progress={usedPercent}
           />
@@ -94,47 +103,124 @@ export function ContextUsageIndicator({
         ) : null}
       </button>
 
-      <div
-        id={tooltipId}
-        role="tooltip"
-        className={`${inspectorOpen ? 'hidden' : ''} pointer-events-none invisible absolute bottom-[calc(100%+10px)] left-1/2 z-50 min-w-[220px] -translate-x-1/2 translate-y-1 rounded-xl border border-line bg-paper px-3.5 py-2.5 opacity-0 shadow-[0_14px_36px_rgba(20,20,19,0.16)] transition-[opacity,transform,visibility] duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100`}
-      >
-        <div className="text-[11px] text-ink-faint">{t('chat.contextWindow')}</div>
-        {usage ? (
-          <>
-            <div className="mt-1 text-sm font-medium text-ink">
-              {t('chat.contextUsagePercent', { usedPercent, leftPercent })}
-            </div>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-paper-hover">
-              <div
-                className={`h-full rounded-full transition-[width] duration-300 ${barTone}`}
-                style={{ width: `${usedPercent}%` }}
-              />
-            </div>
-            <div className="mt-1.5 text-xs text-ink-soft">
-              {t('chat.contextTokensUsed', {
-                used: formatTokenCount(usage.usedTokens),
-                total: formatTokenCount(usage.totalTokens),
-              })}
-            </div>
-            {usage.estimated ? (
-              <div className="mt-1 text-[11px] text-ink-faint">{t('chat.contextUsageEstimated')}</div>
-            ) : null}
-          </>
-        ) : (
-          <div className="mt-1 text-xs text-ink-soft">
-            {t('chat.contextUsageUnavailable')}
-          </div>
-        )}
-        {onInspect ? (
-          <div className="mt-1.5 text-[11px] text-ink-faint">
-            {t('chat.contextInspector.openHint')}
-          </div>
-        ) : null}
-        <span className="absolute -bottom-[5px] left-1/2 size-2 -translate-x-1/2 rotate-45 border-b border-r border-line bg-paper" />
-      </div>
+      {panelVisible ? (
+        <ContextUsagePanel
+          usage={usage ?? null}
+          breakdown={breakdown ?? null}
+          onShowDetails={onInspect ? () => { setPanelOpen(false); onInspect() } : undefined}
+        />
+      ) : null}
     </div>
   )
+}
+
+interface ContextUsagePanelProps {
+  usage: ContextUsage | null
+  breakdown: ContextUsageBreakdown | null
+  onShowDetails?: () => void
+  /** Initial expanded state; used by static-markup tests that cannot click. */
+  defaultExpanded?: boolean
+}
+
+export function ContextUsagePanel({ usage, breakdown, onShowDetails, defaultExpanded = false }: ContextUsagePanelProps) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const usedPercent = usage ? usagePercent(usage) : 0
+  const barTone = usedPercent >= 90
+    ? 'bg-status-danger'
+    : usedPercent >= 75
+      ? 'bg-status-warning'
+      : 'bg-clay'
+  const categories = breakdown
+    ? [
+        { key: 'messages', label: t('chat.contextPanel.messages'), tokens: breakdown.messagesTokens, dot: 'bg-clay' },
+        { key: 'systemPrompt', label: t('chat.contextPanel.systemPrompt'), tokens: breakdown.systemPromptTokens, dot: 'bg-clay/60' },
+        { key: 'systemTools', label: t('chat.contextPanel.systemTools'), tokens: breakdown.systemToolsTokens, dot: 'bg-clay/35' },
+      ]
+    : []
+
+  return (
+    <div
+      role="dialog"
+      aria-label={t('chat.contextPanel.title')}
+      data-context-usage-panel="true"
+      className="absolute bottom-[calc(100%+10px)] right-0 z-50 w-[min(320px,86vw)] rounded-xl border border-line bg-paper px-3.5 py-3 shadow-[0_14px_36px_rgba(20,20,19,0.16)]"
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-lg px-1 py-0.5 outline-none transition hover:bg-paper-hover focus-visible:ring-2 focus-visible:ring-clay/35"
+        aria-expanded={expanded}
+        aria-label={expanded ? t('chat.contextPanel.collapse') : t('chat.contextPanel.expand')}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="text-xs font-medium text-ink-soft">{t('chat.contextPanel.title')}</span>
+        {usage ? (
+          <span className="ml-auto font-mono text-xs tabular-nums text-ink">
+            {formatTokenCount(usage.usedTokens)} / {formatTokenCount(usage.totalTokens)} ({usedPercent}%)
+          </span>
+        ) : (
+          <span className="ml-auto text-xs text-ink-faint">{t('chat.contextUsageUnavailable')}</span>
+        )}
+        <ChevronRight
+          size={14}
+          aria-hidden="true"
+          className={`shrink-0 text-ink-faint transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
+      </button>
+
+      <div className="mt-2 h-1 overflow-hidden rounded-full bg-paper-hover">
+        <div
+          className={`h-full rounded-full transition-[width] duration-300 ${barTone}`}
+          style={{ width: `${usedPercent}%` }}
+        />
+      </div>
+
+      {expanded ? (
+        <div className="mt-2.5" data-context-usage-breakdown="true">
+          {categories.length > 0 ? (
+            <ul className="grid gap-1">
+              {categories.map((category) => (
+                <li key={category.key} className="flex items-center gap-2 px-1 text-xs">
+                  <span aria-hidden="true" className={`size-2 shrink-0 rounded-[3px] ${category.dot}`} />
+                  <span className="text-ink-soft">{category.label}</span>
+                  <span className="ml-auto font-mono tabular-nums text-ink">
+                    {formatTokenCount(category.tokens)}
+                  </span>
+                  <span className="w-12 text-right font-mono tabular-nums text-ink-faint">
+                    {usage ? formatSharePercent(category.tokens, usage.totalTokens) : '—'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-1 text-[11px] text-ink-faint">{t('chat.contextPanel.breakdownUnavailable')}</p>
+          )}
+          {usage?.estimated ? (
+            <p className="mt-2 px-1 text-[11px] text-ink-faint">{t('chat.contextUsageEstimated')}</p>
+          ) : null}
+          {onShowDetails ? (
+            <button
+              type="button"
+              className="mt-2.5 w-full rounded-lg border border-line bg-surface/60 px-3 py-1.5 text-xs font-medium text-ink-soft outline-none transition hover:bg-paper-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-clay/35"
+              onClick={onShowDetails}
+            >
+              {t('chat.contextPanel.details')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function usagePercent(usage: ContextUsage): number {
+  return Math.min(100, Math.max(0, Math.round((usage.usedTokens / usage.totalTokens) * 100)))
+}
+
+function formatSharePercent(tokens: number, totalTokens: number): string {
+  if (totalTokens <= 0) return '—'
+  const share = Math.max(0, (tokens / totalTokens) * 100)
+  return `${share >= 10 ? Math.round(share) : Math.round(share * 10) / 10}%`
 }
 
 export function formatTokenCount(tokens: number): string {

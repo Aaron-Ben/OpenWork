@@ -100,6 +100,13 @@ export const enUS = {
     contextTokensUsed: '{{used}} / {{total}} tokens used', contextUsageEstimated: 'Provider-neutral estimate; protocol framing excluded',
     contextUsageUnavailable: 'Context usage unavailable',
     contextUsageAria: 'Context {{usedPercent}}% used, {{used}} of {{total}} tokens',
+    contextPanel: {
+      title: 'Context window',
+      expand: 'Show context breakdown', collapse: 'Hide context breakdown',
+      messages: 'Messages', systemPrompt: 'System prompt', systemTools: 'System tools',
+      breakdownUnavailable: 'Breakdown will appear after the next context refresh.',
+      details: 'Details',
+    },
     contextInspector: {
       title: 'Context window contents',
       previewDescription: 'Preview of the System Context, Conversation, and Tool Surface rebuilt from current sources.',

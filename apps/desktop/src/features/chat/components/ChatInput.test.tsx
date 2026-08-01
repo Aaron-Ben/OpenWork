@@ -43,10 +43,8 @@ describe('ChatInput toolbar', () => {
     expect(markup).toContain('DeepSeek Chat · Plus')
     expect(markup).toContain('aria-label="发送"')
     expect(markup).toContain('data-context-usage-ring="true"')
-    expect(markup).toContain('role="tooltip"')
-    expect(markup).toContain('上下文窗口')
-    expect(markup).toContain('26% 已用（剩余 74%）')
-    expect(markup).toContain('66k / 258k Tokens 已用')
+    expect(markup).toContain('data-context-usage-progress="26"')
+    expect(markup).not.toContain('data-context-usage-panel')
     expect(markup).toContain('w-[clamp(104px,20vw,200px)]')
     expect(markup).not.toContain('w-[clamp(110px,28vw,260px)]')
     expect(markup).not.toContain('overflow-hidden rounded-[18px]')
@@ -80,9 +78,8 @@ describe('ChatInput toolbar', () => {
     )
 
     expect(markup).toContain('data-context-usage-progress="0"')
-    expect(markup).toContain('暂无上下文用量')
     expect(markup).toContain('aria-haspopup="dialog"')
-    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('aria-expanded="false"')
   })
 
   it('replaces the send affordance with a compact stop control while streaming', () => {

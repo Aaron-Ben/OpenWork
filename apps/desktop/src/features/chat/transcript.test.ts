@@ -273,6 +273,57 @@ describe('buildTranscript', () => {
     expect(toolResults).toHaveLength(1)
   })
 
+  it('does not duplicate a persisted tool call while the final answer streams', () => {
+    const persistedCall: RuntimeStoredMessage[] = [
+      {
+        id: 'turn-tools-call',
+        turnId: 'turn-tools',
+        sequence: 2,
+        role: 'assistant',
+        content: [{
+          type: 'tool_call',
+          id: 'provider-read',
+          name: 'read',
+          input: '{"path":"agent-session.ts"}',
+          state: 'submitted',
+        }],
+        createdAt: '2026-07-18T00:00:01Z',
+      },
+    ]
+    const runtime = {
+      ...createSessionRuntimeView(),
+      turnId: 'turn-tools',
+      phase: 'running_model' as const,
+      assistantDraft: { turnId: 'turn-tools', text: 'The file is fully inspected.', reasoning: '' },
+      toolCalls: {
+        'tool-read': {
+          toolCallId: 'tool-read',
+          providerCallId: 'provider-read',
+          name: 'read',
+          input: { path: 'agent-session.ts' },
+          status: 'succeeded' as const,
+          output: 'file contents',
+          isError: false,
+        },
+      },
+      orderedToolCallIds: ['tool-read'],
+    }
+
+    const result = buildTranscript(persistedCall, runtime)
+    const toolActivityMessages = result.filter((message) => message.parts.some((part) =>
+      part.type === 'tool_call' || part.type === 'tool_result'
+    ))
+
+    expect(toolActivityMessages).toHaveLength(1)
+    expect(toolActivityMessages[0].parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_call', id: 'provider-read' }),
+      expect.objectContaining({ type: 'tool_result', id: 'provider-read', state: 'success' }),
+    ]))
+    expect(result.find((message) => message.id === 'live-turn-tools')?.parts).toEqual([
+      { type: 'text', text: 'The file is fully inspected.' },
+    ])
+  })
+
   it('shows a compacting placeholder while an automatic compaction runs without a draft', () => {
     const runtime = {
       ...createSessionRuntimeView(),

@@ -96,6 +96,13 @@ export const zhTW = {
     contextWindow: '上下文視窗：', contextUsagePercent: '已使用 {{usedPercent}}%（剩餘 {{leftPercent}}%）',
     contextTokensUsed: '已使用 {{used}} / {{total}} Tokens', contextUsageEstimated: 'Provider 無關估算，不包含協議包裝',
     contextUsageUnavailable: '暫無上下文用量', contextUsageAria: '上下文已使用 {{usedPercent}}%，{{used}} / {{total}} Tokens',
+    contextPanel: {
+      title: '上下文視窗',
+      expand: '展開上下文分類', collapse: '收合上下文分類',
+      messages: '訊息', systemPrompt: '系統提示', systemTools: '系統工具',
+      breakdownUnavailable: '下次上下文重新整理後顯示分類。',
+      details: '詳情',
+    },
     contextInspector: {
       title: '上下文視窗內容', previewDescription: '依目前來源重建 System Context、Conversation 與 Tool Surface 預覽。',
       open: '檢視上下文內容', openHint: '點選以檢視目前記載的內容。',
