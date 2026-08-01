@@ -46,7 +46,7 @@ fn exec_rule(id: &str, behavior: RuleBehavior) -> Rule {
         id,
         RulePattern::Exec(ExecPattern::TokenPrefix(vec!["echo".into()])),
         behavior,
-        RuleScope::Workspace,
+        RuleScope::Session,
     )
 }
 
@@ -55,7 +55,7 @@ fn write_rule(id: &str, behavior: RuleBehavior) -> Rule {
         id,
         RulePattern::Write(PathPattern::new("/repo/**").expect("valid path glob")),
         behavior,
-        RuleScope::Workspace,
+        RuleScope::Session,
     )
 }
 
@@ -154,13 +154,7 @@ fn step_1_rule_barriers_and_exec_eligibility_still_win() {
     ) else {
         panic!("an explicit ask must beat all allow evidence")
     };
-    assert!(matches!(
-        card.units[0].verdict,
-        UnitVerdict::Ask {
-            source: AskSource::ExplicitRule,
-            ..
-        }
-    ));
+    assert!(matches!(card.units[0].verdict, UnitVerdict::Ask { .. }));
 
     assert!(matches!(
         authorize(

@@ -566,7 +566,6 @@ impl TurnRunner {
                     DecisionSource::ReadonlyProof => "readonly_proof",
                     DecisionSource::ModeFsCommand => "mode_fs_command",
                     DecisionSource::SessionGrant => "session_grant",
-                    DecisionSource::Rule => "rule",
                     DecisionSource::Builtin | DecisionSource::Mode => "builtin",
                 };
                 tool_trace.record_permission_decision("allow", source);

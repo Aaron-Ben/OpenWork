@@ -68,14 +68,12 @@ impl BuiltinRuleSet {
             ),
         ] {
             for (index, suffix) in patterns.into_iter().enumerate() {
-                let mut rule = Rule::new(
+                rules.push(Rule::new(
                     format!("builtin.ask.{id}.{index}"),
                     RulePattern::Write(path_pattern(format!("{root}/{suffix}"))),
                     RuleBehavior::Ask,
                     RuleScope::Builtin,
-                );
-                rule.sensitive = true;
-                rules.push(rule);
+                ));
             }
         }
 

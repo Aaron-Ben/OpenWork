@@ -57,39 +57,39 @@ fn acc_06_builtin_git_and_openwork_denies_are_silent() {
     }
 }
 
-/// permissions.md §3.4 / 验收 5: built-in rules are provided by code and the
-/// user cannot delete them. The only way a user rule could "remove" one is by
-/// out-ranking it, and §3.3 forbids that — `deny` and `ask` always beat a
-/// later `allow`, no matter the order.
+/// permissions.md §3.4 / 验收 5: built-in rules are provided by code and
+/// nothing can remove them. The only way another rule could "remove" one is by
+/// out-ranking it, and §3.3 forbids that — `deny` and `ask` always beat an
+/// `allow`, no matter the order or the scope it came from.
 #[test]
-fn acc_05_user_rules_cannot_remove_builtin_rules() {
+fn acc_05_nothing_can_remove_builtin_rules() {
     let engine = PermissionEngine::for_workspace_with_rules(
         "/repo",
         vec![
             Rule::new(
-                "user.allow.everything",
+                "session.allow.everything",
                 RulePattern::Write(PathPattern::new("/repo/**").expect("valid glob")),
                 RuleBehavior::Allow,
-                RuleScope::Workspace,
+                RuleScope::Session,
             ),
             Rule::new(
-                "user.allow.git",
+                "session.allow.git",
                 RulePattern::Write(PathPattern::new("/repo/.git/**").expect("valid glob")),
                 RuleBehavior::Allow,
-                RuleScope::Workspace,
+                RuleScope::Session,
             ),
         ],
     );
 
     for mode in [PermissionMode::Default, PermissionMode::AcceptEdits] {
-        // Built-in hard deny survives a user allow aimed straight at it.
+        // Built-in hard deny survives a session grant aimed straight at it.
         let protected = invocation("write git config", Effect::write("/repo/.git/config"));
         assert!(
             matches!(
                 engine.authorize(mode, &protected, &[]),
                 Authorization::Deny { silent: true, .. }
             ),
-            "builtin deny must survive a user allow in {mode:?}"
+            "builtin deny must survive a session grant in {mode:?}"
         );
 
         // Built-in sensitive ask likewise cannot be downgraded to allow.
@@ -99,7 +99,7 @@ fn acc_05_user_rules_cannot_remove_builtin_rules() {
                 engine.authorize(mode, &sensitive, &[]),
                 Authorization::Ask { .. }
             ),
-            "builtin sensitive ask must survive a user allow in {mode:?}"
+            "builtin sensitive ask must survive a session grant in {mode:?}"
         );
     }
 }
@@ -188,19 +188,19 @@ fn acc_02_strongest_rule_wins_independent_of_order() {
             "allow-src",
             RulePattern::Read(path.clone()),
             RuleBehavior::Allow,
-            RuleScope::Workspace,
+            RuleScope::Session,
         ),
         Rule::new(
             "ask-src",
             RulePattern::Read(path.clone()),
             RuleBehavior::Ask,
-            RuleScope::Workspace,
+            RuleScope::Session,
         ),
         Rule::new(
             "deny-src",
             RulePattern::Read(path),
             RuleBehavior::Deny,
-            RuleScope::Workspace,
+            RuleScope::Session,
         ),
     ];
     let analysis = invocation("read src/main.rs", Effect::read("/repo/src/main.rs"));
@@ -223,7 +223,7 @@ fn acc_25_exec_prefix_matches_tokens_not_string_prefixes() {
             "test".into(),
         ])),
         RuleBehavior::Ask,
-        RuleScope::Workspace,
+        RuleScope::Session,
     );
     let engine = PermissionEngine::for_workspace_with_rules("/repo", vec![rule]);
 

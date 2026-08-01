@@ -333,7 +333,7 @@ impl PermissionEngine {
                 matches!(
                     unit.verdict,
                     UnitVerdict::Ask {
-                        source: AskSource::ExplicitRule | AskSource::BuiltinSensitive,
+                        source: AskSource::BuiltinSensitive,
                         ..
                     }
                 )
@@ -484,23 +484,17 @@ fn verdict_decision_source(verdict: &UnitVerdict) -> Option<&DecisionSource> {
 fn verdict_from_rule(rule: &Rule) -> UnitVerdict {
     match rule.behavior {
         RuleBehavior::Allow => UnitVerdict::Allow {
-            source: if rule.mode_only {
-                DecisionSource::Mode
-            } else if rule.scope == RuleScope::Session {
-                DecisionSource::SessionGrant
-            } else if rule.scope == RuleScope::Builtin {
-                DecisionSource::Builtin
-            } else {
-                DecisionSource::Rule
+            source: match (rule.mode_only, rule.scope) {
+                (true, _) => DecisionSource::Mode,
+                (false, RuleScope::Session) => DecisionSource::SessionGrant,
+                (false, RuleScope::Builtin) => DecisionSource::Builtin,
             },
             rule_id: Some(rule.id.clone()),
         },
+        // Every `ask` rule is built-in: §3.4's sensitive-path tier is the only
+        // producer, and there is no config file to add more (§3.6).
         RuleBehavior::Ask => UnitVerdict::Ask {
-            source: if rule.sensitive {
-                AskSource::BuiltinSensitive
-            } else {
-                AskSource::ExplicitRule
-            },
+            source: AskSource::BuiltinSensitive,
             rule_id: Some(rule.id.clone()),
         },
         RuleBehavior::Deny => UnitVerdict::Deny {
@@ -531,7 +525,6 @@ fn decision_source_priority(source: &DecisionSource) -> u8 {
         DecisionSource::Mode => 5,
         DecisionSource::SessionGrant => 4,
         DecisionSource::ReadonlyProof => 3,
-        DecisionSource::Rule => 2,
         DecisionSource::Builtin => 1,
     }
 }

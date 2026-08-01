@@ -5,7 +5,6 @@ use super::{Effect, ExecGrantSuggestion, RuleId};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskSource {
-    ExplicitRule,
     BuiltinSensitive,
     NoRuleCovers,
     Unparsed,
@@ -15,7 +14,6 @@ pub enum AskSource {
 #[serde(rename_all = "snake_case")]
 pub enum DecisionSource {
     Builtin,
-    Rule,
     SessionGrant,
     Mode,
     ModeFsCommand,

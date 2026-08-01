@@ -244,28 +244,22 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
             "user.ask.git-status",
             exec(),
             RuleBehavior::Ask,
-            RuleScope::Workspace,
+            RuleScope::Session,
         )],
     );
     let Authorization::Ask { card, .. } = ask.authorize(PermissionMode::Default, &analysis, &[])
     else {
         panic!("explicit ask must beat readonly proof")
     };
-    assert!(matches!(
-        card.units[0].verdict,
-        UnitVerdict::Ask {
-            source: AskSource::ExplicitRule,
-            ..
-        }
-    ));
+    assert!(matches!(card.units[0].verdict, UnitVerdict::Ask { .. }));
 
     let deny = PermissionEngine::for_workspace_with_rules(
         "/repo",
         vec![Rule::new(
-            "user.deny.git-status",
+            "session.deny.git-status",
             exec(),
             RuleBehavior::Deny,
-            RuleScope::Workspace,
+            RuleScope::Session,
         )],
     );
     assert!(matches!(
@@ -276,10 +270,10 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
     let allow = PermissionEngine::for_workspace_with_rules(
         "/repo",
         vec![Rule::new(
-            "user.allow.git-status",
+            "session.allow.git-status",
             exec(),
             RuleBehavior::Allow,
-            RuleScope::Workspace,
+            RuleScope::Session,
         )],
     );
     let Authorization::Allow { evidence, .. } =
@@ -287,10 +281,10 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
     else {
         panic!("P3 removes the legacy guard that downgraded explicit exec allow rules")
     };
-    assert_eq!(evidence.source, DecisionSource::Rule);
+    assert_eq!(evidence.source, DecisionSource::SessionGrant);
     assert_eq!(
         evidence.rule_id.as_ref().map(|id| id.as_str()),
-        Some("user.allow.git-status")
+        Some("session.allow.git-status")
     );
 }
 

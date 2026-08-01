@@ -177,7 +177,7 @@ export type RuntimeUnitVerdict =
     }
   | {
       decision: 'ask'
-      source: 'explicit_rule' | 'builtin_sensitive' | 'no_rule_covers' | 'unparsed'
+      source: 'builtin_sensitive' | 'no_rule_covers' | 'unparsed'
       ruleId: string | null
     }
   | { decision: 'deny'; ruleId: string; silent: boolean }

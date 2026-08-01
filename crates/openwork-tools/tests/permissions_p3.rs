@@ -3,11 +3,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openwork_tools::{
-    AnalysisUnit, ApprovalSessionAction, AskSource, Authorization, DecisionSource, Effect,
-    ExecPattern, FinalizedToolset, InvocationAnalysis, LocalFileSystem, PermissionEngine,
-    PermissionMode, PermissionProfile, Rule, RuleBehavior, RulePattern, RuleScope,
-    TokioProcessBackend, ToolInvocation, ToolSessionContext, ToolsetConfig, UnitVerdict,
-    builtin_registry, reduce_exec_grant,
+    AnalysisUnit, ApprovalSessionAction, Authorization, DecisionSource, Effect, ExecPattern,
+    FinalizedToolset, InvocationAnalysis, LocalFileSystem, PermissionEngine, PermissionMode,
+    PermissionProfile, Rule, RuleBehavior, RulePattern, RuleScope, TokioProcessBackend,
+    ToolInvocation, ToolSessionContext, ToolsetConfig, UnitVerdict, builtin_registry,
+    reduce_exec_grant,
 };
 
 fn bash_toolset(workspace: &Path) -> FinalizedToolset {
@@ -377,7 +377,7 @@ fn acc_55_and_70_explicit_ask_beats_a_session_grant_and_hides_the_button() {
             "user.ask.git-push",
             RulePattern::Exec(ExecPattern::TokenPrefix(vec!["git".into(), "push".into()])),
             RuleBehavior::Ask,
-            RuleScope::Workspace,
+            RuleScope::Session,
         )],
     );
     let session_rules = vec![session_exec_rule(
@@ -390,12 +390,6 @@ fn acc_55_and_70_explicit_ask_beats_a_session_grant_and_hides_the_button() {
     else {
         panic!("explicit ask must beat the session grant")
     };
-    assert!(matches!(
-        card.units[0].verdict,
-        UnitVerdict::Ask {
-            source: AskSource::ExplicitRule,
-            ..
-        }
-    ));
+    assert!(matches!(card.units[0].verdict, UnitVerdict::Ask { .. }));
     assert_eq!(card.session_action, None);
 }

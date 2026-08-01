@@ -51,8 +51,6 @@ function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
     }
   }
   switch (verdict.source) {
-    case 'explicit_rule':
-      return t('tool.permission.explicitAsk')
     case 'builtin_sensitive':
       return t('tool.permission.sensitivePath')
     case 'unparsed':

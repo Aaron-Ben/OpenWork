@@ -39,10 +39,14 @@ impl RuleBehavior {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Where a rule came from.
+///
+/// There are only two producers: the built-in rule set (code) and session
+/// grants (a button the user pressed this session). permissions.md §3.6 rules
+/// out a third — there is no permission config file — so this enum is complete,
+/// not a stub awaiting more variants.
 pub enum RuleScope {
     Builtin,
-    Global,
-    Workspace,
     Session,
 }
 
@@ -50,8 +54,6 @@ impl RuleScope {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Builtin => "builtin",
-            Self::Global => "global",
-            Self::Workspace => "workspace",
             Self::Session => "session",
         }
     }
@@ -149,7 +151,6 @@ pub struct Rule {
     pub behavior: RuleBehavior,
     pub scope: RuleScope,
     pub(crate) silent: bool,
-    pub(crate) sensitive: bool,
     pub(crate) mode_only: bool,
 }
 
@@ -166,7 +167,6 @@ impl Rule {
             behavior,
             scope,
             silent: false,
-            sensitive: false,
             mode_only: false,
         }
     }
