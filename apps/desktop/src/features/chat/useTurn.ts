@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 
 import { coreCommands } from '../../bridge/commands'
-import type { RuntimePermissionMode } from '../../bridge/compat'
+import type { RuntimePermissionDecision, RuntimePermissionMode } from '../../bridge/compat'
 import { useContextWindowStore } from '../../stores/contextWindowStore'
 import { resolveErrorMessage } from '../../utils/commandError'
 import { useRuntimeStore } from './runtimeStore'
@@ -45,7 +45,7 @@ export function useTurnActions(sessionId: string | null) {
     }
   }, [sessionId])
 
-  const resolvePermission = useCallback(async (allow: boolean) => {
+  const resolvePermission = useCallback(async (decision: RuntimePermissionDecision) => {
     if (!sessionId) return false
     const runtime = useRuntimeStore.getState().bySession[sessionId]
     const request = runtime?.pendingPermission
@@ -55,7 +55,7 @@ export function useTurnActions(sessionId: string | null) {
         sessionId,
         runtime.turnId,
         request.toolCallId,
-        allow,
+        decision,
       )
       return true
     } catch (error) {

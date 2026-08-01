@@ -2,11 +2,12 @@
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
 import type { ContentBlock, ToolResultArtifact } from '../type/parts'
 
-export const RUNTIME_SESSION_UPDATE_VERSION = 5
+export const RUNTIME_SESSION_UPDATE_VERSION = 6
 
 export function supportsRuntimeSessionUpdateVersion(version: number): boolean {
   // V2 added tool progress, V3 added terminal tool artifacts, V4 added the
-  // compacting phase, and V5 added structured permission cards. Older
+  // compacting phase, V5 added structured permission cards, and V6 added
+  // session-scoped approval actions plus the resulting permission mode. Older
   // versions remain readable during an
   // in-process rolling transition.
   return version >= 1 && version <= RUNTIME_SESSION_UPDATE_VERSION
@@ -156,6 +157,7 @@ export interface RuntimeTurnAccepted {
 }
 
 export type RuntimePermissionMode = 'default' | 'accept_edits'
+export type RuntimePermissionDecision = 'allow_once' | 'allow_session' | 'accept_edits' | 'deny'
 
 export type RuntimePermissionEffect =
   | { kind: 'read'; path: string }
@@ -168,7 +170,11 @@ export type RuntimeEffectDisplay =
   | { certainty: 'trusted_program'; program: string }
 
 export type RuntimeUnitVerdict =
-  | { decision: 'allow'; source: 'builtin' | 'mode' | 'readonly_proof'; ruleId: string | null }
+  | {
+      decision: 'allow'
+      source: 'builtin' | 'rule' | 'session_grant' | 'mode' | 'readonly_proof'
+      ruleId: string | null
+    }
   | {
       decision: 'ask'
       source: 'explicit_rule' | 'builtin_sensitive' | 'no_rule_covers' | 'unparsed'
@@ -187,7 +193,22 @@ export interface RuntimeApprovalCard {
   units: RuntimePermissionCardUnit[]
   raw: string
   unparsed: boolean
+  sessionAction?: RuntimeApprovalSessionAction
 }
+
+export type RuntimeExecPattern =
+  | { kind: 'token_prefix'; tokens: string[] }
+  | { kind: 'literal'; tokens: string[] }
+
+export interface RuntimeExecGrantSuggestion {
+  pattern: RuntimeExecPattern
+  label: string
+  exact: boolean
+}
+
+export type RuntimeApprovalSessionAction =
+  | { kind: 'allow_exec'; grants: RuntimeExecGrantSuggestion[] }
+  | { kind: 'enable_accept_edits' }
 
 export interface RuntimePermissionRequest {
   sessionId: string
@@ -238,7 +259,12 @@ export type RuntimeSessionUpdate =
       artifacts?: ToolResultArtifact[]
     }
   | { type: 'permission_requested'; request: RuntimePermissionRequest }
-  | { type: 'permission_resolved'; toolCallId: string; decision: 'allow' | 'deny' }
+  | {
+      type: 'permission_resolved'
+      toolCallId: string
+      decision: RuntimePermissionDecision
+      permissionMode?: RuntimePermissionMode
+    }
   | { type: 'turn_finished'; outcome: RuntimeTurnOutcome }
 
 export interface RuntimeSessionUpdateEnvelope {

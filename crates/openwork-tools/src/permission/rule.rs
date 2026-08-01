@@ -91,7 +91,8 @@ impl PathPattern {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "tokens", rename_all = "snake_case")]
 pub enum ExecPattern {
     TokenPrefix(Vec<String>),
     Literal(Vec<String>),

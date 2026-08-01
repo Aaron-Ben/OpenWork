@@ -196,6 +196,7 @@ export function reduceSessionUpdate(
       return {
         ...next,
         phase: 'running_tools',
+        permissionMode: update.permissionMode ?? state.permissionMode,
         pendingPermission:
           state.pendingPermission?.toolCallId === update.toolCallId
             ? null

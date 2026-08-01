@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openwork_tools::{
-    AnalysisUnit, AskSource, Authorization, Effect, ExecPattern, FinalizedToolset,
+    AnalysisUnit, AskSource, Authorization, DecisionSource, Effect, ExecPattern, FinalizedToolset,
     InvocationAnalysis, LocalFileSystem, PermissionEngine, PermissionMode, PermissionProfile,
     ReadonlyProof, Rule, RuleBehavior, RulePattern, RuleScope, TokioProcessBackend, ToolInvocation,
     ToolSessionContext, ToolsetConfig, UnitVerdict, builtin_registry,
@@ -29,6 +29,7 @@ fn authorize(toolset: &FinalizedToolset, command: &str, mode: PermissionMode) ->
     toolset.authorize(
         &ToolInvocation::new("bash", serde_json::json!({ "command": command })),
         mode,
+        &[],
     )
 }
 
@@ -245,7 +246,8 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
             RuleScope::Workspace,
         )],
     );
-    let Authorization::Ask { card, .. } = ask.authorize(PermissionMode::Default, &analysis) else {
+    let Authorization::Ask { card, .. } = ask.authorize(PermissionMode::Default, &analysis, &[])
+    else {
         panic!("explicit ask must beat readonly proof")
     };
     assert!(matches!(
@@ -266,7 +268,7 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
         )],
     );
     assert!(matches!(
-        deny.authorize(PermissionMode::Default, &analysis),
+        deny.authorize(PermissionMode::Default, &analysis, &[]),
         Authorization::Deny { .. }
     ));
 
@@ -279,10 +281,16 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
             RuleScope::Workspace,
         )],
     );
-    assert!(matches!(
-        allow.authorize(PermissionMode::Default, &analysis),
-        Authorization::Ask { .. }
-    ));
+    let Authorization::Allow { evidence, .. } =
+        allow.authorize(PermissionMode::Default, &analysis, &[])
+    else {
+        panic!("P3 removes the legacy guard that downgraded explicit exec allow rules")
+    };
+    assert_eq!(evidence.source, DecisionSource::Rule);
+    assert_eq!(
+        evidence.rule_id.as_ref().map(|id| id.as_str()),
+        Some("user.allow.git-status")
+    );
 }
 
 #[test]

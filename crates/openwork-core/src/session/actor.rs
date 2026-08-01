@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
 use openwork_models::model::{ContentBlock, ModelPort};
-use openwork_tools::{FinalizedToolset, PermissionMode};
+use openwork_tools::{ApprovalSessionAction, FinalizedToolset, PermissionMode};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -15,6 +15,7 @@ use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest,
     ConversationRewindRequest, new_trace_id, rewind_conversation, run_compaction,
 };
+use super::permission_state::{PermissionModeOrigin, SessionPermissionState};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
 use super::{
     ClientRequestId, CompactionError, CompactionStateCollector, ConversationCompaction,
@@ -280,6 +281,7 @@ struct ActiveTurn {
 
 struct PendingPermission {
     tool_call_id: ToolCallId,
+    session_action: Option<ApprovalSessionAction>,
     respond_to: oneshot::Sender<PermissionDecision>,
 }
 
@@ -305,7 +307,7 @@ struct SessionActor {
     snapshot: SessionSnapshot,
     active_turn: Option<ActiveTurn>,
     accepted_requests: HashMap<ClientRequestId, TurnAccepted>,
-    permission_mode_tx: watch::Sender<PermissionMode>,
+    permission_state_tx: watch::Sender<SessionPermissionState>,
 }
 
 impl SessionActor {
@@ -318,11 +320,12 @@ impl SessionActor {
         update_tx: broadcast::Sender<SessionUpdateEnvelope>,
         global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
     ) -> Self {
-        let (permission_mode_tx, _) = watch::channel(config.permission_mode);
+        let (permission_state_tx, _) =
+            watch::channel(SessionPermissionState::new(config.permission_mode));
         Self {
             snapshot: SessionSnapshot {
-                // Snapshot V4 adds the in-memory permission mode.
-                version: 4,
+                // Snapshot V5 adds session-scoped approval actions.
+                version: 5,
                 session_id: config.session_id.clone(),
                 last_update_sequence: 0,
                 permission_mode: config.permission_mode,
@@ -348,7 +351,7 @@ impl SessionActor {
             next_update_sequence: 1,
             active_turn: None,
             accepted_requests: HashMap::new(),
-            permission_mode_tx,
+            permission_state_tx,
         }
     }
 
@@ -405,8 +408,7 @@ impl SessionActor {
                 let _ = respond_to.send(result);
             }
             SessionCommand::SetPermissionMode { mode, respond_to } => {
-                self.snapshot.permission_mode = mode;
-                self.permission_mode_tx.send_replace(mode);
+                self.set_permission_mode(mode, PermissionModeOrigin::UserToggle);
                 let _ = respond_to.send(mode);
             }
             SessionCommand::CompactConversation { respond_to } => {
@@ -505,7 +507,7 @@ impl SessionActor {
             trace: Arc::clone(&self.trace),
             cancel,
             events: self.runner_tx.clone(),
-            permission_mode: self.permission_mode_tx.subscribe(),
+            permission_state: self.permission_state_tx.subscribe(),
         };
         tokio::spawn(run_turn(request));
         Ok(accepted)
@@ -565,18 +567,59 @@ impl SessionActor {
         tool_call_id: ToolCallId,
         decision: PermissionDecision,
     ) -> Result<(), SessionError> {
-        let Some(active) = self.active_turn.as_mut() else {
-            return Err(SessionError::TurnNotActive(turn_id));
-        };
-        if active.turn_id != turn_id {
-            return Err(SessionError::TurnNotActive(turn_id));
-        }
-        let Some(pending) = active.permission.take() else {
-            return Err(SessionError::PermissionNotPending(tool_call_id));
+        let pending = {
+            let Some(active) = self.active_turn.as_mut() else {
+                return Err(SessionError::TurnNotActive(turn_id));
+            };
+            if active.turn_id != turn_id {
+                return Err(SessionError::TurnNotActive(turn_id));
+            }
+            let Some(pending) = active.permission.take() else {
+                return Err(SessionError::PermissionNotPending(tool_call_id));
+            };
+            pending
         };
         if pending.tool_call_id != tool_call_id {
-            active.permission = Some(pending);
+            if let Some(active) = self.active_turn.as_mut() {
+                active.permission = Some(pending);
+            }
             return Err(SessionError::PermissionNotPending(tool_call_id));
+        }
+
+        let selected_action = match decision {
+            PermissionDecision::AllowSession => match pending.session_action.as_ref() {
+                Some(action @ ApprovalSessionAction::AllowExec { .. }) => Some(action),
+                _ => {
+                    if let Some(active) = self.active_turn.as_mut() {
+                        active.permission = Some(pending);
+                    }
+                    return Err(SessionError::PermissionDecisionUnavailable(tool_call_id));
+                }
+            },
+            PermissionDecision::AcceptEdits => match pending.session_action.as_ref() {
+                Some(action @ ApprovalSessionAction::EnableAcceptEdits) => Some(action),
+                _ => {
+                    if let Some(active) = self.active_turn.as_mut() {
+                        active.permission = Some(pending);
+                    }
+                    return Err(SessionError::PermissionDecisionUnavailable(tool_call_id));
+                }
+            },
+            PermissionDecision::AllowOnce | PermissionDecision::Deny => None,
+        };
+        match selected_action {
+            Some(ApprovalSessionAction::AllowExec { grants }) => {
+                self.permission_state_tx.send_modify(|state| {
+                    state.apply_exec_grants(&tool_call_id, grants);
+                });
+            }
+            Some(ApprovalSessionAction::EnableAcceptEdits) => {
+                self.set_permission_mode(
+                    PermissionMode::AcceptEdits,
+                    PermissionModeOrigin::ApprovalCard,
+                );
+            }
+            None => {}
         }
 
         if let SessionRuntimeSnapshot::Running {
@@ -594,6 +637,7 @@ impl SessionActor {
             SessionUpdate::PermissionResolved {
                 tool_call_id,
                 decision,
+                permission_mode: self.snapshot.permission_mode,
             },
         );
         Ok(())
@@ -618,6 +662,7 @@ impl SessionActor {
                 if let Some(active) = self.active_turn.as_mut() {
                     active.permission = Some(PendingPermission {
                         tool_call_id: request.tool_call_id.clone(),
+                        session_action: request.card.session_action.clone(),
                         respond_to,
                     });
                 }
@@ -656,6 +701,12 @@ impl SessionActor {
                 };
             }
         }
+    }
+
+    fn set_permission_mode(&mut self, mode: PermissionMode, origin: PermissionModeOrigin) {
+        self.snapshot.permission_mode = mode;
+        self.permission_state_tx
+            .send_modify(|state| state.set_mode(mode, origin));
     }
 
     fn is_active(&self, turn_id: &TurnId) -> bool {
@@ -721,12 +772,13 @@ impl SessionActor {
 
     fn emit(&mut self, turn_id: TurnId, update: SessionUpdate) {
         let envelope = SessionUpdateEnvelope {
-            // Version 5 adds the structured permission card. Version 4 adds
+            // Version 6 adds session-scoped approval actions. Version 5 adds
+            // the structured permission card. Version 4 adds
             // the `compacting` phase. Version 3 adds structured
             // terminal tool artifacts. Version 2 introduced
             // `tool_call_progress`; snapshot version 2 carries the same
             // artifacts on running tool calls.
-            version: 5,
+            version: 6,
             session_id: self.session_id.clone(),
             turn_id,
             sequence: self.next_update_sequence,

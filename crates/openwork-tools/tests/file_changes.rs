@@ -50,7 +50,7 @@ async fn call(
     input: Value,
 ) -> ToolResult {
     let invocation = ToolInvocation::new(name, input);
-    let permit = match toolset.authorize(&invocation, PermissionMode::AcceptEdits) {
+    let permit = match toolset.authorize(&invocation, PermissionMode::AcceptEdits, &[]) {
         Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
         Authorization::Deny { reason, .. } => panic!("test invocation denied: {reason}"),
         Authorization::Unavailable { message, .. } => {

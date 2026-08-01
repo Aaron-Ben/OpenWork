@@ -16,11 +16,11 @@ fn acc_10_default_asks_for_write_and_accept_edits_allows_it() {
     let analysis = invocation("write src/main.rs", Effect::write("/repo/src/main.rs"));
 
     assert!(matches!(
-        engine.authorize(PermissionMode::Default, &analysis),
+        engine.authorize(PermissionMode::Default, &analysis, &[]),
         Authorization::Ask { .. }
     ));
     assert!(matches!(
-        engine.authorize(PermissionMode::AcceptEdits, &analysis),
+        engine.authorize(PermissionMode::AcceptEdits, &analysis, &[]),
         Authorization::Allow { .. }
     ));
 }
@@ -38,7 +38,7 @@ fn acc_12_no_mode_auto_allows_unprovable_exec() {
 
     for mode in [PermissionMode::Default, PermissionMode::AcceptEdits] {
         assert!(matches!(
-            engine.authorize(mode, &analysis),
+            engine.authorize(mode, &analysis, &[]),
             Authorization::Ask { .. }
         ));
     }
@@ -51,7 +51,7 @@ fn acc_06_builtin_git_and_openwork_denies_are_silent() {
     for path in ["/repo/.git/config", "/repo/.openwork/permissions.toml"] {
         let analysis = invocation("protected write", Effect::write(path));
         assert!(matches!(
-            engine.authorize(PermissionMode::AcceptEdits, &analysis),
+            engine.authorize(PermissionMode::AcceptEdits, &analysis, &[]),
             Authorization::Deny { silent: true, .. }
         ));
     }
@@ -86,7 +86,7 @@ fn acc_05_user_rules_cannot_remove_builtin_rules() {
         let protected = invocation("write git config", Effect::write("/repo/.git/config"));
         assert!(
             matches!(
-                engine.authorize(mode, &protected),
+                engine.authorize(mode, &protected, &[]),
                 Authorization::Deny { silent: true, .. }
             ),
             "builtin deny must survive a user allow in {mode:?}"
@@ -96,7 +96,7 @@ fn acc_05_user_rules_cannot_remove_builtin_rules() {
         let sensitive = invocation("write dotenv", Effect::write("/repo/.env"));
         assert!(
             matches!(
-                engine.authorize(mode, &sensitive),
+                engine.authorize(mode, &sensitive, &[]),
                 Authorization::Ask { .. }
             ),
             "builtin sensitive ask must survive a user allow in {mode:?}"
@@ -116,7 +116,7 @@ fn acc_07_sensitive_files_are_readable_but_writes_ask_in_both_modes() {
     ] {
         let read = invocation("protected read", Effect::read(path));
         assert!(matches!(
-            engine.authorize(PermissionMode::Default, &read),
+            engine.authorize(PermissionMode::Default, &read, &[]),
             Authorization::Allow { .. }
         ));
     }
@@ -125,14 +125,14 @@ fn acc_07_sensitive_files_are_readable_but_writes_ask_in_both_modes() {
         for path in ["/repo/.env", "/repo/.vscode/settings.json"] {
             let write = invocation("sensitive write", Effect::write(path));
             assert!(matches!(
-                engine.authorize(mode, &write),
+                engine.authorize(mode, &write, &[]),
                 Authorization::Ask { .. }
             ));
         }
         for path in ["/repo/.git/config", "/repo/.openwork/permissions.toml"] {
             let write = invocation("protected write", Effect::write(path));
             assert!(matches!(
-                engine.authorize(mode, &write),
+                engine.authorize(mode, &write, &[]),
                 Authorization::Deny { silent: true, .. }
             ));
         }
@@ -145,7 +145,7 @@ fn workspace_root_is_not_covered_by_workspace_descendant_rules() {
     let analysis = invocation("write workspace root", Effect::write("/repo"));
 
     assert!(matches!(
-        engine.authorize(PermissionMode::AcceptEdits, &analysis),
+        engine.authorize(PermissionMode::AcceptEdits, &analysis, &[]),
         Authorization::Ask { .. }
     ));
 }
@@ -156,7 +156,7 @@ fn acc_03_outside_workspace_has_no_builtin_coverage() {
     let analysis = invocation("read /etc/hosts", Effect::read("/etc/hosts"));
 
     assert!(matches!(
-        engine.authorize(PermissionMode::Default, &analysis),
+        engine.authorize(PermissionMode::Default, &analysis, &[]),
         Authorization::Ask { .. }
     ));
 }
@@ -165,7 +165,7 @@ fn acc_03_outside_workspace_has_no_builtin_coverage() {
 fn approval_card_serializes_the_desktop_contract_shape() {
     let engine = PermissionEngine::for_workspace("/repo");
     let analysis = invocation("write /tmp/out", Effect::write("/tmp/out"));
-    let Authorization::Ask { card, .. } = engine.authorize(PermissionMode::Default, &analysis)
+    let Authorization::Ask { card, .. } = engine.authorize(PermissionMode::Default, &analysis, &[])
     else {
         panic!("outside write must ask")
     };
@@ -208,7 +208,7 @@ fn acc_02_strongest_rule_wins_independent_of_order() {
     for ordered in [rules.clone(), rules.into_iter().rev().collect()] {
         let engine = PermissionEngine::for_workspace_with_rules("/repo", ordered);
         assert!(matches!(
-            engine.authorize(PermissionMode::Default, &analysis),
+            engine.authorize(PermissionMode::Default, &analysis, &[]),
             Authorization::Deny { .. }
         ));
     }
@@ -242,7 +242,7 @@ fn acc_25_exec_prefix_matches_tokens_not_string_prefixes() {
         },
     );
 
-    let Authorization::Ask { card, .. } = engine.authorize(PermissionMode::Default, &matched)
+    let Authorization::Ask { card, .. } = engine.authorize(PermissionMode::Default, &matched, &[])
     else {
         panic!("matched exec must ask")
     };
@@ -251,7 +251,8 @@ fn acc_25_exec_prefix_matches_tokens_not_string_prefixes() {
         UnitVerdict::Ask { rule_id: Some(id), .. } if id.as_str() == "ask-cargo-test"
     ));
 
-    let Authorization::Ask { card, .. } = engine.authorize(PermissionMode::Default, &unmatched)
+    let Authorization::Ask { card, .. } =
+        engine.authorize(PermissionMode::Default, &unmatched, &[])
     else {
         panic!("unmatched exec must ask")
     };
@@ -291,7 +292,8 @@ async fn approved_outside_path_uses_a_call_scoped_execution_permit() {
         )
         .expect("toolset");
     let invocation = ToolInvocation::new("read", serde_json::json!({ "path": outside }));
-    let Authorization::Ask { permit, .. } = toolset.authorize(&invocation, PermissionMode::Default)
+    let Authorization::Ask { permit, .. } =
+        toolset.authorize(&invocation, PermissionMode::Default, &[])
     else {
         panic!("outside read must ask")
     };
@@ -328,7 +330,7 @@ async fn execution_permit_does_not_allow_a_workspace_symlink_escape() {
         .expect("toolset");
     let invocation = ToolInvocation::new("read", serde_json::json!({ "path": "link.txt" }));
     let Authorization::Allow { permit, .. } =
-        toolset.authorize(&invocation, PermissionMode::Default)
+        toolset.authorize(&invocation, PermissionMode::Default, &[])
     else {
         panic!("lexical workspace read should be eligible for automatic execution")
     };
@@ -368,7 +370,7 @@ async fn approved_write_cannot_follow_a_workspace_symlink_outside() {
         serde_json::json!({ "path": "link.txt", "content": "changed" }),
     );
     let Authorization::Allow { permit, .. } =
-        toolset.authorize(&invocation, PermissionMode::AcceptEdits)
+        toolset.authorize(&invocation, PermissionMode::AcceptEdits, &[])
     else {
         panic!("lexical workspace write should reach execution enforcement")
     };
@@ -412,7 +414,7 @@ async fn creatable_deep_path_cannot_cross_an_outside_directory_symlink() {
         }),
     );
     let Authorization::Allow { permit, .. } =
-        toolset.authorize(&invocation, PermissionMode::AcceptEdits)
+        toolset.authorize(&invocation, PermissionMode::AcceptEdits, &[])
     else {
         panic!("lexical workspace write should reach execution enforcement")
     };

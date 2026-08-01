@@ -109,7 +109,8 @@ describe('runtimeReducer', () => {
       envelope(3, {
         type: 'permission_resolved',
         toolCallId: 'tool-1',
-        decision: 'allow',
+        decision: 'accept_edits',
+        permissionMode: 'accept_edits',
       }),
     )
 
@@ -118,6 +119,7 @@ describe('runtimeReducer', () => {
     expect(requested.phase).toBe('waiting_permission')
     expect(resolved.pendingPermission).toBeNull()
     expect(resolved.phase).toBe('running_tools')
+    expect(resolved.permissionMode).toBe('accept_edits')
   })
 
   it('appends live tool progress until the terminal result replaces it', () => {

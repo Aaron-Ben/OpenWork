@@ -2,6 +2,7 @@ mod actor;
 mod commands;
 mod compaction;
 mod ids;
+mod permission_state;
 mod run_loop;
 mod storage;
 mod trace;
@@ -24,6 +25,7 @@ pub use compaction::{
     NewConversationCompaction, ReminderSection,
 };
 pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
+pub use permission_state::PermissionModeOrigin;
 pub use storage::{NoopSessionStorage, SessionStorage};
 pub use trace::{
     CompactionAttemptOutcome, CompactionFinished, CompactionStarted, CompactionSummaryAttemptTrace,

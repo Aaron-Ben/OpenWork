@@ -81,6 +81,12 @@ impl From<OpenWorkCoreError> for CommandError {
                     format!("Permission request is not pending: {tool_call_id}"),
                 )
             }
+            OpenWorkCoreError::Session(SessionError::PermissionDecisionUnavailable(tool_call_id)) => {
+                Self::new(
+                    CommandErrorCode::InvalidRequest,
+                    format!("Permission decision is not available: {tool_call_id}"),
+                )
+            }
             OpenWorkCoreError::Session(SessionError::EmptyInput) => Self::new(
                 CommandErrorCode::InvalidRequest,
                 "Turn input must not be empty",

@@ -266,6 +266,10 @@ pub struct ToolTraceAttributesV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_mode_origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_decision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_decision_source: Option<String>,
@@ -474,6 +478,8 @@ impl ToolTraceAttributesV1 {
         Self {
             schema_version: TRACE_SCHEMA_VERSION,
             permission_policy: None,
+            permission_mode: None,
+            permission_mode_origin: None,
             permission_decision: None,
             permission_decision_source: None,
             readonly_proof_key: None,
@@ -1113,6 +1119,11 @@ impl ToolCallTraceGuard {
         self.attributes.permission_policy = Some(bounded(policy, MAX_TRACE_STRING_CHARS));
     }
 
+    pub fn record_permission_mode(&mut self, mode: &str, origin: &str) {
+        self.attributes.permission_mode = Some(bounded(mode, MAX_TRACE_STRING_CHARS));
+        self.attributes.permission_mode_origin = Some(bounded(origin, MAX_TRACE_STRING_CHARS));
+    }
+
     pub fn record_permission_decision(&mut self, decision: &str, source: &str) {
         self.attributes.permission_decision = Some(bounded(decision, MAX_TRACE_STRING_CHARS));
         self.attributes.permission_decision_source = Some(bounded(source, MAX_TRACE_STRING_CHARS));
@@ -1512,6 +1523,8 @@ mod tests {
         .expect("legacy tool attributes");
 
         assert!(attributes.readonly_proof_key.is_none());
+        assert!(attributes.permission_mode.is_none());
+        assert!(attributes.permission_mode_origin.is_none());
         assert!(attributes.permission_rule_id.is_none());
         assert!(attributes.permission_rule_scope.is_none());
     }

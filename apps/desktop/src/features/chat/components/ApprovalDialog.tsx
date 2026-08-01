@@ -5,6 +5,8 @@ import { Check, FileText, Pencil, ShieldAlert, Terminal, X } from 'lucide-react'
 
 import type {
   RuntimeEffectDisplay,
+  RuntimeApprovalSessionAction,
+  RuntimePermissionDecision,
   RuntimePermissionRequest,
   RuntimeUnitVerdict,
 } from '../../../bridge/compat'
@@ -39,6 +41,10 @@ function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
         return t('tool.permission.allowedByMode')
       case 'readonly_proof':
         return t('tool.permission.allowedByReadonlyProof')
+      case 'session_grant':
+        return t('tool.permission.allowedBySessionGrant')
+      case 'rule':
+        return t('tool.permission.allowedByRule')
       case 'builtin':
         return t('tool.permission.allowedByBuiltin')
     }
@@ -53,6 +59,21 @@ function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
     case 'no_rule_covers':
       return t('tool.permission.noRuleCovers')
   }
+}
+
+function sessionActionLabel(t: TFunction, action: RuntimeApprovalSessionAction): string {
+  if (action.kind === 'enable_accept_edits') {
+    return t('tool.permission.enableAcceptEdits')
+  }
+  if (action.grants.length === 1 && action.grants[0].exact) {
+    return t('tool.permission.allowExactForSession', { command: action.grants[0].label })
+  }
+  if (action.grants.length === 1) {
+    return t('tool.permission.allowPrefixForSession', { command: action.grants[0].label })
+  }
+  return t('tool.permission.allowManyForSession', {
+    commands: action.grants.map((grant) => grant.label).join(', '),
+  })
 }
 
 function EffectRow({ display }: { display: RuntimeEffectDisplay }) {
@@ -79,7 +100,7 @@ export function ApprovalCardView({
 }: {
   request: RuntimePermissionRequest
   resolving: boolean
-  onResolve: (allow: boolean) => void
+  onResolve: (decision: RuntimePermissionDecision) => void
 }) {
   const { t } = useTranslation()
   const titleRef = useRef<HTMLDivElement>(null)
@@ -96,7 +117,7 @@ export function ApprovalCardView({
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()
-          onResolve(false)
+          onResolve('deny')
         }
       }}
     >
@@ -163,17 +184,31 @@ export function ApprovalCardView({
         <button
           type="button"
           disabled={resolving}
-          onClick={() => onResolve(true)}
+          onClick={() => onResolve('allow_once')}
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-ink px-3.5 py-1.5 text-sm font-medium text-paper transition hover:bg-ink-soft disabled:opacity-50"
         >
           <Check size={14} />
           {resolving ? t('tool.processing') : t('tool.permission.allowOnce')}
         </button>
+        {request.card.sessionAction ? (
+          <button
+            type="button"
+            disabled={resolving}
+            onClick={() => onResolve(
+              request.card.sessionAction?.kind === 'allow_exec'
+                ? 'allow_session'
+                : 'accept_edits',
+            )}
+            className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-clay-soft bg-paper px-3.5 py-1.5 text-sm font-medium text-ink transition hover:bg-paper-hover disabled:opacity-50"
+          >
+            {sessionActionLabel(t, request.card.sessionAction)}
+          </button>
+        ) : null}
         <div className="flex-1" />
         <button
           type="button"
           disabled={resolving}
-          onClick={() => onResolve(false)}
+          onClick={() => onResolve('deny')}
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-status-danger-border bg-paper px-3.5 py-1.5 text-sm font-medium text-status-danger-ink transition hover:bg-status-danger-soft disabled:opacity-50"
         >
           <X size={14} />
@@ -198,10 +233,10 @@ export function ApprovalDialog({ sessionId }: { sessionId: string | null }) {
     <ApprovalCardView
       request={current}
       resolving={resolving}
-      onResolve={(allow) => {
+      onResolve={(decision) => {
         if (resolving) return
         setResolving(true)
-        void resolvePermission(allow).finally(() => setResolving(false))
+        void resolvePermission(decision).finally(() => setResolving(false))
       }}
     />
   )

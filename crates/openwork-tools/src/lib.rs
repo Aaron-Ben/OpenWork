@@ -28,10 +28,11 @@ pub use file_change::{
 };
 pub use invocation::ToolInvocation;
 pub use permission::{
-    AnalysisUnit, ApprovalCard, AskSource, Authorization, AuthorizationEvidence, CardUnit,
-    DecisionSource, Effect, EffectDisplay, ExecPattern, ExecutionPermit, InvocationAnalysis,
-    PathPattern, PermissionEngine, PermissionMode, ReadonlyProof, Rule, RuleBehavior, RuleId,
-    RulePattern, RuleScope, UnitVerdict,
+    AnalysisUnit, ApprovalCard, ApprovalSessionAction, AskSource, Authorization,
+    AuthorizationEvidence, CardUnit, DecisionSource, Effect, EffectDisplay, ExecGrantSuggestion,
+    ExecPattern, ExecutionPermit, InvocationAnalysis, PathPattern, PermissionEngine,
+    PermissionMode, ReadonlyProof, Rule, RuleBehavior, RuleId, RulePattern, RuleScope, UnitVerdict,
+    reduce_exec_grant,
 };
 pub use policy::{AccessKind, PermissionProfile};
 pub use progress::ToolProgress;

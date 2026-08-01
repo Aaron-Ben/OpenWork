@@ -218,6 +218,8 @@ describe('traceViewModel', () => {
       ...tool,
       attributes: {
         permissionPolicy: 'ask',
+        permissionMode: 'default',
+        permissionModeOrigin: 'session_default',
         permissionDecision: 'allow',
         permissionDecisionSource: 'readonly_proof',
         readonlyProofKey: 'git status',
@@ -229,6 +231,8 @@ describe('traceViewModel', () => {
     expect(toolSections.p0.map((row) => row.key)).toEqual(['permissionDecision', 'executionMs'])
     expect(toolSections.p1.map((row) => row.key)).toEqual([
       'permissionPolicy',
+      'permissionMode',
+      'permissionModeOrigin',
       'permissionDecisionSource',
       'readonlyProofKey',
       'permissionRuleId',

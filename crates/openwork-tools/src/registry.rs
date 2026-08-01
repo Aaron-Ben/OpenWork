@@ -144,7 +144,12 @@ impl FinalizedToolset {
     /// produce a `Deny`, because the two carry different instructions to the
     /// model: a rule denial means "this path is closed, try another approach"
     /// while a malformed call means "fix the call" (permissions.md §5.4).
-    pub fn authorize(&self, invocation: &ToolInvocation, mode: PermissionMode) -> Authorization {
+    pub fn authorize(
+        &self,
+        invocation: &ToolInvocation,
+        mode: PermissionMode,
+        session_rules: &[crate::Rule],
+    ) -> Authorization {
         let entry = match self.tools.get(invocation.name.as_str()) {
             Some(entry) => entry,
             None => {
@@ -164,7 +169,7 @@ impl FinalizedToolset {
             .tool
             .permission_analysis(&self.session, &invocation.input)
         {
-            Ok(analysis) => self.permission.authorize(mode, &analysis),
+            Ok(analysis) => self.permission.authorize(mode, &analysis, session_rules),
             Err(error) => Authorization::Unavailable {
                 code: ToolErrorCode::ExecutionFailed,
                 message: error.to_string(),
@@ -295,7 +300,7 @@ mod tests {
         assert_eq!(toolset.definitions().len(), 1);
         assert_eq!(toolset.definitions()[0].name, "echo");
         let invocation = ToolInvocation::new("echo", json!({"text": "hello"}));
-        let permit = match toolset.authorize(&invocation, PermissionMode::Default) {
+        let permit = match toolset.authorize(&invocation, PermissionMode::Default, &[]) {
             Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
             Authorization::Deny { reason, .. } => panic!("echo denied: {reason}"),
             Authorization::Unavailable { message, .. } => {

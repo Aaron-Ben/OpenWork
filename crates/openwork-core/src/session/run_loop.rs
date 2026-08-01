@@ -11,10 +11,10 @@ use openwork_models::model::{
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
-    Authorization, DecisionSource, FinalizedToolset, PermissionMode,
-    ToolCallContext as RuntimeToolCallContext, ToolCallId as RuntimeToolCallId, ToolErrorCode,
-    ToolInvocation, ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent,
-    ToolResultStatus, ToolValidationError,
+    Authorization, DecisionSource, FinalizedToolset, ToolCallContext as RuntimeToolCallContext,
+    ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation,
+    ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent, ToolResultStatus,
+    ToolValidationError,
 };
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -27,6 +27,7 @@ use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
 };
+use super::permission_state::SessionPermissionState;
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
     ModelTraceAttributesV1, PermissionDecision, PermissionRequest, ResolvedModel, SessionId,
@@ -53,7 +54,7 @@ pub(super) struct TurnRunRequest {
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
     pub events: mpsc::Sender<RunnerEvent>,
-    pub permission_mode: watch::Receiver<PermissionMode>,
+    pub permission_state: watch::Receiver<SessionPermissionState>,
 }
 
 pub(super) enum RunnerEvent {
@@ -546,12 +547,25 @@ impl TurnRunner {
             return Err(TurnRunError::DoomLoop(call.name.clone()));
         }
 
-        let permission_mode = *self.request.permission_mode.borrow();
-        let permit = match self.request.tools.authorize(&invocation, permission_mode) {
+        let permission_state = self.request.permission_state.borrow().clone();
+        tool_trace.record_permission_mode(
+            match permission_state.mode() {
+                openwork_tools::PermissionMode::Default => "default",
+                openwork_tools::PermissionMode::AcceptEdits => "accept_edits",
+            },
+            permission_state.mode_origin().as_str(),
+        );
+        let permit = match self.request.tools.authorize(
+            &invocation,
+            permission_state.mode(),
+            permission_state.session_rules(),
+        ) {
             Authorization::Allow { permit, evidence } => {
                 tool_trace.record_permission_policy("allow");
                 let source = match evidence.source {
                     DecisionSource::ReadonlyProof => "readonly_proof",
+                    DecisionSource::SessionGrant => "session_grant",
+                    DecisionSource::Rule => "rule",
                     DecisionSource::Builtin | DecisionSource::Mode => "builtin",
                 };
                 tool_trace.record_permission_decision("allow", source);
@@ -650,6 +664,14 @@ impl TurnRunner {
                         "user denied tool permission".to_string(),
                     ));
                 }
+                let permission_state = self.request.permission_state.borrow().clone();
+                tool_trace.record_permission_mode(
+                    match permission_state.mode() {
+                        openwork_tools::PermissionMode::Default => "default",
+                        openwork_tools::PermissionMode::AcceptEdits => "accept_edits",
+                    },
+                    permission_state.mode_origin().as_str(),
+                );
                 tool_trace.record_permission_decision("allow", "user");
                 permit
             }

@@ -67,8 +67,9 @@ describe('ApprovalCardView', () => {
   })
 
   // permissions.md 验收 56: no "always deny", and no button that could
-  // produce a persistent rule. The session-scoped middle button arrives in P3.
-  it('acc_56 offers only allow-once and deny actions in P1', () => {
+  // produce a persistent rule. Calls without a complete session change keep
+  // only the two fixed actions.
+  it('acc_56 offers only allow-once and deny when no session action is available', () => {
     const markup = renderToStaticMarkup(
       <ApprovalCardView request={request} resolving={false} onResolve={vi.fn()} />,
     )
@@ -77,5 +78,63 @@ describe('ApprovalCardView', () => {
     expect(markup.match(/拒绝/g)).toHaveLength(1)
     expect(markup).not.toContain('总是拒绝')
     expect(markup).not.toContain('本会话允许')
+  })
+
+  it('acc_29_54 renders the reduced exec scope and exact-command fallback', () => {
+    const prefixRequest: RuntimePermissionRequest = {
+      ...request,
+      card: {
+        ...request.card,
+        sessionAction: {
+          kind: 'allow_exec',
+          grants: [{
+            pattern: { kind: 'token_prefix', tokens: ['cargo', 'test'] },
+            label: 'cargo test',
+            exact: false,
+          }],
+        },
+      },
+    }
+    const exactRequest: RuntimePermissionRequest = {
+      ...request,
+      card: {
+        ...request.card,
+        sessionAction: {
+          kind: 'allow_exec',
+          grants: [{
+            pattern: { kind: 'literal', tokens: ['custom-tool', 'a', 'b'] },
+            label: 'custom-tool a b',
+            exact: true,
+          }],
+        },
+      },
+    }
+
+    const prefixMarkup = renderToStaticMarkup(
+      <ApprovalCardView request={prefixRequest} resolving={false} onResolve={vi.fn()} />,
+    )
+    const exactMarkup = renderToStaticMarkup(
+      <ApprovalCardView request={exactRequest} resolving={false} onResolve={vi.fn()} />,
+    )
+
+    expect(prefixMarkup).toContain('本会话允许以 cargo test 开头的命令')
+    expect(exactMarkup).toContain('本会话仅允许这一条命令：custom-tool a b')
+  })
+
+  it('acc_59_60 renders a file-tool mode change without claiming bash coverage', () => {
+    const modeRequest: RuntimePermissionRequest = {
+      ...request,
+      card: {
+        ...request.card,
+        sessionAction: { kind: 'enable_accept_edits' },
+      },
+    }
+    const markup = renderToStaticMarkup(
+      <ApprovalCardView request={modeRequest} resolving={false} onResolve={vi.fn()} />,
+    )
+
+    expect(markup).toContain('本会话不再询问文件工具改动（切到 acceptEdits）')
+    expect(markup).not.toContain('bash')
+    expect(markup).not.toContain('write(src/**)')
   })
 })

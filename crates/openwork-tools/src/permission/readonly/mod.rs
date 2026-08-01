@@ -33,6 +33,7 @@ pub(crate) fn prove(program: &str, args: &[String], workspace: &Path) -> Option<
     let path_operands = match command.operands {
         OperandKind::AllPaths => operands.as_slice(),
         OperandKind::PatternThenPaths => operands.get(1..).unwrap_or_default(),
+        OperandKind::NoPaths => &[],
         OperandKind::None if operands.is_empty() => &[],
         OperandKind::None => return None,
     };
@@ -128,6 +129,12 @@ fn parse_operands<'a>(command: &ReadonlyCommand, args: &'a [String]) -> Option<V
         }
         operands.push(argument);
         index += 1;
+    }
+    if command
+        .max_operands
+        .is_some_and(|maximum| operands.len() > maximum)
+    {
+        return None;
     }
     Some(operands)
 }

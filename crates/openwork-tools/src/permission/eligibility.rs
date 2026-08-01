@@ -32,15 +32,42 @@ fn is_interpreter_or_wrapper(program: &str, args: &[String]) -> bool {
         program,
         "sh" | "bash"
             | "zsh"
+            | "dash"
+            | "ksh"
+            | "fish"
+            | "csh"
+            | "tcsh"
+            | "ash"
+            | "busybox"
             | "node"
             | "ruby"
             | "perl"
+            | "awk"
+            | "gawk"
+            | "mawk"
+            | "php"
+            | "lua"
+            | "tclsh"
+            | "Rscript"
+            | "osascript"
+            | "deno"
+            | "bun"
             | "ssh"
             | "xargs"
             | "env"
             | "timeout"
             | "nice"
             | "stdbuf"
+            | "sudo"
+            | "doas"
+            | "nohup"
+            | "setsid"
+            | "script"
+            | "watch"
+            | "flock"
+            | "chroot"
+            | "ionice"
+            | "taskset"
     ) || program.starts_with("python")
         || (program == "npm" && args.first().is_some_and(|argument| argument == "run"))
 }
@@ -139,6 +166,44 @@ mod tests {
             Some("/usr/bin")
         ));
         assert!(!eligible("rg", &["--pre=bash", "x"], Some("/usr/bin")));
+    }
+
+    #[test]
+    fn acc_30_p3_interpreters_shells_privilege_tools_and_wrappers_are_ineligible() {
+        for program in [
+            "awk",
+            "gawk",
+            "mawk",
+            "php",
+            "lua",
+            "tclsh",
+            "Rscript",
+            "osascript",
+            "deno",
+            "bun",
+            "dash",
+            "ksh",
+            "fish",
+            "csh",
+            "tcsh",
+            "ash",
+            "busybox",
+            "sudo",
+            "doas",
+            "nohup",
+            "setsid",
+            "script",
+            "watch",
+            "flock",
+            "chroot",
+            "ionice",
+            "taskset",
+        ] {
+            assert!(
+                !eligible(program, &[], Some("/usr/bin")),
+                "{program} must not be eligible for automatic exec allow"
+            );
+        }
     }
 
     #[test]

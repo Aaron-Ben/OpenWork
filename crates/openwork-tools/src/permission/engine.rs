@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::builtin::BuiltinRuleSet;
 use super::{
-    ApprovalCard, AskSource, CardUnit, DecisionSource, Effect, EffectDisplay, ExecutionPermit,
-    InvocationAnalysis, Rule, RuleBehavior, RuleId, RuleScope, UnitVerdict,
+    ApprovalCard, ApprovalSessionAction, AskSource, CardUnit, DecisionSource, Effect,
+    EffectDisplay, ExecGrantSuggestion, ExecutionPermit, InvocationAnalysis, Rule, RuleBehavior,
+    RuleId, RulePattern, RuleScope, UnitVerdict, reduce_exec_grant,
 };
 use crate::ToolErrorCode;
 
@@ -85,7 +86,22 @@ impl PermissionEngine {
         }
     }
 
-    pub fn authorize(&self, mode: PermissionMode, analysis: &InvocationAnalysis) -> Authorization {
+    pub fn authorize(
+        &self,
+        mode: PermissionMode,
+        analysis: &InvocationAnalysis,
+        session_rules: &[Rule],
+    ) -> Authorization {
+        self.authorize_internal(mode, analysis, session_rules, true)
+    }
+
+    fn authorize_internal(
+        &self,
+        mode: PermissionMode,
+        analysis: &InvocationAnalysis,
+        session_rules: &[Rule],
+        include_session_action: bool,
+    ) -> Authorization {
         let permit = ExecutionPermit::new(analysis.effects().cloned().collect());
         let mut units = Vec::with_capacity(analysis.units.len());
         let mut evaluated_units = Vec::with_capacity(analysis.units.len());
@@ -97,7 +113,7 @@ impl PermissionEngine {
                     rule_id: None,
                 })
             } else {
-                self.authorize_unit(mode, unit)
+                self.authorize_unit(mode, unit, session_rules)
             };
             units.push(CardUnit {
                 display: unit.display.clone(),
@@ -153,12 +169,22 @@ impl PermissionEngine {
                 units,
                 raw: analysis.raw.clone(),
                 unparsed: analysis.unparsed,
+                session_action: include_session_action
+                    .then(|| {
+                        self.suggest_session_action(mode, analysis, &evaluated_units, session_rules)
+                    })
+                    .flatten(),
             },
             permit,
         }
     }
 
-    fn authorize_unit(&self, mode: PermissionMode, unit: &super::AnalysisUnit) -> EvaluatedUnit {
+    fn authorize_unit(
+        &self,
+        mode: PermissionMode,
+        unit: &super::AnalysisUnit,
+        session_rules: &[Rule],
+    ) -> EvaluatedUnit {
         if unit.effects.is_empty() {
             return EvaluatedUnit::ask(UnitVerdict::Ask {
                 source: AskSource::NoRuleCovers,
@@ -169,7 +195,7 @@ impl PermissionEngine {
         let matched = unit
             .effects
             .iter()
-            .map(|effect| self.authorize_effect(mode, effect))
+            .map(|effect| self.authorize_effect(mode, effect, session_rules))
             .collect::<Vec<_>>();
 
         if let Some(strongest) = matched
@@ -233,7 +259,7 @@ impl PermissionEngine {
             return matched
                 .into_iter()
                 .flatten()
-                .max_by_key(|result| verdict_severity(&result.verdict))
+                .max_by_key(|result| allow_evidence_priority(&result.verdict))
                 .expect("non-empty effects");
         }
 
@@ -243,23 +269,23 @@ impl PermissionEngine {
         })
     }
 
-    fn authorize_effect(&self, mode: PermissionMode, effect: &Effect) -> Option<EvaluatedUnit> {
+    fn authorize_effect(
+        &self,
+        mode: PermissionMode,
+        effect: &Effect,
+        session_rules: &[Rule],
+    ) -> Option<EvaluatedUnit> {
         let strongest = self
             .builtins
             .rules()
             .iter()
             .chain(self.additional_rules.iter())
+            .chain(session_rules.iter())
             .filter(|rule| !(rule.mode_only && mode != PermissionMode::AcceptEdits))
             .filter(|rule| rule.pattern.is_match(effect))
             .max_by_key(|rule| rule.behavior.severity());
 
         if let Some(rule) = strongest {
-            if matches!(effect, Effect::Exec { .. }) && rule.behavior == RuleBehavior::Allow {
-                return Some(EvaluatedUnit::ask(UnitVerdict::Ask {
-                    source: AskSource::NoRuleCovers,
-                    rule_id: None,
-                }));
-            }
             return Some(EvaluatedUnit {
                 verdict: verdict_from_rule(rule),
                 rule_scope: Some(rule.scope),
@@ -270,9 +296,111 @@ impl PermissionEngine {
         None
     }
 
+    fn suggest_session_action(
+        &self,
+        mode: PermissionMode,
+        analysis: &InvocationAnalysis,
+        evaluated_units: &[EvaluatedUnit],
+        session_rules: &[Rule],
+    ) -> Option<ApprovalSessionAction> {
+        if analysis.unparsed
+            || analysis.units.iter().any(|unit| !unit.allow_eligible)
+            || evaluated_units.iter().any(|unit| {
+                matches!(
+                    unit.verdict,
+                    UnitVerdict::Ask {
+                        source: AskSource::ExplicitRule | AskSource::BuiltinSensitive,
+                        ..
+                    }
+                )
+            })
+        {
+            return None;
+        }
+
+        let blocked = analysis
+            .units
+            .iter()
+            .zip(evaluated_units.iter())
+            .filter(|(_, evaluated)| matches!(evaluated.verdict, UnitVerdict::Ask { .. }))
+            .map(|(unit, _)| unit)
+            .collect::<Vec<_>>();
+        if blocked.is_empty() {
+            return None;
+        }
+
+        let mut grants = Vec::<ExecGrantSuggestion>::new();
+        for unit in &blocked {
+            let mut execs = unit.effects.iter().filter_map(|effect| match effect {
+                Effect::Exec { program, args } => Some((program, args)),
+                _ => None,
+            });
+            let Some((program, args)) = execs.next() else {
+                grants.clear();
+                break;
+            };
+            if execs.next().is_some() || is_p4_filesystem_command(program) {
+                grants.clear();
+                break;
+            }
+            let grant = reduce_exec_grant(program, args);
+            if !grants.iter().any(|existing| existing == &grant) {
+                grants.push(grant);
+            }
+        }
+
+        if !grants.is_empty() {
+            let mut candidate_rules = session_rules.to_vec();
+            candidate_rules.extend(grants.iter().enumerate().map(|(index, grant)| {
+                Rule::new(
+                    format!("session.suggestion.{index}"),
+                    RulePattern::Exec(grant.pattern.clone()),
+                    RuleBehavior::Allow,
+                    RuleScope::Session,
+                )
+            }));
+            if matches!(
+                self.authorize_internal(mode, analysis, &candidate_rules, false),
+                Authorization::Allow { .. }
+            ) {
+                return Some(ApprovalSessionAction::AllowExec { grants });
+            }
+        }
+
+        if mode == PermissionMode::Default
+            && matches!(
+                self.authorize_internal(
+                    PermissionMode::AcceptEdits,
+                    analysis,
+                    session_rules,
+                    false,
+                ),
+                Authorization::Allow { .. }
+            )
+        {
+            return Some(ApprovalSessionAction::EnableAcceptEdits);
+        }
+
+        None
+    }
+
     fn is_workspace_path(&self, path: &Path) -> bool {
         path.starts_with(self.builtins.workspace())
     }
+}
+
+fn is_p4_filesystem_command(program: &str) -> bool {
+    // P3 can only install exec-prefix grants. Until P4 extracts these shell
+    // operations as file effects, offering such a grant would make a write
+    // command look safer than the action the user actually approved.
+    let basename = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    matches!(
+        basename,
+        "mkdir" | "touch" | "rm" | "rmdir" | "mv" | "cp" | "sed"
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -297,6 +425,16 @@ fn aggregate_allow_evidence(units: &[EvaluatedUnit]) -> AuthorizationEvidence {
         matches!(
             unit.verdict,
             UnitVerdict::Allow {
+                source: DecisionSource::SessionGrant,
+                ..
+            }
+        )
+    }) {
+        DecisionSource::SessionGrant
+    } else if units.iter().any(|unit| {
+        matches!(
+            unit.verdict,
+            UnitVerdict::Allow {
                 source: DecisionSource::ReadonlyProof,
                 ..
             }
@@ -313,12 +451,30 @@ fn aggregate_allow_evidence(units: &[EvaluatedUnit]) -> AuthorizationEvidence {
         )
     }) {
         DecisionSource::Mode
+    } else if units.iter().any(|unit| {
+        matches!(
+            unit.verdict,
+            UnitVerdict::Allow {
+                source: DecisionSource::Rule,
+                ..
+            }
+        )
+    }) {
+        DecisionSource::Rule
     } else {
         DecisionSource::Builtin
     };
     let rule = units
         .iter()
-        .find(|unit| verdict_rule_id(&unit.verdict).is_some());
+        .find(|unit| {
+            verdict_decision_source(&unit.verdict) == Some(&source)
+                && verdict_rule_id(&unit.verdict).is_some()
+        })
+        .or_else(|| {
+            units
+                .iter()
+                .find(|unit| verdict_rule_id(&unit.verdict).is_some())
+        });
     let mut proof_keys = units
         .iter()
         .filter_map(|unit| unit.readonly_proof_key.as_deref())
@@ -345,13 +501,24 @@ fn verdict_rule_id(verdict: &UnitVerdict) -> Option<RuleId> {
     }
 }
 
+fn verdict_decision_source(verdict: &UnitVerdict) -> Option<&DecisionSource> {
+    match verdict {
+        UnitVerdict::Allow { source, .. } => Some(source),
+        UnitVerdict::Ask { .. } | UnitVerdict::Deny { .. } => None,
+    }
+}
+
 fn verdict_from_rule(rule: &Rule) -> UnitVerdict {
     match rule.behavior {
         RuleBehavior::Allow => UnitVerdict::Allow {
             source: if rule.mode_only {
                 DecisionSource::Mode
-            } else {
+            } else if rule.scope == RuleScope::Session {
+                DecisionSource::SessionGrant
+            } else if rule.scope == RuleScope::Builtin {
                 DecisionSource::Builtin
+            } else {
+                DecisionSource::Rule
             },
             rule_id: Some(rule.id.clone()),
         },
@@ -375,5 +542,27 @@ fn verdict_severity(verdict: &UnitVerdict) -> u8 {
         UnitVerdict::Allow { .. } => 0,
         UnitVerdict::Ask { .. } => 1,
         UnitVerdict::Deny { .. } => 2,
+    }
+}
+
+fn allow_evidence_priority(verdict: &UnitVerdict) -> u8 {
+    match verdict {
+        UnitVerdict::Allow {
+            source: DecisionSource::SessionGrant,
+            ..
+        } => 4,
+        UnitVerdict::Allow {
+            source: DecisionSource::Rule,
+            ..
+        } => 3,
+        UnitVerdict::Allow {
+            source: DecisionSource::Mode,
+            ..
+        } => 2,
+        UnitVerdict::Allow {
+            source: DecisionSource::Builtin | DecisionSource::ReadonlyProof,
+            ..
+        } => 1,
+        UnitVerdict::Ask { .. } | UnitVerdict::Deny { .. } => 0,
     }
 }

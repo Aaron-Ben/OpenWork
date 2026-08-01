@@ -71,7 +71,7 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
                         &session_id,
                         TurnId::new(envelope.turn_id.to_string()),
                         ToolCallId::new(request.tool_call_id.to_string()),
-                        PermissionDecision::Allow,
+                        PermissionDecision::AllowOnce,
                     )
                     .await
                     .unwrap();

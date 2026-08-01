@@ -223,7 +223,7 @@ fn static_token(node: Node<'_>, source: &[u8]) -> Result<String, ()> {
             }
             static_token(child, source)
         }
-        "word" => decode_word(node_text(node, source)?),
+        "word" | "number" => decode_word(node_text(node, source)?),
         "raw_string" => strip_quotes(node_text(node, source)?, '\''),
         "string" => {
             if node.named_child_count() != 0 {

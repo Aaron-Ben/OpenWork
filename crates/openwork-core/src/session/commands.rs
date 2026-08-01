@@ -29,7 +29,9 @@ impl ResolvedModel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
-    Allow,
+    AllowOnce,
+    AllowSession,
+    AcceptEdits,
     Deny,
 }
 
@@ -83,6 +85,8 @@ pub enum SessionError {
     TurnNotActive(TurnId),
     #[error("permission request is not pending for tool call: {0}")]
     PermissionNotPending(ToolCallId),
+    #[error("permission decision is not available for tool call: {0}")]
+    PermissionDecisionUnavailable(ToolCallId),
     #[error("turn input must not be empty")]
     EmptyInput,
     #[error("context window token capacity must be positive")]

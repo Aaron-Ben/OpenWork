@@ -187,17 +187,13 @@ pub async fn runtime_permission_resolve(
     session_id: String,
     turn_id: String,
     tool_call_id: String,
-    allow: bool,
+    decision: PermissionDecision,
 ) -> Result<(), CommandError> {
     core.resolve_permission(
         &SessionId::new(session_id),
         TurnId::new(turn_id),
         ToolCallId::new(tool_call_id),
-        if allow {
-            PermissionDecision::Allow
-        } else {
-            PermissionDecision::Deny
-        },
+        decision,
     )
     .await
     .map_err(CommandError::from)

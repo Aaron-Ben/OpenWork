@@ -124,6 +124,7 @@ pub enum SessionUpdate {
     PermissionResolved {
         tool_call_id: ToolCallId,
         decision: PermissionDecision,
+        permission_mode: PermissionMode,
     },
     TurnFinished {
         outcome: TurnOutcome,

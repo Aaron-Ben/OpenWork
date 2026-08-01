@@ -9,6 +9,7 @@ import type {
   RuntimeContextWindowInspection,
   RuntimeLoadedSession,
   RuntimePermissionMode,
+  RuntimePermissionDecision,
   RuntimeReapplyFileChangesResult,
   RuntimeSessionInput,
   RuntimeSessionRecord,
@@ -78,9 +79,9 @@ export const coreCommands = {
     sessionId: string,
     turnId: string,
     toolCallId: string,
-    allow: boolean,
+    decision: RuntimePermissionDecision,
   ): Promise<void> =>
-    invoke('runtime_permission_resolve', { sessionId, turnId, toolCallId, allow }),
+    invoke('runtime_permission_resolve', { sessionId, turnId, toolCallId, decision }),
   setPermissionMode: (
     sessionId: string,
     mode: RuntimePermissionMode,

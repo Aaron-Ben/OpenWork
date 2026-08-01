@@ -22,9 +22,9 @@ use openwork_models::model::{
     ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultState,
 };
 use openwork_tools::{
-    AnalysisUnit, Effect, InvocationAnalysis, PermissionMode, PermissionProfile, ReadonlyProof,
-    Tool, ToolCallContext, ToolExecutionError, ToolId, ToolInvocation,
-    ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
+    AnalysisUnit, ApprovalSessionAction, Effect, InvocationAnalysis, PermissionMode,
+    PermissionProfile, ReadonlyProof, Tool, ToolCallContext, ToolExecutionError, ToolId,
+    ToolInvocation, ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
     ToolSessionContext,
 };
 use tokio::sync::broadcast;
@@ -154,6 +154,28 @@ impl Tool for FakeTool {
                         key: key.to_string(),
                     }),
                 }],
+            );
+        }
+        if self.risk == ToolRisk::ProcessExecution
+            && let Some(program) = input.get("program").and_then(serde_json::Value::as_str)
+        {
+            let args = input
+                .get("args")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            return InvocationAnalysis::new(
+                raw.clone(),
+                vec![AnalysisUnit::new(
+                    format!("{} {}", program, args.join(" ")).trim().to_string(),
+                    vec![Effect::Exec {
+                        program: program.to_string(),
+                        args,
+                    }],
+                )],
             );
         }
         let effect = match self.risk {
@@ -654,6 +676,22 @@ async fn permission_mode_change_controls_subsequent_tool_authorization() {
         TurnOutcome::Completed { .. }
     ));
     assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 1);
+    let signals = fixture.trace.signals.lock().unwrap();
+    let tool = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("tool trace");
+    assert_eq!(
+        tool.attributes.permission_mode.as_deref(),
+        Some("accept_edits")
+    );
+    assert_eq!(
+        tool.attributes.permission_mode_origin.as_deref(),
+        Some("user_toggle")
+    );
 }
 
 fn response(text: &str, tool_calls: Vec<ToolCallBlock>) -> ModelResponse {
@@ -1138,7 +1176,7 @@ async fn permission_allow_executes_the_tool_and_finishes() {
     let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
     fixture
         .handle
-        .resolve_permission(turn_id, tool_call_id, PermissionDecision::Allow)
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowOnce)
         .await
         .expect("permission");
 
@@ -1147,6 +1185,246 @@ async fn permission_allow_executes_the_tool_and_finishes() {
         TurnOutcome::Completed { .. }
     ));
     assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn acc_54_62_69_session_exec_grant_unblocks_later_calls_only_in_that_actor() {
+    let command = r#"{"program":"cargo","args":["test","-p","openwork-tools"]}"#;
+    let mut fixture = runtime(
+        vec![
+            response("", vec![tool_call("call-1", "bash", command)]),
+            response("", vec![tool_call("call-2", "bash", command)]),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+    let snapshot = fixture
+        .handle
+        .snapshot()
+        .await
+        .expect("permission snapshot");
+    let openwork_core::session::SessionRuntimeSnapshot::Running {
+        pending_permission: Some(request),
+        ..
+    } = snapshot.runtime
+    else {
+        panic!("permission request must stay visible")
+    };
+    assert!(matches!(
+        request.card.session_action,
+        Some(ApprovalSessionAction::AllowExec { .. })
+    ));
+
+    fixture
+        .handle
+        .resolve_permission(
+            turn_id,
+            tool_call_id.clone(),
+            PermissionDecision::AllowSession,
+        )
+        .await
+        .expect("install session grant");
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 2);
+    let expected_rule_id = format!("session.{}.0", tool_call_id.as_str());
+    {
+        let signals = fixture.trace.signals.lock().unwrap();
+        let granted = signals
+            .iter()
+            .find_map(|signal| match signal {
+                TraceSignal::ToolCallFinished(finished)
+                    if finished.attributes.permission_decision_source.as_deref()
+                        == Some("session_grant") =>
+                {
+                    Some(finished)
+                }
+                _ => None,
+            })
+            .expect("session-granted tool trace");
+        assert_eq!(
+            granted.attributes.permission_rule_id.as_deref(),
+            Some(expected_rule_id.as_str())
+        );
+        assert_eq!(
+            granted.attributes.permission_rule_scope.as_deref(),
+            Some("session")
+        );
+        assert_eq!(
+            granted.attributes.permission_mode.as_deref(),
+            Some("default")
+        );
+        assert_eq!(
+            granted.attributes.permission_mode_origin.as_deref(),
+            Some("session_default")
+        );
+    }
+
+    let mut fresh = runtime(
+        vec![response("", vec![tool_call("call-1", "bash", command)])],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fresh).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut fresh.updates).await;
+    fresh
+        .handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::Deny)
+        .await
+        .expect("deny fresh-session request");
+    assert!(matches!(
+        wait_for_terminal(&mut fresh.updates).await,
+        TurnOutcome::Failed { code, .. } if code == "permission_denied"
+    ));
+}
+
+#[tokio::test]
+async fn approval_client_cannot_invent_a_session_action() {
+    let command = r#"{"program":"cargo","args":["test"]}"#;
+    let mut fixture = runtime(
+        vec![
+            response("", vec![tool_call("call-1", "bash", command)]),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+
+    let unavailable = fixture
+        .handle
+        .resolve_permission(
+            turn_id.clone(),
+            tool_call_id.clone(),
+            PermissionDecision::AcceptEdits,
+        )
+        .await;
+    assert!(matches!(
+        unavailable,
+        Err(SessionError::PermissionDecisionUnavailable(id)) if id == tool_call_id
+    ));
+    assert!(matches!(
+        fixture
+            .handle
+            .snapshot()
+            .await
+            .expect("pending snapshot")
+            .runtime,
+        openwork_core::session::SessionRuntimeSnapshot::Running {
+            pending_permission: Some(_),
+            ..
+        }
+    ));
+
+    fixture
+        .handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowSession)
+        .await
+        .expect("use the server-offered session action");
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn acc_59_61_62_69_card_mode_change_reuses_the_session_mode_state() {
+    let mut fixture = runtime(
+        vec![
+            response("", vec![tool_call("call-1", "write", r#"{"path":"a.rs"}"#)]),
+            response("", vec![tool_call("call-2", "write", r#"{"path":"b.rs"}"#)]),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+    let snapshot = fixture
+        .handle
+        .snapshot()
+        .await
+        .expect("permission snapshot");
+    let openwork_core::session::SessionRuntimeSnapshot::Running {
+        pending_permission: Some(request),
+        ..
+    } = snapshot.runtime
+    else {
+        panic!("permission request must stay visible")
+    };
+    assert_eq!(
+        request.card.session_action,
+        Some(ApprovalSessionAction::EnableAcceptEdits)
+    );
+
+    fixture
+        .handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AcceptEdits)
+        .await
+        .expect("switch mode from approval card");
+    assert_eq!(
+        fixture
+            .handle
+            .snapshot()
+            .await
+            .expect("updated snapshot")
+            .permission_mode,
+        PermissionMode::AcceptEdits
+    );
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 2);
+    {
+        let signals = fixture.trace.signals.lock().unwrap();
+        let automatic = signals
+            .iter()
+            .find_map(|signal| match signal {
+                TraceSignal::ToolCallFinished(finished)
+                    if finished.attributes.permission_decision_source.as_deref()
+                        == Some("builtin") =>
+                {
+                    Some(finished)
+                }
+                _ => None,
+            })
+            .expect("second write trace");
+        assert_eq!(
+            automatic.attributes.permission_mode.as_deref(),
+            Some("accept_edits")
+        );
+        assert_eq!(
+            automatic.attributes.permission_mode_origin.as_deref(),
+            Some("approval_card")
+        );
+    }
+
+    let fresh = runtime(
+        vec![response("done", Vec::new())],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    assert_eq!(
+        fresh
+            .handle
+            .snapshot()
+            .await
+            .expect("fresh actor snapshot")
+            .permission_mode,
+        PermissionMode::Default
+    );
 }
 
 #[tokio::test]
@@ -1328,7 +1606,7 @@ async fn acc_58_multiple_permission_requests_are_presented_serially() {
         .resolve_permission(
             turn_id.clone(),
             first_tool_call_id.clone(),
-            PermissionDecision::Allow,
+            PermissionDecision::AllowOnce,
         )
         .await
         .expect("first permission");
@@ -1341,7 +1619,7 @@ async fn acc_58_multiple_permission_requests_are_presented_serially() {
         .resolve_permission(
             second_turn_id,
             second_tool_call_id,
-            PermissionDecision::Allow,
+            PermissionDecision::AllowOnce,
         )
         .await
         .expect("second permission");
