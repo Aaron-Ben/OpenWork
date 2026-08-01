@@ -59,8 +59,13 @@ export const zhCN = {
       storedSize: '已存 {{size}}', truncated: '已截断，原始 {{size}}', showAll: '展开全部', showPreview: '只显示预览',
       slots: { request: '请求', system_context: 'System Context', tool_definitions: '工具定义', response: '响应' },
     },
-    traceCompleteness: 'Trace：{{state}}（{{captured}}/{{expected}}）',
+    traceCompleteness: 'Trace：{{state}}（{{captured}}/{{expected}}）', traceMissing: '缺少 {{count}} 条',
     completeness: { complete: '完整', partial: '部分缺失', none: '未采集' },
+    permissionActivity: {
+      outcomes: { auto_allowed: '自动放行', silently_denied: '静默拒绝', user_approved: '用户批准', user_denied: '用户拒绝' },
+      sources: { builtin: '内置规则', readonly_proof: '只读证明', mode: 'acceptEdits 模式', mode_fs_command: '文件系统命令闸门', session_grant: '会话授权' },
+      readonlyProof: '判定表：{{key}}', sessionGrantRule: '授权：{{ruleId}}', modeContext: '模式：{{mode}} · 来源：{{origin}}',
+    },
     traceFields: {
       schemaVersion: '属性结构版本', modelCallIndex: '模型调用序号', temperature: '温度', topP: 'Top P', toolChoice: '工具选择', requestBuildMs: '请求构建耗时',
       ttftMs: '首个输出耗时（TTFT）', streamMs: '流式输出耗时', finishReason: '完成原因',
@@ -95,7 +100,7 @@ export const zhCN = {
       request_encode: '请求编码', connect: '连接', response_headers: '响应头', response_body: '响应正文',
       stream_decode: '流式解码', response_decode: '响应解码', not_sent: '未发送', possibly_sent: '可能已发送',
       accepted_no_semantic_output: '已接受但无语义输出', semantic_output_emitted: '已产生语义输出',
-      allow: '允许', deny: '拒绝', ask: '询问', policy: '策略', config: '配置', builtin: '内置', rule: '规则', session_grant: '会话授权', readonly_proof: '只读证明', mode_fs_command: 'acceptEdits 文件系统命令闸门',
+      allow: '允许', deny: '拒绝', ask: '询问', policy: '策略', config: '配置', builtin: '内置', rule: '规则', session_grant: '会话授权', readonly_proof: '只读证明', mode: 'acceptEdits 模式', mode_fs_command: 'acceptEdits 文件系统命令闸门',
       default: '默认', accept_edits: '接受文件改动', session_default: '会话默认', user_toggle: '用户切换', approval_card: '审批卡片',
       user: '用户', system: '系统', auto: '自动',
       enabled: '已启用', disabled: '已禁用', true: '是', false: '否',

@@ -35,8 +35,13 @@ export const zhTW = {
       storedSize: '已儲存 {{size}}', truncated: '已截斷，原始 {{size}}', showAll: '展開全部', showPreview: '只顯示預覽',
       slots: { request: '請求', system_context: 'System Context', tool_definitions: '工具定義', response: '回應' },
     },
-    traceCompleteness: 'Trace：{{state}}（{{captured}}/{{expected}}）',
+    traceCompleteness: 'Trace：{{state}}（{{captured}}/{{expected}}）', traceMissing: '缺少 {{count}} 筆',
     completeness: { complete: '完整', partial: '部分缺失', none: '未採集' },
+    permissionActivity: {
+      outcomes: { auto_allowed: '自動放行', silently_denied: '靜默拒絕', user_approved: '使用者批准', user_denied: '使用者拒絕' },
+      sources: { builtin: '內建規則', readonly_proof: '唯讀證明', mode: 'acceptEdits 模式', mode_fs_command: '檔案系統指令閘門', session_grant: '工作階段授權' },
+      readonlyProof: '判定表：{{key}}', sessionGrantRule: '授權：{{ruleId}}', modeContext: '模式：{{mode}} · 來源：{{origin}}',
+    },
     traceFields: {
       schemaVersion: '屬性結構版本', modelCallIndex: '模型呼叫序號', temperature: '溫度', topP: 'Top P', toolChoice: '工具選擇', requestBuildMs: '請求建置耗時',
       ttftMs: '首個輸出耗時（TTFT）', streamMs: '串流輸出耗時', finishReason: '完成原因',
@@ -71,7 +76,7 @@ export const zhTW = {
       request_encode: '請求編碼', connect: '連線', response_headers: '回應標頭', response_body: '回應正文',
       stream_decode: '串流解碼', response_decode: '回應解碼', not_sent: '未傳送', possibly_sent: '可能已傳送',
       accepted_no_semantic_output: '已接受但無語意輸出', semantic_output_emitted: '已產生語意輸出',
-      allow: '允許', deny: '拒絕', ask: '詢問', policy: '策略', config: '設定', builtin: '內建', rule: '規則', session_grant: '工作階段授權', readonly_proof: '唯讀證明', mode_fs_command: 'acceptEdits 檔案系統命令閘門',
+      allow: '允許', deny: '拒絕', ask: '詢問', policy: '策略', config: '設定', builtin: '內建', rule: '規則', session_grant: '工作階段授權', readonly_proof: '唯讀證明', mode: 'acceptEdits 模式', mode_fs_command: 'acceptEdits 檔案系統命令閘門',
       default: '預設', accept_edits: '接受檔案修改', session_default: '工作階段預設', user_toggle: '使用者切換', approval_card: '審批卡片',
       user: '使用者', system: '系統', auto: '自動',
       enabled: '已啟用', disabled: '已停用', true: '是', false: '否',

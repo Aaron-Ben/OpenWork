@@ -36,8 +36,13 @@ export const enUS = {
       storedSize: '{{size}} stored', truncated: 'Truncated; original size {{size}}', showAll: 'Show all', showPreview: 'Show preview only',
       slots: { request: 'Request', system_context: 'System Context', tool_definitions: 'Tool definitions', response: 'Response' },
     },
-    traceCompleteness: 'Trace: {{state}} ({{captured}}/{{expected}})',
+    traceCompleteness: 'Trace: {{state}} ({{captured}}/{{expected}})', traceMissing: '{{count}} missing',
     completeness: { complete: 'Complete', partial: 'Partial', none: 'None' },
+    permissionActivity: {
+      outcomes: { auto_allowed: 'Auto allowed', silently_denied: 'Silently denied', user_approved: 'User approved', user_denied: 'User denied' },
+      sources: { builtin: 'Built-in rule', readonly_proof: 'Read-only proof', mode: 'acceptEdits mode', mode_fs_command: 'Filesystem command gate', session_grant: 'Session grant' },
+      readonlyProof: 'Proof table: {{key}}', sessionGrantRule: 'Grant: {{ruleId}}', modeContext: 'Mode: {{mode}} · origin: {{origin}}',
+    },
     traceFields: {
       schemaVersion: 'Attribute schema version', modelCallIndex: 'Model call index', temperature: 'Temperature', topP: 'Top P', toolChoice: 'Tool choice', requestBuildMs: 'Request build time',
       ttftMs: 'Time to first output (TTFT)', streamMs: 'Streaming time', finishReason: 'Finish reason',
@@ -74,7 +79,7 @@ export const enUS = {
       response_body: 'Response body', stream_decode: 'Stream decoding', response_decode: 'Response decoding',
       not_sent: 'Not sent', possibly_sent: 'Possibly sent', accepted_no_semantic_output: 'Accepted without semantic output',
       semantic_output_emitted: 'Semantic output emitted', allow: 'Allow', deny: 'Deny', ask: 'Ask',
-      policy: 'Policy', config: 'Configuration', builtin: 'Built-in', rule: 'Rule', session_grant: 'Session grant', readonly_proof: 'Read-only proof', mode_fs_command: 'acceptEdits filesystem command gate',
+      policy: 'Policy', config: 'Configuration', builtin: 'Built-in', rule: 'Rule', session_grant: 'Session grant', readonly_proof: 'Read-only proof', mode: 'acceptEdits mode', mode_fs_command: 'acceptEdits filesystem command gate',
       default: 'Default', accept_edits: 'Accept edits', session_default: 'Session default', user_toggle: 'User toggle', approval_card: 'Approval card',
       user: 'User', system: 'System', auto: 'Automatic', enabled: 'Enabled', disabled: 'Disabled',
       true: 'Yes', false: 'No',

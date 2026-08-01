@@ -10,6 +10,7 @@ import {
   loadTracePayloadWhenExpanded,
   MissingTracePayload,
   SpanDetail,
+  TraceCompletenessSummary,
   TRACE_PAYLOAD_RENDER_LIMIT_CHARS,
   TracePayloadBody,
 } from './TurnTraceDrawer'
@@ -186,5 +187,42 @@ describe('SpanDetail', () => {
     expect(selectedSpanId).toBe('summary-model')
     expect(coreCommands.getSpanPayload).toHaveBeenCalledWith('summary-model', 'response')
     expect(loadedPayload?.body).toEqual({ text: 'summary body' })
+  })
+})
+
+describe('TraceCompletenessSummary', () => {
+  it('acc_73e makes partial and missing traces visibly different from complete traces', () => {
+    const complete = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
+      expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
+      capturedToolCalls: 3, orphanToolSpans: 0, runningSpans: 0,
+      outcomeUnknownSpans: 0, state: 'complete',
+    }} />)
+    const partial = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
+      expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
+      capturedToolCalls: 1, orphanToolSpans: 0, runningSpans: 0,
+      outcomeUnknownSpans: 0, state: 'partial',
+    }} />)
+    const none = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
+      expectedModelCalls: 2, capturedModelCalls: 0, expectedToolCalls: 3,
+      capturedToolCalls: 0, orphanToolSpans: 0, runningSpans: 0,
+      outcomeUnknownSpans: 0, state: 'none',
+    }} />)
+    const structurallyPartial = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
+      expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
+      capturedToolCalls: 3, orphanToolSpans: 1, runningSpans: 0,
+      outcomeUnknownSpans: 0, state: 'partial',
+    }} />)
+
+    expect(complete).toContain('data-trace-completeness="complete"')
+    expect(complete).not.toContain('role="alert"')
+    expect(partial).toContain('data-trace-completeness="partial"')
+    expect(partial).toContain('role="alert"')
+    expect(partial).toContain('缺少 2 条')
+    expect(partial).toContain('bg-status-warning-soft')
+    expect(none).toContain('data-trace-completeness="none"')
+    expect(none).toContain('role="alert"')
+    expect(none).toContain('缺少 5 条')
+    expect(none).toContain('bg-status-danger-soft')
+    expect(structurallyPartial).not.toContain('缺少 0 条')
   })
 })

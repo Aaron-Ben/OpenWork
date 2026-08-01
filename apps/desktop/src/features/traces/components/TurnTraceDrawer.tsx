@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
-import { Bot, ChevronDown, Clock3, MessageSquareText, Minimize2, Wrench, X } from 'lucide-react'
+import { Bot, ChevronDown, CircleAlert, Clock3, MessageSquareText, Minimize2, Wrench, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { coreCommands } from '../../../bridge/commands'
 import type {
   RuntimeTraceContentPolicy,
+  RuntimeTraceCompleteness,
   RuntimeTracePayloadSlot,
   RuntimeTraceSpan,
   RuntimeTraceSpanPayload,
@@ -186,13 +187,7 @@ export function TurnTraceDrawer({
               <SummaryPill icon={<Bot size={12} />} label={t('activity.modelCalls', { count: spans?.filter((span) => span.kind === 'model_call').length ?? summary?.modelCallCount ?? 0 })} />
               <SummaryPill icon={<Wrench size={12} />} label={t('activity.toolCalls', { count: spans?.filter((span) => span.kind === 'tool_call').length ?? summary?.toolCallCount ?? 0 })} />
               <SummaryPill label={t('activity.tokens', { count: tokenTotal })} />
-              {trace ? (
-                <SummaryPill label={t('activity.traceCompleteness', {
-                  state: t(`activity.completeness.${trace.completeness.state}`),
-                  captured: trace.completeness.capturedModelCalls + trace.completeness.capturedToolCalls,
-                  expected: trace.completeness.expectedModelCalls + trace.completeness.expectedToolCalls,
-                })} />
-              ) : null}
+              {trace ? <TraceCompletenessSummary completeness={trace.completeness} /> : null}
             </div>
           </header>
 
@@ -226,6 +221,39 @@ function TraceLoading() {
 
 function SummaryPill({ icon, label }: { icon?: React.ReactNode; label: string }) {
   return <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1">{icon}{label}</span>
+}
+
+export function TraceCompletenessSummary({
+  completeness,
+}: {
+  completeness: RuntimeTraceCompleteness
+}) {
+  const { t } = useTranslation()
+  const captured = completeness.capturedModelCalls + completeness.capturedToolCalls
+  const expected = completeness.expectedModelCalls + completeness.expectedToolCalls
+  const missing = Math.max(0, expected - captured)
+  const incomplete = completeness.state !== 'complete'
+  const classes = completeness.state === 'complete'
+    ? 'bg-surface text-ink-soft'
+    : completeness.state === 'partial'
+      ? 'border border-status-warning-border bg-status-warning-soft font-semibold text-status-warning-ink'
+      : 'border border-status-danger-border bg-status-danger-soft font-semibold text-status-danger-ink'
+
+  return (
+    <span
+      data-trace-completeness={completeness.state}
+      role={incomplete ? 'alert' : undefined}
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 ${classes}`}
+    >
+      {incomplete ? <CircleAlert size={12} aria-hidden="true" /> : null}
+      {t('activity.traceCompleteness', {
+        state: t(`activity.completeness.${completeness.state}`),
+        captured,
+        expected,
+      })}
+      {missing > 0 ? ` · ${t('activity.traceMissing', { count: missing })}` : null}
+    </span>
+  )
 }
 
 export function SpanDetail({

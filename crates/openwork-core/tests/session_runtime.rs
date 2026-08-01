@@ -1414,9 +1414,12 @@ async fn acc_59_61_62_69_card_mode_change_reuses_the_session_mode_state() {
         let automatic = signals
             .iter()
             .find_map(|signal| match signal {
+                // The second write ran because the card switched the mode, so its
+                // source must be `mode` — not `builtin`, which would claim it was
+                // allowed all along (permissions.md §7).
                 TraceSignal::ToolCallFinished(finished)
                     if finished.attributes.permission_decision_source.as_deref()
-                        == Some("builtin") =>
+                        == Some("mode") =>
                 {
                     Some(finished)
                 }

@@ -562,11 +562,17 @@ impl TurnRunner {
         ) {
             Authorization::Allow { permit, evidence } => {
                 tool_trace.record_permission_policy("allow");
+                // `Mode` must not collapse into `Builtin`: permissions.md §7 exists
+                // to answer "为什么这条没问我就跑了", and the two answers differ —
+                // `builtin` means it was always allowed, `mode` means it ran because
+                // acceptEdits was switched on. Merging them hides the one an incident
+                // review would ask about first.
                 let source = match evidence.source {
                     DecisionSource::ReadonlyProof => "readonly_proof",
                     DecisionSource::ModeFsCommand => "mode_fs_command",
                     DecisionSource::SessionGrant => "session_grant",
-                    DecisionSource::Builtin | DecisionSource::Mode => "builtin",
+                    DecisionSource::Mode => "mode",
+                    DecisionSource::Builtin => "builtin",
                 };
                 tool_trace.record_permission_decision("allow", source);
                 if let (Some(rule_id), Some(rule_scope)) =

@@ -33,6 +33,28 @@ const compaction: RuntimeTraceSpan = {
   attributes: { trigger: 'threshold' },
 }
 
+function permissionTool(
+  id: string,
+  decision: string,
+  source: string,
+  attributes: Record<string, unknown> = {},
+): RuntimeTraceSpan {
+  return {
+    ...tool,
+    id,
+    providerCallId: id,
+    requestedToolName: id,
+    resolvedToolName: id,
+    attributes: {
+      permissionDecision: decision,
+      permissionDecisionSource: source,
+      permissionMode: 'default',
+      permissionModeOrigin: 'session_default',
+      ...attributes,
+    },
+  }
+}
+
 describe('TraceTimeline', () => {
   it('renders the model/tool hierarchy and proportional waterfall bars', () => {
     const markup = renderToStaticMarkup(
@@ -55,5 +77,58 @@ describe('TraceTimeline', () => {
 
     expect(markup).toContain('data-span-id="compaction-1"')
     expect(markup).toContain('Conversation 压缩')
+  })
+
+  it('acc_73a_73b distinguishes four permission outcomes and every automatic source', () => {
+    const automaticSources = [
+      'builtin',
+      'readonly_proof',
+      'mode',
+      'mode_fs_command',
+      'session_grant',
+    ]
+    const spans = [
+      model,
+      ...automaticSources.map((source) => permissionTool(`auto-${source}`, 'allow', source)),
+      permissionTool('silent-denial', 'deny', 'builtin'),
+      permissionTool('user-approved', 'allow', 'user'),
+      permissionTool('user-denied', 'deny', 'user'),
+    ]
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={spans} selectedSpanId={null} onSelect={vi.fn()} />,
+    )
+
+    expect(markup.match(/data-permission-activity="auto_allowed"/g)).toHaveLength(5)
+    for (const source of automaticSources) {
+      expect(markup).toContain(`data-permission-source="${source}"`)
+    }
+    expect(markup).toContain('data-permission-activity="silently_denied"')
+    expect(markup).toContain('data-permission-activity="user_approved"')
+    expect(markup).toContain('data-permission-activity="user_denied"')
+    for (const label of ['内置规则', '只读证明', 'acceptEdits 模式', '文件系统命令闸门', '会话授权']) {
+      expect(markup).toContain(label)
+    }
+    expect(markup).toContain('静默拒绝')
+    expect(markup).toContain('用户批准')
+    expect(markup).toContain('用户拒绝')
+  })
+
+  it('acc_73c_73d surfaces proof, mode, and mode origin on the permission marker', () => {
+    const proved = permissionTool('proved-read', 'allow', 'readonly_proof', {
+      readonlyProofKey: 'git status',
+      permissionMode: 'accept_edits',
+      permissionModeOrigin: 'approval_card',
+    })
+    const granted = permissionTool('granted-command', 'allow', 'session_grant', {
+      permissionRuleId: 'session.approval-call-42.0',
+    })
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={[model, proved, granted]} selectedSpanId="proved-read" onSelect={vi.fn()} />,
+    )
+
+    expect(markup).toContain('git status')
+    expect(markup).toContain('session.approval-call-42.0')
+    expect(markup).toContain('接受文件改动')
+    expect(markup).toContain('审批卡片')
   })
 })
