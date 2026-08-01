@@ -228,6 +228,7 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
             readonly_proof: Some(ReadonlyProof {
                 key: "git status".to_string(),
             }),
+            filesystem_command_proof: false,
         }],
     );
     let exec = || {
@@ -294,11 +295,18 @@ fn acc_37_explicit_exec_rules_precede_readonly_proof() {
 }
 
 #[test]
-fn acc_28_and_50_readonly_proof_is_visible_and_does_not_hide_redirection() {
+fn acc_27_28_and_50_readonly_proof_is_visible_and_does_not_hide_redirection() {
     let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
 
     assert_allows_in_both_modes(&toolset, "ls > /dev/null");
-    assert_asks_in_both_modes(&toolset, "cat a.txt > b.txt");
+    assert!(matches!(
+        authorize(&toolset, "cat a.txt > b.txt", PermissionMode::Default),
+        Authorization::Ask { .. }
+    ));
+    assert!(matches!(
+        authorize(&toolset, "cat a.txt > b.txt", PermissionMode::AcceptEdits),
+        Authorization::Allow { .. }
+    ));
 
     let Authorization::Ask { card, .. } =
         authorize(&toolset, "ls && cargo test", PermissionMode::Default)

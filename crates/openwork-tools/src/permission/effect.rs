@@ -35,6 +35,7 @@ pub struct AnalysisUnit {
     pub effects: Vec<Effect>,
     pub allow_eligible: bool,
     pub readonly_proof: Option<ReadonlyProof>,
+    pub filesystem_command_proof: bool,
 }
 
 impl AnalysisUnit {
@@ -44,6 +45,7 @@ impl AnalysisUnit {
             effects,
             allow_eligible: true,
             readonly_proof: None,
+            filesystem_command_proof: false,
         }
     }
 
@@ -52,12 +54,14 @@ impl AnalysisUnit {
         effects: Vec<Effect>,
         allow_eligible: bool,
         readonly_proof: Option<ReadonlyProof>,
+        filesystem_command_proof: bool,
     ) -> Self {
         Self {
             display: display.into(),
             effects,
             allow_eligible,
             readonly_proof,
+            filesystem_command_proof,
         }
     }
 }

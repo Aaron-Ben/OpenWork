@@ -121,7 +121,7 @@ describe('ApprovalCardView', () => {
     expect(exactMarkup).toContain('本会话仅允许这一条命令：custom-tool a b')
   })
 
-  it('acc_59_60 renders a file-tool mode change without claiming bash coverage', () => {
+  it('acc_59_60 renders the complete acceptEdits session scope', () => {
     const modeRequest: RuntimePermissionRequest = {
       ...request,
       card: {
@@ -133,8 +133,8 @@ describe('ApprovalCardView', () => {
       <ApprovalCardView request={modeRequest} resolving={false} onResolve={vi.fn()} />,
     )
 
-    expect(markup).toContain('本会话不再询问文件工具改动（切到 acceptEdits）')
-    expect(markup).not.toContain('bash')
+    expect(markup).toContain('本会话不再询问工作区内非敏感写入')
+    expect(markup).toContain('bash 的 mkdir/touch/rm/rmdir/mv/cp/sed 与输出重定向')
     expect(markup).not.toContain('write(src/**)')
   })
 })

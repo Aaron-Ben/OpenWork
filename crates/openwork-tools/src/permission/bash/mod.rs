@@ -1,3 +1,5 @@
+mod filesystem;
+
 use std::path::{Path, PathBuf};
 
 use tree_sitter::{Node, Parser};
@@ -105,6 +107,10 @@ fn analyze_command(
     if let Some(proof) = &proof {
         effects.extend(proof.effects.iter().cloned());
     }
+    let filesystem_proof = filesystem::prove(&program, &args, workspace);
+    if let Some(proof) = &filesystem_proof {
+        effects.extend(proof.effects.iter().cloned());
+    }
     let (redirection_effects, heredoc_units) = analyze_redirects(node, source, workspace, path)?;
     if !heredoc_units.is_empty() {
         return Err(());
@@ -124,6 +130,7 @@ fn analyze_command(
         effects,
         allow_eligible,
         proof.map(|proof| proof.marker),
+        filesystem_proof.is_some(),
     ))
 }
 
@@ -170,16 +177,23 @@ fn file_redirect_effects(
     if destination == "/dev/null" {
         return Ok(Vec::new());
     }
-    let path = resolve_effect_path(workspace, &destination);
     if raw.contains("<>") {
-        Ok(vec![Effect::read(path.clone()), Effect::write(path)])
-    } else if raw.contains('>') {
-        Ok(vec![Effect::write(path)])
-    } else if raw.contains('<') {
-        Ok(vec![Effect::read(path)])
-    } else {
-        Err(())
+        let write = filesystem::resolve_write_path(workspace, &destination).ok_or(())?;
+        return Ok(vec![Effect::read(write.clone()), Effect::write(write)]);
     }
+    if raw.contains('>') {
+        // A glob as a redirection target is not a statically resolvable path
+        // (§2.3④). Fail closed rather than record the pattern as if it were one.
+        let write = filesystem::resolve_write_path(workspace, &destination).ok_or(())?;
+        return Ok(vec![Effect::write(write)]);
+    }
+    if raw.contains('<') {
+        return Ok(vec![Effect::read(resolve_effect_path(
+            workspace,
+            &destination,
+        ))]);
+    }
+    Err(())
 }
 
 fn collect_heredoc_units(

@@ -18,6 +18,7 @@ pub enum DecisionSource {
     Rule,
     SessionGrant,
     Mode,
+    ModeFsCommand,
     ReadonlyProof,
 }
 

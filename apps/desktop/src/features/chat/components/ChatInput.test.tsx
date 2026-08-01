@@ -52,7 +52,7 @@ describe('ChatInput toolbar', () => {
     expect(markup).not.toContain('overflow-hidden rounded-[18px]')
     expect(markup).not.toContain('麦克风')
     expect(markup).not.toContain('Demo Provider')
-    expect(markup).not.toContain('运行')
+    expect(markup).not.toContain('>运行<')
     expect(markup).toContain('min-h-[80px]')
     expect(markup).toContain('rows="2"')
     expect(markup).not.toContain('min-h-[84px]')
@@ -70,7 +70,8 @@ describe('ChatInput toolbar', () => {
     )
 
     expect(markup).toContain('自动接受文件改动')
-    expect(markup).toContain('命令仍需审批')
+    expect(markup).toContain('bash 的 mkdir/touch/rm/rmdir/mv/cp/sed 与输出重定向')
+    expect(markup).toContain('其他命令仍需审批')
   })
 
   it('keeps the context affordance available when usage has not been measured', () => {

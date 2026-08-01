@@ -71,7 +71,7 @@ export const zhTW = {
       request_encode: '請求編碼', connect: '連線', response_headers: '回應標頭', response_body: '回應正文',
       stream_decode: '串流解碼', response_decode: '回應解碼', not_sent: '未傳送', possibly_sent: '可能已傳送',
       accepted_no_semantic_output: '已接受但無語意輸出', semantic_output_emitted: '已產生語意輸出',
-      allow: '允許', deny: '拒絕', ask: '詢問', policy: '策略', config: '設定', builtin: '內建', rule: '規則', session_grant: '工作階段授權', readonly_proof: '唯讀證明',
+      allow: '允許', deny: '拒絕', ask: '詢問', policy: '策略', config: '設定', builtin: '內建', rule: '規則', session_grant: '工作階段授權', readonly_proof: '唯讀證明', mode_fs_command: 'acceptEdits 檔案系統命令閘門',
       default: '預設', accept_edits: '接受檔案修改', session_default: '工作階段預設', user_toggle: '使用者切換', approval_card: '審批卡片',
       user: '使用者', system: '系統', auto: '自動',
       enabled: '已啟用', disabled: '已停用', true: '是', false: '否',
@@ -123,8 +123,8 @@ export const zhTW = {
     permissionMode: '權限模式',
     permissionModes: {
       default: '預設', accept_edits: '自動接受檔案改動',
-      defaultDescription: '自動讀取工作區檔案；一般寫入與任何指令仍需審批，受保護中繼資料仍會拒絕。',
-      accept_editsDescription: '額外允許檔案工具寫入工作區內非敏感路徑；指令仍需審批。',
+      defaultDescription: '自動讀取工作區檔案並執行已證明唯讀的指令；一般寫入與其他指令仍需審批，受保護中繼資料寫入仍受限制。',
+      accept_editsDescription: '額外允許工作區內非敏感寫入，包括檔案工具、bash 的 mkdir/touch/rm/rmdir/mv/cp/sed 與輸出重新導向；其他指令仍需審批。',
     },
     startConversation: '開始對話', createSession: '建立對話',
     noSessionHelp: '點選專案右側的新增按鈕，開始使用 OpenWork。',
@@ -184,7 +184,7 @@ export const zhTW = {
     permission: {
       title: '即將執行 {{count}} 項操作', raw: '原文', allowOnce: '允許一次',
       allowPrefixForSession: '本工作階段允許以 {{command}} 開頭的命令', allowExactForSession: '本工作階段僅允許這一條命令：{{command}}',
-      allowManyForSession: '本工作階段允許這些命令範圍：{{commands}}', enableAcceptEdits: '本工作階段不再詢問檔案工具修改（切換到 acceptEdits）',
+      allowManyForSession: '本工作階段允許這些命令範圍：{{commands}}', enableAcceptEdits: '本工作階段不再詢問工作區內非敏感寫入，包括檔案工具、bash 的 mkdir/touch/rm/rmdir/mv/cp/sed 與輸出重新導向（切換到 acceptEdits）',
       read: '讀取 {{path}}', write: '寫入 {{path}}', exec: '執行 {{command}}',
       trustedProgram: '執行（信任該程式）：{{program}}', readonlyProof: '唯讀（已核對參數）：{{key}}', outsideWorkspace: '工作區外',
       unknownEffects: '無法可靠推斷效果', unparsedWarning: '此呼叫無法可靠拆分；請按完整原文判斷。',

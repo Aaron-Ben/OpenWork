@@ -218,55 +218,79 @@ impl PermissionEngine {
             });
         }
 
-        if has_exec && unit.readonly_proof.is_some() {
-            if unit
-                .effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Write { .. }))
-            {
-                return EvaluatedUnit::ask(UnitVerdict::Ask {
-                    source: AskSource::NoRuleCovers,
-                    rule_id: None,
-                });
+        let mut allow_evidence = Vec::with_capacity(unit.effects.len());
+        for (effect, matched_rule) in unit.effects.iter().zip(matched.into_iter()) {
+            if let Some(matched_rule) = matched_rule {
+                allow_evidence.push(matched_rule);
+                continue;
             }
-            let all_reads_allowed =
-                unit.effects
-                    .iter()
-                    .zip(matched.iter())
-                    .all(|(effect, result)| match effect {
-                        Effect::Exec { .. } => result.is_none(),
-                        Effect::Read { .. } => result.as_ref().is_some_and(|result| {
-                            matches!(result.verdict, UnitVerdict::Allow { .. })
-                        }),
-                        Effect::Write { .. } => false,
-                    });
-            if all_reads_allowed {
-                let supporting_rule = matched.iter().flatten().next();
-                return EvaluatedUnit {
+            if matches!(effect, Effect::Exec { .. })
+                && mode == PermissionMode::AcceptEdits
+                && unit.filesystem_command_proof
+            {
+                allow_evidence.push(EvaluatedUnit {
+                    verdict: UnitVerdict::Allow {
+                        source: DecisionSource::ModeFsCommand,
+                        rule_id: None,
+                    },
+                    rule_scope: None,
+                    readonly_proof_key: None,
+                });
+                continue;
+            }
+            if matches!(effect, Effect::Exec { .. })
+                && let Some(proof) = &unit.readonly_proof
+            {
+                allow_evidence.push(EvaluatedUnit {
                     verdict: UnitVerdict::Allow {
                         source: DecisionSource::ReadonlyProof,
-                        rule_id: supporting_rule
-                            .as_ref()
-                            .and_then(|result| verdict_rule_id(&result.verdict)),
+                        rule_id: None,
                     },
-                    rule_scope: supporting_rule.and_then(|result| result.rule_scope),
-                    readonly_proof_key: unit.readonly_proof.as_ref().map(|proof| proof.key.clone()),
-                };
+                    rule_scope: None,
+                    readonly_proof_key: Some(proof.key.clone()),
+                });
+                continue;
             }
+
+            return EvaluatedUnit::ask(UnitVerdict::Ask {
+                source: AskSource::NoRuleCovers,
+                rule_id: None,
+            });
         }
 
-        if matched.iter().all(Option::is_some) {
-            return matched
-                .into_iter()
-                .flatten()
-                .max_by_key(|result| allow_evidence_priority(&result.verdict))
-                .expect("non-empty effects");
+        let readonly_proof_used = allow_evidence.iter().any(|evidence| {
+            verdict_decision_source(&evidence.verdict) == Some(&DecisionSource::ReadonlyProof)
+        });
+        let supporting_rule = allow_evidence
+            .iter()
+            .find(|evidence| verdict_rule_id(&evidence.verdict).is_some())
+            .map(|evidence| (verdict_rule_id(&evidence.verdict), evidence.rule_scope));
+        let mut deciding_evidence = allow_evidence
+            .into_iter()
+            .max_by_key(|result| allow_evidence_priority(&result.verdict))
+            .expect("non-empty effects");
+        if readonly_proof_used {
+            deciding_evidence.readonly_proof_key =
+                unit.readonly_proof.as_ref().map(|proof| proof.key.clone());
         }
-
-        EvaluatedUnit::ask(UnitVerdict::Ask {
-            source: AskSource::NoRuleCovers,
-            rule_id: None,
-        })
+        if matches!(
+            deciding_evidence.verdict,
+            UnitVerdict::Allow {
+                source: DecisionSource::ReadonlyProof,
+                rule_id: None,
+            }
+        ) && let Some((rule_id, rule_scope)) = supporting_rule
+        {
+            if let UnitVerdict::Allow {
+                rule_id: deciding_rule_id,
+                ..
+            } = &mut deciding_evidence.verdict
+            {
+                *deciding_rule_id = rule_id;
+            }
+            deciding_evidence.rule_scope = rule_scope;
+        }
+        deciding_evidence
     }
 
     fn authorize_effect(
@@ -339,7 +363,7 @@ impl PermissionEngine {
                 grants.clear();
                 break;
             };
-            if execs.next().is_some() || is_p4_filesystem_command(program) {
+            if execs.next().is_some() {
                 grants.clear();
                 break;
             }
@@ -389,20 +413,6 @@ impl PermissionEngine {
     }
 }
 
-fn is_p4_filesystem_command(program: &str) -> bool {
-    // P3 can only install exec-prefix grants. Until P4 extracts these shell
-    // operations as file effects, offering such a grant would make a write
-    // command look safer than the action the user actually approved.
-    let basename = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
-    matches!(
-        basename,
-        "mkdir" | "touch" | "rm" | "rmdir" | "mv" | "cp" | "sed"
-    )
-}
-
 #[derive(Debug, Clone)]
 struct EvaluatedUnit {
     verdict: UnitVerdict,
@@ -421,49 +431,12 @@ impl EvaluatedUnit {
 }
 
 fn aggregate_allow_evidence(units: &[EvaluatedUnit]) -> AuthorizationEvidence {
-    let source = if units.iter().any(|unit| {
-        matches!(
-            unit.verdict,
-            UnitVerdict::Allow {
-                source: DecisionSource::SessionGrant,
-                ..
-            }
-        )
-    }) {
-        DecisionSource::SessionGrant
-    } else if units.iter().any(|unit| {
-        matches!(
-            unit.verdict,
-            UnitVerdict::Allow {
-                source: DecisionSource::ReadonlyProof,
-                ..
-            }
-        )
-    }) {
-        DecisionSource::ReadonlyProof
-    } else if units.iter().any(|unit| {
-        matches!(
-            unit.verdict,
-            UnitVerdict::Allow {
-                source: DecisionSource::Mode,
-                ..
-            }
-        )
-    }) {
-        DecisionSource::Mode
-    } else if units.iter().any(|unit| {
-        matches!(
-            unit.verdict,
-            UnitVerdict::Allow {
-                source: DecisionSource::Rule,
-                ..
-            }
-        )
-    }) {
-        DecisionSource::Rule
-    } else {
-        DecisionSource::Builtin
-    };
+    let source = units
+        .iter()
+        .filter_map(|unit| verdict_decision_source(&unit.verdict))
+        .max_by_key(|source| decision_source_priority(source))
+        .cloned()
+        .expect("an allowed invocation has at least one allowed unit");
     let rule = units
         .iter()
         .find(|unit| {
@@ -547,22 +520,18 @@ fn verdict_severity(verdict: &UnitVerdict) -> u8 {
 
 fn allow_evidence_priority(verdict: &UnitVerdict) -> u8 {
     match verdict {
-        UnitVerdict::Allow {
-            source: DecisionSource::SessionGrant,
-            ..
-        } => 4,
-        UnitVerdict::Allow {
-            source: DecisionSource::Rule,
-            ..
-        } => 3,
-        UnitVerdict::Allow {
-            source: DecisionSource::Mode,
-            ..
-        } => 2,
-        UnitVerdict::Allow {
-            source: DecisionSource::Builtin | DecisionSource::ReadonlyProof,
-            ..
-        } => 1,
+        UnitVerdict::Allow { source, .. } => decision_source_priority(source),
         UnitVerdict::Ask { .. } | UnitVerdict::Deny { .. } => 0,
+    }
+}
+
+fn decision_source_priority(source: &DecisionSource) -> u8 {
+    match source {
+        DecisionSource::ModeFsCommand => 6,
+        DecisionSource::Mode => 5,
+        DecisionSource::SessionGrant => 4,
+        DecisionSource::ReadonlyProof => 3,
+        DecisionSource::Rule => 2,
+        DecisionSource::Builtin => 1,
     }
 }

@@ -95,7 +95,7 @@ export const zhCN = {
       request_encode: '请求编码', connect: '连接', response_headers: '响应头', response_body: '响应正文',
       stream_decode: '流式解码', response_decode: '响应解码', not_sent: '未发送', possibly_sent: '可能已发送',
       accepted_no_semantic_output: '已接受但无语义输出', semantic_output_emitted: '已产生语义输出',
-      allow: '允许', deny: '拒绝', ask: '询问', policy: '策略', config: '配置', builtin: '内置', rule: '规则', session_grant: '会话授权', readonly_proof: '只读证明',
+      allow: '允许', deny: '拒绝', ask: '询问', policy: '策略', config: '配置', builtin: '内置', rule: '规则', session_grant: '会话授权', readonly_proof: '只读证明', mode_fs_command: 'acceptEdits 文件系统命令闸门',
       default: '默认', accept_edits: '接受文件改动', session_default: '会话默认', user_toggle: '用户切换', approval_card: '审批卡片',
       user: '用户', system: '系统', auto: '自动',
       enabled: '已启用', disabled: '已禁用', true: '是', false: '否',
@@ -183,8 +183,8 @@ export const zhCN = {
     permissionModes: {
       default: '默认',
       accept_edits: '自动接受文件改动',
-      defaultDescription: '自动读取工作区文件；普通写入与任何命令仍需审批，受保护元数据仍会拒绝。',
-      accept_editsDescription: '额外允许文件工具写入工作区内非敏感路径；命令仍需审批。',
+      defaultDescription: '自动读取工作区文件并运行已证明只读的命令；普通写入与其他命令仍需审批，受保护元数据写入仍受限制。',
+      accept_editsDescription: '额外允许工作区内非敏感写入，包括文件工具、bash 的 mkdir/touch/rm/rmdir/mv/cp/sed 与输出重定向；其他命令仍需审批。',
     },
     startConversation: '开始对话',
     createSession: '新建会话',
@@ -271,7 +271,7 @@ export const zhCN = {
     permission: {
       title: '即将执行 {{count}} 项操作', raw: '原文', allowOnce: '允许一次',
       allowPrefixForSession: '本会话允许以 {{command}} 开头的命令', allowExactForSession: '本会话仅允许这一条命令：{{command}}',
-      allowManyForSession: '本会话允许这些命令范围：{{commands}}', enableAcceptEdits: '本会话不再询问文件工具改动（切到 acceptEdits）',
+      allowManyForSession: '本会话允许这些命令范围：{{commands}}', enableAcceptEdits: '本会话不再询问工作区内非敏感写入，包括文件工具、bash 的 mkdir/touch/rm/rmdir/mv/cp/sed 与输出重定向（切到 acceptEdits）',
       read: '读取 {{path}}', write: '写入 {{path}}', exec: '执行 {{command}}',
       trustedProgram: '执行（信任该程序）：{{program}}', readonlyProof: '只读（已核对参数）：{{key}}', outsideWorkspace: '工作区外',
       unknownEffects: '无法可靠推断效果', unparsedWarning: '这条调用无法可靠拆分；请按完整原文判断。',

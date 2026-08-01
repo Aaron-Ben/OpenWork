@@ -564,6 +564,7 @@ impl TurnRunner {
                 tool_trace.record_permission_policy("allow");
                 let source = match evidence.source {
                     DecisionSource::ReadonlyProof => "readonly_proof",
+                    DecisionSource::ModeFsCommand => "mode_fs_command",
                     DecisionSource::SessionGrant => "session_grant",
                     DecisionSource::Rule => "rule",
                     DecisionSource::Builtin | DecisionSource::Mode => "builtin",

@@ -153,6 +153,29 @@ impl Tool for FakeTool {
                     readonly_proof: Some(ReadonlyProof {
                         key: key.to_string(),
                     }),
+                    filesystem_command_proof: false,
+                }],
+            );
+        }
+        if input
+            .get("filesystemCommandProof")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return InvocationAnalysis::new(
+                raw.clone(),
+                vec![AnalysisUnit {
+                    display: "mkdir src/x".to_string(),
+                    effects: vec![
+                        Effect::Exec {
+                            program: "mkdir".to_string(),
+                            args: vec!["src/x".to_string()],
+                        },
+                        Effect::write(session.normalize_effect_path(path)),
+                    ],
+                    allow_eligible: true,
+                    readonly_proof: None,
+                    filesystem_command_proof: true,
                 }],
             );
         }
@@ -2441,6 +2464,44 @@ async fn acc_21_and_72_tool_trace_records_readonly_proof_and_rule_provenance() {
     assert_eq!(
         tool.attributes.permission_rule_scope.as_deref(),
         Some("builtin")
+    );
+}
+
+#[tokio::test]
+async fn p4_tool_trace_records_mode_filesystem_command_source() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call(
+                    "call-mkdir",
+                    "bash",
+                    r#"{"filesystemCommandProof":true,"path":"src/x"}"#,
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        vec![ToolResult::succeeded("created")],
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let tool = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("filesystem command tool trace");
+    assert_eq!(
+        tool.attributes.permission_decision_source.as_deref(),
+        Some("mode_fs_command")
     );
 }
 

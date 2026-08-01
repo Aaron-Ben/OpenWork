@@ -49,7 +49,7 @@ describe('i18n', () => {
       }
       for (const value of [
         'started', 'failed', 'succeeded', 'tool_use', 'stream_decode',
-        'semantic_output_emitted', 'allow', 'policy', 'auto', 'enabled', 'true', 'false',
+        'semantic_output_emitted', 'allow', 'policy', 'mode_fs_command', 'auto', 'enabled', 'true', 'false',
         'degenerate', 'deterministic', 'input_overflow', 'transient', 'timeout',
       ] as const) {
         const path = `activity.traceValues.${value}`

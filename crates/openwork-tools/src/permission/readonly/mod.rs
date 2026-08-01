@@ -13,6 +13,13 @@ pub(crate) struct Proof {
 }
 
 pub(crate) fn prove(program: &str, args: &[String], workspace: &Path) -> Option<Proof> {
+    let basename = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    if basename == "sed" {
+        return prove_sed(args, workspace);
+    }
     if std::iter::once(program)
         .chain(args.iter().map(String::as_str))
         .any(dynamic_token)
@@ -49,6 +56,28 @@ pub(crate) fn prove(program: &str, args: &[String], workspace: &Path) -> Option<
     Some(Proof {
         marker: ReadonlyProof {
             key: command.key.to_string(),
+        },
+        effects,
+    })
+}
+
+fn prove_sed(args: &[String], workspace: &Path) -> Option<Proof> {
+    let invocation = super::sed::analyze(args)?;
+    if invocation.mode != super::sed::Mode::Readonly {
+        return None;
+    }
+    let mut effects = Vec::with_capacity(invocation.files.len() + 1);
+    effects.push(Effect::read(workspace));
+    effects.extend(
+        invocation
+            .files
+            .iter()
+            .filter(|path| path.as_str() != "-")
+            .map(|path| Effect::read(resolve_effect_path(workspace, path))),
+    );
+    Some(Proof {
+        marker: ReadonlyProof {
+            key: "sed".to_string(),
         },
         effects,
     })

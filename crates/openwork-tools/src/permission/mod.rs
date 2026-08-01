@@ -7,6 +7,7 @@ mod engine;
 mod grant;
 mod readonly;
 mod rule;
+mod sed;
 
 pub(crate) use bash::analyze as analyze_bash;
 pub use card::{

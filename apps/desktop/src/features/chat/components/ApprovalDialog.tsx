@@ -38,6 +38,7 @@ function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
   if (verdict.decision === 'allow') {
     switch (verdict.source) {
       case 'mode':
+      case 'mode_fs_command':
         return t('tool.permission.allowedByMode')
       case 'readonly_proof':
         return t('tool.permission.allowedByReadonlyProof')

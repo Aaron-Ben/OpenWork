@@ -312,7 +312,7 @@ fn acc_31_55_ineligible_or_unparsed_exec_has_no_session_button() {
 }
 
 #[test]
-fn acc_59_63_p3_mode_suggestion_only_appears_for_plain_file_tool_writes() {
+fn acc_59_63_64_mode_suggestion_only_appears_when_it_unlocks_the_whole_call() {
     let write_toolset = builtin_registry()
         .finalize(
             &ToolsetConfig::from_names(["write"]),
@@ -351,9 +351,12 @@ fn acc_59_63_p3_mode_suggestion_only_appears_for_plain_file_tool_writes() {
     let bash = bash_toolset(Path::new("/repo"));
     let Authorization::Ask { card, .. } = authorize(&bash, "mkdir src/x", PermissionMode::Default)
     else {
-        panic!("P3 has no bash filesystem command gate")
+        panic!("default mode must still ask before mkdir")
     };
-    assert_eq!(card.session_action, None);
+    assert_eq!(
+        card.session_action,
+        Some(ApprovalSessionAction::EnableAcceptEdits)
+    );
 }
 
 #[test]

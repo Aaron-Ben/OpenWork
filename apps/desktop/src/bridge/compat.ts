@@ -172,7 +172,7 @@ export type RuntimeEffectDisplay =
 export type RuntimeUnitVerdict =
   | {
       decision: 'allow'
-      source: 'builtin' | 'rule' | 'session_grant' | 'mode' | 'readonly_proof'
+      source: 'builtin' | 'rule' | 'session_grant' | 'mode' | 'mode_fs_command' | 'readonly_proof'
       ruleId: string | null
     }
   | {

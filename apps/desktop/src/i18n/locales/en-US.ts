@@ -74,7 +74,7 @@ export const enUS = {
       response_body: 'Response body', stream_decode: 'Stream decoding', response_decode: 'Response decoding',
       not_sent: 'Not sent', possibly_sent: 'Possibly sent', accepted_no_semantic_output: 'Accepted without semantic output',
       semantic_output_emitted: 'Semantic output emitted', allow: 'Allow', deny: 'Deny', ask: 'Ask',
-      policy: 'Policy', config: 'Configuration', builtin: 'Built-in', rule: 'Rule', session_grant: 'Session grant', readonly_proof: 'Read-only proof',
+      policy: 'Policy', config: 'Configuration', builtin: 'Built-in', rule: 'Rule', session_grant: 'Session grant', readonly_proof: 'Read-only proof', mode_fs_command: 'acceptEdits filesystem command gate',
       default: 'Default', accept_edits: 'Accept edits', session_default: 'Session default', user_toggle: 'User toggle', approval_card: 'Approval card',
       user: 'User', system: 'System', auto: 'Automatic', enabled: 'Enabled', disabled: 'Disabled',
       true: 'Yes', false: 'No',
@@ -128,8 +128,8 @@ export const enUS = {
     permissionMode: 'Permission mode',
     permissionModes: {
       default: 'Default', accept_edits: 'Accept edits',
-      defaultDescription: 'Read workspace files automatically; ask before ordinary writes and every command. Protected metadata stays denied.',
-      accept_editsDescription: 'Also allow non-sensitive workspace writes by file tools; commands still require approval.',
+      defaultDescription: 'Read workspace files and run proven read-only commands automatically; ordinary writes and other commands require approval. Protected metadata writes stay restricted.',
+      accept_editsDescription: 'Also allow non-sensitive workspace writes by file tools, bash mkdir/touch/rm/rmdir/mv/cp/sed, and output redirection; other commands still require approval.',
     },
     startConversation: 'Start a conversation',
     createSession: 'New conversation', noSessionHelp: 'Use the new-conversation button beside a project to start using OpenWork.',
@@ -189,7 +189,7 @@ export const enUS = {
     permission: {
       title: '{{count}} operations require approval', raw: 'Original input', allowOnce: 'Allow once',
       allowPrefixForSession: 'Allow commands starting with {{command}} for this session', allowExactForSession: 'Allow only this command for this session: {{command}}',
-      allowManyForSession: 'Allow these command scopes for this session: {{commands}}', enableAcceptEdits: 'Stop asking about file-tool edits for this session (switch to acceptEdits)',
+      allowManyForSession: 'Allow these command scopes for this session: {{commands}}', enableAcceptEdits: 'Stop asking about non-sensitive workspace writes for this session, including file tools, bash mkdir/touch/rm/rmdir/mv/cp/sed, and output redirection (switch to acceptEdits)',
       read: 'Read {{path}}', write: 'Write {{path}}', exec: 'Execute {{command}}',
       trustedProgram: 'Execute (trust this program): {{program}}', readonlyProof: 'Read-only (arguments checked): {{key}}', outsideWorkspace: 'Outside workspace',
       unknownEffects: 'Effects could not be inferred reliably', unparsedWarning: 'This call could not be split reliably. Review the full original input.',
