@@ -16,6 +16,7 @@ pub enum AskSource {
 pub enum DecisionSource {
     Builtin,
     Mode,
+    ReadonlyProof,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,12 +44,16 @@ pub enum UnitVerdict {
 #[serde(tag = "certainty", rename_all = "snake_case")]
 pub enum EffectDisplay {
     Inferred { effect: Effect },
+    ReadonlyProof { key: String },
     TrustedProgram { program: String },
 }
 
 impl EffectDisplay {
-    pub(crate) fn from_effect(effect: &Effect) -> Self {
+    pub(crate) fn from_effect(effect: &Effect, readonly_proof_key: Option<&str>) -> Self {
         match effect {
+            Effect::Exec { .. } if readonly_proof_key.is_some() => Self::ReadonlyProof {
+                key: readonly_proof_key.expect("checked above").to_string(),
+            },
             Effect::Exec { program, .. } => Self::TrustedProgram {
                 program: program.clone(),
             },

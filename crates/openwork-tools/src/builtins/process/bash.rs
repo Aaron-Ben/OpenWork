@@ -52,7 +52,11 @@ impl Tool for BashTool {
         session: &ToolSessionContext,
         input: &Self::Input,
     ) -> InvocationAnalysis {
-        analyze_bash(&input.command, &session.working_directory)
+        analyze_bash(
+            &input.command,
+            &session.working_directory,
+            session.environment.get("PATH").map(String::as_str),
+        )
     }
 
     async fn execute(

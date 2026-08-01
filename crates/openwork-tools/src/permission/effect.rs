@@ -33,6 +33,8 @@ impl Effect {
 pub struct AnalysisUnit {
     pub display: String,
     pub effects: Vec<Effect>,
+    pub allow_eligible: bool,
+    pub readonly_proof: Option<ReadonlyProof>,
 }
 
 impl AnalysisUnit {
@@ -40,8 +42,29 @@ impl AnalysisUnit {
         Self {
             display: display.into(),
             effects,
+            allow_eligible: true,
+            readonly_proof: None,
         }
     }
+
+    pub(crate) fn with_exec_evidence(
+        display: impl Into<String>,
+        effects: Vec<Effect>,
+        allow_eligible: bool,
+        readonly_proof: Option<ReadonlyProof>,
+    ) -> Self {
+        Self {
+            display: display.into(),
+            effects,
+            allow_eligible,
+            readonly_proof,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadonlyProof {
+    pub key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

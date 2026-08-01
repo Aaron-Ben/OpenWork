@@ -164,10 +164,11 @@ export type RuntimePermissionEffect =
 
 export type RuntimeEffectDisplay =
   | { certainty: 'inferred'; effect: RuntimePermissionEffect }
+  | { certainty: 'readonly_proof'; key: string }
   | { certainty: 'trusted_program'; program: string }
 
 export type RuntimeUnitVerdict =
-  | { decision: 'allow'; source: 'builtin' | 'mode'; ruleId: string | null }
+  | { decision: 'allow'; source: 'builtin' | 'mode' | 'readonly_proof'; ruleId: string | null }
   | {
       decision: 'ask'
       source: 'explicit_rule' | 'builtin_sensitive' | 'no_rule_covers' | 'unparsed'

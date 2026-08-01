@@ -219,11 +219,21 @@ describe('traceViewModel', () => {
       attributes: {
         permissionPolicy: 'ask',
         permissionDecision: 'allow',
+        permissionDecisionSource: 'readonly_proof',
+        readonlyProofKey: 'git status',
+        permissionRuleId: 'builtin.allow.workspace_root_read',
+        permissionRuleScope: 'builtin',
         executionMs: 12,
       },
     })
     expect(toolSections.p0.map((row) => row.key)).toEqual(['permissionDecision', 'executionMs'])
-    expect(toolSections.p1.map((row) => row.key)).toEqual(['permissionPolicy'])
+    expect(toolSections.p1.map((row) => row.key)).toEqual([
+      'permissionPolicy',
+      'permissionDecisionSource',
+      'readonlyProofKey',
+      'permissionRuleId',
+      'permissionRuleScope',
+    ])
 
     const compactionSections = buildTraceAttributeSections({
       ...compaction,

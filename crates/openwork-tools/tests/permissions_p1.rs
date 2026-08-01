@@ -26,7 +26,7 @@ fn acc_10_default_asks_for_write_and_accept_edits_allows_it() {
 }
 
 #[test]
-fn acc_12_p1_never_auto_allows_exec() {
+fn acc_12_no_mode_auto_allows_unprovable_exec() {
     let engine = PermissionEngine::for_workspace("/repo");
     let analysis = invocation(
         "cargo test",
@@ -327,7 +327,8 @@ async fn execution_permit_does_not_allow_a_workspace_symlink_escape() {
         )
         .expect("toolset");
     let invocation = ToolInvocation::new("read", serde_json::json!({ "path": "link.txt" }));
-    let Authorization::Allow { permit } = toolset.authorize(&invocation, PermissionMode::Default)
+    let Authorization::Allow { permit, .. } =
+        toolset.authorize(&invocation, PermissionMode::Default)
     else {
         panic!("lexical workspace read should be eligible for automatic execution")
     };
@@ -366,7 +367,7 @@ async fn approved_write_cannot_follow_a_workspace_symlink_outside() {
         "write",
         serde_json::json!({ "path": "link.txt", "content": "changed" }),
     );
-    let Authorization::Allow { permit } =
+    let Authorization::Allow { permit, .. } =
         toolset.authorize(&invocation, PermissionMode::AcceptEdits)
     else {
         panic!("lexical workspace write should reach execution enforcement")
@@ -410,7 +411,7 @@ async fn creatable_deep_path_cannot_cross_an_outside_directory_symlink() {
             "content": "must stay inside"
         }),
     );
-    let Authorization::Allow { permit } =
+    let Authorization::Allow { permit, .. } =
         toolset.authorize(&invocation, PermissionMode::AcceptEdits)
     else {
         panic!("lexical workspace write should reach execution enforcement")

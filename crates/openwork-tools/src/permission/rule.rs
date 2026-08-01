@@ -46,6 +46,17 @@ pub enum RuleScope {
     Session,
 }
 
+impl RuleScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Global => "global",
+            Self::Workspace => "workspace",
+            Self::Session => "session",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct PathPattern {
     source: String,

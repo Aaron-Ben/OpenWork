@@ -80,6 +80,12 @@ impl BuiltinRuleSet {
         }
 
         rules.push(Rule::new(
+            "builtin.allow.workspace_root_read",
+            RulePattern::Read(path_pattern(root.clone())),
+            RuleBehavior::Allow,
+            RuleScope::Builtin,
+        ));
+        rules.push(Rule::new(
             "builtin.allow.workspace_read",
             RulePattern::Read(path_pattern(format!("{root}/**"))),
             RuleBehavior::Allow,

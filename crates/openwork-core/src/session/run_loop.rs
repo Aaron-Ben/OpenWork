@@ -11,10 +11,10 @@ use openwork_models::model::{
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
-    Authorization, FinalizedToolset, PermissionMode, ToolCallContext as RuntimeToolCallContext,
-    ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation,
-    ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent, ToolResultStatus,
-    ToolValidationError,
+    Authorization, DecisionSource, FinalizedToolset, PermissionMode,
+    ToolCallContext as RuntimeToolCallContext, ToolCallId as RuntimeToolCallId, ToolErrorCode,
+    ToolInvocation, ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent,
+    ToolResultStatus, ToolValidationError,
 };
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -548,14 +548,27 @@ impl TurnRunner {
 
         let permission_mode = *self.request.permission_mode.borrow();
         let permit = match self.request.tools.authorize(&invocation, permission_mode) {
-            Authorization::Allow { permit } => {
+            Authorization::Allow { permit, evidence } => {
                 tool_trace.record_permission_policy("allow");
-                tool_trace.record_permission_decision("allow", "policy");
+                let source = match evidence.source {
+                    DecisionSource::ReadonlyProof => "readonly_proof",
+                    DecisionSource::Builtin | DecisionSource::Mode => "builtin",
+                };
+                tool_trace.record_permission_decision("allow", source);
+                if let (Some(rule_id), Some(rule_scope)) =
+                    (evidence.rule_id.as_ref(), evidence.rule_scope)
+                {
+                    tool_trace.record_permission_rule(rule_id.as_str(), rule_scope.as_str());
+                }
+                if let Some(key) = evidence.readonly_proof_key.as_deref() {
+                    tool_trace.record_readonly_proof(key);
+                }
                 permit
             }
             Authorization::Deny {
                 reason,
                 rule_id,
+                rule_scope,
                 silent,
             } => {
                 tool_trace.record_permission_policy("deny");
@@ -563,10 +576,7 @@ impl TurnRunner {
                 // everything else to the rule that produced them.
                 tool_trace
                     .record_permission_decision("deny", if silent { "builtin" } else { "rule" });
-                // TODO(P2): permissions.md §7 also requires `permissionRuleId`
-                // and `permissionRuleScope` on the span; the trace attribute
-                // does not exist yet.
-                let _ = rule_id;
+                tool_trace.record_permission_rule(rule_id.as_str(), rule_scope.as_str());
                 let result = ToolResult::denied(reason.clone());
                 self.append_tool_result(call, tool_call_id, result, tool_trace)
                     .await?;

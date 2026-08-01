@@ -22,8 +22,8 @@ use openwork_models::model::{
     ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultState,
 };
 use openwork_tools::{
-    AnalysisUnit, Effect, InvocationAnalysis, PermissionMode, PermissionProfile, Tool,
-    ToolCallContext, ToolExecutionError, ToolId, ToolInvocation,
+    AnalysisUnit, Effect, InvocationAnalysis, PermissionMode, PermissionProfile, ReadonlyProof,
+    Tool, ToolCallContext, ToolExecutionError, ToolId, ToolInvocation,
     ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
     ToolSessionContext,
 };
@@ -134,6 +134,28 @@ impl Tool for FakeTool {
             .get("path")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("fixture");
+        if let Some(key) = input
+            .get("readonlyProofKey")
+            .and_then(serde_json::Value::as_str)
+        {
+            return InvocationAnalysis::new(
+                raw.clone(),
+                vec![AnalysisUnit {
+                    display: raw.clone(),
+                    effects: vec![
+                        Effect::Exec {
+                            program: raw,
+                            args: Vec::new(),
+                        },
+                        Effect::read(&session.working_directory),
+                    ],
+                    allow_eligible: true,
+                    readonly_proof: Some(ReadonlyProof {
+                        key: key.to_string(),
+                    }),
+                }],
+            );
+        }
         let effect = match self.risk {
             ToolRisk::ReadOnly => Effect::read(session.normalize_effect_path(path)),
             ToolRisk::WorkspaceMutation => Effect::write(session.normalize_effect_path(path)),
@@ -2079,7 +2101,7 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
     );
     assert_eq!(
         tool.attributes.permission_decision_source.as_deref(),
-        Some("policy")
+        Some("builtin")
     );
     assert_eq!(tool.attributes.result_persisted, Some(true));
     assert_eq!(tool.attributes.artifact_count, Some(0));
@@ -2092,6 +2114,105 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
     ] {
         assert!(tool_attributes.get(removed).is_none());
     }
+}
+
+#[tokio::test]
+async fn acc_21_and_72_tool_trace_records_readonly_proof_and_rule_provenance() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call(
+                    "call-readonly",
+                    "bash",
+                    r#"{"readonlyProofKey":"git status"}"#,
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        vec![ToolResult::succeeded("clean")],
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let tool = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("readonly tool trace");
+    assert_eq!(
+        tool.attributes.permission_decision_source.as_deref(),
+        Some("readonly_proof")
+    );
+    assert_eq!(
+        tool.attributes.readonly_proof_key.as_deref(),
+        Some("git status")
+    );
+    assert_eq!(
+        tool.attributes.permission_rule_id.as_deref(),
+        Some("builtin.allow.workspace_root_read")
+    );
+    assert_eq!(
+        tool.attributes.permission_rule_scope.as_deref(),
+        Some("builtin")
+    );
+}
+
+#[tokio::test]
+async fn acc_72_builtin_denial_trace_records_rule_id_and_scope() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call(
+                    "call-denied",
+                    "write",
+                    r#"{"path":".git/config"}"#,
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let signals = fixture.trace.signals.lock().unwrap();
+    let tool = signals
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished),
+            _ => None,
+        })
+        .expect("denied tool trace");
+    assert_eq!(tool.status, TraceStatus::Denied);
+    assert_eq!(
+        tool.attributes.permission_decision_source.as_deref(),
+        Some("builtin")
+    );
+    assert!(
+        tool.attributes
+            .permission_rule_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("builtin.deny..git."))
+    );
+    assert_eq!(
+        tool.attributes.permission_rule_scope.as_deref(),
+        Some("builtin")
+    );
 }
 
 #[tokio::test]

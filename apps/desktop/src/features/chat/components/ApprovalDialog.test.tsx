@@ -19,9 +19,9 @@ const request: RuntimePermissionRequest = {
             certainty: 'inferred',
             effect: { kind: 'read', path: '/repo/README.md' },
           },
-          { certainty: 'trusted_program', program: 'cat' },
+          { certainty: 'readonly_proof', key: 'cat' },
         ],
-        verdict: { decision: 'allow', source: 'builtin', ruleId: 'builtin.read.workspace' },
+        verdict: { decision: 'allow', source: 'readonly_proof', ruleId: 'builtin.read.workspace' },
         outsideWorkspace: false,
       },
       {
@@ -56,9 +56,10 @@ describe('ApprovalCardView', () => {
     expect(markup).toContain('cat README.md')
     expect(markup).toContain('cargo test &gt; /tmp/log')
     expect(markup).toContain('读取 /repo/README.md')
+    expect(markup).toContain('只读（已核对参数）：cat')
     expect(markup).toContain('执行（信任该程序）：cargo')
     expect(markup).toContain('写入 /tmp/log')
-    expect(markup).toContain('内置规则已放行')
+    expect(markup).toContain('只读证明已放行')
     expect(markup).toContain('无规则覆盖')
     expect(markup).toContain('工作区外')
     expect(markup).toContain('原文')

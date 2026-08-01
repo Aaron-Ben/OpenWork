@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(toolset.definitions()[0].name, "echo");
         let invocation = ToolInvocation::new("echo", json!({"text": "hello"}));
         let permit = match toolset.authorize(&invocation, PermissionMode::Default) {
-            Authorization::Allow { permit } | Authorization::Ask { permit, .. } => permit,
+            Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
             Authorization::Deny { reason, .. } => panic!("echo denied: {reason}"),
             Authorization::Unavailable { message, .. } => {
                 panic!("echo could not be judged: {message}")

@@ -15,6 +15,9 @@ function effectLabel(t: TFunction, display: RuntimeEffectDisplay): string {
   if (display.certainty === 'trusted_program') {
     return t('tool.permission.trustedProgram', { program: display.program })
   }
+  if (display.certainty === 'readonly_proof') {
+    return t('tool.permission.readonlyProof', { key: display.key })
+  }
 
   switch (display.effect.kind) {
     case 'read':
@@ -31,9 +34,14 @@ function effectLabel(t: TFunction, display: RuntimeEffectDisplay): string {
 function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
   if (verdict.decision === 'deny') return t('tool.permission.deniedByRule')
   if (verdict.decision === 'allow') {
-    return verdict.source === 'mode'
-      ? t('tool.permission.allowedByMode')
-      : t('tool.permission.allowedByBuiltin')
+    switch (verdict.source) {
+      case 'mode':
+        return t('tool.permission.allowedByMode')
+      case 'readonly_proof':
+        return t('tool.permission.allowedByReadonlyProof')
+      case 'builtin':
+        return t('tool.permission.allowedByBuiltin')
+    }
   }
   switch (verdict.source) {
     case 'explicit_rule':
@@ -51,9 +59,11 @@ function EffectRow({ display }: { display: RuntimeEffectDisplay }) {
   const { t } = useTranslation()
   const Icon = display.certainty === 'trusted_program'
     ? Terminal
-    : display.effect.kind === 'write'
-      ? Pencil
-      : FileText
+    : display.certainty === 'readonly_proof'
+      ? FileText
+      : display.effect.kind === 'write'
+        ? Pencil
+        : FileText
   return (
     <li className="flex min-w-0 items-start gap-2 text-xs text-ink-soft">
       <Icon className="mt-0.5 size-3.5 shrink-0 text-ink-faint" />

@@ -5,8 +5,10 @@ use tree_sitter::{Node, Parser};
 use crate::policy::lexical_normalize;
 
 use super::super::{AnalysisUnit, Effect, InvocationAnalysis};
+use super::eligibility::{EligibilityInput, changes_working_directory, is_allow_eligible};
+use super::readonly;
 
-pub(crate) fn analyze(raw: &str, workspace: &Path) -> InvocationAnalysis {
+pub(crate) fn analyze(raw: &str, workspace: &Path, path: Option<&str>) -> InvocationAnalysis {
     let mut parser = Parser::new();
     if parser
         .set_language(&tree_sitter_bash::LANGUAGE.into())
@@ -23,8 +25,19 @@ pub(crate) fn analyze(raw: &str, workspace: &Path) -> InvocationAnalysis {
     }
 
     let mut units = Vec::new();
-    if collect_units(root, raw.as_bytes(), workspace, &mut units).is_err() || units.is_empty() {
+    if collect_units(root, raw.as_bytes(), workspace, path, &mut units).is_err() || units.is_empty()
+    {
         return InvocationAnalysis::unparsed(raw);
+    }
+    if units.iter().any(|unit| {
+        unit.effects.iter().any(|effect| match effect {
+            Effect::Exec { program, args } => changes_working_directory(program, args),
+            _ => false,
+        })
+    }) {
+        for unit in &mut units {
+            unit.allow_eligible = false;
+        }
     }
     InvocationAnalysis::new(raw, units)
 }
@@ -33,28 +46,29 @@ fn collect_units(
     node: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    path: Option<&str>,
     units: &mut Vec<AnalysisUnit>,
 ) -> Result<(), ()> {
     match node.kind() {
         "program" | "list" | "pipeline" | "subshell" => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                collect_units(child, source, workspace, units)?;
+                collect_units(child, source, workspace, path, units)?;
             }
             Ok(())
         }
         "command" => {
-            units.push(analyze_command(node, source, workspace)?);
+            units.push(analyze_command(node, source, workspace, path)?);
             Ok(())
         }
         "redirected_statement" => {
             let body = node.child_by_field_name("body").ok_or(())?;
             let before = units.len();
-            collect_units(body, source, workspace, units)?;
+            collect_units(body, source, workspace, path, units)?;
             if units.len() != before + 1 {
                 return Err(());
             }
-            let (effects, heredoc_units) = analyze_redirects(node, source, workspace)?;
+            let (effects, heredoc_units) = analyze_redirects(node, source, workspace, path)?;
             units[before].effects.extend(effects);
             units[before].display = node_text(node, source)?.to_string();
             units.extend(heredoc_units);
@@ -65,7 +79,12 @@ fn collect_units(
     }
 }
 
-fn analyze_command(node: Node<'_>, source: &[u8], workspace: &Path) -> Result<AnalysisUnit, ()> {
+fn analyze_command(
+    node: Node<'_>,
+    source: &[u8],
+    workspace: &Path,
+    path: Option<&str>,
+) -> Result<AnalysisUnit, ()> {
     let name = node.child_by_field_name("name").ok_or(())?;
     let program = static_token(name, source)?;
     if program.is_empty() {
@@ -82,44 +101,43 @@ fn analyze_command(node: Node<'_>, source: &[u8], workspace: &Path) -> Result<An
         program: program.clone(),
         args: args.clone(),
     }];
-    if Path::new(&program)
-        .file_name()
-        .is_some_and(|name| name == "cat")
-    {
-        effects.extend(cat_read_effects(&args, workspace));
+    let proof = readonly::prove(&program, &args, workspace);
+    if let Some(proof) = &proof {
+        effects.extend(proof.effects.iter().cloned());
     }
-    let (redirection_effects, heredoc_units) = analyze_redirects(node, source, workspace)?;
+    let (redirection_effects, heredoc_units) = analyze_redirects(node, source, workspace, path)?;
     if !heredoc_units.is_empty() {
         return Err(());
     }
     effects.extend(redirection_effects);
 
-    Ok(AnalysisUnit::new(node_text(node, source)?, effects))
+    let has_leading_assignment = has_leading_assignment(node);
+    let allow_eligible = is_allow_eligible(EligibilityInput {
+        program: &program,
+        args: &args,
+        workspace,
+        path,
+        has_leading_assignment,
+    });
+    Ok(AnalysisUnit::with_exec_evidence(
+        node_text(node, source)?,
+        effects,
+        allow_eligible,
+        proof.map(|proof| proof.marker),
+    ))
 }
 
-fn cat_read_effects(args: &[String], workspace: &Path) -> Vec<Effect> {
-    let mut operands = false;
-    args.iter()
-        .filter_map(|argument| {
-            if argument == "--" {
-                operands = true;
-                return None;
-            }
-            if !operands && argument.starts_with('-') {
-                return None;
-            }
-            if argument == "-" {
-                return None;
-            }
-            Some(Effect::read(resolve_effect_path(workspace, argument)))
-        })
-        .collect()
+fn has_leading_assignment(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| child.kind() == "variable_assignment")
 }
 
 fn analyze_redirects(
     node: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    path: Option<&str>,
 ) -> Result<(Vec<Effect>, Vec<AnalysisUnit>), ()> {
     let mut effects = Vec::new();
     let mut heredoc_units = Vec::new();
@@ -130,7 +148,7 @@ fn analyze_redirects(
                 effects.extend(file_redirect_effects(redirect, source, workspace)?);
             }
             "heredoc_redirect" => {
-                collect_heredoc_units(redirect, source, workspace, &mut heredoc_units)?;
+                collect_heredoc_units(redirect, source, workspace, path, &mut heredoc_units)?;
             }
             _ => return Err(()),
         }
@@ -168,6 +186,7 @@ fn collect_heredoc_units(
     redirect: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    path: Option<&str>,
     units: &mut Vec<AnalysisUnit>,
 ) -> Result<(), ()> {
     let mut cursor = redirect.walk();
@@ -181,7 +200,7 @@ fn collect_heredoc_units(
                         "heredoc_content" => {}
                         "command_substitution" => {
                             let command = body_child.named_child(0).ok_or(())?;
-                            collect_units(command, source, workspace, units)?;
+                            collect_units(command, source, workspace, path, units)?;
                         }
                         _ => return Err(()),
                     }
@@ -270,7 +289,7 @@ mod tests {
         ];
 
         for (raw, expected) in cases {
-            let analysis = analyze(raw, Path::new("/repo"));
+            let analysis = analyze(raw, Path::new("/repo"), Some("/usr/bin:/bin"));
             assert!(!analysis.unparsed, "input unexpectedly unparsed: {raw}");
             assert_eq!(analysis.units.len(), expected, "input: {raw}");
         }
@@ -278,13 +297,21 @@ mod tests {
 
     #[test]
     fn acc_22_unquoted_heredoc_commands_are_independent_units() {
-        let analysis = analyze("cat <<EOF\n$(whoami)\nEOF", Path::new("/repo"));
+        let analysis = analyze(
+            "cat <<EOF\n$(whoami)\nEOF",
+            Path::new("/repo"),
+            Some("/usr/bin:/bin"),
+        );
 
         assert!(!analysis.unparsed);
         assert_eq!(analysis.units.len(), 2);
         assert_eq!(analysis.units[1].display, "whoami");
 
-        let quoted = analyze("cat <<'EOF'\n$(whoami)\nEOF", Path::new("/repo"));
+        let quoted = analyze(
+            "cat <<'EOF'\n$(whoami)\nEOF",
+            Path::new("/repo"),
+            Some("/usr/bin:/bin"),
+        );
         assert!(!quoted.unparsed);
         assert_eq!(quoted.units.len(), 1);
     }
@@ -292,7 +319,7 @@ mod tests {
     #[test]
     fn acc_24_supported_parser_rejection_and_syntax_failure_share_unparsed_path() {
         for raw in ["echo $(whoami)", "echo 'unterminated"] {
-            let analysis = analyze(raw, Path::new("/repo"));
+            let analysis = analyze(raw, Path::new("/repo"), Some("/usr/bin:/bin"));
             assert!(analysis.unparsed, "input should be unparsed: {raw}");
             assert_eq!(analysis.units.len(), 1);
             assert_eq!(analysis.units[0].display, raw);
@@ -301,8 +328,12 @@ mod tests {
 
     #[test]
     fn acc_26_and_52_redirection_is_a_separate_effect() {
-        let plain = analyze("cargo test", Path::new("/repo"));
-        let redirected = analyze("cargo test > /tmp/log", Path::new("/repo"));
+        let plain = analyze("cargo test", Path::new("/repo"), Some("/usr/bin:/bin"));
+        let redirected = analyze(
+            "cargo test > /tmp/log",
+            Path::new("/repo"),
+            Some("/usr/bin:/bin"),
+        );
 
         assert!(!plain.unparsed);
         assert!(!redirected.unparsed);
@@ -317,7 +348,11 @@ mod tests {
 
     #[test]
     fn acc_01_cat_and_acc_52_output_path_are_both_extracted() {
-        let analysis = analyze("cat a.txt > b.txt", Path::new("/repo"));
+        let analysis = analyze(
+            "cat a.txt > b.txt",
+            Path::new("/repo"),
+            Some("/usr/bin:/bin"),
+        );
 
         assert!(!analysis.unparsed);
         assert!(

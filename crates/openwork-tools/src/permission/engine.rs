@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::builtin::BuiltinRuleSet;
 use super::{
     ApprovalCard, AskSource, CardUnit, DecisionSource, Effect, EffectDisplay, ExecutionPermit,
-    InvocationAnalysis, Rule, RuleBehavior, RuleId, UnitVerdict,
+    InvocationAnalysis, Rule, RuleBehavior, RuleId, RuleScope, UnitVerdict,
 };
 use crate::ToolErrorCode;
 
@@ -26,6 +26,7 @@ impl Default for PermissionMode {
 pub enum Authorization {
     Allow {
         permit: ExecutionPermit,
+        evidence: AuthorizationEvidence,
     },
     Ask {
         card: ApprovalCard,
@@ -38,6 +39,7 @@ pub enum Authorization {
     Deny {
         reason: String,
         rule_id: RuleId,
+        rule_scope: RuleScope,
         silent: bool,
     },
     /// The call could not be judged at all — unknown tool, malformed input, or
@@ -50,6 +52,14 @@ pub enum Authorization {
         code: ToolErrorCode,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationEvidence {
+    pub source: DecisionSource,
+    pub rule_id: Option<RuleId>,
+    pub rule_scope: Option<RuleScope>,
+    pub readonly_proof_key: Option<String>,
 }
 
 pub struct PermissionEngine {
@@ -78,48 +88,64 @@ impl PermissionEngine {
     pub fn authorize(&self, mode: PermissionMode, analysis: &InvocationAnalysis) -> Authorization {
         let permit = ExecutionPermit::new(analysis.effects().cloned().collect());
         let mut units = Vec::with_capacity(analysis.units.len());
+        let mut evaluated_units = Vec::with_capacity(analysis.units.len());
 
         for unit in &analysis.units {
-            let verdict = if analysis.unparsed {
-                UnitVerdict::Ask {
+            let evaluated = if analysis.unparsed {
+                EvaluatedUnit::ask(UnitVerdict::Ask {
                     source: AskSource::Unparsed,
                     rule_id: None,
-                }
+                })
             } else {
-                self.authorize_unit(mode, &unit.effects)
+                self.authorize_unit(mode, unit)
             };
             units.push(CardUnit {
                 display: unit.display.clone(),
                 effects: unit
                     .effects
                     .iter()
-                    .map(EffectDisplay::from_effect)
+                    .map(|effect| {
+                        EffectDisplay::from_effect(
+                            effect,
+                            unit.readonly_proof.as_ref().map(|proof| proof.key.as_str()),
+                        )
+                    })
                     .collect(),
                 outside_workspace: unit.effects.iter().any(|effect| {
                     effect
                         .path()
                         .is_some_and(|path| !self.is_workspace_path(path))
                 }),
-                verdict,
+                verdict: evaluated.verdict.clone(),
             });
+            evaluated_units.push(evaluated);
         }
 
-        if let Some((rule_id, silent)) = units.iter().find_map(|unit| match &unit.verdict {
-            UnitVerdict::Deny { rule_id, silent } => Some((rule_id.clone(), *silent)),
-            _ => None,
-        }) {
+        if let Some(evaluated) = evaluated_units
+            .iter()
+            .find(|unit| matches!(unit.verdict, UnitVerdict::Deny { .. }))
+        {
+            let UnitVerdict::Deny { rule_id, silent } = &evaluated.verdict else {
+                unreachable!("filtered to deny")
+            };
             return Authorization::Deny {
                 reason: format!("permission denied by rule {}", rule_id.as_str()),
-                rule_id,
-                silent,
+                rule_id: rule_id.clone(),
+                rule_scope: evaluated
+                    .rule_scope
+                    .expect("rule denials always carry their scope"),
+                silent: *silent,
             };
         }
 
-        if units
+        if evaluated_units
             .iter()
             .all(|unit| matches!(unit.verdict, UnitVerdict::Allow { .. }))
         {
-            return Authorization::Allow { permit };
+            return Authorization::Allow {
+                permit,
+                evidence: aggregate_allow_evidence(&evaluated_units),
+            };
         }
 
         Authorization::Ask {
@@ -132,23 +158,92 @@ impl PermissionEngine {
         }
     }
 
-    fn authorize_unit(&self, mode: PermissionMode, effects: &[Effect]) -> UnitVerdict {
-        if effects.is_empty() {
-            return UnitVerdict::Ask {
+    fn authorize_unit(&self, mode: PermissionMode, unit: &super::AnalysisUnit) -> EvaluatedUnit {
+        if unit.effects.is_empty() {
+            return EvaluatedUnit::ask(UnitVerdict::Ask {
                 source: AskSource::NoRuleCovers,
                 rule_id: None,
-            };
+            });
         }
 
-        let mut verdicts = effects
+        let matched = unit
+            .effects
             .iter()
             .map(|effect| self.authorize_effect(mode, effect))
             .collect::<Vec<_>>();
-        verdicts.sort_by_key(verdict_severity);
-        verdicts.pop().expect("non-empty effects")
+
+        if let Some(strongest) = matched
+            .iter()
+            .flatten()
+            .max_by_key(|result| verdict_severity(&result.verdict))
+            .filter(|result| !matches!(result.verdict, UnitVerdict::Allow { .. }))
+        {
+            return strongest.clone();
+        }
+
+        let has_exec = unit
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Exec { .. }));
+        if has_exec && !unit.allow_eligible {
+            return EvaluatedUnit::ask(UnitVerdict::Ask {
+                source: AskSource::NoRuleCovers,
+                rule_id: None,
+            });
+        }
+
+        if has_exec && unit.readonly_proof.is_some() {
+            if unit
+                .effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Write { .. }))
+            {
+                return EvaluatedUnit::ask(UnitVerdict::Ask {
+                    source: AskSource::NoRuleCovers,
+                    rule_id: None,
+                });
+            }
+            let all_reads_allowed =
+                unit.effects
+                    .iter()
+                    .zip(matched.iter())
+                    .all(|(effect, result)| match effect {
+                        Effect::Exec { .. } => result.is_none(),
+                        Effect::Read { .. } => result.as_ref().is_some_and(|result| {
+                            matches!(result.verdict, UnitVerdict::Allow { .. })
+                        }),
+                        Effect::Write { .. } => false,
+                    });
+            if all_reads_allowed {
+                let supporting_rule = matched.iter().flatten().next();
+                return EvaluatedUnit {
+                    verdict: UnitVerdict::Allow {
+                        source: DecisionSource::ReadonlyProof,
+                        rule_id: supporting_rule
+                            .as_ref()
+                            .and_then(|result| verdict_rule_id(&result.verdict)),
+                    },
+                    rule_scope: supporting_rule.and_then(|result| result.rule_scope),
+                    readonly_proof_key: unit.readonly_proof.as_ref().map(|proof| proof.key.clone()),
+                };
+            }
+        }
+
+        if matched.iter().all(Option::is_some) {
+            return matched
+                .into_iter()
+                .flatten()
+                .max_by_key(|result| verdict_severity(&result.verdict))
+                .expect("non-empty effects");
+        }
+
+        EvaluatedUnit::ask(UnitVerdict::Ask {
+            source: AskSource::NoRuleCovers,
+            rule_id: None,
+        })
     }
 
-    fn authorize_effect(&self, mode: PermissionMode, effect: &Effect) -> UnitVerdict {
+    fn authorize_effect(&self, mode: PermissionMode, effect: &Effect) -> Option<EvaluatedUnit> {
         let strongest = self
             .builtins
             .rules()
@@ -160,22 +255,93 @@ impl PermissionEngine {
 
         if let Some(rule) = strongest {
             if matches!(effect, Effect::Exec { .. }) && rule.behavior == RuleBehavior::Allow {
-                return UnitVerdict::Ask {
+                return Some(EvaluatedUnit::ask(UnitVerdict::Ask {
                     source: AskSource::NoRuleCovers,
                     rule_id: None,
-                };
+                }));
             }
-            return verdict_from_rule(rule);
+            return Some(EvaluatedUnit {
+                verdict: verdict_from_rule(rule),
+                rule_scope: Some(rule.scope),
+                readonly_proof_key: None,
+            });
         }
 
-        UnitVerdict::Ask {
-            source: AskSource::NoRuleCovers,
-            rule_id: None,
-        }
+        None
     }
 
     fn is_workspace_path(&self, path: &Path) -> bool {
         path.starts_with(self.builtins.workspace())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EvaluatedUnit {
+    verdict: UnitVerdict,
+    rule_scope: Option<RuleScope>,
+    readonly_proof_key: Option<String>,
+}
+
+impl EvaluatedUnit {
+    fn ask(verdict: UnitVerdict) -> Self {
+        Self {
+            verdict,
+            rule_scope: None,
+            readonly_proof_key: None,
+        }
+    }
+}
+
+fn aggregate_allow_evidence(units: &[EvaluatedUnit]) -> AuthorizationEvidence {
+    let source = if units.iter().any(|unit| {
+        matches!(
+            unit.verdict,
+            UnitVerdict::Allow {
+                source: DecisionSource::ReadonlyProof,
+                ..
+            }
+        )
+    }) {
+        DecisionSource::ReadonlyProof
+    } else if units.iter().any(|unit| {
+        matches!(
+            unit.verdict,
+            UnitVerdict::Allow {
+                source: DecisionSource::Mode,
+                ..
+            }
+        )
+    }) {
+        DecisionSource::Mode
+    } else {
+        DecisionSource::Builtin
+    };
+    let rule = units
+        .iter()
+        .find(|unit| verdict_rule_id(&unit.verdict).is_some());
+    let mut proof_keys = units
+        .iter()
+        .filter_map(|unit| unit.readonly_proof_key.as_deref())
+        .collect::<Vec<_>>();
+    proof_keys.sort_unstable();
+    proof_keys.dedup();
+
+    AuthorizationEvidence {
+        source,
+        rule_id: rule.and_then(|unit| verdict_rule_id(&unit.verdict)),
+        rule_scope: rule.and_then(|unit| unit.rule_scope),
+        // A Tool Call may contain multiple independently proved shell units.
+        // Single-unit calls retain the exact table key; compound calls keep a
+        // stable comma-separated set so every contributing key remains
+        // searchable from the one string field defined by permissions.md §7.
+        readonly_proof_key: (!proof_keys.is_empty()).then(|| proof_keys.join(",")),
+    }
+}
+
+fn verdict_rule_id(verdict: &UnitVerdict) -> Option<RuleId> {
+    match verdict {
+        UnitVerdict::Allow { rule_id, .. } | UnitVerdict::Ask { rule_id, .. } => rule_id.clone(),
+        UnitVerdict::Deny { rule_id, .. } => Some(rule_id.clone()),
     }
 }
 

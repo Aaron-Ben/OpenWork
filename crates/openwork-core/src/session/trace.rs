@@ -270,6 +270,12 @@ pub struct ToolTraceAttributesV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_decision_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub readonly_proof_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_rule_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_rule_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_count: Option<u64>,
@@ -470,6 +476,9 @@ impl ToolTraceAttributesV1 {
             permission_policy: None,
             permission_decision: None,
             permission_decision_source: None,
+            readonly_proof_key: None,
+            permission_rule_id: None,
+            permission_rule_scope: None,
             execution_ms: None,
             artifact_count: None,
             error_retryable: None,
@@ -1109,6 +1118,15 @@ impl ToolCallTraceGuard {
         self.attributes.permission_decision_source = Some(bounded(source, MAX_TRACE_STRING_CHARS));
     }
 
+    pub fn record_readonly_proof(&mut self, key: &str) {
+        self.attributes.readonly_proof_key = Some(bounded(key, MAX_TRACE_STRING_CHARS));
+    }
+
+    pub fn record_permission_rule(&mut self, rule_id: &str, rule_scope: &str) {
+        self.attributes.permission_rule_id = Some(bounded(rule_id, MAX_TRACE_STRING_CHARS));
+        self.attributes.permission_rule_scope = Some(bounded(rule_scope, MAX_TRACE_STRING_CHARS));
+    }
+
     pub fn record_permission_wait_ms(&mut self, duration_ms: i64) {
         self.permission_wait_ms = Some(duration_ms.max(0));
     }
@@ -1480,6 +1498,22 @@ mod tests {
                 ..TraceFlushResult::default()
             }
         }
+    }
+
+    #[test]
+    fn tool_trace_attributes_accept_legacy_json_without_p2_permission_fields() {
+        let attributes: ToolTraceAttributesV1 = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "permissionPolicy": "allow",
+            "permissionDecision": "allow",
+            "permissionDecisionSource": "builtin",
+            "artifactTypes": []
+        }))
+        .expect("legacy tool attributes");
+
+        assert!(attributes.readonly_proof_key.is_none());
+        assert!(attributes.permission_rule_id.is_none());
+        assert!(attributes.permission_rule_scope.is_none());
     }
 
     #[test]

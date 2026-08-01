@@ -594,7 +594,7 @@ function TraceAttributeList({ rows }: { rows: TraceAttributeRow[] }) {
 
 const LOCALIZED_TRACE_ATTRIBUTE_VALUES = new Set([
   'finishReason', 'errorPhase', 'deliveryState', 'permissionPolicy',
-  'permissionDecision', 'permissionDecisionSource', 'thinkingMode', 'toolChoice',
+  'permissionDecision', 'permissionDecisionSource', 'permissionRuleScope', 'thinkingMode', 'toolChoice',
 ])
 
 function localizeTraceAttributeValue(row: TraceAttributeRow, t: TFunction): string {
