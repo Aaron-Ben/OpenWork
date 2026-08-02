@@ -10,7 +10,9 @@ pub const SESSION_UPDATE_BATCH_EVENT: &str = "openwork://session-update-batch";
 const LIVE_UPDATE_BATCH_INTERVAL: Duration = Duration::from_millis(50);
 
 enum BridgeEmission {
-    Single(SessionUpdateEnvelope),
+    // Boxed so the enum stays pointer-sized: the batch variant only carries a
+    // Vec, and without this every emission would be as large as one envelope.
+    Single(Box<SessionUpdateEnvelope>),
     LiveBatch(Vec<SessionUpdateEnvelope>),
 }
 
@@ -35,7 +37,7 @@ impl UpdateBatcher {
         if let Some(batch) = self.flush() {
             emissions.push(batch);
         }
-        emissions.push(BridgeEmission::Single(payload));
+        emissions.push(BridgeEmission::Single(Box::new(payload)));
         emissions
     }
 
@@ -56,7 +58,7 @@ impl UpdateBatcher {
 fn emit(app: &AppHandle, emission: BridgeEmission) {
     match emission {
         BridgeEmission::Single(payload) => {
-            let _ = app.emit(SESSION_UPDATE_EVENT, payload);
+            let _ = app.emit(SESSION_UPDATE_EVENT, *payload);
         }
         BridgeEmission::LiveBatch(payloads) => {
             let _ = app.emit(SESSION_UPDATE_BATCH_EVENT, payloads);
