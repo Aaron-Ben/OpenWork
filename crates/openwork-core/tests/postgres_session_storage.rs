@@ -322,6 +322,8 @@ async fn trace_list_includes_turnless_compaction_traces() {
     assert_eq!(row.status, "completed");
     assert_eq!(row.span_count, 1);
     assert_eq!(row.model_call_count, 0);
+    // 压缩 span 记录了 30 input + 20 output，独立 Trace 的 token 合计同样来自 span 实测。
+    assert_eq!(row.total_tokens, 50);
     assert!(row.started_at.ends_with("+08:00"), "{}", row.started_at);
 }
 
@@ -1189,6 +1191,9 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .expect("turn trace summary");
     assert_eq!(listed_trace.trace_id, turn_id.as_str());
     assert_eq!(listed_trace.span_count, 2);
+    // 模型 span 记录 11 + 7，工具 span 未记录 token，合计以实际加载的 span 为准。
+    assert_eq!(listed_trace.total_tokens, 18);
+    assert_eq!(loaded_trace.summary.total_tokens, 18);
 
     let interrupted_turn_id = TurnId::new(unique("turn-interrupted"));
     storage

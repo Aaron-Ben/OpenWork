@@ -54,6 +54,7 @@ function trace(spans: RuntimeTraceSpan[]): RuntimeTurnTrace {
       modelSubmissionCount: spans.filter((span) => span.kind === 'model_call').length,
       toolCallCount: spans.filter((span) => span.kind === 'tool_call').length,
       spanCount: spans.length,
+      totalTokens: 0,
       startedAt: '2026-07-22T00:00:00Z',
       endedAt: '2026-07-22T00:00:01Z',
     },

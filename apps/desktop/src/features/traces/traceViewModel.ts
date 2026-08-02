@@ -299,15 +299,32 @@ export function buildTraceTree(spans: RuntimeTraceSpan[]): TraceTree {
   return { roots, models, orphans }
 }
 
+export interface WaterfallRange {
+  startMs: number
+  endMs: number
+}
+
+interface SpanTiming {
+  span: RuntimeTraceSpan
+  start: number
+  end: number
+}
+
+function parseSpanTimings(spans: RuntimeTraceSpan[], now: number): SpanTiming[] {
+  return spans
+    .map((span) => {
+      const start = Date.parse(span.startedAt)
+      const end = span.endedAt ? Date.parse(span.endedAt) : now
+      return { span, start, end: Math.max(start, end) }
+    })
+    .filter(({ start, end }) => Number.isFinite(start) && Number.isFinite(end))
+}
+
 export function buildWaterfallRows(
   spans: RuntimeTraceSpan[],
   now = Date.now(),
 ): WaterfallRow[] {
-  const parsed = spans.map((span) => {
-    const start = Date.parse(span.startedAt)
-    const end = span.endedAt ? Date.parse(span.endedAt) : now
-    return { span, start, end: Math.max(start, end) }
-  }).filter(({ start, end }) => Number.isFinite(start) && Number.isFinite(end))
+  const parsed = parseSpanTimings(spans, now)
   if (parsed.length === 0) return []
 
   const rangeStart = Math.min(...parsed.map((item) => item.start))
@@ -321,6 +338,19 @@ export function buildWaterfallRows(
       widthPercent: Math.max(0.75, ((end - start) / range) * 100),
       durationMs: Math.max(0, end - start),
     }))
+}
+
+/** 瀑布的时间范围（刻度尺用），与 buildWaterfallRows 共用同一套解析与边界。 */
+export function buildWaterfallRange(
+  spans: RuntimeTraceSpan[],
+  now = Date.now(),
+): WaterfallRange | null {
+  const parsed = parseSpanTimings(spans, now)
+  if (parsed.length === 0) return null
+  return {
+    startMs: Math.min(...parsed.map((item) => item.start)),
+    endMs: Math.max(...parsed.map((item) => item.end)),
+  }
 }
 
 function compareSpanStart(left: RuntimeTraceSpan, right: RuntimeTraceSpan): number {
@@ -342,4 +372,52 @@ export function shouldPollTrace(
 ): boolean {
   return summaryStatus === 'running'
     || spans.some((span) => span.status === 'running' || span.endedAt === null)
+}
+
+export type TraceSortKey =
+  | 'startedAt'
+  | 'durationMs'
+  | 'modelSubmissionCount'
+  | 'toolCallCount'
+  | 'totalTokens'
+  | 'resolvedModelName'
+
+export type TraceSortDirection = 'asc' | 'desc'
+
+export interface TraceSort {
+  key: TraceSortKey
+  direction: TraceSortDirection
+}
+
+/** 默认与后端 `ORDER BY started_at DESC` 一致，首次渲染不改变既有顺序。 */
+export const DEFAULT_TRACE_SORT: TraceSort = { key: 'startedAt', direction: 'desc' }
+
+function traceSortValue(item: TraceListItem, key: TraceSortKey): number | string | null {
+  switch (key) {
+    case 'startedAt': return item.startedAt
+    case 'durationMs': return item.durationMs
+    case 'modelSubmissionCount': return item.modelSubmissionCount
+    case 'toolCallCount': return item.toolCallCount
+    case 'totalTokens': return item.totalTokens
+    case 'resolvedModelName': return item.resolvedModelName || null
+  }
+}
+
+/** 客户端排序；空值（运行中的耗时、无模型名）无论方向都沉底，traceId 兜底保证稳定。 */
+export function sortTraceListItems(
+  items: TraceListItem[],
+  sort: TraceSort,
+): TraceListItem[] {
+  const factor = sort.direction === 'asc' ? 1 : -1
+  return [...items].sort((left, right) => {
+    const a = traceSortValue(left, sort.key)
+    const b = traceSortValue(right, sort.key)
+    if (a == null && b == null) return left.traceId.localeCompare(right.traceId)
+    if (a == null) return 1
+    if (b == null) return -1
+    const compared = typeof a === 'string' || typeof b === 'string'
+      ? String(a).localeCompare(String(b))
+      : a - b
+    return compared !== 0 ? compared * factor : left.traceId.localeCompare(right.traceId)
+  })
 }

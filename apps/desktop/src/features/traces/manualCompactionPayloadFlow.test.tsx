@@ -61,7 +61,7 @@ describe('manual compaction payload flow', () => {
     const summary: RuntimeTraceSummary = {
       traceId: 'trace-manual', turnId: null, sessionId: 'session-1', turnSequence: null,
       status: 'completed', resolvedModelName: 'test-model', modelCallCount: 0,
-      modelSubmissionCount: 0, toolCallCount: 0, spanCount: 2,
+      modelSubmissionCount: 0, toolCallCount: 0, spanCount: 2, totalTokens: 1_380,
       startedAt: '2026-07-27T00:00:00+08:00', endedAt: '2026-07-27T00:00:02+08:00',
     }
     const summarySpan = span({

@@ -160,7 +160,7 @@ describe('SpanDetail', () => {
       summary: {
         traceId: 'trace-manual', turnId: null, sessionId: 'session-1', turnSequence: null,
         status: 'completed', resolvedModelName: 'deepseek-v4-flash', modelCallCount: 0,
-        modelSubmissionCount: 0, toolCallCount: 0, spanCount: 2,
+        modelSubmissionCount: 0, toolCallCount: 0, spanCount: 2, totalTokens: 0,
         startedAt: '2026-07-20T00:00:00.000Z', endedAt: '2026-07-20T00:00:02.000Z',
       },
       spans: [rootSpan, summarySpan],

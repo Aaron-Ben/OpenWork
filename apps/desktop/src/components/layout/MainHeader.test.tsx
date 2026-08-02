@@ -10,8 +10,9 @@ describe('MainHeader', () => {
     )
 
     expect(markup).toContain('data-main-header="true"')
+    expect(markup).toContain('data-tauri-drag-region="deep"')
     expect(markup).toContain('分析 model-provider-v1 设计')
-    expect(markup).toContain('h-16')
+    expect(markup).toContain('h-12')
     expect(markup).not.toContain('aria-label="展开侧栏"')
     expect(markup).not.toContain('aria-label="会话操作"')
   })

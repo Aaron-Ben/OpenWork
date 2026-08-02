@@ -15,6 +15,8 @@ describe('Sidebar', () => {
     )
 
     expect(markup).toContain('OpenWork')
+    expect(markup).not.toContain('>OW<')
+    expect(markup).toContain('data-tauri-drag-region="deep"')
     expect(markup).toContain('项目')
     expect(markup).toContain('OpenWork')
     expect(markup).toContain('aria-label="打开文件夹"')

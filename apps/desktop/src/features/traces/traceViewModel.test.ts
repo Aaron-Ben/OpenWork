@@ -7,9 +7,12 @@ import {
   buildTraceAttributeSections,
   buildTraceListItems,
   buildTraceTree,
+  buildWaterfallRange,
   buildWaterfallRows,
+  DEFAULT_TRACE_SORT,
   filterTraceListItems,
   shouldPollTrace,
+  sortTraceListItems,
   TRACE_ATTRIBUTE_KEYS,
   TRACE_ATTRIBUTE_PLACEMENT,
 } from './traceViewModel'
@@ -26,6 +29,7 @@ const summaries: RuntimeTraceSummary[] = [
     modelSubmissionCount: 1,
     toolCallCount: 1,
     spanCount: 2,
+    totalTokens: 30,
     startedAt: '2026-07-18T00:00:00.000Z',
     endedAt: '2026-07-18T00:00:02.000Z',
   },
@@ -191,6 +195,36 @@ describe('traceViewModel', () => {
     expect(rows[0]).toMatchObject({ span: model, leftPercent: 0, widthPercent: 100, durationMs: 2000 })
     expect(rows[1].leftPercent).toBe(25)
     expect(rows[1].widthPercent).toBe(25)
+  })
+
+  it('exposes the waterfall time range for the ruler', () => {
+    const range = buildWaterfallRange([model, tool], Date.parse('2026-07-18T00:00:03.000Z'))
+
+    expect(range).toEqual({
+      startMs: Date.parse('2026-07-18T00:00:00.000Z'),
+      endMs: Date.parse('2026-07-18T00:00:02.000Z'),
+    })
+    expect(buildWaterfallRange([], Date.now())).toBeNull()
+  })
+
+  it('sorts the run table with empty values always sinking to the bottom', () => {
+    const items = buildTraceListItems([
+      { ...summaries[0], traceId: 'a', modelSubmissionCount: 2, toolCallCount: 1, totalTokens: 100, startedAt: '2026-07-18T00:00:00.000Z', endedAt: '2026-07-18T00:00:01.000Z' },
+      { ...summaries[0], traceId: 'b', resolvedModelName: 'claude-sonnet', modelSubmissionCount: 5, toolCallCount: 9, totalTokens: 40, startedAt: '2026-07-17T00:00:00.000Z', endedAt: null },
+      { ...summaries[0], traceId: 'c', turnId: null, resolvedModelName: '', modelSubmissionCount: 0, toolCallCount: 0, totalTokens: 999, startedAt: '2026-07-19T00:00:00.000Z', endedAt: '2026-07-19T00:00:02.000Z' },
+    ], {})
+
+    expect(sortTraceListItems(items, DEFAULT_TRACE_SORT).map((item) => item.traceId))
+      .toEqual(['c', 'a', 'b'])
+    expect(sortTraceListItems(items, { key: 'modelSubmissionCount', direction: 'asc' }).map((item) => item.traceId))
+      .toEqual(['c', 'a', 'b'])
+    expect(sortTraceListItems(items, { key: 'totalTokens', direction: 'desc' }).map((item) => item.traceId))
+      .toEqual(['c', 'a', 'b'])
+    // 无模型名的（独立压缩）无论方向都沉底
+    expect(sortTraceListItems(items, { key: 'resolvedModelName', direction: 'asc' }).map((item) => item.traceId))
+      .toEqual(['b', 'a', 'c'])
+    expect(sortTraceListItems(items, { key: 'resolvedModelName', direction: 'desc' }).map((item) => item.traceId))
+      .toEqual(['a', 'b', 'c'])
   })
 
   it('keeps polling while a summary or loaded span is still running', () => {

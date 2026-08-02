@@ -165,6 +165,10 @@ pub struct TraceTurnSummary {
     pub model_submission_count: i32,
     pub tool_call_count: i32,
     pub span_count: i64,
+    /// 整条 Trace 的 token 合计：各 span 的 `input_tokens + output_tokens` 求和，
+    /// 与 Span 级 `total_tokens` 同口径；未记录 token 的 span 按 0 计。
+    /// 注意该值跨 provider 不可直接比较（cached 是否计入 input 各家不同）。
+    pub total_tokens: i64,
     pub started_at: String,
     pub ended_at: Option<String>,
 }
@@ -1045,6 +1049,7 @@ impl PostgresStorage {
                     turns.resolved_model_name, turns.model_call_count,
                     turns.model_submission_count,
                     turns.tool_call_count, COUNT(spans.id)::BIGINT AS span_count,
+                    COALESCE(SUM(spans.input_tokens + spans.output_tokens), 0)::BIGINT AS total_tokens,
                     to_char(turns.started_at,
                         'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS started_at,
                     to_char(turns.ended_at,
@@ -1071,6 +1076,9 @@ impl PostgresStorage {
                     0 AS tool_call_count,
                     (SELECT COUNT(*)::BIGINT FROM trace_spans member
                      WHERE member.trace_id = root.trace_id) AS span_count,
+                    (SELECT COALESCE(SUM(member.input_tokens + member.output_tokens), 0)::BIGINT
+                     FROM trace_spans member
+                     WHERE member.trace_id = root.trace_id) AS total_tokens,
                     to_char(root.started_at,
                         'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS started_at,
                     to_char(root.ended_at,
@@ -1098,6 +1106,7 @@ impl PostgresStorage {
                     turns.resolved_model_name, turns.model_call_count,
                     turns.model_submission_count,
                     turns.tool_call_count, COUNT(spans.id)::BIGINT AS span_count,
+                    COALESCE(SUM(spans.input_tokens + spans.output_tokens), 0)::BIGINT AS total_tokens,
                     to_char(turns.started_at,
                         'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS started_at,
                     to_char(turns.ended_at,
@@ -1131,6 +1140,8 @@ impl PostgresStorage {
         .fetch_all(&self.pool)
         .await?;
         summary.span_count = i64::try_from(spans.len()).unwrap_or(i64::MAX);
+        // 与 span_count 同理，以实际加载的 span 为准重算 token 合计。
+        summary.total_tokens = spans.iter().filter_map(|span| span.total_tokens).sum();
         let completeness = derive_trace_completeness(
             &summary.status,
             summary.model_submission_count,
@@ -1177,6 +1188,9 @@ impl PostgresStorage {
                     0 AS tool_call_count,
                     (SELECT COUNT(*)::BIGINT FROM trace_spans member
                      WHERE member.trace_id = root.trace_id) AS span_count,
+                    (SELECT COALESCE(SUM(member.input_tokens + member.output_tokens), 0)::BIGINT
+                     FROM trace_spans member
+                     WHERE member.trace_id = root.trace_id) AS total_tokens,
                     to_char(root.started_at,
                         'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS started_at,
                     to_char(root.ended_at,
@@ -1194,6 +1208,8 @@ impl PostgresStorage {
         .ok_or_else(|| StorageError::TraceNotFound(trace_id.to_string()))?;
         let spans = self.load_trace_spans(trace_id).await?;
         summary.span_count = i64::try_from(spans.len()).unwrap_or(i64::MAX);
+        // 与 span_count 同理，以实际加载的 span 为准重算 token 合计。
+        summary.total_tokens = spans.iter().filter_map(|span| span.total_tokens).sum();
         let completeness = derive_trace_completeness(
             &summary.status,
             summary.model_submission_count,

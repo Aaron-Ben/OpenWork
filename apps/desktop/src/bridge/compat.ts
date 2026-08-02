@@ -323,6 +323,8 @@ export interface RuntimeTraceSummary {
   modelSubmissionCount: number
   toolCallCount: number
   spanCount: number
+  /** 整条 Trace 的 token 合计（各 span 的 input + output 求和），跨 provider 不可直接比较。 */
+  totalTokens: number
   startedAt: string
   endedAt: string | null
 }

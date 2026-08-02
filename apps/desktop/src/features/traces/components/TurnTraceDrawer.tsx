@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
-import { Bot, ChevronDown, CircleAlert, Clock3, MessageSquareText, Minimize2, Wrench, X } from 'lucide-react'
+import { Bot, CircleAlert, Clock3, Loader2, Maximize2, MessageSquareText, Minimize2, Wrench, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -23,7 +23,9 @@ import {
   type TraceListItem,
 } from '../traceViewModel'
 import { formatDuration } from './TraceList'
-import { TraceTimeline } from './TraceTimeline'
+import { parseTracePayloadMessages, TracePayloadConversation } from './TracePayloadConversation'
+import { spanName, TraceTimeline } from './TraceTimeline'
+import { TraceToolIcon } from './traceToolIcons'
 
 export type TraceDrawerSource =
   | { kind: 'turn'; turnId: string }
@@ -167,7 +169,7 @@ export function TurnTraceDrawer({
           initial={{ opacity: 0, x: 32 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 32 }}
-          className="absolute inset-y-0 right-0 flex w-[min(880px,96vw)] flex-col border-l border-line bg-paper shadow-[-18px_0_45px_rgba(20,20,19,0.12)] outline-none max-[640px]:w-full"
+          className="absolute inset-y-0 right-0 flex w-[min(1120px,96vw)] flex-col border-l border-line bg-paper shadow-[-18px_0_45px_rgba(20,20,19,0.12)] outline-none max-[640px]:w-full"
           onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}
         >
           <header className="border-b border-line px-5 py-4">
@@ -191,7 +193,7 @@ export function TurnTraceDrawer({
             </div>
           </header>
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(260px,0.9fr)_minmax(300px,1.1fr)] max-[760px]:grid-cols-1 max-[760px]:overflow-auto">
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)] max-[760px]:grid-cols-1 max-[760px]:overflow-auto">
             <section className="min-h-0 overflow-auto border-r border-line p-4 max-[760px]:border-b max-[760px]:border-r-0" aria-label={t('activity.timeline')}>
               {!spans && !error ? <TraceLoading /> : null}
               {error ? <p className="rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
@@ -293,7 +295,7 @@ export function SpanDetail({
             ? <Bot size={16} />
             : span.kind === 'compaction'
               ? <Minimize2 size={16} />
-              : <Wrench size={16} />}
+              : <TraceToolIcon toolName={span.resolvedToolName ?? span.requestedToolName} size={16} />}
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-ink">
@@ -455,10 +457,10 @@ function TracePayloadSlotDisclosure({
   onOpenMessage?: (sessionId: string, messageId: string) => void
 }) {
   const { t } = useTranslation()
-  const policy = useTraceContentStore((state) => state.policy)
-  const [expanded, setExpanded] = useState(false)
+  const [open, setOpen] = useState(false)
   const [payloadState, setPayloadState] = useState<PayloadState>({ status: 'idle' })
   const mounted = useRef(true)
+  const rowRef = useRef<HTMLButtonElement>(null)
   const responseMessageId = slot === 'response' ? span.responseMessageId : null
   const storedElsewhere = payloadStoredElsewhere(span, slot)
 
@@ -469,11 +471,34 @@ function TracePayloadSlotDisclosure({
     }
   }, [])
 
-  async function handleToggle(nextExpanded: boolean) {
-    setExpanded(nextExpanded)
-    if (!nextExpanded || payloadState.status !== 'idle' || responseMessageId || storedElsewhere) {
-      return
-    }
+  // 成功响应的正文在会话里：整行就是跳转入口，不开窗也不拉取。
+  if (responseMessageId) {
+    return (
+      <button
+        type="button"
+        data-payload-slot={slot}
+        className="flex w-full items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2 text-xs font-medium text-clay transition-colors hover:bg-clay-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
+        onClick={() => onOpenMessage?.(span.sessionId, responseMessageId)}
+      >
+        <MessageSquareText size={13} className="shrink-0" />
+        {t('activity.payloads.openMessage')}
+      </button>
+    )
+  }
+
+  // 正文不在 Trace 里的槽位（工具调用、压缩）：陈述事实，不可交互。
+  if (storedElsewhere) {
+    return (
+      <div data-payload-slot={slot} className="rounded-xl border border-line bg-paper px-3 py-2">
+        <span className="text-xs font-medium text-ink">{t(`activity.payloads.slots.${slot}`)}</span>
+        <p className="mt-0.5 text-[11px] leading-5 text-ink-faint">{t(storedElsewhere)}</p>
+      </div>
+    )
+  }
+
+  async function handleOpen() {
+    setOpen(true)
+    if (payloadState.status !== 'idle') return
     setPayloadState({ status: 'loading' })
     try {
       const payload = await loadTracePayloadWhenExpanded(true, span.id, slot)
@@ -485,42 +510,122 @@ function TracePayloadSlotDisclosure({
     }
   }
 
+  const handleClose = () => {
+    setOpen(false)
+    rowRef.current?.focus()
+  }
+
   return (
-    <details
-      data-payload-slot={slot}
-      className="rounded-xl border border-line bg-paper"
-      onToggle={(event) => void handleToggle(event.currentTarget.open)}
-    >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-ink marker:hidden">
-        <ChevronDown
-          size={13}
-          className={`shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
-        />
+    <>
+      <button
+        ref={rowRef}
+        type="button"
+        data-payload-slot={slot}
+        onClick={() => void handleOpen()}
+        className="flex w-full items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2 text-xs font-medium text-ink transition-colors hover:bg-paper-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
+      >
+        <Maximize2 size={12} className="shrink-0 text-ink-faint" />
         <span>{t(`activity.payloads.slots.${slot}`)}</span>
-      </summary>
-      <div className="border-t border-line px-3 py-3">
-        {responseMessageId ? (
+        {payloadState.status === 'loading' ? (
+          <Loader2
+            size={12}
+            className="ml-auto shrink-0 animate-spin text-ink-faint"
+            aria-label={t('activity.payloads.loading')}
+          />
+        ) : null}
+      </button>
+      <AnimatePresence>
+        {open ? (
+          <TracePayloadModal
+            slot={slot}
+            spanTitle={spanName(span, t)}
+            state={payloadState}
+            onClose={handleClose}
+          />
+        ) : null}
+      </AnimatePresence>
+    </>
+  )
+}
+
+/** 正文查看窗：槽位内容在居中大窗里展示，详情列保持紧凑。 */
+export function TracePayloadModal({
+  slot,
+  spanTitle,
+  state,
+  onClose,
+}: {
+  slot: RuntimeTracePayloadSlot
+  spanTitle: string
+  state: PayloadState
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const policy = useTraceContentStore((store) => store.policy)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    panelRef.current?.focus()
+  }, [])
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 grid place-items-center bg-ink/20 p-4 backdrop-blur-[1px]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
+    >
+      <motion.div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${t(`activity.payloads.slots.${slot}`)} · ${spanTitle}`}
+        tabIndex={-1}
+        data-payload-modal={slot}
+        initial={{ opacity: 0, scale: 0.97, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: 8 }}
+        transition={{ duration: 0.16, ease: 'easeOut' }}
+        className="flex max-h-[85vh] w-[min(960px,92vw)] flex-col overflow-hidden rounded-2xl border border-line bg-paper shadow-[0_24px_70px_rgba(20,20,19,0.25)] outline-none"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            onClose()
+          }
+        }}
+      >
+        <header className="flex items-center gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold text-ink">
+              {t(`activity.payloads.slots.${slot}`)}
+            </h3>
+            <p className="mt-0.5 truncate text-[11px] text-ink-faint">{spanTitle}</p>
+          </div>
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-lg bg-clay-soft px-3 py-2 text-xs font-medium text-clay hover:bg-clay-soft/75"
-            onClick={() => onOpenMessage?.(span.sessionId, responseMessageId)}
+            onClick={onClose}
+            aria-label={t('activity.payloads.close')}
+            className="rounded-lg p-1.5 text-ink-faint transition-colors hover:bg-paper-hover hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
           >
-            <MessageSquareText size={14} />
-            {t('activity.payloads.openMessage')}
+            <X size={15} />
           </button>
-        ) : storedElsewhere ? (
-          <p className="text-xs leading-5 text-ink-faint">{t(storedElsewhere)}</p>
-        ) : payloadState.status === 'idle' || payloadState.status === 'loading' ? (
-          <p className="text-xs text-ink-faint">{t('activity.payloads.loading')}</p>
-        ) : payloadState.status === 'error' ? (
-          <p className="text-xs text-status-danger-ink" role="alert">{payloadState.message}</p>
-        ) : payloadState.payload ? (
-          <TracePayloadBody payload={payloadState.payload} />
-        ) : (
-          <MissingTracePayload policy={policy} />
-        )}
-      </div>
-    </details>
+        </header>
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {state.status === 'error' ? (
+            <p role="alert" className="text-xs text-status-danger-ink">{state.message}</p>
+          ) : state.status === 'loaded' ? (
+            state.payload ? (
+              <TracePayloadBody payload={state.payload} relaxed />
+            ) : (
+              <MissingTracePayload policy={policy} />
+            )
+          ) : (
+            <p className="text-xs text-ink-faint">{t('activity.payloads.loading')}</p>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -551,10 +656,25 @@ export function MissingTracePayload({ policy }: { policy: RuntimeTraceContentPol
   )
 }
 
-export function TracePayloadBody({ payload }: { payload: RuntimeTraceSpanPayload }) {
+export function TracePayloadBody({
+  payload,
+  relaxed = false,
+}: {
+  payload: RuntimeTraceSpanPayload
+  /** relaxed（模态窗）时取消限高，由外层容器滚动；内联（详情列）时限高。 */
+  relaxed?: boolean
+}) {
   const { t } = useTranslation()
   const [showAll, setShowAll] = useState(false)
   const rendered = useMemo(() => buildTracePayloadPreview(payload.body), [payload.body])
+  // request 槽位存的是组装后的 Message[]：优先渲染成对话形态（长块自动收起），
+  // 形状不符或用户主动切换时退回原始 JSON。
+  const messages = useMemo(
+    () => (payload.slot === 'request' ? parseTracePayloadMessages(payload.body) : null),
+    [payload.body, payload.slot],
+  )
+  const [view, setView] = useState<'conversation' | 'json'>('conversation')
+  const showConversation = messages !== null && view === 'conversation'
   const text = showAll ? rendered.full : rendered.preview
   return (
     <div>
@@ -567,20 +687,62 @@ export function TracePayloadBody({ payload }: { payload: RuntimeTraceSpanPayload
             })}
           </span>
         ) : null}
+        {messages ? (
+          <span
+            className="ml-auto inline-flex overflow-hidden rounded-md border border-line"
+            data-payload-view-toggle="true"
+          >
+            <PayloadViewButton active={showConversation} onClick={() => setView('conversation')}>
+              {t('activity.payloads.viewMessages')}
+            </PayloadViewButton>
+            <PayloadViewButton active={!showConversation} onClick={() => setView('json')}>
+              JSON
+            </PayloadViewButton>
+          </span>
+        ) : null}
       </div>
-      <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface p-3 font-mono text-[11px] leading-5 text-ink-soft">
-        {text}{rendered.limited && !showAll ? '\n…' : ''}
-      </pre>
-      {rendered.limited ? (
-        <button
-          type="button"
-          className="mt-2 text-xs font-medium text-clay hover:underline"
-          onClick={() => setShowAll((value) => !value)}
-        >
-          {showAll ? t('activity.payloads.showPreview') : t('activity.payloads.showAll')}
-        </button>
-      ) : null}
+      {showConversation ? (
+        <TracePayloadConversation messages={messages} relaxed={relaxed} />
+      ) : (
+        <>
+          <pre className={`overflow-auto whitespace-pre-wrap break-all rounded-lg bg-surface p-3 font-mono text-[11px] leading-5 text-ink-soft ${relaxed ? '' : 'max-h-[32rem]'}`}>
+            {text}{rendered.limited && !showAll ? '\n…' : ''}
+          </pre>
+          {rendered.limited ? (
+            <button
+              type="button"
+              className="mt-2 text-xs font-medium text-clay hover:underline"
+              onClick={() => setShowAll((value) => !value)}
+            >
+              {showAll ? t('activity.payloads.showPreview') : t('activity.payloads.showAll')}
+            </button>
+          ) : null}
+        </>
+      )}
     </div>
+  )
+}
+
+function PayloadViewButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`px-2 py-0.5 text-[10px] font-medium transition-colors ${
+        active ? 'bg-clay-soft text-clay' : 'text-ink-faint hover:text-ink-soft'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 

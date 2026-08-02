@@ -2,6 +2,7 @@ import { Activity, FolderClosed, PanelLeftOpen, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { isMacOS } from '@/utils/platform'
 
 interface MainHeaderProps {
   title: string | null
@@ -15,7 +16,8 @@ export function MainHeader({ title, kind = 'session', sidebarExpanded, onToggleS
   return (
     <header
       data-main-header="true"
-      className="flex h-16 shrink-0 items-center gap-3 border-b border-line bg-paper px-5"
+      data-tauri-drag-region="deep"
+      className={`flex h-12 shrink-0 items-center gap-3 border-b border-line bg-paper ${!sidebarExpanded && isMacOS ? 'pl-20 pr-4' : 'px-4'}`}
     >
       {!sidebarExpanded ? (
         <>

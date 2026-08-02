@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { ProjectSection } from '../../features/sessions/components/ProjectSection'
+import { isMacOS } from '../../utils/platform'
 import { Button } from '../ui/button'
 import type { AppView } from './types'
 
@@ -42,7 +43,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
         animate={{ width: 240 }}
         transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: 'easeOut' }}
       >
-        <SidebarHeader title={t('settings.title')} onCollapse={onToggleExpanded} />
+        <SidebarHeader onCollapse={onToggleExpanded} />
         <div className="px-3 pb-5 pt-1">
           <Button type="button" variant="ghost" className="h-10 w-full justify-start rounded-xl px-3" onClick={() => onNavigate('chat')}>
             <ArrowLeft size={18} />{t('sidebar.backToApp')}
@@ -91,16 +92,16 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           />
         </motion.div>
       </div>
-      <div data-sidebar-footer="true" className="grid shrink-0 gap-1 border-t border-line p-3">
+      <div data-sidebar-footer="true" className="grid shrink-0 gap-1 border-t border-line px-3 py-2">
         <Button
           type="button"
           variant="ghost"
-          className="h-10 w-full justify-start rounded-xl px-3"
+          className="h-8 w-full justify-start rounded-xl px-3"
           aria-label={t('sidebar.settings')}
           title={t('sidebar.settings')}
           onClick={() => onNavigate('settings-models')}
         >
-          <SettingsIcon size={19} className="shrink-0" />
+          <SettingsIcon size={17} className="shrink-0" />
           <span>{t('sidebar.settings')}</span>
         </Button>
       </div>
@@ -108,15 +109,16 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
   )
 }
 
-function SidebarHeader({ title, onCollapse }: { title: string; onCollapse: () => void }) {
+function SidebarHeader({ title, onCollapse }: { title?: string; onCollapse: () => void }) {
   const { t } = useTranslation()
   return (
-    <div className="flex h-16 shrink-0 items-center gap-3 px-3">
-      <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-ink font-sans text-sm font-bold text-paper">OW</div>
-      <div className="min-w-0 flex-1 font-sans text-lg font-semibold text-ink">{title}</div>
-      <Button type="button" variant="ghost" size="icon" className="size-9 rounded-xl" aria-label={t('sidebar.collapse')} aria-expanded="true" onClick={onCollapse}>
-        <PanelLeftClose size={19} />
-      </Button>
+    <div data-tauri-drag-region="deep" className="shrink-0">
+      <div className={`flex h-11 items-center justify-end ${isMacOS ? 'pl-20 pr-3' : 'px-3'}`}>
+        <Button type="button" variant="ghost" size="icon" className="size-9 rounded-xl" aria-label={t('sidebar.collapse')} aria-expanded="true" onClick={onCollapse}>
+          <PanelLeftClose size={19} />
+        </Button>
+      </div>
+      {title ? <div className="truncate px-4 pb-3 font-sans text-lg font-semibold text-ink">{title}</div> : null}
     </div>
   )
 }

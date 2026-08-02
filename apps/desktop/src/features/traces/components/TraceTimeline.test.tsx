@@ -66,8 +66,41 @@ describe('TraceTimeline', () => {
     expect(markup).toContain('data-trace-waterfall="true"')
     expect(markup).toContain('data-span-id="model-1"')
     expect(markup).toContain('data-span-id="tool-1"')
-    expect(markup).toContain('margin-left:25%')
+    expect(markup).toContain('left:25%')
     expect(markup).toContain('width:25%')
+  })
+
+  it('renders a time ruler and an expanded-by-default collapse toggle on parents', () => {
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={[model, tool]} selectedSpanId={null} onSelect={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-trace-ruler="true"')
+    // 有子节点的 model_call 默认展开，可折叠
+    expect(markup).toContain('data-collapse-toggle="model-1"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('data-span-id="tool-1"')
+  })
+
+  it('picks the tool icon by effect and falls back to the wrench for unknown tools', () => {
+    const bash = { ...tool, id: 'tool-bash', resolvedToolName: 'bash', requestedToolName: 'bash' }
+    const grep = { ...tool, id: 'tool-grep', resolvedToolName: 'grep', requestedToolName: 'grep' }
+    const edit = { ...tool, id: 'tool-edit', resolvedToolName: 'edit', requestedToolName: 'edit' }
+    const glob = { ...tool, id: 'tool-glob', resolvedToolName: 'glob', requestedToolName: 'glob' }
+    const write = { ...tool, id: 'tool-write', resolvedToolName: 'write_file', requestedToolName: 'write_file' }
+    const unknown = { ...tool, id: 'tool-x', resolvedToolName: 'teleport', requestedToolName: 'teleport' }
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={[model, tool, bash, grep, edit, glob, write, unknown]} selectedSpanId={null} onSelect={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-tool-icon="read"')
+    expect(markup).toContain('data-tool-icon="bash"')
+    expect(markup).toContain('data-tool-icon="grep"')
+    expect(markup).toContain('data-tool-icon="edit"')
+    expect(markup).toContain('data-tool-icon="glob"')
+    // write_file 这类带后缀的 resolved 名也按写效果归类
+    expect(markup).toContain('data-tool-icon="write"')
+    expect(markup).toContain('data-tool-icon="unknown"')
   })
 
   it('renders compaction as a first-class timeline operation', () => {

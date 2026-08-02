@@ -1,14 +1,23 @@
-import { Bot, Minimize2, ShieldCheck, ShieldX, UserCheck, UserX, Wrench } from 'lucide-react'
-import { useMemo } from 'react'
+import { Bot, ChevronRight, Minimize2, ShieldCheck, ShieldX, UserCheck, UserX } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { RuntimeTraceSpan } from '../../../bridge/compat'
 import {
   buildTraceTree,
+  buildWaterfallRange,
   buildWaterfallRows,
+  type TraceModelNode,
+  type WaterfallRange,
   type WaterfallRow,
 } from '../traceViewModel'
 import { formatDuration } from './TraceList'
+import { TraceToolIcon } from './traceToolIcons'
+
+// 名称列 / 耗时列 / 瀑布轨道列共享同一栅格模板，刻度尺与所有数据行因此严格对齐。
+const TIMELINE_GRID = 'grid-cols-[minmax(0,1fr)_56px_minmax(96px,40%)]'
+const RULER_FRACTIONS = [0, 0.25, 0.5, 0.75, 1] as const
 
 interface TraceTimelineProps {
   spans: RuntimeTraceSpan[]
@@ -20,48 +29,56 @@ export function TraceTimeline({ spans, selectedSpanId, onSelect }: TraceTimeline
   const { t } = useTranslation()
   const tree = useMemo(() => buildTraceTree(spans), [spans])
   const waterfall = useMemo(() => buildWaterfallRows(spans), [spans])
+  const range = useMemo(() => buildWaterfallRange(spans), [spans])
   const rowById = useMemo(
     () => new Map(waterfall.map((row) => [row.span.id, row])),
     [waterfall],
   )
+  // 折叠是纯视图状态：默认全展开（第一层 model_call / compaction 直接可见），
+  // 有子 span 的节点可单独把工具调用收起来降噪。
+  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set())
+
+  const toggleCollapse = (spanId: string) => {
+    setCollapsedIds((current) => {
+      const next = new Set(current)
+      if (next.has(spanId)) {
+        next.delete(spanId)
+      } else {
+        next.add(spanId)
+      }
+      return next
+    })
+  }
 
   return (
-    <div data-trace-waterfall="true" role="list" aria-label={t('activity.timeline')} className="grid gap-3">
-      {tree.roots.map((node) => (
-        <div key={node.span.id} className="grid gap-px">
-          <TraceRow
-            span={node.span}
-            row={rowById.get(node.span.id)}
-            selected={selectedSpanId === node.span.id}
+    <div data-trace-waterfall="true" role="list" aria-label={t('activity.timeline')}>
+      {range ? <TimeRuler range={range} /> : null}
+      <div className="grid gap-px">
+        {tree.roots.map((node) => (
+          <TimelineNode
+            key={node.span.id}
+            node={node}
+            collapsed={collapsedIds.has(node.span.id)}
+            onToggleCollapse={toggleCollapse}
+            rowById={rowById}
+            selectedSpanId={selectedSpanId}
             onSelect={onSelect}
           />
-          {node.children.length > 0 ? (
-            <div className="ml-[11px] grid gap-px border-l border-line pl-2">
-              {node.children.map((child) => (
-                <TraceRow
-                  key={child.id}
-                  span={child}
-                  row={rowById.get(child.id)}
-                  selected={selectedSpanId === child.id}
-                  onSelect={onSelect}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ))}
+        ))}
+      </div>
       {tree.orphans.length > 0 ? (
-        <div className="grid gap-px">
+        <div className="mt-2 grid gap-px">
           {tree.orphans.map((span) => (
-            <TraceRow
+            <TimelineRow
               key={span.id}
               span={span}
+              depth={0}
               row={rowById.get(span.id)}
               selected={selectedSpanId === span.id}
               onSelect={onSelect}
             />
           ))}
-          <p className="mt-1 text-xs text-status-warning-ink">
+          <p className="mt-1 px-2 text-xs text-status-warning-ink">
             {t('activity.orphanTools', { count: tree.orphans.length })}
           </p>
         </div>
@@ -70,72 +87,220 @@ export function TraceTimeline({ spans, selectedSpanId, onSelect }: TraceTimeline
   )
 }
 
-function TraceRow({
+/** 顶部时间刻度：标注相对 Trace 起点的偏移量，与 Jaeger 瀑布一致。 */
+function TimeRuler({ range }: { range: WaterfallRange }) {
+  const { t } = useTranslation()
+  const total = Math.max(1, range.endMs - range.startMs)
+  return (
+    <div
+      data-trace-ruler="true"
+      aria-label={t('activity.timeAxis')}
+      className={`grid ${TIMELINE_GRID} gap-2 px-2 pb-1.5 pt-0.5`}
+    >
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+      <span className="relative block h-4 select-none text-[10px] tabular-nums text-ink-faint">
+        {RULER_FRACTIONS.map((fraction) => (
+          <span
+            key={fraction}
+            className="absolute top-0 whitespace-nowrap"
+            style={{
+              left: `${fraction * 100}%`,
+              transform: fraction === 0
+                ? 'none'
+                : fraction === 1
+                  ? 'translateX(-100%)'
+                  : 'translateX(-50%)',
+            }}
+          >
+            {formatDuration(total * fraction)}
+          </span>
+        ))}
+      </span>
+    </div>
+  )
+}
+
+function TimelineNode({
+  node,
+  collapsed,
+  onToggleCollapse,
+  rowById,
+  selectedSpanId,
+  onSelect,
+}: {
+  node: TraceModelNode
+  collapsed: boolean
+  onToggleCollapse: (spanId: string) => void
+  rowById: Map<string, WaterfallRow>
+  selectedSpanId: string | null
+  onSelect: (span: RuntimeTraceSpan) => void
+}) {
+  const hasChildren = node.children.length > 0
+  return (
+    <div>
+      <TimelineRow
+        span={node.span}
+        depth={0}
+        row={rowById.get(node.span.id)}
+        selected={selectedSpanId === node.span.id}
+        hasChildren={hasChildren}
+        collapsed={collapsed}
+        onToggleCollapse={onToggleCollapse}
+        onSelect={onSelect}
+      />
+      <AnimatePresence initial={false}>
+        {!collapsed && hasChildren ? (
+          <motion.div
+            key="children"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="grid gap-px">
+              {node.children.map((child) => (
+                <TimelineRow
+                  key={child.id}
+                  span={child}
+                  depth={1}
+                  row={rowById.get(child.id)}
+                  selected={selectedSpanId === child.id}
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function TimelineRow({
   span,
+  depth,
   row,
   selected,
+  hasChildren = false,
+  collapsed = false,
+  onToggleCollapse,
   onSelect,
 }: {
   span: RuntimeTraceSpan
+  depth: number
   row: WaterfallRow | undefined
   selected: boolean
+  hasChildren?: boolean
+  collapsed?: boolean
+  onToggleCollapse?: (spanId: string) => void
   onSelect: (span: RuntimeTraceSpan) => void
 }) {
   const { t } = useTranslation()
   return (
-    <button
-      type="button"
+    <div
       role="listitem"
       data-span-id={span.id}
-      aria-pressed={selected}
       onClick={() => onSelect(span)}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35 ${
+      className={`grid ${TIMELINE_GRID} cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors ${
         selected ? 'bg-clay-soft' : 'hover:bg-paper-hover'
       }`}
     >
-      <span className={`size-1.5 shrink-0 rounded-full ${spanStatusDot(span.status)}`} />
-      {span.kind === 'model_call' ? (
-        <Bot size={13} className="shrink-0 text-ink-faint" />
-      ) : span.kind === 'compaction' ? (
-        <Minimize2 size={13} className="shrink-0 text-ink-faint" />
-      ) : (
-        <Wrench size={13} className="shrink-0 text-ink-faint" />
-      )}
-      <span className="min-w-0 flex-1">
-        <span
-          className={`block truncate text-xs ${
-            selected ? 'font-medium text-ink' : 'text-ink-soft'
-          }`}
+      <div
+        className="flex min-w-0 items-center gap-1"
+        style={depth > 0 ? { paddingLeft: depth * 18 } : undefined}
+      >
+        {hasChildren && onToggleCollapse ? (
+          <button
+            type="button"
+            data-collapse-toggle={span.id}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? t('activity.expand') : t('activity.collapse')}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleCollapse(span.id)
+            }}
+            className="grid size-4 shrink-0 place-items-center rounded text-ink-faint transition-colors hover:bg-paper-hover hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
+          >
+            <ChevronRight
+              size={12}
+              className={`transition-transform duration-200 ${collapsed ? '' : 'rotate-90'}`}
+            />
+          </button>
+        ) : (
+          <span className="size-4 shrink-0" aria-hidden="true" />
+        )}
+        <button
+          type="button"
+          aria-pressed={selected}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
         >
-          {span.kind === 'model_call'
-            ? span.resolvedModelName ?? t('activity.modelCall')
-            : span.kind === 'compaction'
-              ? t('activity.compaction')
-              : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
-        </span>
-        <PermissionActivityMarker span={span} />
-      </span>
-      <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-faint">
+          <span className={`size-1.5 shrink-0 rounded-full ${spanStatusDot(span.status)}`} />
+          <SpanKindIcon span={span} />
+          <span className="min-w-0 flex-1">
+            <span
+              className={`block truncate text-xs ${
+                selected ? 'font-medium text-ink' : 'text-ink-soft'
+              }`}
+            >
+              {spanName(span, t)}
+            </span>
+          </span>
+          <PermissionActivityMarker span={span} />
+        </button>
+      </div>
+      <span className="shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-faint">
         {row ? formatDuration(row.durationMs) : '—'}
       </span>
-      {row ? (
-        <span className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-paper-hover">
+      <span className="relative block h-3.5 overflow-hidden rounded-[3px] bg-paper-hover/50">
+        <TrackGridlines />
+        {row ? (
           <span
-            className={`block h-full rounded-full ${
-              span.kind === 'model_call'
-                ? 'bg-trace-bar-model'
-                : span.kind === 'compaction'
-                  ? 'bg-status-warning-ink'
-                  : 'bg-trace-bar-tool'
-            }`}
-            style={{ marginLeft: `${row.leftPercent}%`, width: `${row.widthPercent}%` }}
+            className={`absolute inset-y-0 rounded-[3px] ${spanBarColor(span.kind)} transition-[left,width] duration-300 ease-out`}
+            style={{ left: `${row.leftPercent}%`, width: `${row.widthPercent}%` }}
           />
-        </span>
-      ) : (
-        <span className="w-16 shrink-0" aria-hidden="true" />
-      )}
-    </button>
+        ) : null}
+      </span>
+    </div>
   )
+}
+
+function TrackGridlines() {
+  return (
+    <span aria-hidden="true" className="pointer-events-none absolute inset-0">
+      {[25, 50, 75].map((percent) => (
+        <span
+          key={percent}
+          className="absolute inset-y-0 w-px bg-line/80"
+          style={{ left: `${percent}%` }}
+        />
+      ))}
+    </span>
+  )
+}
+
+function SpanKindIcon({ span }: { span: RuntimeTraceSpan }) {
+  if (span.kind === 'model_call') return <Bot size={13} className="shrink-0 text-trace-bar-model" />
+  if (span.kind === 'compaction') return <Minimize2 size={13} className="shrink-0 text-status-warning-ink" />
+  return (
+    <TraceToolIcon
+      toolName={span.resolvedToolName ?? span.requestedToolName}
+      className="shrink-0 text-trace-bar-tool"
+    />
+  )
+}
+
+function spanBarColor(kind: RuntimeTraceSpan['kind']): string {
+  if (kind === 'model_call') return 'bg-trace-bar-model'
+  if (kind === 'compaction') return 'bg-status-warning-ink'
+  return 'bg-trace-bar-tool'
+}
+
+export function spanName(span: RuntimeTraceSpan, t: ReturnType<typeof useTranslation>['t']): string {
+  if (span.kind === 'model_call') return span.resolvedModelName ?? t('activity.modelCall')
+  if (span.kind === 'compaction') return t('activity.compaction')
+  return span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')
 }
 
 const AUTOMATIC_PERMISSION_SOURCES = new Set([
@@ -202,7 +367,7 @@ function PermissionActivityMarker({ span }: { span: RuntimeTraceSpan }) {
       data-permission-activity={kind}
       data-permission-source={source ?? undefined}
       title={details.filter(Boolean).join(' · ')}
-      className={`mt-0.5 inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${styles[kind]}`}
+      className={`inline-flex max-w-full shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${styles[kind]}`}
     >
       <Icon size={10} aria-hidden="true" />
       <span className="truncate">{categoryLabel}{sourceLabel ? ` · ${sourceLabel}` : ''}</span>

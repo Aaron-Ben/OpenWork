@@ -89,7 +89,7 @@ export function TracePage() {
 
   return (
     <div className="relative h-full overflow-auto bg-paper">
-      <div className="mx-auto w-full max-w-5xl p-8 max-[640px]:p-5">
+      <div className="mx-auto w-full max-w-6xl p-8 max-[640px]:p-5">
         <div className="flex items-start justify-between gap-4">
           <p className="max-w-2xl text-sm leading-6 text-ink-faint">{t('activity.description')}</p>
           <Button type="button" variant="ghost" size="sm" disabled={isLoading} onClick={() => void load()}>

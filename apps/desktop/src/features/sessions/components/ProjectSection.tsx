@@ -105,12 +105,12 @@ export function ProjectSection({
         <Button
           type="button"
           variant="ghost"
-          className="h-8 min-w-0 flex-1 justify-start gap-1 rounded-lg px-2 text-xs font-medium text-ink-faint"
+          className="h-8 min-w-0 flex-1 justify-start gap-1 rounded-lg px-0 text-sm font-medium text-ink-faint"
           aria-expanded={projectsExpanded}
           onClick={toggleProjects}
         >
-          {projectsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           <span>{t('sidebar.projects')}</span>
+          {projectsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </Button>
         <Button
           type="button"
