@@ -2,7 +2,7 @@
 
 工具执行的授权体系。本文描述目标状态。
 
-模式与判定顺序参考 cc-haha 的 `default` / `acceptEdits`（行为基线见 [cc-haha-default-accept-edits-permissions.md](cc-haha-default-accept-edits-permissions.md)），但**不移植沙箱，也不移植 PowerShell 与 Windows 特有路径检查**；有意偏离的地方集中列在 §8。
+模式与判定顺序参考 cc-haha 的 `default` / `acceptEdits`，但**不移植沙箱，也不移植 PowerShell 与 Windows 特有路径检查**；有意偏离的地方集中列在 §8。
 
 工具契约见 [tools.md](tools.md)，Tool Call 生命周期见 [session-runtime.md](session-runtime.md)。
 

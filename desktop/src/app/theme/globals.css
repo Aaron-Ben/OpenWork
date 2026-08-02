@@ -1,37 +1,8 @@
 @import "tailwindcss";
 
 /* ============================================================
-   字体 —— Anthropic 私有字体(英文) + 系统字体(中文)
-   ⚠️ Anthropic 字体为私有字体,仅限自用,勿随产品公网分发。
-
-   中文不自带字体:思源黑体/宋体全量 TTF 合计 42.8 MB,而 macOS 自带
-   苹方与宋体,平台 hinting 更好。下面三个变量末尾的 system-ui /
-   serif / ui-monospace 负责兜住汉字。
+   字体 —— 使用平台系统字体，不随应用分发第三方字体文件。
    ============================================================ */
-
-@font-face {
-  font-family: "Anthropic Serif Web Text";
-  src: url("./fonts/anthropic-serif.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Anthropic Sans Web Text";
-  src: url("./fonts/anthropic-sans.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Anthropic Mono Variable";
-  src: url("./fonts/anthropic-mono.ttf") format("truetype");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
 
 /* ============================================================
    语义 token —— 亮/暗两套 CSS 变量驱动主题
@@ -142,9 +113,9 @@
    ============================================================ */
 
 @theme {
-  --font-serif: "Anthropic Serif Web Text", Georgia, "Times New Roman", serif;
-  --font-sans: "Anthropic Sans Web Text", system-ui, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Anthropic Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+  --font-serif: ui-serif, Georgia, "Times New Roman", serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
 }
 
 @theme inline {
