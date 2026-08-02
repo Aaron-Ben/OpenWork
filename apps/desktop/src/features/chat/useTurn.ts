@@ -1,9 +1,9 @@
 import { useCallback } from 'react'
 
-import { coreCommands } from '../../bridge/commands'
-import type { RuntimePermissionDecision, RuntimePermissionMode } from '../../bridge/compat'
-import { useContextWindowStore } from '../../stores/contextWindowStore'
-import { resolveErrorMessage } from '../../utils/commandError'
+import { coreCommands } from '@/bridge/commands'
+import type { RuntimePermissionDecision, RuntimePermissionMode } from '@/bridge/compat'
+import { useContextWindowStore } from '@/stores/contextWindowStore'
+import { resolveErrorMessage } from '@/lib/commandError'
 import { useRuntimeStore } from './runtimeStore'
 
 function nextClientRequestId(): string {

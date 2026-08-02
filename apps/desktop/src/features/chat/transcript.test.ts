@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { RuntimeStoredMessage } from '../../bridge/compat'
+import type { RuntimeStoredMessage } from '@/bridge/compat'
 import { createSessionRuntimeView } from './runtimeReducer'
 import { buildTranscript } from './transcript'
 

@@ -22,7 +22,7 @@ import {
   type ContentBlock,
   type ToolResultArtifact,
   type ToolResultState,
-} from '../../../type/parts'
+} from '@/types/parts'
 import {
   FileChangeCard,
   FileDiffPanel,

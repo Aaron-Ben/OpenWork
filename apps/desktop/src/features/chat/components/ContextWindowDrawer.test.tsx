@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { RuntimeContextWindowInspection } from '../../../bridge/compat'
+import type { RuntimeContextWindowInspection } from '@/bridge/compat'
 import { ContextWindowDrawer } from './ContextWindowDrawer'
 
 const inspection: RuntimeContextWindowInspection = {

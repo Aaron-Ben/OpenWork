@@ -1,13 +1,13 @@
 import { create } from 'zustand'
 
-import { coreCommands } from '../../bridge/commands'
-import type { ProviderConfig } from '../models/contracts'
+import { coreCommands } from '@/bridge/commands'
+import type { ProviderConfig } from '@/features/models/contracts'
 import type {
   RuntimeSessionRecord,
   RuntimeStoredMessage,
-} from '../../bridge/compat'
-import { resolveErrorMessage } from '../../utils/commandError'
-import { useRuntimeStore } from '../chat/runtimeStore'
+} from '@/bridge/compat'
+import { resolveErrorMessage } from '@/lib/commandError'
+import { useRuntimeStore } from '@/features/chat/runtimeStore'
 
 interface CreateSessionInput {
   title: string

@@ -1,4 +1,4 @@
-import type { RuntimeTraceSpan, RuntimeTraceSummary } from '../../bridge/compat'
+import type { RuntimeTraceSpan, RuntimeTraceSummary } from '@/bridge/compat'
 
 export type TraceStatusFilter =
   | 'all'

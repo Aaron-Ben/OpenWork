@@ -1,6 +1,6 @@
 import { memo } from 'react'
 
-import type { ChatItem } from '../../../type/chat'
+import type { ChatItem } from '@/types/chat'
 import { AssistantMessage } from './AssistantMessage'
 import { ToolActivityList } from './ToolActivityList'
 import { UserMessage } from './UserMessage'

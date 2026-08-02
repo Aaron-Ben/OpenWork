@@ -4,8 +4,8 @@ import {
   RUNTIME_SESSION_UPDATE_VERSION,
   type RuntimeSessionSnapshot,
   type RuntimeSessionUpdateEnvelope,
-} from '../bridge/compat'
-import { useRuntimeStore } from '../features/chat/runtimeStore'
+} from '@/bridge/compat'
+import { useRuntimeStore } from '@/features/chat/runtimeStore'
 import {
   processSessionUpdate,
   resyncSessionView,

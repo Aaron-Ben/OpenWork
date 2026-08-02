@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { RuntimeSessionUpdateEnvelope } from '../bridge/compat'
-import { useRuntimeStore } from '../features/chat/runtimeStore'
-import { useSessionStore } from '../features/sessions/sessionStore'
+import type { RuntimeSessionUpdateEnvelope } from '@/bridge/compat'
+import { useRuntimeStore } from '@/features/chat/runtimeStore'
+import { useSessionStore } from '@/features/sessions/sessionStore'
 import {
   createSessionUpdateDispatcher,
   recordCoreBridgeError,

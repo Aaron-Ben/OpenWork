@@ -1,6 +1,6 @@
-import type { ChatItem } from '../../type/chat'
-import type { ContentBlock, ToolResultState } from '../../type/parts'
-import type { RuntimeLiveToolCall, RuntimeStoredMessage } from '../../bridge/compat'
+import type { ChatItem } from '@/types/chat'
+import type { ContentBlock, ToolResultState } from '@/types/parts'
+import type { RuntimeLiveToolCall, RuntimeStoredMessage } from '@/bridge/compat'
 import {
   appendCompletedFileChangeSummaries,
   mergeToolMessages,

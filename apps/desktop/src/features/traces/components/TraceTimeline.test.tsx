@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { RuntimeTraceSpan } from '../../../bridge/compat'
+import type { RuntimeTraceSpan } from '@/bridge/compat'
 import { TraceTimeline } from './TraceTimeline'
 
 const model: RuntimeTraceSpan = {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ChatItem } from '../../../type/chat'
+import type { ChatItem } from '@/types/chat'
 import {
   areTranscriptMessagePropsEqual,
   type TranscriptMessageProps,

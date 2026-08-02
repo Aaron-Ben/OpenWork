@@ -1,4 +1,4 @@
-import type { RuntimeTurnTrace } from '../../bridge/compat'
+import type { RuntimeTurnTrace } from '@/bridge/compat'
 
 export interface ContextUsage {
   usedTokens: number

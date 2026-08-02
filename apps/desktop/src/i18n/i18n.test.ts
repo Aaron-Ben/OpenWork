@@ -4,7 +4,7 @@ import i18n, { supportedLanguages } from './index'
 import { enUS } from './locales/en-US'
 import { zhCN } from './locales/zh-CN'
 import { zhTW } from './locales/zh-TW'
-import { TRACE_ATTRIBUTE_KEYS } from '../features/traces/traceViewModel'
+import { TRACE_ATTRIBUTE_KEYS } from '@/features/traces/traceViewModel'
 
 function keyPaths(value: object, prefix = ''): string[] {
   return Object.entries(value).flatMap(([key, child]) => {

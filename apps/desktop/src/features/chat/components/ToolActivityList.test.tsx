@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import type { ContentBlock } from '../../../type/parts'
+import type { ContentBlock } from '@/types/parts'
 import {
   ToolActivityList,
   collectFileChanges,

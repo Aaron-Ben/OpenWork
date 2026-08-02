@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { RuntimePermissionRequest } from '../../../bridge/compat'
+import type { RuntimePermissionRequest } from '@/bridge/compat'
 import { ApprovalCardView } from './ApprovalDialog'
 
 const request: RuntimePermissionRequest = {

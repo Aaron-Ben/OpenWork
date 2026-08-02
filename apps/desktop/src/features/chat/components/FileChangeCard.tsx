@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { resolveErrorMessage } from '../../../utils/commandError'
+import { resolveErrorMessage } from '@/lib/commandError'
 
 export type FileChangeKind = 'created' | 'modified'
 export type FileDiffLineKind = 'context' | 'addition' | 'deletion'

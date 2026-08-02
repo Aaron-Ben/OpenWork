@@ -2,7 +2,7 @@ import { type ReactNode, useState } from "react";
 import { Bot, Check, Loader2, Pencil, Plus, Trash2, X, Zap } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { resolveErrorMessage as resolveMessage } from "../../../utils/commandError";
+import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
 import type { ProviderConfig, TestResult } from "../contracts";
 import { useModelStore } from "../modelStore";
 import { providerTestResultStyle, ProviderFormModal } from "./ProviderFormModal";

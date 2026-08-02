@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { coreCommands } from '../../../bridge/commands'
-import type { RuntimeTraceSpan, RuntimeTraceSpanPayload, RuntimeTurnTrace } from '../../../bridge/compat'
+import { coreCommands } from '@/bridge/commands'
+import type { RuntimeTraceSpan, RuntimeTraceSpanPayload, RuntimeTurnTrace } from '@/bridge/compat'
 import {
   buildTracePayloadPreview,
   initialTraceSpanId,
@@ -15,7 +15,7 @@ import {
   TracePayloadBody,
 } from './TurnTraceDrawer'
 
-vi.mock('../../../bridge/commands', () => ({
+vi.mock('@/bridge/commands', () => ({
   coreCommands: {
     getTrace: vi.fn(),
     getTraceById: vi.fn(),

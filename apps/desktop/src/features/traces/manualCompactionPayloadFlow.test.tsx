@@ -1,15 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import { coreCommands } from '../../bridge/commands'
+import { coreCommands } from '@/bridge/commands'
 import type {
   RuntimeConversationCompaction,
   RuntimeTraceSpan,
   RuntimeTraceSpanPayload,
   RuntimeTraceSummary,
   RuntimeTurnTrace,
-} from '../../bridge/compat'
-import { isManualCompactionDraft } from '../chat/ChatPage'
+} from '@/bridge/compat'
+import { isManualCompactionDraft } from '@/features/chat/ChatPage'
 import { buildTraceListItems } from './traceViewModel'
 import { TraceList } from './components/TraceList'
 import {
@@ -19,7 +19,7 @@ import {
   TracePayloadBody,
 } from './components/TurnTraceDrawer'
 
-vi.mock('../../bridge/commands', () => ({
+vi.mock('@/bridge/commands', () => ({
   coreCommands: {
     compactConversation: vi.fn(),
     listTraces: vi.fn(),

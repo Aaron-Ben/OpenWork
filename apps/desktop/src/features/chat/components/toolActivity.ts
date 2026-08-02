@@ -1,4 +1,4 @@
-import type { ChatItem } from '../../../type/chat'
+import type { ChatItem } from '@/types/chat'
 
 /// 持久化后 Tool Message 与触发它的 Assistant Message 分开保存。
 /// UI 将可关联的结果折叠回对应 Assistant，保证流式态和重载态都只显示一行 ToolRun。

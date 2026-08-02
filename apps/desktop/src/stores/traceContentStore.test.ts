@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { coreCommands } from '../bridge/commands'
+import { coreCommands } from '@/bridge/commands'
 import {
   DEFAULT_TRACE_CONTENT_POLICY,
   TRACE_CONTENT_POLICY_STORAGE_KEY,
@@ -8,7 +8,7 @@ import {
   useTraceContentStore,
 } from './traceContentStore'
 
-vi.mock('../bridge/commands', () => ({
+vi.mock('@/bridge/commands', () => ({
   coreCommands: { setTraceContentPolicy: vi.fn() },
 }))
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { coreCommands } from '../../bridge/commands'
-import { resolveErrorMessage } from '../../utils/commandError'
+import { coreCommands } from '@/bridge/commands'
+import { resolveErrorMessage } from '@/lib/commandError'
 import { buildCompactionHistory, type CompactionHistoryItem } from './traceViewModel'
 
 export interface CompactionHistoryState {

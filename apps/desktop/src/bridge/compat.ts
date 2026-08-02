@@ -1,6 +1,6 @@
 // Temporary hand-written mirror of the Rust Host Contract.
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
-import type { ContentBlock, ToolResultArtifact } from '../type/parts'
+import type { ContentBlock, ToolResultArtifact } from '@/types/parts'
 
 export const RUNTIME_SESSION_UPDATE_VERSION = 6
 

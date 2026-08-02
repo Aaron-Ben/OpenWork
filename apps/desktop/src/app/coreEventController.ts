@@ -1,12 +1,12 @@
-import { coreCommands } from '../bridge/commands'
+import { coreCommands } from '@/bridge/commands'
 import type {
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
-} from '../bridge/compat'
-import { supportsRuntimeSessionUpdateVersion } from '../bridge/compat'
-import { useRuntimeStore, type RuntimeApplyResult } from '../features/chat/runtimeStore'
-import { useSessionStore } from '../features/sessions/sessionStore'
-import { resolveErrorMessage } from '../utils/commandError'
+} from '@/bridge/compat'
+import { supportsRuntimeSessionUpdateVersion } from '@/bridge/compat'
+import { useRuntimeStore, type RuntimeApplyResult } from '@/features/chat/runtimeStore'
+import { useSessionStore } from '@/features/sessions/sessionStore'
+import { resolveErrorMessage } from '@/lib/commandError'
 
 export interface CoreEventControllerDependencies {
   apply: (payload: RuntimeSessionUpdateEnvelope) => RuntimeApplyResult

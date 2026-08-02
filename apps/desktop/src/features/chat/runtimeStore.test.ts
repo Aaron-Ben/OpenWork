@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { RuntimeSessionUpdateEnvelope } from '../../bridge/compat'
+import type { RuntimeSessionUpdateEnvelope } from '@/bridge/compat'
 import { useRuntimeStore } from './runtimeStore'
 
 function textUpdate(sessionId: string, turnId: string, text: string): RuntimeSessionUpdateEnvelope {

@@ -1,13 +1,13 @@
 import { useEffect } from 'react'
 
-import { listenToSessionUpdates } from '../bridge/events'
+import { listenToSessionUpdates } from '@/bridge/events'
 import {
   supportsRuntimeSessionUpdateVersion,
   type RuntimeSessionUpdateEnvelope,
-} from '../bridge/compat'
-import { useRuntimeStore } from '../features/chat/runtimeStore'
-import { useSessionStore } from '../features/sessions/sessionStore'
-import { resolveErrorMessage } from '../utils/commandError'
+} from '@/bridge/compat'
+import { useRuntimeStore } from '@/features/chat/runtimeStore'
+import { useSessionStore } from '@/features/sessions/sessionStore'
+import { resolveErrorMessage } from '@/lib/commandError'
 import { processSessionUpdate } from './coreEventController'
 
 const LIVE_UPDATE_BATCH_MS = 100

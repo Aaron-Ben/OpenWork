@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
-import { formatBeijingDateTime } from '../../../lib/dateTime'
+import { formatBeijingDateTime } from '@/lib/dateTime'
 import type { CompactionHistoryItem } from '../traceViewModel'
 import { formatDuration } from './TraceList'
 

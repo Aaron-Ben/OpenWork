@@ -5,7 +5,7 @@ import type {
   ProviderInput,
   ProviderPreset,
   TestResult,
-} from '../features/models/contracts'
+} from '@/features/models/contracts'
 
 // 薄 Tauri invoke 封装,每个方法对应一个 Rust command。
 export const providersApi = {

@@ -16,18 +16,18 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '../../../components/ui/button'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '../../../components/ui/dropdown-menu'
-import { useProjectStore, normalizeDirectoryPath, type OpenedProject } from '../../../stores/projectStore'
-import type { RuntimeSessionRecord } from '../../../bridge/compat'
-import { selectDefaultModel, useModelStore } from '../../models/modelStore'
-import { useRuntimeStore } from '../../chat/runtimeStore'
-import type { SessionRuntimePhase } from '../../chat/runtimeReducer'
+} from '@/components/ui/dropdown-menu'
+import { useProjectStore, normalizeDirectoryPath, type OpenedProject } from '@/stores/projectStore'
+import type { RuntimeSessionRecord } from '@/bridge/compat'
+import { selectDefaultModel, useModelStore } from '@/features/models/modelStore'
+import { useRuntimeStore } from '@/features/chat/runtimeStore'
+import type { SessionRuntimePhase } from '@/features/chat/runtimeReducer'
 import { useSessionStore } from '../sessionStore'
 
 export function ProjectSection({

@@ -2,8 +2,8 @@ import { memo } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { MarkdownRenderer } from '../../../components/markdown/MarkdownRenderer'
-import type { ContentBlock } from '../../../type/parts'
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
+import type { ContentBlock } from '@/types/parts'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityList } from './ToolActivityList'
 

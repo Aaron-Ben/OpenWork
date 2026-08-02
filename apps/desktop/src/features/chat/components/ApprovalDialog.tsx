@@ -9,7 +9,7 @@ import type {
   RuntimePermissionDecision,
   RuntimePermissionRequest,
   RuntimeUnitVerdict,
-} from '../../../bridge/compat'
+} from '@/bridge/compat'
 import { useRuntimeStore } from '../runtimeStore'
 import { useTurnActions } from '../useTurn'
 

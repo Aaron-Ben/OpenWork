@@ -12,14 +12,14 @@ import {
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { RuntimeTraceContentPolicy } from '../../bridge/compat'
-import { setLanguage, type SupportedLanguage } from '../../i18n'
+import type { RuntimeTraceContentPolicy } from '@/bridge/compat'
+import { setLanguage, type SupportedLanguage } from '@/i18n'
 import {
   parseContextWindowTokens,
   useContextWindowStore,
-} from '../../stores/contextWindowStore'
-import { useThemeStore, type Theme } from '../../stores/themeStore'
-import { useTraceContentStore } from '../../stores/traceContentStore'
+} from '@/stores/contextWindowStore'
+import { useThemeStore, type Theme } from '@/stores/themeStore'
+import { useTraceContentStore } from '@/stores/traceContentStore'
 
 const TRACE_POLICIES: RuntimeTraceContentPolicy[] = ['full', 'compaction_only', 'off']
 

@@ -2,7 +2,7 @@ import { Bot, FileText, Image as ImageIcon, MessageSquare, User, Wrench } from '
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { extractText, type ContentBlock, type DataBlock } from '../../../type/parts'
+import { extractText, type ContentBlock, type DataBlock } from '@/types/parts'
 
 export interface TracePayloadMessage {
   role: string

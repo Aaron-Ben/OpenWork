@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { RuntimeTraceSpan, RuntimeTurnTrace } from '../../bridge/compat'
+import type { RuntimeTraceSpan, RuntimeTurnTrace } from '@/bridge/compat'
 import { contextUsageFromTrace } from './contextUsage'
 
 function modelSpan(

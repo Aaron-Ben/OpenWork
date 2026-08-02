@@ -4,7 +4,7 @@ import { Bot, CircleAlert, Clock3, Loader2, Maximize2, MessageSquareText, Minimi
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
-import { coreCommands } from '../../../bridge/commands'
+import { coreCommands } from '@/bridge/commands'
 import type {
   RuntimeTraceContentPolicy,
   RuntimeTraceCompleteness,
@@ -12,10 +12,10 @@ import type {
   RuntimeTraceSpan,
   RuntimeTraceSpanPayload,
   RuntimeTurnTrace,
-} from '../../../bridge/compat'
-import { formatBeijingDateTime } from '../../../lib/dateTime'
-import { useTraceContentStore } from '../../../stores/traceContentStore'
-import { resolveErrorMessage } from '../../../utils/commandError'
+} from '@/bridge/compat'
+import { formatBeijingDateTime } from '@/lib/dateTime'
+import { useTraceContentStore } from '@/stores/traceContentStore'
+import { resolveErrorMessage } from '@/lib/commandError'
 import {
   buildTraceAttributeSections,
   shouldPollTrace,

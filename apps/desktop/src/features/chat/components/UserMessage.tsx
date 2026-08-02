@@ -1,6 +1,6 @@
 import { memo } from 'react'
 
-import type { ContentBlock, TextBlock } from '../../../type/parts'
+import type { ContentBlock, TextBlock } from '@/types/parts'
 
 interface UserMessageProps {
   parts: ContentBlock[]

@@ -2,8 +2,8 @@ import { useEffect, useState, type RefObject } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
-import { cn } from '../../../lib/utils'
-import type { ChatItem } from '../../../type/chat'
+import { cn } from '@/lib/utils'
+import type { ChatItem } from '@/types/chat'
 
 export interface ConversationTurn {
   id: string

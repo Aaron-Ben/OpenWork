@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { RuntimeTraceSpan } from '../../../bridge/compat'
+import type { RuntimeTraceSpan } from '@/bridge/compat'
 import {
   buildTraceTree,
   buildWaterfallRange,

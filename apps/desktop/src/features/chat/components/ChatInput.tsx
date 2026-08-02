@@ -5,8 +5,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { ProviderModel } from '../../models/contracts'
-import type { RuntimePermissionMode } from '../../../bridge/compat'
+import type { ProviderModel } from '@/features/models/contracts'
+import type { RuntimePermissionMode } from '@/bridge/compat'
 import type { ContextUsage, ContextUsageBreakdown } from '../contextUsage'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 

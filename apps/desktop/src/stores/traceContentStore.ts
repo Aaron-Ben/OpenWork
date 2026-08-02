@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 
-import { coreCommands } from '../bridge/commands'
-import type { RuntimeTraceContentPolicy } from '../bridge/compat'
-import { resolveErrorMessage } from '../utils/commandError'
+import { coreCommands } from '@/bridge/commands'
+import type { RuntimeTraceContentPolicy } from '@/bridge/compat'
+import { resolveErrorMessage } from '@/lib/commandError'
 
 export const TRACE_CONTENT_POLICY_STORAGE_KEY = 'openwork-trace-content-policy'
 export const DEFAULT_TRACE_CONTENT_POLICY: RuntimeTraceContentPolicy = 'full'

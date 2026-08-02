@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_CONTEXT_WINDOW_TOKENS, useContextWindowStore } from '../../stores/contextWindowStore'
-import { useTraceContentStore } from '../../stores/traceContentStore'
+import { DEFAULT_CONTEXT_WINDOW_TOKENS, useContextWindowStore } from '@/stores/contextWindowStore'
+import { useTraceContentStore } from '@/stores/traceContentStore'
 import { GeneralSettings } from './GeneralSettings'
 
 describe('GeneralSettings', () => {

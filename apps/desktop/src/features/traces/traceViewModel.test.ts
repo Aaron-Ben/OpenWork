@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { RuntimeTraceSpan, RuntimeTraceSummary } from '../../bridge/compat'
+import type { RuntimeTraceSpan, RuntimeTraceSummary } from '@/bridge/compat'
 import {
   buildCompactionHistory,
   buildTraceAttributeRows,

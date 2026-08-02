@@ -2,8 +2,8 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, X, Zap } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { providersApi } from "../../../bridge/providers";
-import { resolveErrorMessage as resolveMessage } from "../../../utils/commandError";
+import { providersApi } from "@/bridge/providers";
+import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
 import type { ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../contracts";
 import { useModelStore } from "../modelStore";
 

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import type { RuntimeTraceSpan } from '../../../bridge/compat'
+import type { RuntimeTraceSpan } from '@/bridge/compat'
 import type { CompactionHistoryItem } from '../traceViewModel'
 import { CompactionHistoryList, formatReclaim } from './CompactionHistoryList'
 

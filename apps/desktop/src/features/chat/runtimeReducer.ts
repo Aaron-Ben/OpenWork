@@ -6,8 +6,8 @@ import type {
   RuntimeSessionUpdateEnvelope,
   RuntimeToolProgress,
   RuntimeTurnOutcome,
-} from '../../bridge/compat'
-import { supportsRuntimeSessionUpdateVersion } from '../../bridge/compat'
+} from '@/bridge/compat'
+import { supportsRuntimeSessionUpdateVersion } from '@/bridge/compat'
 
 const MAX_LIVE_TOOL_OUTPUT_CHARS = 32 * 1024
 

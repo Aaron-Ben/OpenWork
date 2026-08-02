@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { coreCommands } from '../../bridge/commands'
-import type { ProviderConfig } from '../models/contracts'
-import { createSessionRuntimeView } from '../chat/runtimeReducer'
-import { useRuntimeStore } from '../chat/runtimeStore'
-import { buildTranscript } from '../chat/transcript'
+import { coreCommands } from '@/bridge/commands'
+import type { ProviderConfig } from '@/features/models/contracts'
+import { createSessionRuntimeView } from '@/features/chat/runtimeReducer'
+import { useRuntimeStore } from '@/features/chat/runtimeStore'
+import { buildTranscript } from '@/features/chat/transcript'
 import { useSessionStore } from './sessionStore'
 
-vi.mock('../../bridge/commands', () => ({
+vi.mock('@/bridge/commands', () => ({
   coreCommands: {
     listSessions: vi.fn(),
     createSession: vi.fn(),

@@ -2,7 +2,7 @@ import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Minimize2 } from 'lucide-rea
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { formatBeijingDateTime } from '../../../lib/dateTime'
+import { formatBeijingDateTime } from '@/lib/dateTime'
 import {
   DEFAULT_TRACE_SORT,
   sortTraceListItems,

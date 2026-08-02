@@ -2,7 +2,7 @@ import { Activity, FolderClosed, PanelLeftOpen, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { isMacOS } from '@/utils/platform'
+import { isMacOS } from '@/lib/platform'
 
 interface MainHeaderProps {
   title: string | null

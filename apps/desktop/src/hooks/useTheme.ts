@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { useThemeStore, type Theme } from '../stores/themeStore'
+import { useThemeStore, type Theme } from '@/stores/themeStore'
 
 /** `system` 模式下查询操作系统当前是否为暗色。 */
 function resolveDark(theme: Theme): boolean {

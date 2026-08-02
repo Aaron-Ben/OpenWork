@@ -6,12 +6,12 @@ import { useTranslation } from 'react-i18next'
 import type {
   RuntimeContextInspectionMessage,
   RuntimeContextWindowInspection,
-} from '../../../bridge/compat'
-import { MarkdownRenderer } from '../../../components/markdown/MarkdownRenderer'
-import { CompactionHistoryList } from '../../traces/components/CompactionHistoryList'
-import { useCompactionHistory } from '../../traces/useCompactionHistory'
-import type { ContentBlock } from '../../../type/parts'
-import { extractText } from '../../../type/parts'
+} from '@/bridge/compat'
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
+import { CompactionHistoryList } from '@/features/traces/components/CompactionHistoryList'
+import { useCompactionHistory } from '@/features/traces/useCompactionHistory'
+import type { ContentBlock } from '@/types/parts'
+import { extractText } from '@/types/parts'
 import { formatTokenCount } from './ContextUsageIndicator'
 
 interface ContextWindowDrawerProps {

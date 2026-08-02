@@ -4,7 +4,7 @@ import type {
   RuntimePermissionMode,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
-} from '../../bridge/compat'
+} from '@/bridge/compat'
 import {
   createSessionRuntimeView,
   reduceSessionUpdate,

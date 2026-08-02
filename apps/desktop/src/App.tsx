@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { AppShell } from './components/layout/AppShell'
-import { useModelStore } from './features/models/modelStore'
-import { useSessionStore } from './features/sessions/sessionStore'
-import { useTheme } from './hooks/useTheme'
-import { useTraceContentStore } from './stores/traceContentStore'
+import { AppShell } from '@/components/layout/AppShell'
+import { useModelStore } from '@/features/models/modelStore'
+import { useSessionStore } from '@/features/sessions/sessionStore'
+import { useTheme } from '@/hooks/useTheme'
+import { useTraceContentStore } from '@/stores/traceContentStore'
 
 function App() {
   const { t } = useTranslation()

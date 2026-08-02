@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { coreCommands } from '../../../bridge/commands'
-import { Button } from '../../../components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select'
-import type { RuntimeTraceSummary } from '../../../bridge/compat'
-import { resolveErrorMessage } from '../../../utils/commandError'
-import { useSessionStore } from '../../sessions/sessionStore'
-import { useNavigationStore } from '../../../app/navigationStore'
-import { useProjectStore } from '../../../stores/projectStore'
+import { coreCommands } from '@/bridge/commands'
+import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { RuntimeTraceSummary } from '@/bridge/compat'
+import { resolveErrorMessage } from '@/lib/commandError'
+import { useSessionStore } from '@/features/sessions/sessionStore'
+import { useNavigationStore } from '@/app/navigationStore'
+import { useProjectStore } from '@/stores/projectStore'
 import {
   buildTraceListItems,
   filterTraceListItems,

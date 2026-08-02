@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
-import { providersApi } from '../../bridge/providers'
-import { resolveErrorMessage } from '../../utils/commandError'
+import { providersApi } from '@/bridge/providers'
+import { resolveErrorMessage } from '@/lib/commandError'
 import type {
   ProviderConfig,
   ProviderIndex,

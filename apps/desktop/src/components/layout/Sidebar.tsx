@@ -2,12 +2,12 @@ import { Activity, ArrowLeft, Bot, PanelLeftClose, Settings as SettingsIcon, Sli
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
-import { ProjectSection } from '../../features/sessions/components/ProjectSection'
-import { isMacOS } from '../../utils/platform'
+import { ProjectSection } from '@/features/sessions/components/ProjectSection'
+import { isMacOS } from '@/lib/platform'
 import { Button } from '../ui/button'
 import type { AppView } from './types'
 
-export { ProjectItem } from '../../features/sessions/components/ProjectSection'
+export { ProjectItem } from '@/features/sessions/components/ProjectSection'
 
 interface SidebarProps {
   view: AppView

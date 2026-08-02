@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
-} from '../../bridge/compat'
+} from '@/bridge/compat'
 import {
   createSessionRuntimeView,
   reduceSessionUpdate,
