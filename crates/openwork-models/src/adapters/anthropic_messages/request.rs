@@ -1,8 +1,11 @@
-use crate::model::{ContentBlock, DataSource, ModelError, ModelRequest, Role};
+use crate::model::{ContentBlock, DataSource, ModelError, ModelRequest, Role, ThinkingMode};
 use serde_json::{Value, json};
 
 pub(crate) fn encode_request(req: &ModelRequest, stream: bool) -> Result<Value, ModelError> {
-    if req.thinking.is_some() {
+    if matches!(
+        req.thinking.map(|thinking| thinking.mode),
+        Some(ThinkingMode::Enabled)
+    ) {
         return Err(ModelError::invalid_request(
             "Anthropic thinking mode is not mapped yet",
         ));
@@ -182,7 +185,7 @@ fn encode_content_part(part: &ContentBlock) -> Result<Value, ModelError> {
 mod tests {
     use super::*;
     use crate::model::{
-        Message, ProviderOpaqueBlock, ToolCallBlock, ToolCallState, ToolDefinition,
+        Message, ProviderOpaqueBlock, ThinkingConfig, ToolCallBlock, ToolCallState, ToolDefinition,
         ToolResultBlock, ToolResultState,
     };
     use crate::provider::ProviderDriver;
@@ -211,6 +214,24 @@ mod tests {
         assert_eq!(body["temperature"].as_f64(), Some(f64::from(0.1_f32)));
         assert_eq!(body["top_p"].as_f64(), Some(f64::from(0.9_f32)));
         assert_eq!(body["max_tokens"], 128);
+    }
+
+    #[test]
+    fn omits_explicitly_disabled_thinking() {
+        let req = ModelRequest::text("claude-sonnet-4-5", "hello")
+            .with_thinking(ThinkingConfig::disabled());
+
+        let body = encode_request(&req, false).expect("disabled thinking should be supported");
+
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn rejects_enabled_thinking_until_it_is_mapped() {
+        let req = ModelRequest::text("claude-sonnet-4-5", "hello")
+            .with_thinking(ThinkingConfig::enabled());
+
+        assert!(encode_request(&req, false).is_err());
     }
 
     #[test]

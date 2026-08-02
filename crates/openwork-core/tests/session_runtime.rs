@@ -18,8 +18,8 @@ use openwork_core::session::{
 };
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
-    ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, TokenUsage,
-    ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultState,
+    ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
+    TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultState,
 };
 use openwork_tools::{
     AnalysisUnit, ApprovalSessionAction, Effect, InvocationAnalysis, PermissionMode,
@@ -1739,7 +1739,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         assert!(compact_trace.attributes.prepare_ms.is_some());
         assert_eq!(
             compact_trace.attributes.summary_max_output_tokens,
-            Some(4_096)
+            Some(16_384)
         );
         assert_eq!(
             compact_trace
@@ -1781,6 +1781,10 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         );
         assert!(summary_trace.started.turn_id.is_none());
         assert_eq!(summary_trace.status, TraceStatus::Succeeded);
+        assert_eq!(
+            summary_trace.attributes.thinking_mode.as_deref(),
+            Some("disabled")
+        );
         assert!(summary_trace.started.payloads.request.is_some());
         assert!(summary_trace.response_payload.is_some());
         assert!(summary_trace.response_message_id.is_none());
@@ -1856,7 +1860,8 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
             ]
         );
         assert!(requests[1].tools.is_empty());
-        assert_eq!(requests[1].max_output_tokens, Some(4_096));
+        assert_eq!(requests[1].max_output_tokens, Some(16_384));
+        assert_eq!(requests[1].thinking, Some(ThinkingConfig::disabled()));
         let ContentBlock::Text(prompt) = requests[1]
             .messages
             .last()

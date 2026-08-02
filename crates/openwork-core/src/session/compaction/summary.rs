@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelEvent, ModelPort, ModelResponse,
-    Role, ToolResultBlock, ToolResultState,
+    Role, ThinkingConfig, ToolResultBlock, ToolResultState,
 };
 
 use crate::context::ResolvedSystemContext;
@@ -23,7 +23,7 @@ use crate::session::{
     TraceRecorder, TraceStatus, TurnId,
 };
 
-const COMPACTION_MAX_OUTPUT_TOKENS: u32 = 4_096;
+const COMPACTION_MAX_OUTPUT_TOKENS: u32 = 16_384;
 const MIN_SUMMARY_CHARS: usize = 500;
 const COMPACTION_SUMMARY_MAX_ATTEMPTS: usize = 3;
 const COMPACTION_SUMMARY_RETRY_DELAY: Duration = Duration::from_secs(3);
@@ -165,6 +165,7 @@ pub(super) async fn generate_summary(
     trace.attributes_mut().summary_max_output_tokens = Some(COMPACTION_MAX_OUTPUT_TOKENS);
     let mut model_request = prepared.request;
     model_request.max_output_tokens = Some(COMPACTION_MAX_OUTPUT_TOKENS);
+    model_request.thinking = Some(ThinkingConfig::disabled());
     let summary_context_budget = crate::model_call::ContextBudgetEstimate {
         reserved_output_tokens: Some(COMPACTION_MAX_OUTPUT_TOKENS),
         ..prepared.context_budget
