@@ -5,7 +5,7 @@ Tauri 2 + React + TypeScript。React 只通过 Tauri Command/Event 与 Core 通�
 ## 1. 目录
 
 ```text
-apps/desktop/
+desktop/
 ├── src/
 │   ├── app/          Bootstrap、导航、唯一的 Event Bridge
 │   ├── bridge/       commands.ts / compat.ts（Host DTO）

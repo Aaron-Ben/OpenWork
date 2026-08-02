@@ -157,7 +157,7 @@ const date = span.startedAt.slice(0, 10)
 const time = span.startedAt.split('T')[1].replace('+08:00', '')
 ```
 
-新增时间显示一律走 `apps/desktop/src/lib/dateTime.ts`，不要在组件里各自 `new Intl.DateTimeFormat`。
+新增时间显示一律走 `desktop/src/lib/dateTime.ts`，不要在组件里各自 `new Intl.DateTimeFormat`。
 
 ## 2. 迁移规范
 

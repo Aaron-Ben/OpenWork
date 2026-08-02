@@ -88,12 +88,12 @@ cargo run -p openwork-core --bin openwork-migrate
 ### 4. Start Desktop
 
 ```bash
-cd apps/desktop
+cd desktop
 pnpm install
 pnpm tauri dev
 ```
 
-Desktop commands must run inside `apps/desktop`; the repository root does not contain a `package.json`. `OpenWorkCore::bootstrap` also applies pending migrations. The standalone migration command is mainly useful for first-time provisioning and database diagnostics.
+Desktop commands must run inside `desktop`; the repository root does not contain a `package.json`. `OpenWorkCore::bootstrap` also applies pending migrations. The standalone migration command is mainly useful for first-time provisioning and database diagnostics.
 
 ## Basic workflow
 
@@ -133,7 +133,7 @@ Key architecture invariants:
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop` | Tauri 2 / React / TypeScript desktop client |
+| `desktop` | Tauri 2 / React / TypeScript desktop client |
 | `crates/openwork-core` | Core facade, session runtime, PostgreSQL storage, and Trace |
 | `crates/openwork-agent` | Agent definition, system prompt, and static policy |
 | `crates/openwork-chat-state` | Single-writer conversation actor and model-request snapshots |
@@ -175,7 +175,7 @@ cargo clippy --all-targets --all-features
 cargo fmt
 ```
 
-Run Desktop commands from `apps/desktop`:
+Run Desktop commands from `desktop`:
 
 ```bash
 pnpm test

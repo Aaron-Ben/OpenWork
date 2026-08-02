@@ -1,6 +1,6 @@
 # AGENTS.md
 
-OpenWork: local agent workbench. Rust workspace (5 crates in `crates/`) + Tauri 2 / React / TypeScript desktop app in `apps/desktop/`. PostgreSQL-only persistence via SQLx.
+OpenWork: local agent workbench. Rust workspace (5 crates in `crates/`) + Tauri 2 / React / TypeScript desktop app in `desktop/`. PostgreSQL-only persistence via SQLx.
 
 ## Current state (read this first)
 
@@ -22,7 +22,7 @@ cargo clippy --all-targets --all-features
 cargo fmt
 ```
 
-Desktop — run from `apps/desktop/` only. The repo root has no `package.json`; running pnpm scripts at root fails with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`.
+Desktop — run from `desktop/` only. The repo root has no `package.json`; running pnpm scripts at root fails with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`.
 
 ```bash
 pnpm install
@@ -55,7 +55,7 @@ Start order: postgres → migrate → `pnpm tauri dev`. `OpenWorkCore::bootstrap
   TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork cargo test -p openwork-core
   ```
 - `deepseek_live_runtime.rs` is `#[ignore]`d (needs network + `DEEPSEEK_API_KEY` + `TEST_DATABASE_URL`).
-- Tauri-side contract test: `apps/desktop/src-tauri/tests/command_error_contract.rs` pins the stable error code/message shape exposed to the frontend.
+- Tauri-side contract test: `desktop/src-tauri/tests/command_error_contract.rs` pins the stable error code/message shape exposed to the frontend.
 
 ## Migrations
 
@@ -68,8 +68,8 @@ Start order: postgres → migrate → `pnpm tauri dev`. `OpenWorkCore::bootstrap
 
 Authoritative design docs: `docs/` — one document per feature (see `docs/README.md` index). Source of truth for "what exists now" is the code + migrations.
 
-- `openwork-core` is the **only** runtime entry. `OpenWorkCore` owns provider repository, credentials, and the session registry. Tauri (`apps/desktop/src-tauri`) only adapts Commands/Events and maps errors — no state machine duplication.
-- Dependency direction (never reversed): `openwork-models` ← `openwork-tools`, `openwork-chat-state` ← `openwork-agent` ← `openwork-core` ← `apps/desktop/src-tauri`. `openwork-models` depends on no other OpenWork crate.
+- `openwork-core` is the **only** runtime entry. `OpenWorkCore` owns provider repository, credentials, and the session registry. Tauri (`desktop/src-tauri`) only adapts Commands/Events and maps errors — no state machine duplication.
+- Dependency direction (never reversed): `openwork-models` ← `openwork-tools`, `openwork-chat-state` ← `openwork-agent` ← `openwork-core` ← `desktop/src-tauri`. `openwork-models` depends on no other OpenWork crate.
 - One active session = one `SessionActor`; it drives at most one Turn at a time. The actor's run loop is the only place that advances the Model → Tool/Permission → Model chain. Trace, storage, and desktop never advance a Turn.
 - `openwork-chat-state` is the single writer of the conversation; core writes via commands, reads via snapshots.
 - `openwork-agent` holds only static agent definition (prompt, tool set, limits) — it must not start async run loops.
@@ -85,8 +85,8 @@ Authoritative design docs: `docs/` — one document per feature (see `docs/READM
 
 ## Frontend ↔ Rust contract
 
-- Contract codegen is deferred. Bridge DTOs are **hand-written** in `apps/desktop/src/bridge/compat.ts` and must be manually kept in sync with the Rust host DTOs (defined in `openwork-core`, e.g. `SessionInput` in `storage/postgres.rs`, surfaced via `src-tauri/src/commands/`). Bump `RUNTIME_SESSION_UPDATE_VERSION` in `compat.ts` when the update shape changes.
-- React only talks to core through `apps/desktop/src/bridge/commands.ts` invoke wrappers — never SQL, provider adapters, or tool executors.
+- Contract codegen is deferred. Bridge DTOs are **hand-written** in `desktop/src/bridge/compat.ts` and must be manually kept in sync with the Rust host DTOs (defined in `openwork-core`, e.g. `SessionInput` in `storage/postgres.rs`, surfaced via `src-tauri/src/commands/`). Bump `RUNTIME_SESSION_UPDATE_VERSION` in `compat.ts` when the update shape changes.
+- React only talks to core through `desktop/src/bridge/commands.ts` invoke wrappers — never SQL, provider adapters, or tool executors.
 - Frontend state layers are separate: canonical session/messages, per-session runtime view (reducer), local UI state. See `docs/desktop.md`.
 
 ## Conventions

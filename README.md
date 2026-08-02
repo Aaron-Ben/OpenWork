@@ -88,12 +88,12 @@ cargo run -p openwork-core --bin openwork-migrate
 ### 4. 启动 Desktop
 
 ```bash
-cd apps/desktop
+cd desktop
 pnpm install
 pnpm tauri dev
 ```
 
-桌面端命令必须在 `apps/desktop` 中执行；仓库根目录没有 `package.json`。`OpenWorkCore::bootstrap` 也会应用待执行 migration，独立迁移命令主要用于首次配置和数据库诊断。
+桌面端命令必须在 `desktop` 中执行；仓库根目录没有 `package.json`。`OpenWorkCore::bootstrap` 也会应用待执行 migration，独立迁移命令主要用于首次配置和数据库诊断。
 
 ## 基本使用流程
 
@@ -133,7 +133,7 @@ flowchart LR
 
 | 路径 | 职责 |
 | --- | --- |
-| `apps/desktop` | Tauri 2 / React / TypeScript 桌面客户端 |
+| `desktop` | Tauri 2 / React / TypeScript 桌面客户端 |
 | `crates/openwork-core` | Core Facade、Session Runtime、PostgreSQL Storage 与 Trace |
 | `crates/openwork-agent` | Agent Definition、System Prompt 与静态策略 |
 | `crates/openwork-chat-state` | Conversation 单写者 Actor 与模型请求快照 |
@@ -175,7 +175,7 @@ cargo clippy --all-targets --all-features
 cargo fmt
 ```
 
-Desktop 命令在 `apps/desktop` 中运行：
+Desktop 命令在 `desktop` 中运行：
 
 ```bash
 pnpm test

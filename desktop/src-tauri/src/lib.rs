@@ -64,7 +64,7 @@ pub fn run() {
 
 #[cfg(debug_assertions)]
 fn load_development_env() {
-    // `pnpm tauri dev` starts Cargo below `apps/desktop`; dotenvy searches parent
+    // `pnpm tauri dev` starts Cargo below `desktop`; dotenvy searches parent
     // directories, so it finds the repository-root `.env`. Existing process
     // variables keep precedence over values from the file.
     let _ = dotenvy::dotenv();

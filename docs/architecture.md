@@ -7,8 +7,8 @@ OpenWork 是本地 Agent 工作台：Rust workspace（5 个 crate）+ Tauri 2 / 
 ## 1. 依赖方向
 
 ```text
-apps/desktop/src          ← 只通过 Tauri Command/Event
-apps/desktop/src-tauri    → openwork-core, openwork-models
+desktop/src          ← 只通过 Tauri Command/Event
+desktop/src-tauri    → openwork-core, openwork-models
 openwork-core             → openwork-agent, openwork-chat-state, openwork-models, openwork-tools
 openwork-agent            → openwork-models, openwork-tools
 openwork-chat-state       → openwork-models

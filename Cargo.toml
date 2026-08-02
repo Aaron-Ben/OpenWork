@@ -5,7 +5,7 @@ members = [
   "crates/openwork-models",
   "crates/openwork-tools",
   "crates/openwork-core",
-  "apps/desktop/src-tauri",
+  "desktop/src-tauri",
 ]
 resolver = "2"
 
