@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ProjectSection } from '@/features/sessions/components/ProjectSection'
 import { isMacOS } from '@/lib/platform'
-import { Button } from '../ui/button'
+import { Button } from '@/components/ui/button'
 import type { AppView } from './types'
 
 export { ProjectItem } from '@/features/sessions/components/ProjectSection'

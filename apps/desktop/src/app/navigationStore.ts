@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { AppView } from '@/components/layout/types'
+import type { AppView } from '@/app/types'
 
 interface NavigationStoreState {
   view: AppView

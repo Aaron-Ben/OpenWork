@@ -23,7 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useProjectStore, normalizeDirectoryPath, type OpenedProject } from '@/stores/projectStore'
+import { useProjectStore, normalizeDirectoryPath, type OpenedProject } from '@/features/projects/projectStore'
 import type { RuntimeSessionRecord } from '@/bridge/compat'
 import { selectDefaultModel, useModelStore } from '@/features/models/modelStore'
 import { useRuntimeStore } from '@/features/chat/runtimeStore'

@@ -1,18 +1,18 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { GeneralSettings } from '../settings/GeneralSettings'
+import { GeneralSettings } from '@/features/settings/components/GeneralSettings'
 import { useCoreEventBridge } from '@/app/useCoreEventBridge'
 import { shouldCollapseSidebar, useNavigationStore } from '@/app/navigationStore'
 import { resyncSessionView } from '@/app/coreEventController'
 import { ChatPage } from '@/features/chat/ChatPage'
 import { ModelSettings } from '@/features/models/components/ModelSettings'
 import { useSessionStore } from '@/features/sessions/sessionStore'
-import { normalizeDirectoryPath, useProjectStore } from '@/stores/projectStore'
+import { normalizeDirectoryPath, useProjectStore } from '@/features/projects/projectStore'
 import { MainHeader } from './MainHeader'
 import { Sidebar } from './Sidebar'
 
-const TracePage = lazy(() => import('@/features/traces/components/TracePage'))
+const TracePage = lazy(() => import('@/features/traces/TracePage'))
 
 export function AppShell() {
   const { t } = useTranslation()

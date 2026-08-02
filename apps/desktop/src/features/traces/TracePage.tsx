@@ -9,15 +9,15 @@ import type { RuntimeTraceSummary } from '@/bridge/compat'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useSessionStore } from '@/features/sessions/sessionStore'
 import { useNavigationStore } from '@/app/navigationStore'
-import { useProjectStore } from '@/stores/projectStore'
+import { useProjectStore } from '@/features/projects/projectStore'
 import {
   buildTraceListItems,
   filterTraceListItems,
   shouldPollTrace,
   type TraceStatusFilter,
-} from '../traceViewModel'
-import { TraceList } from './TraceList'
-import { TurnTraceDrawer } from './TurnTraceDrawer'
+} from './traceViewModel'
+import { TraceList } from './components/TraceList'
+import { TurnTraceDrawer } from './components/TurnTraceDrawer'
 
 const STATUS_OPTIONS: TraceStatusFilter[] = ['all', 'running', 'completed', 'failed', 'cancelled', 'interrupted']
 

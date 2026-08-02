@@ -19,7 +19,7 @@ import { EMPTY_RUNTIME_VIEW, useRuntimeStore } from './runtimeStore'
 import { buildTranscript } from './transcript'
 import { useTurnActions } from './useTurn'
 import { contextUsageFromTrace, type ContextUsage } from './contextUsage'
-import { useContextWindowStore } from '@/stores/contextWindowStore'
+import { useContextWindowStore } from '@/features/settings/contextWindowStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useNavigationStore } from '@/app/navigationStore'
 

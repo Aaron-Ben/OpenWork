@@ -14,7 +14,7 @@ import type {
   RuntimeTurnTrace,
 } from '@/bridge/compat'
 import { formatBeijingDateTime } from '@/lib/dateTime'
-import { useTraceContentStore } from '@/stores/traceContentStore'
+import { useTraceContentStore } from '@/features/settings/traceContentStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import {
   buildTraceAttributeSections,

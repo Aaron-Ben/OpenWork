@@ -17,9 +17,9 @@ import { setLanguage, type SupportedLanguage } from '@/i18n'
 import {
   parseContextWindowTokens,
   useContextWindowStore,
-} from '@/stores/contextWindowStore'
-import { useThemeStore, type Theme } from '@/stores/themeStore'
-import { useTraceContentStore } from '@/stores/traceContentStore'
+} from '@/features/settings/contextWindowStore'
+import { useThemeStore, type Theme } from '@/app/themeStore'
+import { useTraceContentStore } from '@/features/settings/traceContentStore'
 
 const TRACE_POLICIES: RuntimeTraceContentPolicy[] = ['full', 'compaction_only', 'off']
 

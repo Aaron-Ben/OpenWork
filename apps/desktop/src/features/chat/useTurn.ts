@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 
 import { coreCommands } from '@/bridge/commands'
 import type { RuntimePermissionDecision, RuntimePermissionMode } from '@/bridge/compat'
-import { useContextWindowStore } from '@/stores/contextWindowStore'
+import { useContextWindowStore } from '@/features/settings/contextWindowStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useRuntimeStore } from './runtimeStore'
 
