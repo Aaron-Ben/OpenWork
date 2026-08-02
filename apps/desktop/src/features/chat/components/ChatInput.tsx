@@ -34,6 +34,11 @@ interface ChatInputProps {
 
 export type ChatSlashCommand = 'compact'
 
+function resizeTextarea(textarea: HTMLTextAreaElement) {
+  textarea.style.height = 'auto'
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+}
+
 export function ChatInput({
   model,
   modelOptions,
@@ -72,9 +77,9 @@ export function ChatInput({
 
   useEffect(() => {
     const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
+    if (!textarea || composingRef.current) return
+    const frame = window.requestAnimationFrame(() => resizeTextarea(textarea))
+    return () => window.cancelAnimationFrame(frame)
   }, [value])
 
   useEffect(() => setSlashMenuDismissed(false), [value])
@@ -161,8 +166,10 @@ export function ChatInput({
           onCompositionStart={() => {
             composingRef.current = true
           }}
-          onCompositionEnd={() => {
+          onCompositionEnd={(event) => {
             composingRef.current = false
+            const textarea = event.currentTarget
+            window.requestAnimationFrame(() => resizeTextarea(textarea))
           }}
           placeholder={t('chat.placeholder')}
           rows={2}

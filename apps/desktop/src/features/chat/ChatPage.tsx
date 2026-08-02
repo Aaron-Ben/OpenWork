@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, Sparkles, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { AssistantMessage } from './components/AssistantMessage'
 import { ChatInput } from './components/ChatInput'
 import { ContextWindowDrawer } from './components/ContextWindowDrawer'
 import {
@@ -10,8 +9,7 @@ import {
   getConversationTurns,
 } from './components/ConversationNavigator'
 import { ApprovalDialog } from './components/ApprovalDialog'
-import { ToolActivityList } from './components/ToolActivityList'
-import { UserMessage } from './components/UserMessage'
+import { TranscriptMessage } from './components/TranscriptMessage'
 import { selectDefaultModel, useModelStore } from '../models/modelStore'
 import type { RuntimeContextWindowInspection, RuntimeStoredMessage } from '../../bridge/compat'
 import { coreCommands } from '../../bridge/commands'
@@ -117,12 +115,12 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     if (container && stickToBottomRef.current) container.scrollTop = container.scrollHeight
   }, [messages])
 
-  function handleTranscriptScroll() {
+  const handleTranscriptScroll = useCallback(() => {
     const container = scrollContainerRef.current
     if (!container) return
     stickToBottomRef.current =
       container.scrollHeight - container.scrollTop - container.clientHeight < 80
-  }
+  }, [])
 
   useEffect(() => () => {
     if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current)
@@ -248,24 +246,33 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     }
   }
 
-  async function undoFileChanges(changeIds: string[]) {
+  const undoFileChanges = useCallback(async (changeIds: string[]) => {
     if (!sessionId) return
     await coreCommands.undoFileChanges(sessionId, changeIds)
     const reloaded = await reloadSession(sessionId)
     if (!reloaded) throw new Error('File changes were undone, but the conversation could not be refreshed')
-  }
+  }, [reloadSession, sessionId])
 
-  async function reapplyFileChanges(changeIds: string[]) {
+  const reapplyFileChanges = useCallback(async (changeIds: string[]) => {
     if (!sessionId) return
     await coreCommands.reapplyFileChanges(sessionId, changeIds)
     const reloaded = await reloadSession(sessionId)
     if (!reloaded) throw new Error('File changes were reapplied, but the conversation could not be refreshed')
-  }
+  }, [reloadSession, sessionId])
+
+  const openTrace = useCallback((turnId: string, providerToolCallId?: string) => {
+    setSelectedTrace({ turnId, providerToolCallId })
+  }, [])
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="relative min-h-0">
-        <div ref={scrollContainerRef} className="h-full overflow-auto" onScroll={handleTranscriptScroll}>
+        <div
+          ref={scrollContainerRef}
+          className="h-full overflow-auto"
+          style={{ contain: 'layout paint style' }}
+          onScroll={handleTranscriptScroll}
+        >
           {messages.length === 0 ? (
             sessionId && loadState === 'loading' ? (
               <div className="grid min-h-full place-items-center px-6 py-14" role="status">
@@ -297,45 +304,16 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
             )
           ) : (
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
-              {messages.map((message) => {
-                const openTrace = message.turnId
-                  ? (providerToolCallId?: string) => setSelectedTrace({ turnId: message.turnId!, providerToolCallId })
-                  : undefined
-                const fileChangePresentation = message.fileChangePresentation ?? 'activity'
-                return (
-                  <div
-                    key={message.id}
-                    data-message-id={message.id}
-                    data-turn-id={message.role === 'user' ? message.turnId ?? message.id : undefined}
-                    className={highlightedMessageId === message.id
-                      ? 'rounded-xl bg-clay-soft ring-2 ring-clay/45 transition-colors'
-                      : 'rounded-xl transition-colors'}
-                  >
-                    {message.role === 'user' ? (
-                      <UserMessage parts={message.parts} />
-                    ) : message.role === 'tool' ? (
-                      <ToolActivityList
-                        parts={message.parts}
-                        onOpenTrace={openTrace}
-                        onUndoFileChanges={undoFileChanges}
-                        onReapplyFileChanges={reapplyFileChanges}
-                        fileChangePresentation={fileChangePresentation}
-                      />
-                    ) : (
-                      <AssistantMessage
-                        parts={message.parts}
-                        model={message.model}
-                        isStreaming={message.isStreaming}
-                        isCompacting={message.isCompacting}
-                        onOpenTrace={openTrace}
-                        onUndoFileChanges={undoFileChanges}
-                        onReapplyFileChanges={reapplyFileChanges}
-                        fileChangePresentation={fileChangePresentation}
-                      />
-                    )}
-                  </div>
-                )
-              })}
+              {messages.map((message) => (
+                <TranscriptMessage
+                  key={message.id}
+                  message={message}
+                  highlighted={highlightedMessageId === message.id}
+                  onOpenTrace={openTrace}
+                  onUndoFileChanges={undoFileChanges}
+                  onReapplyFileChanges={reapplyFileChanges}
+                />
+              ))}
             </div>
           )}
         </div>

@@ -25,6 +25,7 @@ interface RuntimeStoreState {
   acceptTurn: (sessionId: string, clientRequestId: string, turnId: string) => void
   failTurnStart: (sessionId: string, clientRequestId: string, message: string) => void
   apply: (envelope: RuntimeSessionUpdateEnvelope) => RuntimeApplyResult
+  applyBatch: (envelopes: RuntimeSessionUpdateEnvelope[]) => RuntimeApplyResult
   replaceSnapshot: (snapshot: RuntimeSessionSnapshot) => void
   markResyncing: (sessionId: string) => void
   markSyncFailed: (sessionId: string, message: string) => void
@@ -32,6 +33,27 @@ interface RuntimeStoreState {
   setPermissionMode: (sessionId: string, mode: RuntimePermissionMode) => void
   reconcileCanonical: (sessionId: string) => void
   clearSession: (sessionId: string) => void
+}
+
+function reduceRuntimeUpdates(
+  previous: SessionRuntimeView,
+  envelopes: RuntimeSessionUpdateEnvelope[],
+): { next: SessionRuntimeView; result: RuntimeApplyResult } {
+  let next = previous
+  let duplicate = false
+  let sequenceGap = false
+  let terminal = false
+  let draftCleared = false
+
+  for (const envelope of envelopes) {
+    duplicate ||= envelope.sequence <= next.lastSequence
+    sequenceGap ||= envelope.sequence > next.lastSequence + 1
+    next = reduceSessionUpdate(next, envelope)
+    terminal ||= envelope.update.type === 'turn_finished'
+    draftCleared ||= envelope.update.type === 'draft_cleared'
+  }
+
+  return { next, result: { duplicate, sequenceGap, terminal, draftCleared } }
 }
 
 function viewFor(state: RuntimeStoreState, sessionId: string): SessionRuntimeView {
@@ -113,20 +135,31 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
 
   apply: (envelope) => {
     const previous = viewFor(get(), envelope.sessionId)
-    const duplicate = envelope.sequence <= previous.lastSequence
-    const sequenceGap = envelope.sequence > previous.lastSequence + 1
-    const next = reduceSessionUpdate(previous, envelope)
+    const { next, result } = reduceRuntimeUpdates(previous, [envelope])
     if (next !== previous) {
       set((state) => ({
         bySession: { ...state.bySession, [envelope.sessionId]: next },
       }))
     }
-    return {
-      duplicate,
-      sequenceGap,
-      terminal: envelope.update.type === 'turn_finished',
-      draftCleared: envelope.update.type === 'draft_cleared',
+    return result
+  },
+
+  applyBatch: (envelopes) => {
+    if (envelopes.length === 0) {
+      return { duplicate: false, sequenceGap: false, terminal: false, draftCleared: false }
     }
+    const sessionId = envelopes[0].sessionId
+    if (envelopes.some((envelope) => envelope.sessionId !== sessionId)) {
+      throw new Error('runtime update batch must contain exactly one session')
+    }
+    const previous = viewFor(get(), sessionId)
+    const { next, result } = reduceRuntimeUpdates(previous, envelopes)
+    if (next !== previous) {
+      set((state) => ({
+        bySession: { ...state.bySession, [sessionId]: next },
+      }))
+    }
+    return result
   },
 
   replaceSnapshot: (snapshot) => {

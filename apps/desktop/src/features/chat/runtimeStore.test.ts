@@ -97,4 +97,49 @@ describe('runtimeStore', () => {
       terminal: null,
     })
   })
+
+  it('does not publish every tool progress chunk as a separate UI update', () => {
+    const store = useRuntimeStore.getState()
+    store.apply({
+      version: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sequence: 1,
+      occurredAtMs: 1,
+      update: {
+        type: 'tool_call_started',
+        toolCall: {
+          toolCallId: 'tool-1',
+          providerCallId: 'call-1',
+          name: 'bash',
+          input: { command: 'verbose-command' },
+          status: 'running',
+          output: null,
+          isError: null,
+        },
+      },
+    })
+
+    let publications = 0
+    const unsubscribe = useRuntimeStore.subscribe((state, previous) => {
+      if (state.bySession['session-1'] !== previous.bySession['session-1']) publications += 1
+    })
+    store.applyBatch(Array.from({ length: 200 }, (_, index) => ({
+      version: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sequence: index + 2,
+      occurredAtMs: index + 2,
+      update: {
+        type: 'tool_call_progress',
+        toolCallId: 'tool-1',
+        progress: { kind: 'stdout', chunk: `line ${index}\n` },
+      },
+    })))
+    unsubscribe()
+
+    expect(publications).toBeLessThanOrEqual(2)
+    expect(useRuntimeStore.getState().bySession['session-1'].toolCalls['tool-1'].output)
+      .toContain('line 199')
+  })
 })
