@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bot, PanelLeftClose, Settings as SettingsIcon, SlidersHorizontal } from 'lucide-react'
+import { Activity, ArrowLeft, Bot, PanelLeftClose, Puzzle, Settings as SettingsIcon, SlidersHorizontal } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -53,6 +53,9 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           <div className="px-3 pb-2 font-sans text-xs font-medium text-ink-faint">{t('settings.title')}</div>
           <SettingsNavItem active={view === 'settings-models'} icon={<Bot size={18} />} onClick={() => onNavigate('settings-models')}>
             {t('settings.models.title')}
+          </SettingsNavItem>
+          <SettingsNavItem active={view === 'settings-skills'} icon={<Puzzle size={18} />} onClick={() => onNavigate('settings-skills')}>
+            {t('settings.skills.title')}
           </SettingsNavItem>
           <SettingsNavItem active={view === 'settings-general'} icon={<SlidersHorizontal size={18} />} onClick={() => onNavigate('settings-general')}>
             {t('settings.general.title')}

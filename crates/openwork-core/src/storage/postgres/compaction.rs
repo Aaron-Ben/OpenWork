@@ -36,8 +36,8 @@ impl PostgresStorage {
                 })?,
         };
         let fetch_limit = i64::from(limit) + 1;
-        let rows: Vec<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
-            "SELECT id, turn_id, sequence, role, content,
+        let rows: Vec<StoredMessageRow> = sqlx::query_as(
+            "SELECT id, turn_id, sequence, role, content, message_kind,
                     to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at
              FROM messages
              WHERE session_id = $1
@@ -56,16 +56,19 @@ impl PostgresStorage {
         let messages = rows
             .into_iter()
             .take(limit as usize)
-            .map(|(id, turn_id, sequence, role, content, created_at)| {
-                Ok(StoredMessageRecord {
-                    id,
-                    turn_id,
-                    sequence,
-                    role: parse_role(&role)?,
-                    content: serde_json::from_value(content)?,
-                    created_at,
-                })
-            })
+            .map(
+                |(id, turn_id, sequence, role, content, message_kind, created_at)| {
+                    Ok(StoredMessageRecord {
+                        id,
+                        turn_id,
+                        sequence,
+                        role: parse_role(&role)?,
+                        content: serde_json::from_value(content)?,
+                        message_kind: parse_message_kind(&message_kind)?,
+                        created_at,
+                    })
+                },
+            )
             .collect::<Result<Vec<_>, StorageError>>()?;
         let next_after_sequence = has_more.then(|| {
             messages

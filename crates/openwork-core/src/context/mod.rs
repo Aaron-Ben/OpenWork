@@ -4,6 +4,7 @@ use serde::Serialize;
 mod builder;
 mod inspection;
 mod project_instructions;
+mod skill_catalog;
 mod user_project;
 
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
@@ -12,6 +13,8 @@ pub use inspection::{
     ContextInspectionSystemPart, ContextWindowInspection,
 };
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
+use skill_catalog::SkillCatalogLoader;
+pub(crate) use skill_catalog::list_skills;
 use user_project::{UserProjectContextError, UserProjectContextLoader};
 
 /// One independently assembled system-context contribution.

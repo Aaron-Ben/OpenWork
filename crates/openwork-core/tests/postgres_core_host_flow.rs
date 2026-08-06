@@ -5,7 +5,6 @@ use openwork_core::{
     PermissionDecision, ProviderInput, RuntimeTurnId, SessionId, SessionInput, SessionUpdate,
     ToolCallId, TurnOutcome,
 };
-use openwork_models::model::ContentBlock;
 use openwork_models::provider::{ModelTier, ProviderKind, ProviderModel};
 use uuid::Uuid;
 
@@ -58,9 +57,10 @@ async fn stored_deepseek_v4_flash_completes_a_real_turn() {
         core.start_turn(
             &session_id,
             ClientRequestId::new(unique("request-deepseek-stored-live")),
-            vec![ContentBlock::text(
+            vec![openwork_core::UserInput::text(
                 "Reply with exactly: OPENWORK_FRONTEND_OK. Do not call tools.",
             )],
+            None,
         )
         .await
         .map_err(|error| error.to_string())?;

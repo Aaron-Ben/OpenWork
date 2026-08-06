@@ -95,13 +95,15 @@ struct CompactionRuntimeStateV1 {
 安装后模型看到三条 item 加上后续新消息：
 
 ```text
-last-user replay        最后一条真实用户请求（synthetic，带原消息 provenance）
+last-user replay        最后一条真实用户请求的可见内容（synthetic，带原消息 provenance）
 compaction summary      冻结的摘要
 system reminder         冻结的运行状态提醒
 + replaced_through_message_sequence 之后的原始消息
 ```
 
 System Context、项目环境、`AGENTS.md` 和 Tool Definitions **从各自权威来源重新物化**，不进 checkpoint（见 [context-window.md](context-window.md)）。
+
+显式选择产生的 Skill 正文是一条先于用户可见消息写入的 contextual User-role Text Message。summarizer 输入包含该正文快照，但 `last-user replay` 通过消息顺序自然选择随后写入的用户可见消息，不复制 contextual Message。Skill 的有效影响进入摘要后即可随旧 Conversation 回收；resume 使用同一组已持久化 Message，不重新读取磁盘上的 Skill 文件。
 
 ## 5. checkpoint
 
@@ -128,7 +130,7 @@ System Context、项目环境、`AGENTS.md` 和 Tool Definitions **从各自权�
 0. 开启 Compaction Span，记录触发证据
 1. 读取稳定 Conversation snapshot 和原始边界
    └─ 度量 conversationTokensBefore
-2. 找到最后一条真实用户请求
+2. 找到最后一条用户可见的 normal User Message，并构造 replay
 3. 收集并渲染 runtime state
 4. 调用 summarizer（每次采样是一个子 Span）
 5. 清洗和严格验证摘要
@@ -248,6 +250,7 @@ ConversationTranscriptQuery { compactionId?, afterSequence?, limit? }
 - 非 `stop`、含 Tool Call、过短或多根标签的输出失败；
 - 第一次不合格、第二次合格时接受第二次；连续三次失败则压缩失败且**不安装 checkpoint**；
 - 最后一条真实用户请求不会误选到 summary 或 reminder；
+- summarizer 能看到位于用户请求之前的 Skill instruction Message；随后持久化的 normal User Message 自然成为 last-user replay，只保留用户可见内容；
 - `edited_paths` 只来自有效且未 undone 的 `file_change` artifact；
 - contributor 顺序、路径顺序和 reminder 字节稳定；
 - 未知 extension key 可以 round-trip，且不会自动注入不可识别文本。
@@ -262,7 +265,7 @@ ConversationTranscriptQuery { compactionId?, afterSequence?, limit? }
 ### 持久化与重启
 
 - checkpoint 和原始 Message **同时保留**；
-- 重启前后的 last-user、summary、reminder 和 tail 完全一致；
+- 重启前后的 last-user、summary、reminder 和 tail 完全一致；边界后的 Skill instruction Message 仍按原始顺序恢复；
 - checkpoint 事务失败时旧 Conversation 不变；
 - checkpoint 已提交但 Chat State 停止时，Session 不继续发旧请求，重启后加载新 checkpoint。
 

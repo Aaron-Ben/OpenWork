@@ -49,7 +49,7 @@ describe('sessionStore', () => {
       },
       messages: [{
         id: 'message-1', turnId: 'turn-1', sequence: 1, role: 'assistant',
-        content: [{ type: 'text', text: 'done' }], createdAt: '2026-07-18T00:00:01Z',
+        content: [{ type: 'text', text: 'done' }], messageKind: 'normal', createdAt: '2026-07-18T00:00:01Z',
       }],
     })
 
@@ -84,6 +84,7 @@ describe('sessionStore', () => {
             type: 'tool_call', id: 'provider-read', name: 'read',
             input: '{"path":"branch-summarization.ts"}', state: 'finished',
           }],
+          messageKind: 'normal',
           createdAt: '2026-07-18T00:00:02Z',
         },
         {
@@ -92,11 +93,12 @@ describe('sessionStore', () => {
             type: 'tool_result', id: 'provider-read', name: 'read',
             output: [{ type: 'text', text: 'contents' }], state: 'success',
           }],
+          messageKind: 'normal',
           createdAt: '2026-07-18T00:00:03Z',
         },
         {
           id: 'final-answer', turnId: 'turn-1', sequence: 4, role: 'assistant',
-          content: [{ type: 'text', text: 'done' }], createdAt: '2026-07-18T00:00:04Z',
+          content: [{ type: 'text', text: 'done' }], messageKind: 'normal', createdAt: '2026-07-18T00:00:04Z',
         },
       ],
     })
@@ -110,6 +112,7 @@ describe('sessionStore', () => {
           type: 'tool_call', id: 'provider-read', name: 'read',
           input: '{"path":"branch-summarization.ts"}', state: 'submitted',
         }],
+        messageKind: 'normal',
         createdAt: '2026-07-18T00:00:02Z',
       }],
     })

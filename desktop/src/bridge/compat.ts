@@ -31,12 +31,47 @@ export interface RuntimeSessionRecord {
   lastTurnAt: string | null
 }
 
+export type RuntimeSkillSource = 'agents'
+
+export interface RuntimeSkillSummary {
+  source: RuntimeSkillSource
+  name: string
+  description: string
+  path: string
+  disabled: boolean
+}
+
+export interface RuntimeSkillWarning {
+  path: string
+  reason: string
+}
+
+export interface RuntimeSkillDiscovery {
+  skills: RuntimeSkillSummary[]
+  warnings: RuntimeSkillWarning[]
+}
+
+export interface RuntimeSkillDetail {
+  source: RuntimeSkillSource
+  name: string
+  description: string
+  path: string
+  body: string
+}
+
+export type RuntimeUserInput =
+  | { type: 'text'; text: string }
+  | { type: 'skill'; name: string; path: string }
+
+export type RuntimeSkillInput = Extract<RuntimeUserInput, { type: 'skill' }>
+
 export interface RuntimeStoredMessage {
   id: string
   turnId: string | null
   sequence: number
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: ContentBlock[]
+  messageKind: 'normal' | 'skill_instruction'
   createdAt: string
 }
 

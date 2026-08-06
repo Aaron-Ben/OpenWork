@@ -14,9 +14,9 @@ pub use credential::{API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError
 pub use postgres::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
-    ModelRecord, PostgresStorage, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
-    TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord,
-    TraceTurnSummary, TurnTrace,
+    ModelRecord, PostgresStorage, SessionInput, SessionRecord, StorageError, StoredMessageKind,
+    StoredMessageRecord, TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord,
+    TraceSpanRecord, TraceTurnSummary, TurnTrace,
 };
 pub use provider::PostgresProviderRepository;
 pub use trace::PostgresTraceRecorder;

@@ -134,8 +134,8 @@ struct ContextBudgetEstimate {
 **未来能力必须继续满足：**
 
 1. 三条链分别物化，只在组装边界汇合；
-2. Chat State 可以拥有 synthetic item，但**不拥有**其上游 Memory / Plan / Skill / Project Instruction 来源；
-3. 系统生成的 User-role item 必须带 provenance；
+2. Chat State 可以拥有 synthetic item 和已解析的 Skill 快照，但**不读取或拥有**其上游 Memory / Plan / Skill / Project Instruction 来源；
+3. 系统生成的 User-role contextual message 必须带 provenance；显式 Skill 指令在正文标记中保留 canonical `name + path`，持久层以 `message_kind = 'skill_instruction'` 区分它和用户可见消息；
 4. **压缩只替换 Conversation 投影**，摘要不得成为 System Source 或 Tool Surface 的权威副本；
 5. 压缩或 resume 之后必须**重新物化三条链**再构造请求；
 6. 来源与顺序未变化时，稳定前缀应保持字节一致；
@@ -149,10 +149,16 @@ struct ContextBudgetEstimate {
 |---|---|---|---|---|
 | Memory | 稳定的记忆规则 | 检索结果，带 synthetic provenance | memory search tool | Memory store |
 | Plan | plan-mode 规则 | 当前计划/进度，带 synthetic provenance | plan read/update tools | Plan store |
-| Skill | 已加载 skill 的说明 | — | skill load tool | Skill registry |
+| Skill | skill 目录（name + description + 绝对路径） | 显式选择生成的 contextual User-role Text，或模型 `read` 的 Tool Result | **无新增工具**（复用 `read`） | 文件系统目录；已接受 Turn 的历史快照随 contextual Message 持久化 |
 | MCP | — | — | 远端工具定义 | MCP client |
 
-**注意它们对模型的接口大多是工具** —— 这意味着它们的运行记录天然是 `tool_call` Span，不需要新的 Trace kind（见 [trace.md](trace.md)）。
+**注意它们对模型的接口大多是工具** —— 工具路径天然产生 `tool_call` Span；用户显式选择 Skill 则直接进入 Model Request 正文。两条路径都不需要新的 Trace kind（见 [trace.md](trace.md)）。
+
+Skill 一行分两层，**两层的归宿相反**：**目录**（每个 skill 只有 name、description 和绝对路径，一行 bullet）常驻 System Context，**正文**进入 Conversation。正文有两条入口：用户从 `$` 候选框选中时，Core 在接受 Turn 前把 `UserInput::Skill { name, path }` 解析为带标记的 contextual User-role Text 快照；模型自主决定使用时，仍作为 `read` 的 Tool Result 进入。理由见 [skills.md §4](skills.md)：正文放 System Context 就永远回收不掉（压缩只替换 Conversation），目录放 Conversation 则会在压缩时被边界甩掉、要补就得给压缩投影开特例；放 System Context 则每个 Turn 重新物化，压缩前后都在——**零额外机制**。
+
+显式选择没有制造第四条物化链：Tauri Command 把 `UserInput::Text` 与 `UserInput::Skill { name, path }` 一次性交给 Core；Core 解析并持久化正文快照后，Chat State 只接收已经物化的 User-role Text Message。`ModelRequestBuilder` 不读取文件、不查询 Skill 状态，也不做 Skill 特殊投影；provider adapter 永远只看到已有 ContentBlock。
+
+Skill 也是这张表里唯一**不新增工具**的一项：目录里带着绝对路径，模型用已有的 `read` 打开它，与读 `references/` 是同一个机制。**新增能力时先问它能不能落在已有工具上，再考虑加工具。**
 
 不为未来可能性预建字段、枚举、Registry 或数据库表。只有出现**第二个**真正需要独立更新和恢复的动态来源时，才抽出通用的 Source 生命周期接口。
 
@@ -168,6 +174,8 @@ struct ContextBudgetEstimate {
 - 未压缩时返回完整已提交 Conversation，压缩后返回摘要加后续消息；
 - 不包含 Draft，不包含 System Message；
 - Assistant Message 与 Tool Result 写入后进入下一次 Model Call；
+- 显式选择的 Skill 作为带 `name + path + body` 的历史快照进入 Conversation；磁盘变化不改写已接受 Turn；
+- `ModelRequestBuilder` 直接组装 Core 已物化的 contextual Text Message，不识别 Skill；provider adapter 不读取 Skill 来源；
 - Chat State 不接收 Model、System Prompt 或 Tool Definitions。
 
 **Tool Surface**

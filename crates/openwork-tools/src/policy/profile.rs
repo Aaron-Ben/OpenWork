@@ -16,8 +16,25 @@ impl PermissionProfile {
         }
     }
 
+    pub fn for_workspace_and_skill_roots(
+        working_directory: impl Into<PathBuf>,
+        skill_roots: impl IntoIterator<Item = PathBuf>,
+    ) -> Self {
+        Self {
+            builtins: BuiltinRuleSet::for_workspace_and_skill_roots(working_directory, skill_roots),
+        }
+    }
+
     pub(crate) fn workspace(&self) -> &Path {
         self.builtins.workspace()
+    }
+
+    pub(crate) fn skill_roots(&self) -> &[PathBuf] {
+        self.builtins.skill_roots()
+    }
+
+    pub(crate) fn builtin_rules(&self) -> &BuiltinRuleSet {
+        &self.builtins
     }
 
     pub(crate) fn hard_denies(&self, path: &Path, kind: AccessKind) -> bool {
@@ -48,7 +65,12 @@ impl PermissionProfile {
                 path.display()
             ));
         }
-        if path_is_within(path, self.workspace()) {
+        let is_readable_skill_path = kind == AccessKind::Read
+            && self
+                .skill_roots()
+                .iter()
+                .any(|root| path_is_within(path, root));
+        if path_is_within(path, self.workspace()) || is_readable_skill_path {
             Ok(())
         } else {
             Err(format!(

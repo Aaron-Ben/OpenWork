@@ -11,6 +11,7 @@ PostgreSQL 单一持久化。`crates/openwork-core/migrations/` 是 schema 的**
 | `_sqlx_migrations` | SQLx 版本与校验和 | 基础设施 |
 | `provider_credentials` | Provider 元数据与加密凭证 | 是（敏感） |
 | `models` | 可选择的模型端点 | 是 |
+| `skill_status` | 用户对 Skill 的启停偏好 | 是 |
 | `sessions` | Session 元数据 | 是 |
 | `turns` | 一次用户运行的状态与汇总 | 是 |
 | `messages` | 完整原始消息 | 是 |
@@ -23,6 +24,7 @@ PostgreSQL 单一持久化。`crates/openwork-core/migrations/` 是 schema 的**
 ```text
 Provider Credential ← Model.credential_ref
 Model ← Session.default_model_id, Turn.model_id, TraceSpan.model_id
+SkillStatus（按 Skill name 保存用户偏好，不拥有文件内容）
 Session
 ├── Turn ── Message ← TraceSpan.response_message_id
 ├── ConversationCompaction
@@ -135,6 +137,17 @@ CREATE TABLE provider_credentials (
 
 `config` 只保存低频 Provider 选项。禁止保存：API Key 明文、完整请求/响应、Session/Turn 状态、能由代码默认值表达的字段。
 
+### skill_status
+
+```sql
+CREATE TABLE skill_status (
+    name       TEXT PRIMARY KEY,
+    disabled   BOOLEAN NOT NULL DEFAULT FALSE
+);
+```
+
+它只保存用户对 Skill 名称的启停偏好，不缓存文件路径、description 或正文。Skill 文件系统仍是发现与内容的事实来源；目录被删除后，孤立状态行可以保留，之后同名 Skill 再次出现时继续应用该偏好。
+
 ### sessions
 
 ```sql
@@ -205,6 +218,7 @@ CREATE TABLE messages (
     sequence                BIGINT NOT NULL,
     role                    TEXT NOT NULL,
     content                 JSONB NOT NULL,
+    message_kind            TEXT NOT NULL DEFAULT 'normal',
     content_format_version  SMALLINT NOT NULL DEFAULT 1,
     provider_call_id / tool_name  TEXT,
     created_at,
@@ -212,6 +226,7 @@ CREATE TABLE messages (
     CONSTRAINT messages_turn_session_fk
         FOREIGN KEY (turn_id, session_id) REFERENCES turns(id, session_id) ON DELETE CASCADE,
     CONSTRAINT messages_role_valid CHECK (role IN ('system','user','assistant','tool')),
+    CONSTRAINT messages_kind_valid CHECK (message_kind IN ('normal','skill_instruction')),
     CONSTRAINT messages_content_is_array CHECK (jsonb_typeof(content) = 'array'),
     CONSTRAINT messages_content_format_positive CHECK (content_format_version > 0),
     CONSTRAINT messages_turn_required CHECK (turn_id IS NOT NULL OR role = 'system'),
@@ -226,6 +241,8 @@ CREATE UNIQUE INDEX uq_messages_tool_result
 ```
 
 `content_format_version` 是**产品最核心持久化事实的版本标记**。`content` 的唯一结构约束只有"它是个数组"——`ContentBlock` 形状一旦变化，没有这一列就无法区分新旧行，也无法写针对性回填。
+
+用户显式选择 Skill 时，Core 先写入一条 `message_kind = 'skill_instruction'` 的 User-role Message；`content` 只含普通 Text block，正文使用 `<skill><name>…</name><path>…</path>…</skill>` 标记。随后写入 `message_kind = 'normal'` 的用户可见原始 Text Message。Desktop transcript 过滤 Skill instruction，模型 Conversation、Trace、summarizer 和精确 transcript 仍能读取完整快照；不新增 skill invocation 表。压缩语义见 [compaction.md §4](compaction.md)。
 
 `uq_messages_tool_result` 保证一个 Turn 下同一 Provider Tool Call 只有一个结果。
 

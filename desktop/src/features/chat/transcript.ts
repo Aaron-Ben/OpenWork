@@ -11,7 +11,8 @@ function canonicalItems(messages: RuntimeStoredMessage[]): ChatItem[] {
   return messages
     .filter(
       (message): message is RuntimeStoredMessage & { role: 'user' | 'assistant' | 'tool' } =>
-        message.role === 'user' || message.role === 'assistant' || message.role === 'tool',
+        message.messageKind === 'normal'
+        && (message.role === 'user' || message.role === 'assistant' || message.role === 'tool'),
     )
     .map((message) => ({
       id: message.id,

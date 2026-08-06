@@ -7,7 +7,6 @@ use openwork_core::{
     TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted, TurnTrace,
     UndoFileChangesResult,
 };
-use openwork_models::model::ContentBlock;
 
 use crate::CommandError;
 
@@ -127,25 +126,14 @@ pub async fn runtime_turn_start(
     core: tauri::State<'_, OpenWorkCore>,
     session_id: String,
     client_request_id: String,
-    text: String,
+    input: Vec<openwork_core::UserInput>,
     context_window_tokens: Option<u64>,
 ) -> Result<TurnAccepted, CommandError> {
     let session_id = SessionId::new(session_id);
     let client_request_id = ClientRequestId::new(client_request_id);
-    let input = vec![ContentBlock::text(text)];
-    match context_window_tokens {
-        Some(context_window_tokens) => {
-            core.start_turn_with_context_window(
-                &session_id,
-                client_request_id,
-                input,
-                context_window_tokens,
-            )
-            .await
-        }
-        None => core.start_turn(&session_id, client_request_id, input).await,
-    }
-    .map_err(CommandError::from)
+    core.start_turn(&session_id, client_request_id, input, context_window_tokens)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

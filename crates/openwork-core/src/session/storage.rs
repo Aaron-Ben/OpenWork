@@ -16,6 +16,7 @@ pub trait SessionStorage: Send + Sync {
         turn_id: &TurnId,
         client_request_id: &ClientRequestId,
         model: &ResolvedModel,
+        contextual_messages: &[Message],
         user_message: &Message,
     ) -> Result<(), String>;
 
@@ -93,6 +94,7 @@ impl SessionStorage for NoopSessionStorage {
         _turn_id: &TurnId,
         _client_request_id: &ClientRequestId,
         _model: &ResolvedModel,
+        _contextual_messages: &[Message],
         _user_message: &Message,
     ) -> Result<(), String> {
         Ok(())

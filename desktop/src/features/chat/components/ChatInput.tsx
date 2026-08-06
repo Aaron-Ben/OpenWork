@@ -1,13 +1,28 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, LoaderCircle, Minimize2, ShieldCheck, Square } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { ArrowUp, LoaderCircle, Minimize2, Puzzle, ShieldCheck, Square } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { ProviderModel } from '@/features/models/contracts'
-import type { RuntimePermissionMode } from '@/bridge/compat'
+import type {
+  RuntimePermissionMode,
+  RuntimeSkillInput,
+  RuntimeSkillSummary,
+} from '@/bridge/compat'
 import type { ContextUsage, ContextUsageBreakdown } from '../contextUsage'
+import {
+  findSkillMentionTarget,
+  deriveSkillMentionEdit,
+  rankSkillCandidates,
+  reconcileSkillMentionBindings,
+  selectSkillMention,
+  skillMentionSegments,
+  skillInputsFromBindings,
+  validSkillMentionBindings,
+  type SkillMentionBinding,
+} from '../skillMentions'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 
 interface ChatInputProps {
@@ -19,20 +34,59 @@ interface ChatInputProps {
   isSending: boolean
   isCompacting?: boolean
   disabled?: boolean
+  skills?: readonly RuntimeSkillSummary[]
   onValueChange: (value: string) => void
   onModelChange: (model: string) => void
   onPermissionModeChange: (mode: RuntimePermissionMode) => void
-  onSubmit: () => void
+  onSubmit: (skills: RuntimeSkillInput[]) => void
   onCancel?: () => void
   topContent?: ReactNode
   contextUsage?: ContextUsage | null
   contextBreakdown?: ContextUsageBreakdown | null
   contextInspectorOpen?: boolean
   onInspectContext?: () => void
+  onRefreshSkills?: () => void | Promise<void>
   onSlashCommand?: (command: ChatSlashCommand) => void
 }
 
 export type ChatSlashCommand = 'compact'
+
+interface SkillMentionOverlayProps {
+  value: string
+  bindings: readonly SkillMentionBinding[]
+  overlayRef?: Ref<HTMLDivElement>
+  contentRef?: Ref<HTMLDivElement>
+}
+
+export function SkillMentionOverlay({
+  value,
+  bindings,
+  overlayRef,
+  contentRef,
+}: SkillMentionOverlayProps) {
+  const segments = skillMentionSegments(value, bindings)
+  return (
+    <div
+      ref={overlayRef}
+      data-skill-mention-overlay="true"
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 overflow-hidden px-5 py-3 text-base leading-7 text-ink whitespace-pre-wrap [overflow-wrap:break-word]"
+    >
+      <div ref={contentRef}>
+        {segments.map((segment, index) => segment.binding ? (
+          <span
+            key={`${segment.binding.start}:${segment.binding.path}`}
+            data-skill-mention={segment.binding.name}
+            className="rounded-[3px] bg-clay-soft text-clay shadow-[inset_0_0_0_1px_color-mix(in_srgb,currentColor_18%,transparent)]"
+          >
+            {segment.text}
+          </span>
+        ) : <span key={index}>{segment.text}</span>)}
+        {value.endsWith('\n') ? '\u200b' : null}
+      </div>
+    </div>
+  )
+}
 
 function resizeTextarea(textarea: HTMLTextAreaElement) {
   textarea.style.height = 'auto'
@@ -48,6 +102,7 @@ export function ChatInput({
   isSending,
   isCompacting = false,
   disabled = false,
+  skills = [],
   onValueChange,
   onModelChange,
   onPermissionModeChange,
@@ -58,19 +113,50 @@ export function ChatInput({
   contextBreakdown,
   contextInspectorOpen = false,
   onInspectContext,
+  onRefreshSkills,
   onSlashCommand,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const overlayContentRef = useRef<HTMLDivElement>(null)
+  const skillOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const previousValueRef = useRef(value)
+  const selectionRef = useRef({ start: value.length, end: value.length })
+  const compositionSelectionRef = useRef<{ start: number; end: number } | null>(null)
   const composingRef = useRef(false)
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false)
+  const [skillMenuDismissed, setSkillMenuDismissed] = useState(false)
+  const [caret, setCaret] = useState(value.length)
+  const [selectedSkillIndex, setSelectedSkillIndex] = useState(0)
+  const [skillBindings, setSkillBindings] = useState<SkillMentionBinding[]>([])
   const selectedModel = modelOptions.find((option) => option.modelId === model)
+  const skillTarget = useMemo(() => {
+    const target = findSkillMentionTarget(value, caret)
+    if (!target) return null
+    const overlapsBinding = validSkillMentionBindings(value, skillBindings).some(
+      (binding) => target.start < binding.end && target.end > binding.start,
+    )
+    return overlapsBinding ? null : target
+  }, [caret, skillBindings, value])
+  const skillCandidates = useMemo(
+    () => skillTarget ? rankSkillCandidates(skills, skillTarget.query) : [],
+    [skillTarget, skills],
+  )
+  const activeSkillIndex = Math.min(selectedSkillIndex, Math.max(0, skillCandidates.length - 1))
   const slashQuery = value.startsWith('/') && !/\s/.test(value)
     ? value.slice(1).toLowerCase()
     : null
   const compactMatches = slashQuery !== null && 'compact'.startsWith(slashQuery)
   const slashMenuOpen = compactMatches
+    && skillTarget === null
     && !slashMenuDismissed
+    && !disabled
+    && !isSending
+    && !isCompacting
+  const skillMenuOpen = skillTarget !== null
+    && skillCandidates.length > 0
+    && !skillMenuDismissed
     && !disabled
     && !isSending
     && !isCompacting
@@ -78,11 +164,78 @@ export function ChatInput({
   useEffect(() => {
     const textarea = textareaRef.current
     if (!textarea || composingRef.current) return
-    const frame = window.requestAnimationFrame(() => resizeTextarea(textarea))
+    const frame = window.requestAnimationFrame(() => {
+      resizeTextarea(textarea)
+      syncOverlay(textarea)
+    })
     return () => window.cancelAnimationFrame(frame)
   }, [value])
 
   useEffect(() => setSlashMenuDismissed(false), [value])
+  useEffect(() => setSkillMenuDismissed(false), [value, caret])
+  useEffect(
+    () => setSelectedSkillIndex(0),
+    [skillCandidates.length, skillTarget?.query, skillTarget?.start],
+  )
+
+  useEffect(() => {
+    if (!skillMenuOpen) return
+    skillOptionRefs.current[activeSkillIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [activeSkillIndex, skillMenuOpen])
+
+  useEffect(() => {
+    if (skillTarget?.query === '') void onRefreshSkills?.()
+  }, [onRefreshSkills, skillTarget?.query])
+
+  useEffect(() => {
+    const previousValue = previousValueRef.current
+    if (previousValue === value) return
+    setSkillBindings([])
+    previousValueRef.current = value
+    compositionSelectionRef.current = null
+    setCaret((current) => {
+      const position = Math.min(current, value.length)
+      selectionRef.current = { start: position, end: position }
+      return position
+    })
+  }, [value])
+
+  function syncSelection(textarea: HTMLTextAreaElement) {
+    const start = textarea.selectionStart ?? value.length
+    const end = textarea.selectionEnd ?? start
+    selectionRef.current = { start, end }
+    setCaret(start)
+  }
+
+  function syncOverlay(textarea: HTMLTextAreaElement) {
+    if (overlayRef.current) {
+      const scrollbarWidth = Math.max(0, textarea.offsetWidth - textarea.clientWidth)
+      overlayRef.current.style.right = `${scrollbarWidth}px`
+    }
+    if (!overlayContentRef.current) return
+    overlayContentRef.current.style.transform = `translate(${-textarea.scrollLeft}px, ${-textarea.scrollTop}px)`
+  }
+
+  function handleValueChange(
+    nextValue: string,
+    selectionStart: number | null,
+    selectionEnd: number | null,
+  ) {
+    const previousSelection = compositionSelectionRef.current ?? selectionRef.current
+    const edit = deriveSkillMentionEdit(value, nextValue, previousSelection, selectionStart)
+    setSkillBindings((current) => reconcileSkillMentionBindings(value, nextValue, current, edit))
+    previousValueRef.current = nextValue
+    const nextStart = selectionStart ?? nextValue.length
+    selectionRef.current = { start: nextStart, end: selectionEnd ?? nextStart }
+    if (compositionSelectionRef.current) {
+      compositionSelectionRef.current = {
+        start: previousSelection?.start ?? nextStart,
+        end: nextStart,
+      }
+    }
+    setCaret(nextStart)
+    onValueChange(nextValue)
+  }
 
   function selectCompactCommand() {
     if (onSlashCommand) {
@@ -92,8 +245,52 @@ export function ChatInput({
     }
   }
 
+  function selectSkillCandidate(skill: RuntimeSkillSummary) {
+    if (!skillTarget) return
+    const selected = selectSkillMention(value, skillTarget, skill)
+    setSkillBindings((current) => [
+      ...reconcileSkillMentionBindings(value, selected.value, current, skillTarget),
+      selected.binding,
+    ])
+    previousValueRef.current = selected.value
+    selectionRef.current = { start: selected.caret, end: selected.caret }
+    setCaret(selected.caret)
+    setSkillMenuDismissed(true)
+    onValueChange(selected.value)
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(selected.caret, selected.caret)
+    })
+  }
+
+  function submit() {
+    onSubmit(skillInputsFromBindings(value, skillBindings))
+  }
+
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    syncSelection(event.currentTarget)
     if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return
+    if (skillMenuOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setSkillMenuDismissed(true)
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const direction = event.key === 'ArrowDown' ? 1 : -1
+        setSelectedSkillIndex((current) => (
+          (current + direction + skillCandidates.length) % skillCandidates.length
+        ))
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        const selected = skillCandidates[activeSkillIndex]
+        if (selected) selectSkillCandidate(selected)
+        return
+      }
+    }
     if (slashMenuOpen) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -112,7 +309,7 @@ export function ChatInput({
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      onSubmit()
+      submit()
     }
   }
 
@@ -131,7 +328,7 @@ export function ChatInput({
         transition={{ duration: 0.2, ease: 'easeOut' }}
         onSubmit={(event) => {
           event.preventDefault()
-          onSubmit()
+          submit()
         }}
       >
         {slashMenuOpen ? (
@@ -157,27 +354,98 @@ export function ChatInput({
           </div>
         ) : null}
 
-        <textarea
-          ref={textareaRef}
-          className="max-h-48 min-h-[80px] w-full resize-none border-0 bg-transparent px-5 py-3 text-base leading-7 text-ink outline-none placeholder:text-ink-faint focus:ring-0"
-          value={value}
-          onChange={(event) => onValueChange(event.target.value)}
-          onKeyDown={handleKeyDown}
-          onCompositionStart={() => {
-            composingRef.current = true
-          }}
-          onCompositionEnd={(event) => {
-            composingRef.current = false
-            const textarea = event.currentTarget
-            window.requestAnimationFrame(() => resizeTextarea(textarea))
-          }}
-          placeholder={t('chat.placeholder')}
-          rows={2}
-          disabled={disabled || isCompacting}
-          aria-autocomplete="list"
-          aria-controls={slashMenuOpen ? 'chat-slash-command-menu' : undefined}
-          aria-expanded={slashMenuOpen}
-        />
+        {skillMenuOpen ? (
+          <div
+            id="chat-skill-menu"
+            data-skill-menu="true"
+            role="listbox"
+            aria-label={t('chat.skills.menu')}
+            className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-64 overflow-y-auto rounded-xl border border-line bg-paper p-1.5 shadow-[0_14px_36px_rgba(31,30,29,0.14)]"
+          >
+            {skillCandidates.map((skill, index) => {
+              const selected = index === activeSkillIndex
+              return (
+                <button
+                  ref={(element) => {
+                    skillOptionRefs.current[index] = element
+                  }}
+                  id={`chat-skill-option-${index}`}
+                  key={skill.path}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-skill-option={skill.name}
+                  className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition ${selected ? 'bg-paper-hover' : 'hover:bg-paper-hover/70'}`}
+                  title={skill.path}
+                  onMouseEnter={() => setSelectedSkillIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectSkillCandidate(skill)}
+                >
+                  <Puzzle size={15} className="mt-0.5 shrink-0 text-clay" />
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono text-sm text-ink">${skill.name}</span>
+                    <span className="mt-0.5 block truncate text-xs text-ink-faint">{skill.description}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+
+        <div className="relative">
+          <SkillMentionOverlay
+            value={value}
+            bindings={skillBindings}
+            overlayRef={overlayRef}
+            contentRef={overlayContentRef}
+          />
+          <textarea
+            ref={textareaRef}
+            className="relative z-10 max-h-48 min-h-[80px] w-full resize-none border-0 bg-transparent px-5 py-3 text-base leading-7 text-transparent caret-ink outline-none selection:bg-clay-soft/70 placeholder:text-ink-faint focus:ring-0"
+            value={value}
+            onChange={(event) => handleValueChange(
+              event.target.value,
+              event.target.selectionStart,
+              event.target.selectionEnd,
+            )}
+            onKeyDown={handleKeyDown}
+            onKeyUp={(event) => syncSelection(event.currentTarget)}
+            onClick={(event) => syncSelection(event.currentTarget)}
+            onFocus={(event) => {
+              syncSelection(event.currentTarget)
+              void onRefreshSkills?.()
+            }}
+            onPaste={(event) => syncSelection(event.currentTarget)}
+            onCut={(event) => syncSelection(event.currentTarget)}
+            onDrop={(event) => syncSelection(event.currentTarget)}
+            onSelect={(event) => syncSelection(event.currentTarget)}
+            onScroll={(event) => syncOverlay(event.currentTarget)}
+            onCompositionStart={(event) => {
+              syncSelection(event.currentTarget)
+              compositionSelectionRef.current = selectionRef.current
+              composingRef.current = true
+            }}
+            onCompositionEnd={(event) => {
+              composingRef.current = false
+              queueMicrotask(() => {
+                compositionSelectionRef.current = null
+              })
+              const textarea = event.currentTarget
+              syncSelection(textarea)
+              window.requestAnimationFrame(() => {
+                resizeTextarea(textarea)
+                syncOverlay(textarea)
+              })
+            }}
+            placeholder={t('chat.placeholder')}
+            rows={2}
+            disabled={disabled || isCompacting}
+            aria-autocomplete="list"
+            aria-controls={skillMenuOpen ? 'chat-skill-menu' : slashMenuOpen ? 'chat-slash-command-menu' : undefined}
+            aria-activedescendant={skillMenuOpen ? `chat-skill-option-${activeSkillIndex}` : undefined}
+            aria-expanded={skillMenuOpen || slashMenuOpen}
+          />
+        </div>
 
         <div className="mx-5 border-t border-line" />
 

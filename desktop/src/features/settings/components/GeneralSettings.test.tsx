@@ -13,6 +13,7 @@ describe('GeneralSettings', () => {
     expect(markup).toContain('外观')
     expect(markup).toContain('上下文窗口')
     expect(markup).toContain('Trace 内容')
+    expect(markup).not.toContain('Skills')
   })
 
   it('offers explicit light, dark, and system theme choices plus languages', () => {

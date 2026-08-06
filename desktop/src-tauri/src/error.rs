@@ -14,6 +14,7 @@ pub enum CommandErrorCode {
     SchemaNotReady,
     ConfigurationInvalid,
     OperationConflict,
+    SkillUnavailable,
     ModelRequestFailed,
     InternalError,
 }
@@ -60,6 +61,17 @@ impl From<OpenWorkCoreError> for CommandError {
             OpenWorkCoreError::FileChangeNotUndone(id) => Self::new(
                 CommandErrorCode::OperationConflict,
                 format!("File change has not been undone: {id}"),
+            ),
+            OpenWorkCoreError::SkillUnavailable(name) => Self::new(
+                CommandErrorCode::SkillUnavailable,
+                format!("Selected skill is unavailable: {name}"),
+            ),
+            OpenWorkCoreError::SkillRead(error) => {
+                Self::new(CommandErrorCode::InvalidRequest, error.to_string())
+            }
+            OpenWorkCoreError::SkillFilesystemTask(_) => Self::new(
+                CommandErrorCode::InternalError,
+                "Skill files could not be processed",
             ),
             OpenWorkCoreError::FileChangeUndo(error) => {
                 Self::new(CommandErrorCode::OperationConflict, error.to_string())
@@ -230,6 +242,27 @@ mod tests {
 
         assert_eq!(error.code, CommandErrorCode::OperationConflict);
         assert_eq!(error.message, "File change has not been undone: change-1");
+    }
+
+    #[test]
+    fn unavailable_skill_has_a_specific_host_error_code() {
+        let error = CommandError::from(OpenWorkCoreError::SkillUnavailable("commit".to_string()));
+
+        assert_eq!(error.code, CommandErrorCode::SkillUnavailable);
+        assert_eq!(error.message, "Selected skill is unavailable: commit");
+    }
+
+    #[tokio::test]
+    async fn skill_filesystem_task_failure_is_internal_and_redacted() {
+        let join_error = tokio::spawn(async { panic!("private panic detail") })
+            .await
+            .expect_err("task must fail");
+
+        let error = CommandError::from(OpenWorkCoreError::SkillFilesystemTask(join_error));
+
+        assert_eq!(error.code, CommandErrorCode::InternalError);
+        assert_eq!(error.message, "Skill files could not be processed");
+        assert!(!error.message.contains("private panic detail"));
     }
 
     #[test]

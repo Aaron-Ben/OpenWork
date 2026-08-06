@@ -6,6 +6,7 @@ mod state;
 mod summary;
 mod transcript;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +23,7 @@ use uuid::Uuid;
 
 use crate::context::{ResolvedSystemContext, SystemContextBuilder};
 use crate::model_call::estimate_conversation_tokens;
+use crate::skills::SkillRoots;
 
 use self::projection::{last_real_user, last_user_source};
 use self::summary::{SummaryTraceContext, generate_summary};
@@ -213,6 +215,8 @@ pub(super) struct ConversationCompactionRequest {
     pub model_id: Option<String>,
     pub resolved_model_name: String,
     pub working_directory: PathBuf,
+    pub skill_roots: SkillRoots,
+    pub disabled_skill_names: BTreeSet<String>,
     pub agent: Agent,
     pub chat: ChatStateHandle,
     pub model: Arc<dyn ModelPort>,
@@ -316,7 +320,8 @@ async fn run_compaction_inner(
         .map_err(|error| CompactionError::State(error.to_string()))?;
     let system_context = match request.system_context {
         Some(context) => context,
-        None => SystemContextBuilder::new(&request.working_directory)
+        None => SystemContextBuilder::new(&request.working_directory, request.skill_roots.clone())
+            .with_disabled_skills(request.disabled_skill_names.clone())
             .build(request.agent.system_prompt())
             .await
             .map_err(|error| CompactionError::Context(error.to_string()))?,

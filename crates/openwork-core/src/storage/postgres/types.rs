@@ -54,7 +54,24 @@ pub struct StoredMessageRecord {
     pub sequence: i64,
     pub role: Role,
     pub content: Vec<ContentBlock>,
+    pub message_kind: StoredMessageKind,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoredMessageKind {
+    Normal,
+    SkillInstruction,
+}
+
+impl StoredMessageKind {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::SkillInstruction => "skill_instruction",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

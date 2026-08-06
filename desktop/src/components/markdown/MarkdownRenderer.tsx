@@ -325,7 +325,7 @@ function CodeBlock({
   return (
     <div className={codeBlockClass(variant)}>
       <div className="flex items-center gap-2 px-3 pt-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-paper/45">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-faint">
           {language || 'text'}
         </span>
         <button
@@ -333,13 +333,13 @@ function CodeBlock({
           aria-label={copied ? t('tool.copied') : t('tool.copy')}
           title={copied ? t('tool.copied') : t('tool.copy')}
           onClick={() => void copyCode()}
-          className="grid size-6 shrink-0 place-items-center rounded-md text-paper/45 transition-colors hover:bg-paper/10 hover:text-paper"
+          className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint transition-colors hover:bg-ink/10 hover:text-ink"
         >
           {copied ? <Check size={12} className="text-status-success" /> : <Copy size={12} />}
         </button>
       </div>
       <pre className={preClass(variant)}>
-        <code className="whitespace-pre border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed text-paper">
+        <code className="whitespace-pre border-0 bg-transparent p-0 font-mono text-[0.82rem] leading-relaxed text-ink">
           {code}
         </code>
       </pre>
@@ -441,7 +441,7 @@ function listItemClass(variant: MarkdownVariant): string {
 
 function codeBlockClass(variant: MarkdownVariant): string {
   return [
-    'overflow-hidden rounded-lg bg-ink',
+    'overflow-hidden rounded-lg bg-paper-hover',
     variant === 'compact' ? 'my-2' : 'my-3',
   ].join(' ')
 }

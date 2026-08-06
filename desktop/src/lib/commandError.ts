@@ -8,6 +8,7 @@ export type CommandErrorCode =
   | 'schema_not_ready'
   | 'configuration_invalid'
   | 'operation_conflict'
+  | 'skill_unavailable'
   | 'model_request_failed'
   | 'internal_error'
 
@@ -26,6 +27,7 @@ const COMMAND_ERROR_CODES = new Set<CommandErrorCode>([
   'schema_not_ready',
   'configuration_invalid',
   'operation_conflict',
+  'skill_unavailable',
   'model_request_failed',
   'internal_error',
 ])

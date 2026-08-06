@@ -1,5 +1,7 @@
 use super::*;
 
+pub(super) type StoredMessageRow = (String, Option<String>, i64, String, Value, String, String);
+
 pub(super) fn is_payload_reference_conflict(error: &sqlx::Error) -> bool {
     let sqlx::Error::Database(error) = error else {
         return false;
@@ -100,9 +102,12 @@ pub(super) async fn insert_message(
     turn_id: Option<&TurnId>,
     role: Role,
     content: Value,
-    provider_call_id: Option<&str>,
-    tool_name: Option<&str>,
+    message_kind: StoredMessageKind,
+    tool: Option<(&str, &str)>,
 ) -> Result<String, StorageError> {
+    let (provider_call_id, tool_name) = tool
+        .map(|(provider_call_id, tool_name)| (Some(provider_call_id), Some(tool_name)))
+        .unwrap_or((None, None));
     let sequence: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE session_id = $1",
     )
@@ -112,8 +117,9 @@ pub(super) async fn insert_message(
     let message_id = format!("msg-{}", Uuid::new_v4().simple());
     sqlx::query(
         "INSERT INTO messages (
-             id, session_id, turn_id, sequence, role, content, provider_call_id, tool_name
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             id, session_id, turn_id, sequence, role, content, message_kind,
+             provider_call_id, tool_name
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(&message_id)
     .bind(session_id.as_str())
@@ -121,6 +127,7 @@ pub(super) async fn insert_message(
     .bind(sequence)
     .bind(role.as_provider_str())
     .bind(content)
+    .bind(message_kind.as_str())
     .bind(provider_call_id)
     .bind(tool_name)
     .execute(&mut **transaction)
@@ -231,6 +238,16 @@ pub(super) fn parse_role(value: &str) -> Result<Role, StorageError> {
         "tool" => Ok(Role::Tool),
         other => Err(StorageError::InvalidInput(format!(
             "unknown stored message role: {other}"
+        ))),
+    }
+}
+
+pub(super) fn parse_message_kind(value: &str) -> Result<StoredMessageKind, StorageError> {
+    match value {
+        "normal" => Ok(StoredMessageKind::Normal),
+        "skill_instruction" => Ok(StoredMessageKind::SkillInstruction),
+        other => Err(StorageError::InvalidInput(format!(
+            "unknown stored message kind: {other}"
         ))),
     }
 }

@@ -5,7 +5,6 @@ use openwork_core::{
     ClientRequestId, ModelInput, OpenWorkCore, PermissionDecision, PostgresStorage, SessionId,
     SessionInput, SessionUpdate, ToolCallId, session::TurnId,
 };
-use openwork_models::model::ContentBlock;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -55,9 +54,10 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
         .start_turn(
             &session_id,
             ClientRequestId::new(unique("request-deepseek-live")),
-            vec![ContentBlock::text(
+            vec![openwork_core::UserInput::text(
                 "Reply with exactly: OPENWORK_RUNTIME_OK. Do not call tools.",
             )],
+            None,
         )
         .await
         .unwrap();

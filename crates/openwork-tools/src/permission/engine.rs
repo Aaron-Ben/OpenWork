@@ -86,6 +86,13 @@ impl PermissionEngine {
         }
     }
 
+    pub(crate) fn from_builtin_rules(builtins: BuiltinRuleSet) -> Self {
+        Self {
+            builtins,
+            additional_rules: Vec::new(),
+        }
+    }
+
     pub fn authorize(
         &self,
         mode: PermissionMode,

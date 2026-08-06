@@ -42,6 +42,9 @@ pub(crate) fn compacted_items(
     let message_sequence = compaction
         .last_user_message_sequence
         .ok_or(CompactionError::MissingLastUser)?;
+    if last_user.content.is_empty() {
+        return Err(CompactionError::MissingLastUser);
+    }
     Ok(vec![
         ConversationItem::last_user_replay(&compaction.id, message_id, message_sequence, last_user),
         ConversationItem::synthetic(
@@ -59,4 +62,43 @@ pub(crate) fn compacted_items(
 
 pub(crate) fn compaction_summary_message(summary: &str) -> Message {
     Message::text(Role::User, format!("{SUMMARY_PREFIX}{}", summary.trim()))
+}
+
+#[cfg(test)]
+mod tests {
+    use openwork_models::model::{ContentBlock, Message, Role};
+
+    use super::compacted_items;
+    use crate::session::{
+        CompactionRuntimeState, ConversationCompaction, ConversationCompactionKind,
+        NewConversationCompaction, SessionId,
+    };
+
+    #[test]
+    fn last_user_replay_keeps_the_visible_user_message() {
+        let compaction = ConversationCompaction::in_memory(
+            &SessionId::new("session-1"),
+            &NewConversationCompaction {
+                kind: ConversationCompactionKind::Manual,
+                source_message_count: 1,
+                resolved_model_name: "test-model".to_string(),
+                summary: "Summary".to_string(),
+                runtime_state: CompactionRuntimeState::default(),
+                runtime_reminder: "Reminder".to_string(),
+                input_tokens: None,
+                output_tokens: None,
+                trigger_turn_id: None,
+                last_user_message_id: Some("message-1".to_string()),
+                last_user_message_sequence: Some(1),
+            },
+        );
+        let user = Message::text(Role::User, "Use $commit.");
+
+        let items = compacted_items(&compaction, user).expect("replacement");
+
+        assert_eq!(
+            items[0].message.content,
+            [ContentBlock::text("Use $commit.")]
+        );
+    }
 }

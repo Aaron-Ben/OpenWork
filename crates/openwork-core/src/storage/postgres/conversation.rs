@@ -71,6 +71,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: last_user.role,
                 content: last_user.content,
+                message_kind: StoredMessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             });
             records.push(StoredMessageRecord {
@@ -79,6 +80,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: compaction_summary_message(&compaction.summary).content,
+                message_kind: StoredMessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             });
             records.push(StoredMessageRecord {
@@ -87,6 +89,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: Message::text(Role::User, &compaction.runtime_reminder).content,
+                message_kind: StoredMessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             });
         }
@@ -167,6 +170,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: last_user.role,
                 content: last_user.content,
+                message_kind: StoredMessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             },
             StoredMessageRecord {
@@ -175,6 +179,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: compaction_summary_message(&compaction.summary).content,
+                message_kind: StoredMessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             },
             StoredMessageRecord {
@@ -183,6 +188,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: Message::text(Role::User, &compaction.runtime_reminder).content,
+                message_kind: StoredMessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             },
         ])
@@ -209,8 +215,8 @@ impl PostgresStorage {
                 compaction.id
             ))
         })?;
-        let row: Option<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
-            "SELECT id, turn_id, sequence, role, content,
+        let row: Option<StoredMessageRow> = sqlx::query_as(
+            "SELECT id, turn_id, sequence, role, content, message_kind,
                     to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at
              FROM messages
              WHERE session_id = $1 AND id = $2 AND role = 'user'",
@@ -219,18 +225,20 @@ impl PostgresStorage {
         .bind(message_id)
         .fetch_optional(&self.pool)
         .await?;
-        let (id, turn_id, sequence, role, content, created_at) = row.ok_or_else(|| {
-            StorageError::InvalidInput(format!(
-                "compaction {} last user message was not found",
-                compaction.id
-            ))
-        })?;
+        let (id, turn_id, sequence, role, content, message_kind, created_at) =
+            row.ok_or_else(|| {
+                StorageError::InvalidInput(format!(
+                    "compaction {} last user message was not found",
+                    compaction.id
+                ))
+            })?;
         Ok(StoredMessageRecord {
             id,
             turn_id,
             sequence,
             role: parse_role(&role)?,
             content: serde_json::from_value(content)?,
+            message_kind: parse_message_kind(&message_kind)?,
             created_at,
         })
     }
@@ -241,8 +249,8 @@ impl PostgresStorage {
         after_sequence: i64,
         through_sequence: Option<i64>,
     ) -> Result<Vec<StoredMessageRecord>, StorageError> {
-        let rows: Vec<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
-            "SELECT id, turn_id, sequence, role, content,
+        let rows: Vec<StoredMessageRow> = sqlx::query_as(
+            "SELECT id, turn_id, sequence, role, content, message_kind,
                     to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at
              FROM messages
              WHERE session_id = $1
@@ -256,16 +264,19 @@ impl PostgresStorage {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|(id, turn_id, sequence, role, content, created_at)| {
-                Ok(StoredMessageRecord {
-                    id,
-                    turn_id,
-                    sequence,
-                    role: parse_role(&role)?,
-                    content: serde_json::from_value(content)?,
-                    created_at,
-                })
-            })
+            .map(
+                |(id, turn_id, sequence, role, content, message_kind, created_at)| {
+                    Ok(StoredMessageRecord {
+                        id,
+                        turn_id,
+                        sequence,
+                        role: parse_role(&role)?,
+                        content: serde_json::from_value(content)?,
+                        message_kind: parse_message_kind(&message_kind)?,
+                        created_at,
+                    })
+                },
+            )
             .collect()
     }
 
@@ -273,8 +284,8 @@ impl PostgresStorage {
         &self,
         session_id: &SessionId,
     ) -> Result<Vec<StoredMessageRecord>, StorageError> {
-        let rows: Vec<(String, Option<String>, i64, String, Value, String)> = sqlx::query_as(
-            "SELECT id, turn_id, sequence, role, content,
+        let rows: Vec<StoredMessageRow> = sqlx::query_as(
+            "SELECT id, turn_id, sequence, role, content, message_kind,
                     to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at
              FROM messages
              WHERE session_id = $1
@@ -284,16 +295,19 @@ impl PostgresStorage {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|(id, turn_id, sequence, role, content, created_at)| {
-                Ok(StoredMessageRecord {
-                    id,
-                    turn_id,
-                    sequence,
-                    role: parse_role(&role)?,
-                    content: serde_json::from_value(content)?,
-                    created_at,
-                })
-            })
+            .map(
+                |(id, turn_id, sequence, role, content, message_kind, created_at)| {
+                    Ok(StoredMessageRecord {
+                        id,
+                        turn_id,
+                        sequence,
+                        role: parse_role(&role)?,
+                        content: serde_json::from_value(content)?,
+                        message_kind: parse_message_kind(&message_kind)?,
+                        created_at,
+                    })
+                },
+            )
             .collect()
     }
     async fn load_latest_compaction_through(

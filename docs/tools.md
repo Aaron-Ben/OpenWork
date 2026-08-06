@@ -189,6 +189,8 @@ async fn resolve_path(&self, input: &str,
 7. 再执行只读 / 写入 / 保护目录判断；
 8. 返回 `CheckedPath`，由 Backend 完成实际操作。
 
+第 7 步的保护目录里包含一个用户级 skill 根：`~/.agents/skills/`。它在工作目录之外，必须通过 Core 持有的 `SkillRoots` 显式授权；对 `read` / `grep` / `glob` / `list` **可读**，对 `write` / `edit` **一律拒绝**。该根为 `None` 时不纳入；`.claude/skills/` 不是来源。没有 project、bundled 或 `.openwork/skills/` 根。理由是闭环——能改 skill 就能让一次提示注入变成跨 Session 持久的提权，见 [skills.md §5.2](skills.md)。
+
 对创建路径仍需防止"检查后父目录被替换"。首选方案是 Backend 在已验证父目录下创建临时文件并同目录 rename。
 
 ### Shell 重定向边界
@@ -208,6 +210,8 @@ async fn resolve_path(&self, input: &str,
 ## 9. 内置工具
 
 七个工具，两组：`filesystem/{read, write, edit, grep, glob, list}` 与 `process/{bash}`。
+
+**Skill 不增加第八个工具。** `SKILL.md` 与 `references/` 走 `read`、`scripts/` 走 `bash`——一个专用的 `skill(name)` 工具能做的事 `read` 已经全能做，而工具定义的常驻成本每次 Model Call 都要付。理由见 [skills.md §4.4](skills.md)。用户从 `$` 候选框显式选择是 Turn 输入，不是 Tool Call。
 
 ### read
 

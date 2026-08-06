@@ -26,6 +26,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::skills::list_skills,
+            commands::skills::set_skill_disabled,
+            commands::skills::read_skill,
             commands::provider::provider_list,
             commands::provider::provider_presets,
             commands::provider::provider_create,

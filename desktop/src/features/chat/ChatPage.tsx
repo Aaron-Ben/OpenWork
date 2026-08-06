@@ -11,7 +11,12 @@ import {
 import { ApprovalDialog } from './components/ApprovalDialog'
 import { TranscriptMessage } from './components/TranscriptMessage'
 import { selectDefaultModel, useModelStore } from '@/features/models/modelStore'
-import type { RuntimeContextWindowInspection, RuntimeStoredMessage } from '@/bridge/compat'
+import type {
+  RuntimeContextWindowInspection,
+  RuntimeSkillInput,
+  RuntimeSkillSummary,
+  RuntimeStoredMessage,
+} from '@/bridge/compat'
 import { coreCommands } from '@/bridge/commands'
 import { TurnTraceDrawer } from '@/features/traces/components/TurnTraceDrawer'
 import { useSessionStore } from '@/features/sessions/sessionStore'
@@ -29,6 +34,15 @@ export function isManualCompactionDraft(value: string): boolean {
   return value.trim().toLowerCase() === '/compact'
 }
 
+export function shouldClearAcceptedDraft(
+  activeSessionId: string | null,
+  submittedSessionId: string,
+  currentRevision: number,
+  submittedRevision: number,
+): boolean {
+  return activeSessionId === submittedSessionId && currentRevision === submittedRevision
+}
+
 export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState('')
@@ -42,8 +56,16 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const [contextInspectionRefresh, setContextInspectionRefresh] = useState(0)
   const [selectedTrace, setSelectedTrace] = useState<{ turnId: string; providerToolCallId?: string } | null>(null)
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
+  const [availableSkills, setAvailableSkills] = useState<RuntimeSkillSummary[]>([])
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const highlightTimerRef = useRef<number | null>(null)
+  const skillRefreshSequenceRef = useRef(0)
+  const draftRevisionRef = useRef(0)
+  const draftSessionIdRef = useRef(sessionId)
+  if (draftSessionIdRef.current !== sessionId) {
+    draftSessionIdRef.current = sessionId
+    draftRevisionRef.current += 1
+  }
   const stickToBottomRef = useRef(true)
   const activeSessionIdRef = useRef(sessionId)
   activeSessionIdRef.current = sessionId
@@ -97,6 +119,24 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
       enabled: true,
     }
   }, [providers, session?.defaultModelId])
+
+  const refreshSkills = useCallback(async () => {
+    const requestSequence = skillRefreshSequenceRef.current + 1
+    skillRefreshSequenceRef.current = requestSequence
+    try {
+      const discovery = await coreCommands.listSkills()
+      if (skillRefreshSequenceRef.current === requestSequence) {
+        setAvailableSkills(discovery.skills.filter((skill) => !skill.disabled))
+      }
+    } catch {
+      // Keep the last successful snapshot so a transient host error does not
+      // make the picker look as though every Skill was removed.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshSkills()
+  }, [refreshSkills, sessionId])
 
   useEffect(() => {
     setSelectedTrace(null)
@@ -212,17 +252,30 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     }
   }, [contextInspectorOpen, contextInspectionRefresh, contextInspectionRevision, contextWindowTokens, sessionId])
 
-  async function send() {
+  async function send(skills: RuntimeSkillInput[] = []) {
+    const submittedRevision = draftRevisionRef.current
     const text = draft.trim()
     if (!text || isSending || isCompacting || !sessionId) return
     if (isManualCompactionDraft(text)) {
       await runCompaction()
       return
     }
-    setDraft('')
+    const submittedSessionId = sessionId
     stickToBottomRef.current = true
-    const accepted = await startTurn(text)
-    if (!accepted) setDraft(text)
+    const accepted = await startTurn(text, skills)
+    if (accepted && shouldClearAcceptedDraft(
+      activeSessionIdRef.current,
+      submittedSessionId,
+      draftRevisionRef.current,
+      submittedRevision,
+    )) {
+      setDraft('')
+    }
+  }
+
+  function updateDraft(value: string) {
+    draftRevisionRef.current += 1
+    setDraft(value)
   }
 
   async function runCompaction() {
@@ -366,6 +419,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           </p>
         ) : null}
         <ChatInput
+          key={sessionId ?? 'no-session'}
           topContent={<ApprovalDialog sessionId={sessionId} />}
           model={sessionModel?.modelId ?? ''}
           modelOptions={sessionModel ? [sessionModel] : []}
@@ -378,12 +432,14 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           isSending={isSending}
           isCompacting={isCompacting}
           disabled={!sessionId || !sessionModel}
-          onValueChange={setDraft}
+          skills={availableSkills}
+          onValueChange={updateDraft}
           onModelChange={() => undefined}
           onPermissionModeChange={(mode) => void setPermissionMode(mode)}
-          onSubmit={() => void send()}
+          onSubmit={(skills) => void send(skills)}
           onCancel={() => void cancelTurn()}
           onInspectContext={sessionId ? () => setContextInspectorOpen(true) : undefined}
+          onRefreshSkills={refreshSkills}
           onSlashCommand={(command) => {
             if (command === 'compact') void runCompaction()
           }}

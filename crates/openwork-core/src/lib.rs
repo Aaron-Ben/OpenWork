@@ -5,7 +5,9 @@ mod core;
 mod model_call;
 mod provider;
 pub mod session;
+pub mod skills;
 pub mod storage;
+mod user_input;
 
 pub use context::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
@@ -42,6 +44,7 @@ pub use storage::{
     ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
     ModelRecord, PostgresProviderRepository, PostgresStorage, PostgresTraceRecorder, SessionInput,
-    SessionRecord, StorageError, StoredMessageRecord, TraceCompleteness, TraceCompletenessState,
-    TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    SessionRecord, StorageError, StoredMessageKind, StoredMessageRecord, TraceCompleteness,
+    TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
 };
+pub use user_input::UserInput;

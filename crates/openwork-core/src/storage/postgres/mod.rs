@@ -25,6 +25,7 @@ mod internal;
 mod model;
 mod session;
 mod session_storage;
+mod skill_status;
 mod trace_query;
 mod types;
 mod validate;
@@ -38,8 +39,9 @@ use types::ConversationCompactionRow;
 pub use types::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
-    ModelRecord, SessionInput, SessionRecord, StorageError, StoredMessageRecord, TraceCompleteness,
-    TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    ModelRecord, SessionInput, SessionRecord, StorageError, StoredMessageKind, StoredMessageRecord,
+    TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord,
+    TraceTurnSummary, TurnTrace,
 };
 use validate::*;
 

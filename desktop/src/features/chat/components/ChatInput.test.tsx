@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ChatInput } from './ChatInput'
+import { ChatInput, SkillMentionOverlay } from './ChatInput'
 
 const baseProps = {
   model: 'deepseek-chat',
@@ -29,6 +29,28 @@ const baseProps = {
 }
 
 describe('ChatInput toolbar', () => {
+  it('renders a selected skill as an inline overlay token without duplicating accessible text', () => {
+    const markup = renderToStaticMarkup(
+      <SkillMentionOverlay
+        value="Use $commit now"
+        bindings={[{
+          start: 4,
+          end: 11,
+          name: 'commit',
+          path: '/Users/me/.agents/skills/commit/SKILL.md',
+        }]}
+      />,
+    )
+
+    expect(markup).toContain('data-skill-mention-overlay="true"')
+    expect(markup).toContain('aria-hidden="true"')
+    expect(markup).toContain('data-skill-mention="commit"')
+    expect(markup).toContain('bg-clay-soft')
+    expect(markup).toContain('Use ')
+    expect(markup).toContain('$commit')
+    expect(markup).toContain(' now')
+  })
+
   it('renders the compact approval, model, and send controls', () => {
     const markup = renderToStaticMarkup(
       <ChatInput
@@ -98,6 +120,37 @@ describe('ChatInput toolbar', () => {
     expect(markup).toContain('data-slash-command="compact"')
     expect(markup).toContain('压缩 Conversation')
     expect(markup).toContain('aria-expanded="true"')
+  })
+
+  it('shows enabled skill candidates for a dollar trigger', () => {
+    const markup = renderToStaticMarkup(
+      <ChatInput
+        {...baseProps}
+        value="$"
+        skills={[
+          {
+            source: 'agents',
+            name: 'commit',
+            description: 'Create a commit from the current changes.',
+            path: '/Users/me/.agents/skills/commit/SKILL.md',
+            disabled: false,
+          },
+          {
+            source: 'agents',
+            name: 'disabled-skill',
+            description: 'Must not be shown.',
+            path: '/Users/me/.agents/skills/disabled-skill/SKILL.md',
+            disabled: true,
+          },
+        ]}
+      />,
+    )
+
+    expect(markup).toContain('data-skill-menu="true"')
+    expect(markup).toContain('data-skill-option="commit"')
+    expect(markup).toContain('$commit')
+    expect(markup).not.toContain('data-skill-option="disabled-skill"')
+    expect(markup).not.toContain('data-slash-command-menu="true"')
   })
 
   it('disables editing and shows progress while compacting', () => {

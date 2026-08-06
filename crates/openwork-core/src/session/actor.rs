@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -6,10 +7,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
-use openwork_models::model::{ContentBlock, ModelPort};
+use openwork_models::model::ModelPort;
 use openwork_tools::{ApprovalSessionAction, FinalizedToolset, PermissionMode};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
+
+use crate::skills::SkillRoots;
 
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest,
@@ -19,7 +22,7 @@ use super::permission_state::{PermissionModeOrigin, SessionPermissionState};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
 use super::{
     ClientRequestId, CompactionError, CompactionStateCollector, ConversationCompaction,
-    PermissionDecision, ResolvedModel, SessionError, SessionId, SessionPhase,
+    PermissionDecision, PreparedTurnInput, ResolvedModel, SessionError, SessionId, SessionPhase,
     SessionRuntimeSnapshot, SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
     ToolCallId, TraceRecorder, TurnAccepted, TurnId,
 };
@@ -32,6 +35,7 @@ const UPDATE_BROADCAST_CAPACITY: usize = 512;
 pub struct SessionRuntimeConfig {
     pub session_id: SessionId,
     pub working_directory: PathBuf,
+    pub skill_roots: SkillRoots,
     pub resolved_model: ResolvedModel,
     pub agent: Agent,
     pub chat: ChatStateHandle,
@@ -105,12 +109,14 @@ impl SessionHandle {
     pub async fn start_turn(
         &self,
         client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
+        input: PreparedTurnInput,
+        disabled_skill_names: BTreeSet<String>,
     ) -> Result<TurnAccepted, SessionError> {
         self.start_turn_with_policy(
             client_request_id,
             input,
             AutomaticCompactionPolicy::default(),
+            disabled_skill_names,
         )
         .await
     }
@@ -118,21 +124,28 @@ impl SessionHandle {
     pub async fn start_turn_with_context_window(
         &self,
         client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
+        input: PreparedTurnInput,
         context_window_tokens: u64,
+        disabled_skill_names: BTreeSet<String>,
     ) -> Result<TurnAccepted, SessionError> {
         let compaction_policy =
             AutomaticCompactionPolicy::for_context_window(context_window_tokens)
                 .ok_or(SessionError::InvalidContextWindowTokens)?;
-        self.start_turn_with_policy(client_request_id, input, compaction_policy)
-            .await
+        self.start_turn_with_policy(
+            client_request_id,
+            input,
+            compaction_policy,
+            disabled_skill_names,
+        )
+        .await
     }
 
     async fn start_turn_with_policy(
         &self,
         client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
+        input: PreparedTurnInput,
         compaction_policy: AutomaticCompactionPolicy,
+        disabled_skill_names: BTreeSet<String>,
     ) -> Result<TurnAccepted, SessionError> {
         let (respond_to, response) = oneshot::channel();
         self.send(SessionCommand::StartTurn {
@@ -140,6 +153,7 @@ impl SessionHandle {
             client_request_id,
             input,
             compaction_policy,
+            disabled_skill_names,
             respond_to,
         })
         .await?;
@@ -183,10 +197,16 @@ impl SessionHandle {
         response.await.map_err(|_| SessionError::ActorStopped)
     }
 
-    pub async fn compact_conversation(&self) -> Result<ConversationCompaction, CompactionError> {
+    pub async fn compact_conversation(
+        &self,
+        disabled_skill_names: BTreeSet<String>,
+    ) -> Result<ConversationCompaction, CompactionError> {
         let (respond_to, response) = oneshot::channel();
         self.command_tx
-            .send(SessionCommand::CompactConversation { respond_to })
+            .send(SessionCommand::CompactConversation {
+                disabled_skill_names,
+                respond_to,
+            })
             .await
             .map_err(|_| CompactionError::ActorStopped)?;
         response.await.map_err(|_| CompactionError::ActorStopped)?
@@ -226,6 +246,19 @@ impl SessionHandle {
         response.await.map_err(|_| SessionError::ActorStopped)
     }
 
+    pub(crate) async fn accepted_turn(
+        &self,
+        client_request_id: ClientRequestId,
+    ) -> Result<Option<TurnAccepted>, SessionError> {
+        let (respond_to, response) = oneshot::channel();
+        self.send(SessionCommand::AcceptedTurn {
+            client_request_id,
+            respond_to,
+        })
+        .await?;
+        response.await.map_err(|_| SessionError::ActorStopped)
+    }
+
     async fn send(&self, command: SessionCommand) -> Result<(), SessionError> {
         self.command_tx
             .send(command)
@@ -238,8 +271,9 @@ enum SessionCommand {
     StartTurn {
         turn_id: TurnId,
         client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
+        input: PreparedTurnInput,
         compaction_policy: AutomaticCompactionPolicy,
+        disabled_skill_names: BTreeSet<String>,
         respond_to: oneshot::Sender<Result<TurnAccepted, SessionError>>,
     },
     CancelTurn {
@@ -257,6 +291,7 @@ enum SessionCommand {
         respond_to: oneshot::Sender<PermissionMode>,
     },
     CompactConversation {
+        disabled_skill_names: BTreeSet<String>,
         respond_to: oneshot::Sender<Result<ConversationCompaction, CompactionError>>,
     },
     RewindConversation {
@@ -269,6 +304,10 @@ enum SessionCommand {
     ReplayUpdates {
         after_sequence: u64,
         respond_to: oneshot::Sender<Vec<SessionUpdateEnvelope>>,
+    },
+    AcceptedTurn {
+        client_request_id: ClientRequestId,
+        respond_to: oneshot::Sender<Option<TurnAccepted>>,
     },
 }
 
@@ -288,6 +327,7 @@ struct PendingPermission {
 struct SessionActor {
     session_id: SessionId,
     working_directory: PathBuf,
+    skill_roots: SkillRoots,
     resolved_model: ResolvedModel,
     agent: Agent,
     chat: ChatStateHandle,
@@ -333,6 +373,7 @@ impl SessionActor {
             },
             session_id: config.session_id,
             working_directory: config.working_directory,
+            skill_roots: config.skill_roots,
             resolved_model: config.resolved_model,
             agent: config.agent,
             chat: config.chat,
@@ -380,9 +421,16 @@ impl SessionActor {
                 client_request_id,
                 input,
                 compaction_policy,
+                disabled_skill_names,
                 respond_to,
             } => {
-                let result = self.start_turn(turn_id, client_request_id, input, compaction_policy);
+                let result = self.start_turn(
+                    turn_id,
+                    client_request_id,
+                    input,
+                    compaction_policy,
+                    disabled_skill_names,
+                );
                 let _ = respond_to.send(result);
             }
             SessionCommand::CancelTurn {
@@ -411,8 +459,11 @@ impl SessionActor {
                 self.set_permission_mode(mode, PermissionModeOrigin::UserToggle);
                 let _ = respond_to.send(mode);
             }
-            SessionCommand::CompactConversation { respond_to } => {
-                let result = self.compact_conversation().await;
+            SessionCommand::CompactConversation {
+                disabled_skill_names,
+                respond_to,
+            } => {
+                let result = self.compact_conversation(disabled_skill_names).await;
                 let _ = respond_to.send(result);
             }
             SessionCommand::RewindConversation {
@@ -437,6 +488,12 @@ impl SessionActor {
                     .collect();
                 let _ = respond_to.send(updates);
             }
+            SessionCommand::AcceptedTurn {
+                client_request_id,
+                respond_to,
+            } => {
+                let _ = respond_to.send(self.accepted_requests.get(&client_request_id).cloned());
+            }
         }
     }
 
@@ -444,8 +501,9 @@ impl SessionActor {
         &mut self,
         turn_id: TurnId,
         client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
+        input: PreparedTurnInput,
         compaction_policy: AutomaticCompactionPolicy,
+        disabled_skill_names: BTreeSet<String>,
     ) -> Result<TurnAccepted, SessionError> {
         if input.is_empty() {
             return Err(SessionError::EmptyInput);
@@ -492,6 +550,8 @@ impl SessionActor {
         let request = TurnRunRequest {
             session_id: self.session_id.clone(),
             working_directory: self.working_directory.clone(),
+            skill_roots: self.skill_roots.clone(),
+            disabled_skill_names,
             turn_id,
             client_request_id,
             input,
@@ -513,7 +573,10 @@ impl SessionActor {
         Ok(accepted)
     }
 
-    async fn compact_conversation(&self) -> Result<ConversationCompaction, CompactionError> {
+    async fn compact_conversation(
+        &self,
+        disabled_skill_names: BTreeSet<String>,
+    ) -> Result<ConversationCompaction, CompactionError> {
         if let Some(active) = &self.active_turn {
             return Err(CompactionError::SessionActive(active.turn_id.clone()));
         }
@@ -522,6 +585,8 @@ impl SessionActor {
             model_id: self.resolved_model.model_id.clone(),
             resolved_model_name: self.resolved_model.model_name.clone(),
             working_directory: self.working_directory.clone(),
+            skill_roots: self.skill_roots.clone(),
+            disabled_skill_names,
             agent: self.agent.clone(),
             chat: self.chat.clone(),
             model: Arc::clone(&self.model),

@@ -91,10 +91,12 @@ impl ToolRegistryBuilder {
             tools.insert(id.clone(), FinalizedEntry { definition, tool });
         }
 
+        let permission =
+            PermissionEngine::from_builtin_rules(session.permissions.builtin_rules().clone());
         Ok(FinalizedToolset {
             definitions,
             tools,
-            permission: PermissionEngine::for_workspace(&session.working_directory),
+            permission,
             session: Arc::new(session),
         })
     }

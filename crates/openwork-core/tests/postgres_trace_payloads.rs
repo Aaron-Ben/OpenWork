@@ -53,6 +53,7 @@ async fn create_turn(storage: &PostgresStorage, prefix: &str) -> (SessionId, Tur
             &turn_id,
             &ClientRequestId::new(unique("request-payload")),
             &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &[],
             &Message::text(Role::User, "inspect trace payloads"),
         )
         .await

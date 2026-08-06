@@ -43,23 +43,23 @@ impl ModelRequestBuilder {
     ) -> Result<PreparedModelCall, ModelRequestBuildError> {
         validate_system_context(input.system_context)?;
         validate_conversation(&input.conversation)?;
+        let conversation = input.conversation;
 
         let max_output_tokens = None;
         let context_budget = ContextBudgetEstimate::measure(
             input.system_context,
-            &input.conversation,
+            &conversation,
             input.tool_definitions,
             max_output_tokens,
         )?;
 
-        let mut messages = Vec::with_capacity(
-            input.system_context.parts().len() + input.conversation.messages.len(),
-        );
+        let mut messages =
+            Vec::with_capacity(input.system_context.parts().len() + conversation.messages.len());
         messages.extend(input.system_context.parts().iter().map(|part| Message {
             role: Role::System,
             content: part.content.clone(),
         }));
-        messages.extend(input.conversation.messages);
+        messages.extend(conversation.messages);
 
         Ok(PreparedModelCall {
             request: ModelRequest {

@@ -82,7 +82,8 @@ Desktop 只面对这些：
 
 ```rust
 OpenWorkCore::create_session / list_sessions / load_session
-OpenWorkCore::start_turn(session_id, client_request_id, input)
+OpenWorkCore::start_turn(session_id, client_request_id, input: Vec<UserInput>,
+                         context_window_tokens)
 OpenWorkCore::cancel_turn(session_id, turn_id)
 OpenWorkCore::resolve_permission(session_id, turn_id, tool_call_id, decision)
 OpenWorkCore::subscribe_updates()
@@ -117,7 +118,9 @@ Session
 
 ## 6. V1 非目标
 
-不要添加：MCP、Memory、Plan、Skill、Artifact、Git/Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩、后台任务恢复。
+不要添加：MCP、Memory、Plan、Artifact、Git/Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩、后台任务恢复。
+
+Skill 已从非目标移出，设计见 [skills.md](skills.md)。它**不引入新 crate、不新增 Trace kind**：目录挂在 System Context 上，正文走 Conversation，启停偏好单独保存在 `skill_status`，资源与脚本复用 `read` / `bash`。用户在 Desktop 选择 `$name` 时，可见 token 与 `{ name, path }` 绑定分离；Tauri 把文本和显式选择编码为同一个有序 `Vec<UserInput>`。Core 在接受 Turn 前把 `UserInput::Skill` 解析为持久化的 contextual User-role Text，模型内容层不定义 Skill 专用类型，`ModelRequestBuilder` 和 provider adapter 只处理已有 ContentBlock。文件读取不下沉到 Bridge、Chat State 或 provider adapter。若某次改动要求新增 Skill crate 或 Trace kind，先回到 skills.md 确认是不是设计走偏了。
 
 工作目录只是 Session 创建时确定、传给 `ToolSessionContext` 的路径值，不是独立领域对象——因此没有 `openwork-workspace` crate。只有当出现多个消费者共享的 Git、Sandbox 或 Checkpoint 能力时，才重新评估是否拆出。
 

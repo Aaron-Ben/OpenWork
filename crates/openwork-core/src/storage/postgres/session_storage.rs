@@ -8,11 +8,19 @@ impl SessionStorage for PostgresStorage {
         turn_id: &TurnId,
         client_request_id: &ClientRequestId,
         model: &ResolvedModel,
+        contextual_messages: &[Message],
         user_message: &Message,
     ) -> Result<(), String> {
-        self.begin_turn_inner(session_id, turn_id, client_request_id, model, user_message)
-            .await
-            .map_err(|error| error.to_string())
+        self.begin_turn_inner(
+            session_id,
+            turn_id,
+            client_request_id,
+            model,
+            contextual_messages,
+            user_message,
+        )
+        .await
+        .map_err(|error| error.to_string())
     }
 
     async fn begin_model_call(
@@ -165,6 +173,7 @@ impl PostgresStorage {
         turn_id: &TurnId,
         client_request_id: &ClientRequestId,
         model: &ResolvedModel,
+        contextual_messages: &[Message],
         user_message: &Message,
     ) -> Result<(), StorageError> {
         if user_message.role != Role::User {
@@ -172,8 +181,15 @@ impl PostgresStorage {
                 "begin_turn requires a user message".to_string(),
             ));
         }
+        if contextual_messages
+            .iter()
+            .any(|message| message.role != Role::User)
+        {
+            return Err(StorageError::InvalidInput(
+                "begin_turn contextual messages must use the user role".to_string(),
+            ));
+        }
         validate_resolved_model(model)?;
-        let content = serde_json::to_value(&user_message.content)?;
         let mut transaction = self.pool.begin().await?;
         lock_session(&mut transaction, session_id).await?;
         let turn_sequence = next_turn_sequence(&mut transaction, session_id).await?;
@@ -193,13 +209,25 @@ impl PostgresStorage {
         .bind(env!("CARGO_PKG_VERSION"))
         .execute(&mut *transaction)
         .await?;
+        for message in contextual_messages {
+            insert_message(
+                &mut transaction,
+                session_id,
+                Some(turn_id),
+                Role::User,
+                serde_json::to_value(&message.content)?,
+                StoredMessageKind::SkillInstruction,
+                None,
+            )
+            .await?;
+        }
         insert_message(
             &mut transaction,
             session_id,
             Some(turn_id),
             Role::User,
-            content,
-            None,
+            serde_json::to_value(&user_message.content)?,
+            StoredMessageKind::Normal,
             None,
         )
         .await?;
@@ -249,7 +277,7 @@ impl PostgresStorage {
             Some(turn_id),
             Role::Assistant,
             content,
-            None,
+            StoredMessageKind::Normal,
             None,
         )
         .await?;
@@ -310,8 +338,8 @@ impl PostgresStorage {
             Some(turn_id),
             Role::Tool,
             content,
-            Some(&result.id),
-            Some(&result.name),
+            StoredMessageKind::Normal,
+            Some((&result.id, &result.name)),
         )
         .await?;
         transaction.commit().await?;

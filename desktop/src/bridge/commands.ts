@@ -15,6 +15,9 @@ import type {
   RuntimeSessionRecord,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
+  RuntimeSkillDetail,
+  RuntimeSkillDiscovery,
+  RuntimeUserInput,
   RuntimeTraceContentPolicy,
   RuntimeTracePayloadSlot,
   RuntimeTraceSpan,
@@ -26,6 +29,10 @@ import type {
 } from './compat'
 
 export const coreCommands = {
+  listSkills: (): Promise<RuntimeSkillDiscovery> => invoke('list_skills'),
+  setSkillDisabled: (name: string, disabled: boolean): Promise<RuntimeSkillDiscovery> =>
+    invoke('set_skill_disabled', { name, disabled }),
+  readSkill: (path: string): Promise<RuntimeSkillDetail> => invoke('read_skill', { path }),
   listSessions: (): Promise<RuntimeSessionRecord[]> => invoke('runtime_session_list'),
   createSession: (input: RuntimeSessionInput): Promise<RuntimeSessionRecord> =>
     invoke('runtime_session_create', { input }),
@@ -59,10 +66,10 @@ export const coreCommands = {
   startTurn: (
     sessionId: string,
     clientRequestId: string,
-    text: string,
+    input: RuntimeUserInput[],
     contextWindowTokens: number,
   ): Promise<RuntimeTurnAccepted> =>
-    invoke('runtime_turn_start', { sessionId, clientRequestId, text, contextWindowTokens }),
+    invoke('runtime_turn_start', { sessionId, clientRequestId, input, contextWindowTokens }),
   cancelTurn: (sessionId: string, turnId: string): Promise<boolean> =>
     invoke('runtime_turn_cancel', { sessionId, turnId }),
   undoFileChanges: (

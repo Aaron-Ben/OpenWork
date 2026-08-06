@@ -1,7 +1,11 @@
 import { useCallback } from 'react'
 
 import { coreCommands } from '@/bridge/commands'
-import type { RuntimePermissionDecision, RuntimePermissionMode } from '@/bridge/compat'
+import type {
+  RuntimePermissionDecision,
+  RuntimePermissionMode,
+  RuntimeSkillInput,
+} from '@/bridge/compat'
 import { useContextWindowStore } from '@/features/settings/contextWindowStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useRuntimeStore } from './runtimeStore'
@@ -11,7 +15,7 @@ function nextClientRequestId(): string {
 }
 
 export function useTurnActions(sessionId: string | null) {
-  const startTurn = useCallback(async (text: string) => {
+  const startTurn = useCallback(async (text: string, skills: RuntimeSkillInput[]) => {
     if (!sessionId) return false
     const clientRequestId = nextClientRequestId()
     if (!useRuntimeStore.getState().beginTurn(sessionId, clientRequestId, text)) return false
@@ -19,7 +23,7 @@ export function useTurnActions(sessionId: string | null) {
       const accepted = await coreCommands.startTurn(
         sessionId,
         clientRequestId,
-        text.trim(),
+        [...skills, { type: 'text', text: text.trim() }],
         useContextWindowStore.getState().contextWindowTokens,
       )
       useRuntimeStore.getState().acceptTurn(sessionId, clientRequestId, accepted.turnId)

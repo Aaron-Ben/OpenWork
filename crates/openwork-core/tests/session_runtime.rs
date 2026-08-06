@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +16,7 @@ use openwork_core::session::{
     ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId,
     TurnOutcome,
 };
+use openwork_core::skills::SkillRoots;
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
@@ -267,6 +268,7 @@ impl SessionStorage for RecordingStorage {
         _turn_id: &TurnId,
         _client_request_id: &ClientRequestId,
         _model: &ResolvedModel,
+        _contextual_messages: &[Message],
         _user_message: &Message,
     ) -> Result<(), String> {
         self.events.lock().unwrap().push("begin_turn".to_string());
@@ -468,6 +470,18 @@ impl TestWorkspace {
     fn write_instructions(&self, content: impl AsRef<[u8]>) {
         fs::write(self.root.join("AGENTS.md"), content).expect("instructions");
     }
+
+    fn write_skill(&self, root: &Path, name: &str, description: &str) -> PathBuf {
+        let directory = root.join(name);
+        fs::create_dir_all(&directory).expect("skill directory");
+        let path = directory.join("SKILL.md");
+        fs::write(
+            &path,
+            format!("---\nname: {name}\ndescription: {description}\n---\nBody\n"),
+        )
+        .expect("skill");
+        fs::canonicalize(path).expect("canonical skill path")
+    }
 }
 
 impl Drop for TestWorkspace {
@@ -507,6 +521,22 @@ fn runtime_in_workspace(
     )
 }
 
+fn runtime_in_workspace_with_skill_roots(
+    responses: Vec<ModelResponse>,
+    permission_mode: PermissionMode,
+    workspace: TestWorkspace,
+    skill_roots: SkillRoots,
+) -> RuntimeFixture {
+    runtime_with_outcomes_in_workspace_and_skill_roots(
+        responses.into_iter().map(Ok).collect(),
+        Vec::new(),
+        permission_mode,
+        false,
+        workspace,
+        skill_roots,
+    )
+}
+
 fn runtime_with_outcomes(
     outcomes: Vec<Result<ModelResponse, ModelError>>,
     tool_results: Vec<ToolResult>,
@@ -528,6 +558,24 @@ fn runtime_with_outcomes_in_workspace(
     permission_mode: PermissionMode,
     fail_assistant: bool,
     workspace: TestWorkspace,
+) -> RuntimeFixture {
+    runtime_with_outcomes_in_workspace_and_skill_roots(
+        outcomes,
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        workspace,
+        SkillRoots::default(),
+    )
+}
+
+fn runtime_with_outcomes_in_workspace_and_skill_roots(
+    outcomes: Vec<Result<ModelResponse, ModelError>>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    workspace: TestWorkspace,
+    skill_roots: SkillRoots,
 ) -> RuntimeFixture {
     let working_directory = workspace.path().to_path_buf();
     let agent = AgentBuilder::new(AgentDefinition::default())
@@ -583,6 +631,7 @@ fn runtime_with_outcomes_in_workspace(
         SessionRuntimeConfig {
             session_id: SessionId::new("session-test"),
             working_directory,
+            skill_roots,
             resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
             agent,
             chat: chat.clone(),
@@ -770,7 +819,8 @@ async fn start_with_request(fixture: &RuntimeFixture, client_request_id: &str) -
         .handle
         .start_turn(
             ClientRequestId::new(client_request_id),
-            vec![ContentBlock::text("do the task")],
+            openwork_core::session::PreparedTurnInput::text("do the task"),
+            BTreeSet::new(),
         )
         .await
         .expect("turn accepted")
@@ -1675,7 +1725,8 @@ async fn duplicate_client_request_is_idempotent_and_a_different_turn_is_busy() {
         .handle
         .start_turn(
             ClientRequestId::new("client-request"),
-            vec![ContentBlock::text("same retry")],
+            openwork_core::session::PreparedTurnInput::text("same retry"),
+            BTreeSet::new(),
         )
         .await
         .expect("idempotent retry");
@@ -1685,7 +1736,8 @@ async fn duplicate_client_request_is_idempotent_and_a_different_turn_is_busy() {
         .handle
         .start_turn(
             ClientRequestId::new("another-request"),
-            vec![ContentBlock::text("overlap")],
+            openwork_core::session::PreparedTurnInput::text("overlap"),
+            BTreeSet::new(),
         )
         .await;
     assert!(matches!(busy, Err(SessionError::Busy(id)) if id == first_turn));
@@ -1715,7 +1767,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
 
     let compaction = fixture
         .handle
-        .compact_conversation()
+        .compact_conversation(BTreeSet::new())
         .await
         .expect("compaction");
 
@@ -1900,6 +1952,98 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
 }
 
 #[tokio::test]
+async fn manual_compaction_rematerializes_the_same_explicit_user_skill_catalog() {
+    let workspace = TestWorkspace::new();
+    let user_root = workspace.path().join("user-skills");
+    let skill_path = workspace.write_skill(&user_root, "review", "Review changes when requested.");
+    let mut fixture = runtime_in_workspace_with_skill_roots(
+        vec![
+            response("first answer", Vec::new()),
+            response(compaction_summary(), Vec::new()),
+        ],
+        PermissionMode::AcceptEdits,
+        workspace,
+        SkillRoots {
+            agents: Some(user_root),
+        },
+    );
+
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+    fixture
+        .handle
+        .compact_conversation(BTreeSet::new())
+        .await
+        .expect("compaction");
+
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let catalog_text = |request: &ModelRequest| {
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == Role::System)
+            .find_map(|message| match message.content.first() {
+                Some(ContentBlock::Text(text)) if text.text.contains("<available_skills>") => {
+                    Some(text.text.clone())
+                }
+                _ => None,
+            })
+            .expect("skill catalog")
+    };
+    let turn_catalog = catalog_text(&requests[0]);
+    let compaction_catalog = catalog_text(&requests[1]);
+    assert_eq!(turn_catalog, compaction_catalog);
+    assert!(turn_catalog.contains(skill_path.to_str().expect("UTF-8 path")));
+}
+
+#[tokio::test]
+async fn session_handle_applies_disabled_skills_to_turn_and_manual_compaction() {
+    let workspace = TestWorkspace::new();
+    let user_root = workspace.path().join("user-skills");
+    workspace.write_skill(&user_root, "review", "Review changes when requested.");
+    let mut fixture = runtime_in_workspace_with_skill_roots(
+        vec![
+            response("first answer", Vec::new()),
+            response(compaction_summary(), Vec::new()),
+        ],
+        PermissionMode::AcceptEdits,
+        workspace,
+        SkillRoots {
+            agents: Some(user_root),
+        },
+    );
+    let disabled_skill_names = BTreeSet::from(["review".to_string()]);
+
+    fixture
+        .handle
+        .start_turn(
+            ClientRequestId::new("disabled-skill-turn"),
+            openwork_core::session::PreparedTurnInput::text("do the task"),
+            disabled_skill_names.clone(),
+        )
+        .await
+        .expect("turn accepted");
+    wait_for_terminal(&mut fixture.updates).await;
+    fixture
+        .handle
+        .compact_conversation(disabled_skill_names)
+        .await
+        .expect("compaction");
+
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|request| {
+        request.messages.iter().all(|message| {
+            message.content.iter().all(|block| match block {
+                ContentBlock::Text(text) => !text.text.contains("<available_skills>"),
+                _ => true,
+            })
+        })
+    }));
+}
+
+#[tokio::test]
 async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
     let mut fixture = runtime_with_outcomes(
         vec![
@@ -2003,8 +2147,9 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
         .handle
         .start_turn_with_context_window(
             ClientRequestId::new("threshold-request"),
-            vec![ContentBlock::text("do the task")],
+            openwork_core::session::PreparedTurnInput::text("do the task"),
             1,
+            BTreeSet::new(),
         )
         .await
         .expect("turn accepted");
@@ -2109,8 +2254,9 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
         .handle
         .start_turn_with_context_window(
             ClientRequestId::new("seven-span-threshold-request"),
-            vec![ContentBlock::text("inspect the project")],
+            openwork_core::session::PreparedTurnInput::text("inspect the project"),
             10_000,
+            BTreeSet::new(),
         )
         .await
         .expect("turn accepted");
@@ -2181,8 +2327,9 @@ async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget(
         .handle
         .start_turn_with_context_window(
             ClientRequestId::new("threshold-overflow-request"),
-            vec![ContentBlock::text("do the task")],
+            openwork_core::session::PreparedTurnInput::text("do the task"),
             1,
+            BTreeSet::new(),
         )
         .await
         .expect("turn accepted");
@@ -2211,7 +2358,10 @@ async fn manual_compaction_is_rejected_while_a_turn_is_active() {
     let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
 
     assert!(matches!(
-        fixture.handle.compact_conversation().await,
+        fixture
+            .handle
+            .compact_conversation(BTreeSet::new())
+            .await,
         Err(CompactionError::SessionActive(id)) if id == active_turn
     ));
 
@@ -2243,7 +2393,10 @@ async fn failed_compaction_persistence_keeps_the_previous_conversation() {
         .store(true, Ordering::Relaxed);
 
     assert!(matches!(
-        fixture.handle.compact_conversation().await,
+        fixture
+            .handle
+            .compact_conversation(BTreeSet::new())
+            .await,
         Err(CompactionError::Persistence(message)) if message.contains("write failed")
     ));
     assert_eq!(fixture.chat.snapshot().await.expect("after"), before);
@@ -2275,7 +2428,7 @@ async fn empty_conversation_is_not_sent_to_the_compaction_model() {
     );
 
     assert!(matches!(
-        fixture.handle.compact_conversation().await,
+        fixture.handle.compact_conversation(BTreeSet::new()).await,
         Err(CompactionError::EmptyConversation)
     ));
     assert!(fixture.model.requests.lock().unwrap().is_empty());

@@ -5,8 +5,8 @@ use openwork_core::{
     ConversationProjectionSelector, ConversationTranscriptQuery, ModelCallFinished,
     ModelCallStarted, ModelInput, ModelTraceAttributesV1, NewConversationCompaction,
     PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads, TraceRecorder,
-    TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
+    StoredMessageKind, ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads,
+    TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
@@ -442,6 +442,7 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             &turn_id,
             &ClientRequestId::new(unique("request-threshold")),
             &ResolvedModel::new(None::<String>, "deepseek", "threshold-test-model"),
+            &[],
             &Message::text(Role::User, "continue the task"),
         )
         .await
@@ -477,6 +478,64 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             &turn_id,
             &TurnOutcome::Completed {
                 final_text: "done".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn postgres_persists_contextual_input_before_the_visible_user_message() {
+    let Some(database_url) = test_database_url() else {
+        return;
+    };
+    let storage = PostgresStorage::connect(Some(&database_url)).await.unwrap();
+    storage.migrate().await.unwrap();
+    let session_id = SessionId::new(unique("session-contextual-input"));
+    storage
+        .create_session(&SessionInput {
+            id: session_id.clone(),
+            title: Some("Contextual input persistence".to_string()),
+            working_directory: "/tmp/openwork-contextual-input".to_string(),
+            default_model_id: None,
+        })
+        .await
+        .unwrap();
+    let turn_id = TurnId::new(unique("turn-contextual-input"));
+    storage
+        .begin_turn(
+            &session_id,
+            &turn_id,
+            &ClientRequestId::new(unique("request-contextual-input")),
+            &ResolvedModel::new(None::<String>, "deepseek", "contextual-input-test"),
+            &[Message::text(
+                Role::User,
+                "<skill>\n<name>read-workflow</name>\n<path>/tmp/read-workflow/SKILL.md</path>\nprivate skill body\n</skill>",
+            )],
+            &Message::text(Role::User, "read the file"),
+        )
+        .await
+        .unwrap();
+
+    let records = storage.load_message_records(&session_id).await.unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].sequence, 1);
+    assert_eq!(records[0].message_kind, StoredMessageKind::SkillInstruction);
+    assert!(matches!(
+        &records[0].content[0],
+        ContentBlock::Text(block) if block.text.contains("private skill body")
+    ));
+    assert_eq!(records[1].sequence, 2);
+    assert_eq!(records[1].message_kind, StoredMessageKind::Normal);
+    assert!(matches!(
+        &records[1].content[0],
+        ContentBlock::Text(block) if block.text == "read the file"
+    ));
+    storage
+        .finish_turn(
+            &turn_id,
+            &TurnOutcome::Completed {
+                final_text: "stored".to_string(),
             },
         )
         .await
@@ -521,6 +580,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             "models",
             "provider_credentials",
             "sessions",
+            "skill_status",
             "trace_annotations",
             "trace_payloads",
             "trace_span_payloads",
@@ -554,7 +614,11 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     .unwrap();
     assert_eq!(
         applied_migrations,
-        vec![(202_607_260_001, "initial schema".to_string(), true)]
+        vec![
+            (202_607_260_001, "initial schema".to_string(), true),
+            (202_608_040_001, "create skill status".to_string(), true),
+            (202_608_050_001, "add message kind".to_string(), true),
+        ]
     );
 
     let model_id = unique("model-test");
@@ -593,6 +657,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &turn_id,
             &client_request_id,
             &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &[],
             &Message::text(Role::User, "read the file"),
         )
         .await
@@ -772,6 +837,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &continuation_turn_id,
             &ClientRequestId::new(unique("request-after-compaction")),
             &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &[],
             &Message::text(Role::User, "continue from the summary"),
         )
         .await
@@ -882,6 +948,10 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .await
         .unwrap();
     assert_eq!(checkpoint_replay.messages.len(), 3);
+    assert_eq!(
+        checkpoint_replay.messages[0].message_kind,
+        openwork_core::StoredMessageKind::Normal
+    );
     assert_eq!(
         checkpoint_replay.checkpoint_id.as_deref(),
         Some(compacted.id.as_str())
@@ -1202,6 +1272,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &interrupted_turn_id,
             &ClientRequestId::new(unique("request-interrupted")),
             &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &[],
             &Message::text(Role::User, "this turn will be interrupted"),
         )
         .await

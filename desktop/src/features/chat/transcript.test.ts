@@ -11,6 +11,7 @@ const canonical: RuntimeStoredMessage[] = [
     sequence: 1,
     role: 'user',
     content: [{ type: 'text', text: 'hello' }],
+    messageKind: 'normal',
     createdAt: '2026-07-18T00:00:00Z',
   },
 ]
@@ -22,6 +23,7 @@ const completedFileTurn: RuntimeStoredMessage[] = [
     sequence: 1,
     role: 'user',
     content: [{ type: 'text', text: 'update the reducer' }],
+    messageKind: 'normal',
     createdAt: '2026-07-18T00:00:00Z',
   },
   {
@@ -36,6 +38,7 @@ const completedFileTurn: RuntimeStoredMessage[] = [
       input: '{"filePath":"runtimeReducer.test.ts"}',
       state: 'finished',
     }],
+    messageKind: 'normal',
     createdAt: '2026-07-18T00:00:01Z',
   },
   {
@@ -64,6 +67,7 @@ const completedFileTurn: RuntimeStoredMessage[] = [
         },
       }],
     }],
+    messageKind: 'normal',
     createdAt: '2026-07-18T00:00:02Z',
   },
   {
@@ -72,11 +76,35 @@ const completedFileTurn: RuntimeStoredMessage[] = [
     sequence: 4,
     role: 'assistant',
     content: [{ type: 'text', text: 'The reducer is updated.' }],
+    messageKind: 'normal',
     createdAt: '2026-07-18T00:00:03Z',
   },
 ]
 
 describe('buildTranscript', () => {
+  it('hides persisted Skill instructions while keeping the visible user input', () => {
+    const messages: RuntimeStoredMessage[] = [{
+      id: 'skill-instruction',
+      turnId: 'turn-skill',
+      sequence: 1,
+      role: 'user',
+      content: [{ type: 'text', text: '<skill>private instructions</skill>' }],
+      messageKind: 'skill_instruction',
+      createdAt: '2026-07-18T00:00:00Z',
+    }, {
+      id: 'skill-user-input',
+      turnId: 'turn-skill',
+      sequence: 2,
+      role: 'user',
+      content: [{ type: 'text', text: 'Use $commit.' }],
+      messageKind: 'normal',
+      createdAt: '2026-07-18T00:00:01Z',
+    }]
+
+    expect(buildTranscript(messages, createSessionRuntimeView()).map((item) => item.id))
+      .toEqual(['skill-user-input'])
+  })
+
   it('keeps canonical messages immutable and appends pending/runtime items', () => {
     const runtime = {
       ...createSessionRuntimeView(),
@@ -287,6 +315,7 @@ describe('buildTranscript', () => {
           input: '{"path":"agent-session.ts"}',
           state: 'submitted',
         }],
+        messageKind: 'normal',
         createdAt: '2026-07-18T00:00:01Z',
       },
     ]

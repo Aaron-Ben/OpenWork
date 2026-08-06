@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -23,6 +24,7 @@ use uuid::Uuid;
 
 use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
+use crate::skills::SkillRoots;
 
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
@@ -30,18 +32,20 @@ use super::compaction::{
 use super::permission_state::SessionPermissionState;
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
-    ModelTraceAttributesV1, PermissionDecision, PermissionRequest, ResolvedModel, SessionId,
-    SessionPhase, SessionStorage, SessionUpdate, ToolCallId, ToolCallStarted, ToolCallTraceGuard,
-    ToolProgressUpdate, ToolTraceAttributesV1, TracePayloads, TraceRecorder, TraceStatus, TurnId,
-    TurnOutcome,
+    ModelTraceAttributesV1, PermissionDecision, PermissionRequest, PreparedTurnInput,
+    ResolvedModel, SessionId, SessionPhase, SessionStorage, SessionUpdate, ToolCallId,
+    ToolCallStarted, ToolCallTraceGuard, ToolProgressUpdate, ToolTraceAttributesV1, TracePayloads,
+    TraceRecorder, TraceStatus, TurnId, TurnOutcome,
 };
 
 pub(super) struct TurnRunRequest {
     pub session_id: SessionId,
     pub working_directory: PathBuf,
+    pub skill_roots: SkillRoots,
+    pub disabled_skill_names: BTreeSet<String>,
     pub turn_id: TurnId,
     pub client_request_id: ClientRequestId,
-    pub input: Vec<ContentBlock>,
+    pub input: PreparedTurnInput,
     pub resolved_model: ResolvedModel,
     pub agent: Agent,
     pub chat: ChatStateHandle,
@@ -130,10 +134,6 @@ struct CompletedModelCall {
 impl TurnRunner {
     async fn begin(&self) -> Result<(), TurnRunError> {
         self.ensure_not_cancelled()?;
-        let user_message = Message {
-            role: Role::User,
-            content: self.request.input.clone(),
-        };
         self.request
             .storage
             .begin_turn(
@@ -141,22 +141,26 @@ impl TurnRunner {
                 &self.request.turn_id,
                 &self.request.client_request_id,
                 &self.request.resolved_model,
-                &user_message,
+                self.request.input.contextual_messages(),
+                self.request.input.user_message(),
             )
             .await
             .map_err(TurnRunError::Persistence)?;
-        self.request
-            .chat
-            .append_user(self.request.input.clone())
-            .await?;
+        for message in self.request.input.clone().into_messages() {
+            self.request.chat.append_user(message.content).await?;
+        }
         Ok(())
     }
 
     async fn run_loop(&mut self) -> Result<String, TurnRunError> {
         self.ensure_not_cancelled()?;
-        let system_context = SystemContextBuilder::new(&self.request.working_directory)
-            .build(self.request.agent.system_prompt())
-            .await?;
+        let system_context = SystemContextBuilder::new(
+            &self.request.working_directory,
+            self.request.skill_roots.clone(),
+        )
+        .with_disabled_skills(self.request.disabled_skill_names.clone())
+        .build(self.request.agent.system_prompt())
+        .await?;
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
             self.update(SessionUpdate::PhaseChanged {
@@ -381,6 +385,8 @@ impl TurnRunner {
             model_id: self.request.resolved_model.model_id.clone(),
             resolved_model_name: self.request.resolved_model.model_name.clone(),
             working_directory: self.request.working_directory.clone(),
+            skill_roots: self.request.skill_roots.clone(),
+            disabled_skill_names: self.request.disabled_skill_names.clone(),
             agent: self.request.agent.clone(),
             chat: self.request.chat.clone(),
             model: Arc::clone(&self.request.model),

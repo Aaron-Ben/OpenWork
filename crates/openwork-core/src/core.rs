@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
@@ -24,17 +24,18 @@ use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::context::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
-    ContextInspectionSystemPart, ContextWindowInspection, SystemContextBuilder,
+    ContextInspectionSystemPart, ContextWindowInspection, SystemContextBuilder, list_skills,
 };
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
     COMPACTION_TRANSCRIPT_TOOL_NAME, ClientRequestId, CompactionError, CompactionStateCollector,
-    ConversationCompaction, ConversationTranscriptTool, PermissionDecision, ResolvedModel,
-    SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot, SessionStorage,
-    SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy, TracePayloadSlot,
-    TurnAccepted, TurnId,
+    ConversationCompaction, ConversationTranscriptTool, PermissionDecision, PreparedTurnInput,
+    ResolvedModel, SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot,
+    SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy,
+    TracePayloadSlot, TurnAccepted, TurnId,
 };
+use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
     PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
@@ -47,13 +48,16 @@ const CORE_UPDATE_BROADCAST_CAPACITY: usize = 4096;
 pub struct OpenWorkCoreConfig {
     pub database_url: Option<String>,
     pub trace_content: TraceContentConfig,
+    pub agents_skills_root: Option<PathBuf>,
 }
 
 impl OpenWorkCoreConfig {
     pub fn from_env_or_local() -> Self {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
         Self {
             database_url: std::env::var("DATABASE_URL").ok(),
             trace_content: TraceContentConfig::default(),
+            agents_skills_root: home.map(|home| home.join(".agents/skills")),
         }
     }
 }
@@ -140,6 +144,12 @@ pub enum OpenWorkCoreError {
     UnsupportedProvider(String),
     #[error("runtime component failed: {0}")]
     RuntimeComponent(String),
+    #[error("selected skill is unavailable: {0}")]
+    SkillUnavailable(String),
+    #[error(transparent)]
+    SkillRead(#[from] crate::skills::SkillReadError),
+    #[error("skill filesystem task failed")]
+    SkillFilesystemTask(#[source] tokio::task::JoinError),
     #[error(transparent)]
     Provider(#[from] ProviderRepositoryError),
     #[error("provider credential bootstrap failed: {0}")]
@@ -154,6 +164,10 @@ pub struct OpenWorkCore {
     trace: Arc<PostgresTraceRecorder>,
     credentials: Arc<dyn CredentialResolver>,
     providers: Option<Arc<dyn ProviderRepository>>,
+    skill_roots: SkillRoots,
+    skill_permission_roots: Vec<PathBuf>,
+    disabled_skill_names: RwLock<BTreeSet<String>>,
+    skill_status_update: Mutex<()>,
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
     sessions: RwLock<HashMap<SessionId, SessionHandle>>,
     session_creation: Mutex<()>,
@@ -173,7 +187,16 @@ impl OpenWorkCore {
         let credentials: Arc<dyn CredentialResolver> = Arc::new(ProviderCredentialResolver {
             providers: Arc::clone(&providers),
         });
-        Self::from_storage_parts(storage, credentials, Some(providers), config.trace_content).await
+        Self::from_storage_parts(
+            storage,
+            credentials,
+            Some(providers),
+            config.trace_content,
+            SkillRoots {
+                agents: config.agents_skills_root,
+            },
+        )
+        .await
     }
 
     pub async fn from_storage(storage: Arc<PostgresStorage>) -> Result<Self, OpenWorkCoreError> {
@@ -182,6 +205,7 @@ impl OpenWorkCore {
             Arc::new(EnvironmentCredentialResolver),
             None,
             TraceContentConfig::default(),
+            SkillRoots::default(),
         )
         .await
     }
@@ -190,7 +214,14 @@ impl OpenWorkCore {
         storage: Arc<PostgresStorage>,
         credentials: Arc<dyn CredentialResolver>,
     ) -> Result<Self, OpenWorkCoreError> {
-        Self::from_storage_parts(storage, credentials, None, TraceContentConfig::default()).await
+        Self::from_storage_parts(
+            storage,
+            credentials,
+            None,
+            TraceContentConfig::default(),
+            SkillRoots::default(),
+        )
+        .await
     }
 
     async fn from_storage_parts(
@@ -198,8 +229,15 @@ impl OpenWorkCore {
         credentials: Arc<dyn CredentialResolver>,
         providers: Option<Arc<dyn ProviderRepository>>,
         trace_content: TraceContentConfig,
+        skill_roots: SkillRoots,
     ) -> Result<Self, OpenWorkCoreError> {
         storage.migrate().await?;
+        let disabled_skill_names = RwLock::new(storage.disabled_skill_names().await?);
+        let permission_root_source = skill_roots.clone();
+        let skill_permission_roots = spawn_skill_filesystem_task(move || {
+            materialize_skill_permission_roots(&permission_root_source)
+        })
+        .await?;
         storage.mark_running_interrupted().await?;
         storage
             .purge_expired_trace_payloads(trace_content.retention_days())
@@ -215,6 +253,10 @@ impl OpenWorkCore {
             trace,
             credentials,
             providers,
+            skill_roots,
+            skill_permission_roots,
+            disabled_skill_names,
+            skill_status_update: Mutex::new(()),
             update_tx,
             sessions: RwLock::new(HashMap::new()),
             session_creation: Mutex::new(()),
@@ -315,6 +357,41 @@ impl OpenWorkCore {
         Ok(self.storage.list_sessions().await?)
     }
 
+    pub async fn list_skills(&self) -> Result<crate::skills::SkillDiscovery, OpenWorkCoreError> {
+        let skill_roots = self.skill_roots.clone();
+        let disabled_names = self.disabled_skill_names.read().await.clone();
+        spawn_skill_filesystem_task(move || list_skills(&skill_roots, &disabled_names)).await
+    }
+
+    pub async fn set_skill_disabled(
+        &self,
+        name: &str,
+        disabled: bool,
+    ) -> Result<crate::skills::SkillDiscovery, OpenWorkCoreError> {
+        let _update = self.skill_status_update.lock().await;
+        self.storage.set_skill_disabled(name, disabled).await?;
+        {
+            let mut names = self.disabled_skill_names.write().await;
+            if disabled {
+                names.insert(name.to_string());
+            } else {
+                names.remove(name);
+            }
+        }
+        self.list_skills().await
+    }
+
+    pub async fn read_skill(
+        &self,
+        path: &str,
+    ) -> Result<crate::skills::SkillDetail, OpenWorkCoreError> {
+        let skill_roots = self.skill_roots.clone();
+        let path = path.to_string();
+        spawn_skill_filesystem_task(move || crate::skills::read_skill(&skill_roots, &path))
+            .await?
+            .map_err(OpenWorkCoreError::from)
+    }
+
     pub async fn load_session(
         &self,
         session_id: &SessionId,
@@ -351,12 +428,18 @@ impl OpenWorkCore {
             .await?
             .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools) =
-            build_default_agent_and_tools(session_id, &working_directory, self.storage.clone())?;
-        let system_context = SystemContextBuilder::new(&working_directory)
-            .build(agent.system_prompt())
-            .await
-            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let (agent, tools) = build_default_agent_and_tools(
+            session_id,
+            &working_directory,
+            &self.skill_permission_roots,
+            self.storage.clone(),
+        )?;
+        let system_context =
+            SystemContextBuilder::new(&working_directory, self.skill_roots.clone())
+                .with_disabled_skills(self.disabled_skill_names.read().await.clone())
+                .build(agent.system_prompt())
+                .await
+                .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
 
         let conversation_records = self.storage.load_conversation_records(session_id).await?;
         let current_turn_id = conversation_records
@@ -364,8 +447,7 @@ impl OpenWorkCore {
             .rev()
             .find_map(|message| message.turn_id.clone());
         let mut conversation = Vec::with_capacity(conversation_records.len());
-        let mut inspected_messages = Vec::with_capacity(conversation_records.len());
-        for message in conversation_records {
+        for message in &conversation_records {
             if message.role == Role::System {
                 return Err(OpenWorkCoreError::RuntimeComponent(
                     "persisted system messages are not valid Conversation input".to_string(),
@@ -374,12 +456,6 @@ impl OpenWorkCore {
             conversation.push(Message {
                 role: message.role,
                 content: message.content.clone(),
-            });
-            inspected_messages.push(ContextInspectionMessage {
-                message_id: message.id,
-                turn_id: message.turn_id,
-                role: message.role,
-                content: message.content,
             });
         }
 
@@ -392,6 +468,21 @@ impl OpenWorkCore {
             tools.definitions(),
         ))
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let projected_conversation = prepared
+            .request
+            .messages
+            .iter()
+            .skip(system_context.parts().len());
+        let inspected_messages = conversation_records
+            .into_iter()
+            .zip(projected_conversation)
+            .map(|(record, projected)| ContextInspectionMessage {
+                message_id: record.id,
+                turn_id: record.turn_id,
+                role: projected.role,
+                content: projected.content.clone(),
+            })
+            .collect();
         let budget = prepared.context_budget;
 
         Ok(ContextWindowInspection {
@@ -447,25 +538,66 @@ impl OpenWorkCore {
         &self,
         session_id: &SessionId,
         client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
+        input: Vec<crate::UserInput>,
+        context_window_tokens: Option<u64>,
     ) -> Result<TurnAccepted, OpenWorkCoreError> {
         let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
-        Ok(handle.start_turn(client_request_id, input).await?)
-    }
+        if let Some(accepted) = handle.accepted_turn(client_request_id.clone()).await? {
+            return Ok(accepted);
+        }
+        let user_content = input
+            .iter()
+            .filter_map(|item| match item {
+                crate::UserInput::Text { text } => Some(ContentBlock::text(text)),
+                crate::UserInput::Skill { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        if user_content.is_empty() {
+            return Err(SessionError::EmptyInput.into());
+        }
 
-    pub async fn start_turn_with_context_window(
-        &self,
-        session_id: &SessionId,
-        client_request_id: ClientRequestId,
-        input: Vec<ContentBlock>,
-        context_window_tokens: u64,
-    ) -> Result<TurnAccepted, OpenWorkCoreError> {
-        let _workspace_operation = self.workspace_operation_guard(session_id).await;
-        let handle = self.session_handle(session_id).await?;
-        Ok(handle
-            .start_turn_with_context_window(client_request_id, input, context_window_tokens)
-            .await?)
+        let disabled_skill_names = self.disabled_skill_names.read().await.clone();
+        let has_skill_input = input
+            .iter()
+            .any(|item| matches!(item, crate::UserInput::Skill { .. }));
+        let skills = if has_skill_input {
+            let selection_disabled_skill_names = disabled_skill_names.clone();
+            let skill_roots = self.skill_roots.clone();
+            spawn_skill_filesystem_task(move || {
+                resolve_selected_skills(&skill_roots, &selection_disabled_skill_names, &input)
+            })
+            .await?
+            .map_err(|error| OpenWorkCoreError::SkillUnavailable(error.name().to_string()))?
+        } else {
+            Vec::new()
+        };
+        let prepared_input = PreparedTurnInput::new(
+            skills
+                .into_iter()
+                .map(|skill| skill.into_message())
+                .collect(),
+            user_content,
+        );
+
+        let accepted = match context_window_tokens {
+            Some(context_window_tokens) => {
+                handle
+                    .start_turn_with_context_window(
+                        client_request_id,
+                        prepared_input,
+                        context_window_tokens,
+                        disabled_skill_names,
+                    )
+                    .await?
+            }
+            None => {
+                handle
+                    .start_turn(client_request_id, prepared_input, disabled_skill_names)
+                    .await?
+            }
+        };
+        Ok(accepted)
     }
 
     pub async fn compact_conversation(
@@ -474,7 +606,9 @@ impl OpenWorkCore {
     ) -> Result<ConversationCompaction, OpenWorkCoreError> {
         let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
-        Ok(handle.compact_conversation().await?)
+        Ok(handle
+            .compact_conversation(self.disabled_skill_names.read().await.clone())
+            .await?)
     }
 
     pub async fn list_conversation_compactions(
@@ -556,9 +690,10 @@ impl OpenWorkCore {
             .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
         let mut records = self.storage.load_message_records(session_id).await?;
         let changes = select_file_changes(&records, &change_ids)?;
+        let working_directory = PathBuf::from(&session.working_directory);
         let context = ToolSessionContext::local(
-            PathBuf::from(&session.working_directory),
-            PermissionProfile::from_builtin_rules(PathBuf::from(&session.working_directory)),
+            working_directory.clone(),
+            skill_permission_profile(&working_directory, &self.skill_permission_roots),
         );
         let result = undo_workspace_file_changes(&context, &changes).await?;
         let updates = mark_file_changes_undone(&mut records, &change_ids)?;
@@ -603,9 +738,10 @@ impl OpenWorkCore {
             .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
         let mut records = self.storage.load_message_records(session_id).await?;
         let changes = select_undone_file_changes(&records, &change_ids)?;
+        let working_directory = PathBuf::from(&session.working_directory);
         let context = ToolSessionContext::local(
-            PathBuf::from(&session.working_directory),
-            PermissionProfile::from_builtin_rules(PathBuf::from(&session.working_directory)),
+            working_directory.clone(),
+            skill_permission_profile(&working_directory, &self.skill_permission_roots),
         );
         let result = reapply_workspace_file_changes(&context, &changes).await?;
         let updates = mark_file_changes_reapplied(&mut records, &change_ids)?;
@@ -807,13 +943,18 @@ impl OpenWorkCore {
         let chat = ChatStateHandle::spawn_items(conversation)
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools) =
-            build_default_agent_and_tools(session_id, &working_directory, self.storage.clone())?;
+        let (agent, tools) = build_default_agent_and_tools(
+            session_id,
+            &working_directory,
+            &self.skill_permission_roots,
+            self.storage.clone(),
+        )?;
 
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
                 session_id: session_id.clone(),
                 working_directory,
+                skill_roots: self.skill_roots.clone(),
                 resolved_model: ResolvedModel::new(
                     Some(model.id),
                     model.provider_kind,
@@ -833,9 +974,21 @@ impl OpenWorkCore {
     }
 }
 
+async fn spawn_skill_filesystem_task<T>(
+    task: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, OpenWorkCoreError>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(task)
+        .await
+        .map_err(OpenWorkCoreError::SkillFilesystemTask)
+}
+
 fn build_default_agent_and_tools(
     session_id: &SessionId,
     working_directory: &Path,
+    skill_permission_roots: &[PathBuf],
     storage: Arc<dyn SessionStorage>,
 ) -> Result<(Agent, FinalizedToolset), OpenWorkCoreError> {
     let mut definition = AgentDefinition::default();
@@ -851,11 +1004,29 @@ fn build_default_agent_and_tools(
             agent.toolset_config(),
             ToolSessionContext::local(
                 working_directory.to_path_buf(),
-                PermissionProfile::from_builtin_rules(working_directory.to_path_buf()),
+                skill_permission_profile(working_directory, skill_permission_roots),
             ),
         )
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
     Ok((agent, tools))
+}
+
+fn skill_permission_profile(
+    working_directory: &Path,
+    skill_permission_roots: &[PathBuf],
+) -> PermissionProfile {
+    PermissionProfile::for_workspace_and_skill_roots(
+        working_directory.to_path_buf(),
+        skill_permission_roots.iter().cloned(),
+    )
+}
+
+fn materialize_skill_permission_roots(skill_roots: &SkillRoots) -> Vec<PathBuf> {
+    skill_roots
+        .agents
+        .iter()
+        .flat_map(|root| std::iter::once(root.clone()).chain(std::fs::canonicalize(root).ok()))
+        .collect()
 }
 
 type MessageContentUpdate = (String, Vec<ContentBlock>);
@@ -1041,15 +1212,122 @@ fn parse_provider_kind(value: &str) -> Result<ProviderKind, OpenWorkCoreError> {
 #[cfg(test)]
 mod tests {
     use openwork_models::model::{ContentBlock, Role, ToolResultBlock, ToolResultState};
-    use openwork_tools::{FileChangeArtifact, FileChangeKind, FileDiffHunk};
+    use openwork_tools::{
+        Authorization, FileChangeArtifact, FileChangeKind, FileDiffHunk, PermissionMode,
+        ToolInvocation, ToolsetConfig,
+    };
+    use serde_json::json;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_path_from_a_symlinked_skill_root_is_readable_without_approval() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "openwork-core-symlinked-skill-root-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace = root.join("workspace");
+        let actual_root = root.join("actual-skills");
+        let configured_root = root.join("configured-skills");
+        let skill_path = actual_root.join("review/SKILL.md");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::create_dir_all(skill_path.parent().expect("skill directory"))
+            .expect("skill directory");
+        std::fs::write(&skill_path, "Body\n").expect("skill");
+        symlink(&actual_root, &configured_root).expect("skill root symlink");
+
+        let skill_roots = SkillRoots {
+            agents: Some(configured_root),
+        };
+        let permission_roots = materialize_skill_permission_roots(&skill_roots);
+        let permissions = skill_permission_profile(&workspace, &permission_roots);
+        let tools = builtin_registry()
+            .finalize(
+                &ToolsetConfig::from_names(["read"]),
+                ToolSessionContext::local(workspace, permissions),
+            )
+            .expect("read toolset");
+        let canonical_skill_path = std::fs::canonicalize(&skill_path).expect("canonical skill");
+        let authorization = tools.authorize(
+            &ToolInvocation::new("read", json!({ "path": canonical_skill_path })),
+            PermissionMode::Default,
+            &[],
+        );
+
+        assert!(matches!(authorization, Authorization::Allow { .. }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn core_skill_status_updates_listing_and_survives_restart() {
+        let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let root = std::env::temp_dir().join(format!(
+            "openwork-core-skill-status-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let agents = root.join(".agents/skills");
+        let skill_name = format!("review-{}", uuid::Uuid::new_v4().simple());
+        let skill_directory = agents.join(&skill_name);
+        std::fs::create_dir_all(&skill_directory).expect("skill directory");
+        std::fs::write(
+            skill_directory.join("SKILL.md"),
+            format!("---\nname: {skill_name}\ndescription: Review changes.\n---\nBody\n"),
+        )
+        .expect("skill");
+        let roots = SkillRoots {
+            agents: Some(agents),
+        };
+        let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
+        let core = OpenWorkCore::from_storage_parts(
+            Arc::clone(&storage),
+            Arc::new(EnvironmentCredentialResolver),
+            None,
+            TraceContentConfig::default(),
+            roots.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert!(!core.list_skills().await.unwrap().skills[0].disabled);
+        core.set_skill_disabled(&skill_name, true).await.unwrap();
+        assert!(core.list_skills().await.unwrap().skills[0].disabled);
+
+        drop(core);
+        let restarted = OpenWorkCore::from_storage_parts(
+            Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap()),
+            Arc::new(EnvironmentCredentialResolver),
+            None,
+            TraceContentConfig::default(),
+            roots,
+        )
+        .await
+        .unwrap();
+        assert!(restarted.list_skills().await.unwrap().skills[0].disabled);
+
+        restarted
+            .set_skill_disabled(&skill_name, false)
+            .await
+            .unwrap();
+        assert!(!restarted.list_skills().await.unwrap().skills[0].disabled);
+        sqlx::query("DELETE FROM skill_status WHERE name = $1")
+            .bind(&skill_name)
+            .execute(restarted.storage().pool())
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
 
     #[test]
     fn default_runtime_exposes_checkpoint_bounded_history_readback() {
         let (_, tools) = build_default_agent_and_tools(
             &SessionId::new("session-history-tool"),
             Path::new("/tmp"),
+            &[],
             Arc::new(crate::session::NoopSessionStorage),
         )
         .expect("default toolset");
@@ -1058,6 +1336,63 @@ mod tests {
             .resolve(COMPACTION_TRANSCRIPT_TOOL_NAME)
             .expect("conversation history tool");
         assert_eq!(definition.risk_hint, openwork_tools::ToolRisk::ReadOnly);
+    }
+
+    #[test]
+    fn default_runtime_protects_only_the_explicit_agents_skill_root() {
+        let root = std::env::temp_dir().join(format!(
+            "openwork-core-tool-skills-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace = root.join("workspace");
+        let agents_skills = root.join(".agents/skills");
+        let agents_skill = agents_skills.join("review/SKILL.md");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::create_dir_all(agents_skill.parent().expect("skill parent"))
+            .expect("skill directory");
+        std::fs::write(&agents_skill, "skill body\n").expect("skill");
+        let skill_roots = SkillRoots {
+            agents: Some(agents_skills),
+        };
+        let permission_roots = materialize_skill_permission_roots(&skill_roots);
+        let (_, tools) = build_default_agent_and_tools(
+            &SessionId::new("session-skill-paths"),
+            &workspace,
+            &permission_roots,
+            Arc::new(crate::session::NoopSessionStorage),
+        )
+        .expect("default toolset");
+
+        let read = ToolInvocation::new("read", json!({ "path": &agents_skill }));
+        assert!(matches!(
+            tools.authorize(&read, PermissionMode::Default, &[]),
+            Authorization::Allow { .. }
+        ));
+        let write = ToolInvocation::new(
+            "write",
+            json!({ "path": agents_skill, "content": "changed" }),
+        );
+        assert!(matches!(
+            tools.authorize(&write, PermissionMode::AcceptEdits, &[]),
+            Authorization::Deny { .. }
+        ));
+        let claude_path = root.join(".claude/skills/not-an-authorized-root/SKILL.md");
+        let claude_read = ToolInvocation::new("read", json!({ "path": claude_path }));
+        assert!(!matches!(
+            tools.authorize(&claude_read, PermissionMode::Default, &[]),
+            Authorization::Allow { .. }
+        ));
+        let project_agents_path = workspace.join(".agents/skills/not-a-user-root/SKILL.md");
+        let write = ToolInvocation::new(
+            "write",
+            json!({ "path": project_agents_path, "content": "ordinary workspace file" }),
+        );
+        assert!(matches!(
+            tools.authorize(&write, PermissionMode::AcceptEdits, &[]),
+            Authorization::Allow { .. }
+        ));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 
     fn change(change_id: &str) -> FileChangeArtifact {
@@ -1093,6 +1428,7 @@ mod tests {
                     .collect::<Result<Vec<_>, _>>()
                     .expect("encode changes"),
             })],
+            message_kind: crate::storage::StoredMessageKind::Normal,
             created_at: "2026-07-19T00:00:00Z".to_string(),
         }
     }

@@ -296,17 +296,38 @@ impl ToolSessionContext {
         kind: AccessKind,
         baseline_allowed: bool,
     ) -> Result<(), ToolExecutionError> {
-        let root = self.permissions.workspace();
-        let canonical_root = self.filesystem.canonicalize(root).await.map_err(|error| {
-            ToolExecutionError::denied(format!(
-                "failed to resolve permitted root {}: {error}",
-                root.display()
-            ))
-        })?;
+        let workspace = self.permissions.workspace();
+        let canonical_workspace =
+            self.filesystem
+                .canonicalize(workspace)
+                .await
+                .map_err(|error| {
+                    ToolExecutionError::denied(format!(
+                        "failed to resolve permitted root {}: {error}",
+                        workspace.display()
+                    ))
+                })?;
+        let mut canonical_skill_roots = Vec::new();
+        for root in self.permissions.skill_roots() {
+            match self.filesystem.canonicalize(root).await {
+                Ok(canonical) => canonical_skill_roots.push(canonical),
+                Err(error) if path_is_within(requested, root) => {
+                    return Err(ToolExecutionError::denied(format!(
+                        "failed to resolve permitted root {}: {error}",
+                        root.display()
+                    )));
+                }
+                Err(_) => {}
+            }
+        }
         if self.permissions.hard_denies(actual, kind)
             || self
                 .permissions
-                .hard_denies_resolved(actual, &canonical_root, kind)
+                .hard_denies_resolved(actual, &canonical_workspace, kind)
+            || (kind == AccessKind::Write
+                && canonical_skill_roots
+                    .iter()
+                    .any(|root| path_is_within(actual, root)))
         {
             return Err(ToolExecutionError::denied(format!(
                 "write access denied for protected metadata path: {}",
@@ -314,11 +335,16 @@ impl ToolSessionContext {
             )));
         }
 
-        if !baseline_allowed && !path_is_within(requested, self.permissions.workspace()) {
+        if !baseline_allowed && !path_is_within(requested, workspace) {
             return Ok(());
         }
 
-        if path_is_within(actual, &canonical_root) {
+        if path_is_within(actual, &canonical_workspace)
+            || (kind == AccessKind::Read
+                && canonical_skill_roots
+                    .iter()
+                    .any(|root| path_is_within(actual, root)))
+        {
             return Ok(());
         }
 

@@ -133,17 +133,23 @@ type RuntimeEffect =
 
 ```text
 生成 clientRequestId
-  → runtime store 创建 pending user message
-  → 调用 turn_start
+  → 从草稿收集仍有效的 SkillMentionBinding，形成 UserInput::Skill[]
+  → runtime store 创建只含用户可见内容的 pending user message
+  → 调用 turn_start({ input })，其中 Skill 输入在前、原始 Text 输入在后
   → Accepted 或 turn_started 事件（任一先到）都把 clientRequestId 绑定到真实 turnId
+  → Accepted 后仅在活动 Session 未改变、草稿 revision 未推进时清空草稿与本地 Skill 绑定
   → 事件更新 draft / tool / permission
   → terminal 后拉取 canonical message
-  → canonical 到达后删除 pending 与 draft
+  → canonical 到达后删除 pending
 ```
 
 **Accepted 与 `turn_started` 事件的到达顺序不作保证**，两者都携带 `clientRequestId` 和 `turnId`，Controller 必须支持任一先到，并把同一条 pending 消息对账到同一个 Turn。
 
-若 `turn_start` 在 Accepted 前失败：pending 消息标记失败、允许重试、**不创建 Assistant Draft、不伪造持久 Message**。
+若 `turn_start` 在 Accepted 前失败（包括选中的 Skill 已不可用）：pending 消息标记失败、允许重试、恢复草稿与仍有效的绑定，**不创建 Assistant Draft、不伪造持久 Message**。
+
+`turn_start` 等待期间输入框可以继续编辑。旧请求成功时不得无条件 `setDraft("")`；清理条件必须同时比较提交 Session 与单调递增的草稿 revision，不能只比较字符串，否则跨 Session 或“改动后又改回同一文本”的 ABA 情况会误清新草稿。Session 切换还必须重建 ChatInput，使短生命周期的 Skill 绑定不会跨 Session 泄漏。
+
+Skill 绑定是聊天输入组件的本地状态，不进入 canonical server state 或 runtime store。提交时绑定被编码为 `UserInput::Skill`，草稿被编码为 `UserInput::Text`。Core 解析后的 Skill 正文以 `message_kind = 'skill_instruction'` 的 User-role Text Message 持久化；聊天 transcript 过滤该类 Message，只渲染用户可见消息。完整契约见 [skills.md §4.2](skills.md)。
 
 ## 7. Trace UI
 

@@ -45,6 +45,7 @@ enum SessionCommand {
 
 规则：
 
+- Desktop 的公开 Turn 输入是有序 `Vec<UserInput>`：显式选择产生 `UserInput::Skill { name, path }`，原始草稿产生 `UserInput::Text { text }`。Core 必须先按 [skills.md §4.2](skills.md) 把 Skill 解析为 contextual User-role Text，并与用户可见 Text 一起物化为 `PreparedTurnInput`；成功后才生成 `turn_id` 并发送 `StartTurn`。SessionActor 不读取 Skill 文件，也不按名称解析；
 - `turn_id` 由 Core 在接受请求时生成；Turn 与 User Message 提交后通过 `accepted_to` 返回 `TurnAccepted`；
 - **`StartTurn` 不等待整个 Agent Loop**，终态通过 `SessionUpdate` / `SessionSnapshot` 获取；
 - 同一 Session 同时只运行一个 Turn，新 Turn 排队或显式取消旧 Turn，**不能隐式并发**；
@@ -74,7 +75,7 @@ accepted
 唯一实现在 `session/run_loop.rs`：
 
 ```text
-持久化 Turn 开始 → 追加 User Message
+持久化 Turn 开始 → 追加已物化的 User Message（可含 Skill 正文快照）
 循环 1..=max_model_calls:
     检查取消
     检查压缩阈值 → 必要时压缩（见 compaction.md）
