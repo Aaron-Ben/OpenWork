@@ -14,3 +14,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+# 超时行为必须用虚拟时钟测，否则一条"慢但正常"的用例要真等 6 分钟。
+tokio = { workspace = true, features = ["test-util"] }
