@@ -1,6 +1,10 @@
-import type { ChatItem } from '@/types/chat'
+import type { ChatItem, TurnPlanView } from '@/types/chat'
 import type { ContentBlock, ToolResultState } from '@/types/parts'
-import type { RuntimeLiveToolCall, RuntimeStoredMessage } from '@/bridge/compat'
+import type {
+  RuntimeLiveToolCall,
+  RuntimeStoredMessage,
+  RuntimeTurnPlan,
+} from '@/bridge/compat'
 import {
   appendCompletedFileChangeSummaries,
   mergeToolMessages,
@@ -97,9 +101,54 @@ function attachLiveResultsToCanonicalCalls(
   })
 }
 
+/**
+ * 按 turnId 建计划索引。
+ *
+ * 活动 Turn 以 runtime 为准:它反映刚广播的事件,比上次加载的持久化快照新。
+ */
+function planIndex(
+  plans: RuntimeTurnPlan[],
+  runtime: SessionRuntimeView,
+): Map<string, TurnPlanView> {
+  const index = new Map<string, TurnPlanView>(
+    plans
+      .filter((plan) => plan.steps.length > 0)
+      .map((plan) => [plan.turnId, { explanation: plan.explanation, steps: plan.steps }]),
+  )
+  if (runtime.turnId) {
+    if (runtime.plan) {
+      index.set(runtime.turnId, {
+        explanation: runtime.plan.explanation,
+        steps: runtime.plan.steps,
+      })
+    } else {
+      // 活动 Turn 明确没有计划(或刚被清空)时移除历史条目,卡片随之消失。
+      index.delete(runtime.turnId)
+    }
+  }
+  return index
+}
+
+/** 计划挂在该 Turn 最后一条 assistant 消息上,一个 Turn 只显示一张卡。 */
+function attachPlans(transcript: ChatItem[], plans: Map<string, TurnPlanView>): ChatItem[] {
+  if (plans.size === 0) return transcript
+  const lastAssistantIndexByTurn = new Map<string, number>()
+  transcript.forEach((item, index) => {
+    if (item.role === 'assistant' && item.turnId) {
+      lastAssistantIndexByTurn.set(item.turnId, index)
+    }
+  })
+  return transcript.map((item, index) => {
+    if (!item.turnId || lastAssistantIndexByTurn.get(item.turnId) !== index) return item
+    const plan = plans.get(item.turnId)
+    return plan ? { ...item, plan } : item
+  })
+}
+
 export function buildTranscript(
   messages: RuntimeStoredMessage[],
   runtime: SessionRuntimeView,
+  plans: RuntimeTurnPlan[] = [],
 ): ChatItem[] {
   let transcript = canonicalItems(messages)
   const persistedToolCallIds = new Set(
@@ -156,8 +205,11 @@ export function buildTranscript(
       requestId: runtime.clientRequestId ?? undefined,
     })
   }
-  return appendCompletedFileChangeSummaries(
-    mergeToolMessages(transcript),
-    runtime.phase === 'idle' ? null : runtime.turnId,
+  return attachPlans(
+    appendCompletedFileChangeSummaries(
+      mergeToolMessages(transcript),
+      runtime.phase === 'idle' ? null : runtime.turnId,
+    ),
+    planIndex(plans, runtime),
   )
 }

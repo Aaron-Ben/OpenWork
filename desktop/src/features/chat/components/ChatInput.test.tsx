@@ -176,3 +176,39 @@ describe('ChatInput toolbar', () => {
     expect(inputPosition).toBeGreaterThan(approvalPosition)
   })
 })
+
+// 输入框是两层叠出来的：透明的 textarea 负责光标与选区，上面的 overlay 负责显示文字。
+// 两层的排版一旦不一致，光标会随文字变长越偏越远，选中时还会露出错位的重影。
+describe('ChatInput 双层排版必须锁死', () => {
+  // 影响字形宽度和基线的属性，任缺一个都会让光标和文字对不上。
+  const typography = ['font-serif', 'text-base', 'leading-7', 'px-5', 'py-3']
+
+  function classOf(markup: string, pattern: RegExp): string {
+    const match = markup.match(pattern)
+    expect(match, `没找到元素：${pattern}`).toBeTruthy()
+    return match![1]
+  }
+
+  it('overlay 与 textarea 使用同一套字体、字号、行高和内边距', () => {
+    const markup = renderToStaticMarkup(<ChatInput {...baseProps} />)
+
+    const overlayClass = classOf(markup, /data-skill-mention-overlay="true"[^>]*class="([^"]*)"/)
+    const textareaClass = classOf(markup, /<textarea[^>]*class="([^"]*)"/)
+
+    for (const token of typography) {
+      expect(overlayClass, `overlay 缺少 ${token}`).toContain(token)
+      expect(textareaClass, `textarea 缺少 ${token}`).toContain(token)
+    }
+  })
+
+  it('textarea 的文字在选中时也保持透明', () => {
+    const markup = renderToStaticMarkup(<ChatInput {...baseProps} />)
+    const textareaClass = classOf(markup, /<textarea[^>]*class="([^"]*)"/)
+
+    // globals.css 的 `::selection { color: var(--ink) }` 会把透明文字在选中时画出来，
+    // 与 overlay 叠成重影。必须显式覆盖掉，只留选区底色。
+    expect(textareaClass).toContain('text-transparent')
+    expect(textareaClass).toContain('selection:text-transparent')
+    expect(textareaClass).toContain('selection:bg-clay-soft/70')
+  })
+})

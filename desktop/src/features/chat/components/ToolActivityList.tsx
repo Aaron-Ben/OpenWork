@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import {
   Activity,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleX,
@@ -50,6 +49,7 @@ interface ToolActivityListProps {
   onOpenTrace?: (providerToolCallId: string) => void
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
   onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
+  onReviewFileChanges?: (changes: FileChangeView[]) => void
   fileChangePresentation?: 'activity' | 'summary'
 }
 
@@ -119,10 +119,9 @@ export const ToolActivityList = memo(function ToolActivityList({
   onOpenTrace,
   onUndoFileChanges,
   onReapplyFileChanges,
+  onReviewFileChanges,
   fileChangePresentation = 'activity',
 }: ToolActivityListProps) {
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(true)
   const allActivities = useMemo(() => collectToolActivities(parts), [parts])
   const fileChanges = useMemo(() => collectFileChanges(allActivities), [allActivities])
   const fileActivityIds = useMemo(
@@ -142,60 +141,27 @@ export const ToolActivityList = memo(function ToolActivityList({
 
   if (allActivities.length === 0) return null
 
-  const SummaryIcon = activities.some((activity) => activity.name === 'write' || activity.name === 'edit') ? Pencil : Wrench
-  const summary = activitySummary(activities, (key, options) => t(key, options))
-
   return (
-    <div data-tool-activity-list="true" className="w-full space-y-1 py-0.5 text-sm text-ink-soft">
+    // 同上：不带 py-*，纵向留白由 transcriptSpacing 统一给。
+    <div data-tool-activity-list="true" className="w-full space-y-1 text-sm text-ink-soft">
       {fileChangePresentation === 'summary' && fileChanges.length > 0 ? (
         <FileChangeCard
           changes={fileChanges}
           onUndoFileChanges={onUndoFileChanges}
           onReapplyFileChanges={onReapplyFileChanges}
+          onReviewFileChanges={onReviewFileChanges}
         />
       ) : null}
       {activities.length > 0 ? (
-        <>
-          <button
-            type="button"
-            data-tool-activity-summary="true"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
-            className="group/summary flex min-h-6 w-full items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-paper-hover"
-          >
-            <SummaryIcon size={13} className="shrink-0 text-ink-faint" strokeWidth={1.9} />
-            <span className="min-w-0 truncate text-xs text-ink-faint">{summary}</span>
-            <ChevronDown
-              size={13}
-              className={`shrink-0 text-ink-faint transition-transform duration-200 ${
-                expanded ? 'rotate-0' : '-rotate-90'
-              }`}
+        <div className="space-y-0.5">
+          {activities.map((activity) => (
+            <ToolActivityRow
+              key={activity.id}
+              activity={activity}
+              onOpenTrace={onOpenTrace}
             />
-          </button>
-
-          <AnimatePresence initial={false}>
-            {expanded ? (
-              <motion.div
-                key="tool-activities"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="overflow-hidden"
-              >
-                <div className="space-y-0.5 pt-0.5">
-                  {activities.map((activity) => (
-                    <ToolActivityRow
-                      key={activity.id}
-                      activity={activity}
-                      onOpenTrace={onOpenTrace}
-                    />
-                  ))}
-                </div>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </>
+          ))}
+        </div>
       ) : null}
     </div>
   )
@@ -465,43 +431,6 @@ function activityLabel(
     default:
       return translate('tool.calledTool', { name: activity.name })
   }
-}
-
-function activitySummary(
-  activities: ToolActivity[],
-  translate: (key: string, options?: Record<string, unknown>) => string,
-): string {
-  const categories: string[] = []
-  const seen = new Set<string>()
-  for (const activity of activities) {
-    const category = activity.name === 'edit'
-      ? 'write'
-      : ['write', 'read', 'list', 'bash'].includes(activity.name)
-        ? activity.name
-      : `other:${activity.name}`
-    if (seen.has(category)) continue
-    seen.add(category)
-    switch (activity.name) {
-      case 'write':
-        categories.push(translate('tool.wroteFiles'))
-        break
-      case 'edit':
-        categories.push(translate('tool.editedFiles'))
-        break
-      case 'read':
-        categories.push(translate('tool.readFiles'))
-        break
-      case 'list':
-        categories.push(translate('tool.listedDirectories'))
-        break
-      case 'bash':
-        categories.push(translate('tool.ranCommands'))
-        break
-      default:
-        categories.push(translate('tool.calledTool', { name: activity.name }))
-    }
-  }
-  return categories.join(translate('tool.summarySeparator'))
 }
 
 function parseFileChange(artifact: ToolResultArtifact): FileChangeView | null {

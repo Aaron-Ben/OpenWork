@@ -9,13 +9,17 @@ import {
   getConversationTurns,
 } from './components/ConversationNavigator'
 import { ApprovalDialog } from './components/ApprovalDialog'
+import { FileChangeReviewDrawer } from './components/FileChangeReviewDrawer'
+import type { FileChangeView } from './components/FileDiffPanel'
 import { TranscriptMessage } from './components/TranscriptMessage'
+import { transcriptGap } from './transcriptSpacing'
 import { selectDefaultModel, useModelStore } from '@/features/models/modelStore'
 import type {
   RuntimeContextWindowInspection,
   RuntimeSkillInput,
   RuntimeSkillSummary,
   RuntimeStoredMessage,
+  RuntimeTurnPlan,
 } from '@/bridge/compat'
 import { coreCommands } from '@/bridge/commands'
 import { TurnTraceDrawer } from '@/features/traces/components/TurnTraceDrawer'
@@ -29,6 +33,7 @@ import { resolveErrorMessage } from '@/lib/commandError'
 import { useNavigationStore } from '@/app/navigationStore'
 
 const EMPTY_MESSAGES: RuntimeStoredMessage[] = []
+const EMPTY_PLANS: RuntimeTurnPlan[] = []
 
 export function isManualCompactionDraft(value: string): boolean {
   return value.trim().toLowerCase() === '/compact'
@@ -55,6 +60,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const [contextInspectionError, setContextInspectionError] = useState<string | null>(null)
   const [contextInspectionRefresh, setContextInspectionRefresh] = useState(0)
   const [selectedTrace, setSelectedTrace] = useState<{ turnId: string; providerToolCallId?: string } | null>(null)
+  const [reviewChanges, setReviewChanges] = useState<FileChangeView[] | null>(null)
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const [availableSkills, setAvailableSkills] = useState<RuntimeSkillSummary[]>([])
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -70,6 +76,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const activeSessionIdRef = useRef(sessionId)
   activeSessionIdRef.current = sessionId
   const canonical = useSessionStore((state) => sessionId ? state.messagesBySession[sessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
+  const plans = useSessionStore((state) => sessionId ? state.plansBySession[sessionId] ?? EMPTY_PLANS : EMPTY_PLANS)
   const runtime = useRuntimeStore((state) => sessionId ? state.bySession[sessionId] ?? EMPTY_RUNTIME_VIEW : EMPTY_RUNTIME_VIEW)
   const session = useSessionStore((state) => sessionId ? state.summaries[sessionId] : undefined)
   const sessionError = useSessionStore((state) => state.error)
@@ -82,7 +89,10 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const requestMessageFocus = useNavigationStore((state) => state.requestMessageFocus)
   const hasAvailableModel = selectDefaultModel(providers) !== null
   const { startTurn, cancelTurn, setPermissionMode } = useTurnActions(sessionId)
-  const messages = useMemo(() => buildTranscript(canonical, runtime), [canonical, runtime])
+  const messages = useMemo(
+    () => buildTranscript(canonical, runtime, plans),
+    [canonical, runtime, plans],
+  )
   const contextBreakdown = useMemo(() => {
     if (!contextInspection) return null
     return {
@@ -140,6 +150,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
   useEffect(() => {
     setSelectedTrace(null)
+    setReviewChanges(null)
     setContextInspectorOpen(false)
     setContextInspection(null)
     setContextInspectionError(null)
@@ -317,6 +328,10 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     setSelectedTrace({ turnId, providerToolCallId })
   }, [])
 
+  const reviewFileChanges = useCallback((changes: FileChangeView[]) => {
+    setReviewChanges(changes)
+  }, [])
+
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
       <div className="relative min-h-0">
@@ -356,15 +371,21 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
               />
             )
           ) : (
-            <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-6 py-8 max-[560px]:px-4">
-              {messages.map((message) => (
+            /*
+              容器不设 gap：相邻消息之间的间距由 transcriptGap 按"上下两个块是什么"决定，
+              否则一串连续的工具行会被 provider 的分包方式切成远近不等的簇。
+            */
+            <div className="mx-auto flex w-full max-w-4xl flex-col px-6 py-8 max-[560px]:px-4">
+              {messages.map((message, index) => (
                 <TranscriptMessage
                   key={message.id}
                   message={message}
                   highlighted={highlightedMessageId === message.id}
+                  gap={transcriptGap(messages[index - 1], message)}
                   onOpenTrace={openTrace}
                   onUndoFileChanges={undoFileChanges}
                   onReapplyFileChanges={reapplyFileChanges}
+                  onReviewFileChanges={reviewFileChanges}
                 />
               ))}
             </div>
@@ -380,6 +401,12 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
               setSelectedTrace(null)
             }}
             onClose={() => setSelectedTrace(null)}
+          />
+        ) : null}
+        {reviewChanges ? (
+          <FileChangeReviewDrawer
+            changes={reviewChanges}
+            onClose={() => setReviewChanges(null)}
           />
         ) : null}
         {contextInspectorOpen && sessionId ? (

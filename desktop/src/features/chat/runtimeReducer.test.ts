@@ -225,6 +225,7 @@ describe('runtimeReducer', () => {
         draftReasoning: 'thought',
         toolCalls: [],
         pendingPermission: null,
+        plan: null,
       },
     }
 
@@ -237,5 +238,155 @@ describe('runtimeReducer', () => {
       permissionMode: 'accept_edits',
       syncState: 'current',
     })
+  })
+})
+
+describe('runtimeReducer plan handling', () => {
+  const threeSteps = [
+    { step: 'read schema', status: 'completed' as const },
+    { step: 'add migration', status: 'in_progress' as const },
+    { step: 'wire runner', status: 'pending' as const },
+  ]
+
+  function withPlan() {
+    const started = reduceSessionUpdate(
+      createSessionRuntimeView(),
+      envelope(1, { type: 'turn_started', clientRequestId: 'request-1' }),
+    )
+    return reduceSessionUpdate(
+      started,
+      envelope(2, {
+        type: 'plan_updated',
+        explanation: 'scoping',
+        plan: threeSteps,
+        updatedAt: '2026-08-07T18:30:00.000000+08:00',
+      }),
+    )
+  }
+
+  it('stores the complete snapshot from a plan_updated event', () => {
+    const view = withPlan()
+
+    expect(view.plan).toEqual({
+      explanation: 'scoping',
+      steps: threeSteps,
+      updatedAt: '2026-08-07T18:30:00.000000+08:00',
+    })
+  })
+
+  it('replaces the whole plan instead of merging with the previous steps', () => {
+    const replaced = reduceSessionUpdate(
+      withPlan(),
+      envelope(3, {
+        type: 'plan_updated',
+        explanation: null,
+        plan: [{ step: 'a completely different step', status: 'pending' }],
+        updatedAt: '2026-08-07T18:31:00.000000+08:00',
+      }),
+    )
+
+    expect(replaced.plan?.steps).toEqual([
+      { step: 'a completely different step', status: 'pending' },
+    ])
+    expect(replaced.plan?.explanation).toBeNull()
+  })
+
+  it('treats an empty plan as an explicit clear', () => {
+    const cleared = reduceSessionUpdate(
+      withPlan(),
+      envelope(3, {
+        type: 'plan_updated',
+        explanation: null,
+        plan: [],
+        updatedAt: '2026-08-07T18:31:00.000000+08:00',
+      }),
+    )
+
+    expect(cleared.plan).toBeNull()
+  })
+
+  it('does not carry a plan into the next turn', () => {
+    const nextTurn = reduceSessionUpdate(
+      withPlan(),
+      envelope(3, { type: 'turn_started', clientRequestId: 'request-2' }),
+    )
+
+    expect(nextTurn.plan).toBeNull()
+  })
+
+  it('does not roll the plan back on a duplicate or out-of-order sequence', () => {
+    const view = withPlan()
+
+    const duplicate = reduceSessionUpdate(
+      view,
+      envelope(2, {
+        type: 'plan_updated',
+        explanation: null,
+        plan: [],
+        updatedAt: '2026-08-07T18:29:00.000000+08:00',
+      }),
+    )
+    expect(duplicate.plan).toEqual(view.plan)
+
+    // 跳号只标记 stale 等待重同步，不能把已经显示的计划抹掉。
+    const gap = reduceSessionUpdate(
+      view,
+      envelope(9, {
+        type: 'plan_updated',
+        explanation: null,
+        plan: [],
+        updatedAt: '2026-08-07T18:32:00.000000+08:00',
+      }),
+    )
+    expect(gap.syncState).toBe('stale')
+    expect(gap.plan).toEqual(view.plan)
+  })
+
+  it('restores the active plan from a snapshot after a missed event', () => {
+    const snapshot: RuntimeSessionSnapshot = {
+      version: 1,
+      sessionId: 'session-1',
+      lastUpdateSequence: 12,
+      permissionMode: 'default',
+      runtime: {
+        state: 'running',
+        turnId: 'turn-1',
+        clientRequestId: 'request-1',
+        phase: 'running_tools',
+        draftText: '',
+        draftReasoning: '',
+        toolCalls: [],
+        pendingPermission: null,
+        plan: {
+          explanation: 'recovered',
+          steps: threeSteps,
+          updatedAt: '2026-08-07T18:30:00.000000+08:00',
+        },
+      },
+    }
+
+    expect(runtimeViewFromSnapshot(snapshot).plan?.steps).toEqual(threeSteps)
+  })
+
+  it('keeps the plan on a terminal snapshot so a reconnect does not lose the card', () => {
+    const snapshot: RuntimeSessionSnapshot = {
+      version: 1,
+      sessionId: 'session-1',
+      lastUpdateSequence: 20,
+      permissionMode: 'default',
+      runtime: {
+        state: 'terminal',
+        turnId: 'turn-1',
+        clientRequestId: 'request-1',
+        outcome: { status: 'completed', finalText: 'done' },
+        plan: {
+          explanation: null,
+          steps: [{ step: 'all done', status: 'completed' }],
+          updatedAt: '2026-08-07T18:35:00.000000+08:00',
+        },
+      },
+    }
+
+    expect(runtimeViewFromSnapshot(snapshot).plan?.steps).toHaveLength(1)
   })
 })

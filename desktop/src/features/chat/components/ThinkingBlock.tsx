@@ -48,10 +48,11 @@ export function ThinkingBlock({ content, isActive = false }: ThinkingBlockProps)
           ref={contentRef}
           className="ml-[7px] mt-1 max-h-[260px] overflow-y-auto border-l border-line pl-3"
         >
+          {/*
+            流式光标由 MarkdownRenderer 在 streaming 时自己画（见其 streaming 分支）。
+            这里不要再补一条 —— 之前两处各画一条，界面上就是一橘一灰两根竖线。
+          */}
           <MarkdownRenderer content={displayContent} variant="compact" streaming={isActive} />
-          {isActive ? (
-            <span className="ml-px inline-block h-3.5 w-0.5 animate-pulse bg-ink-faint align-middle" />
-          ) : null}
         </div>
       ) : null}
     </div>

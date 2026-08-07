@@ -108,6 +108,15 @@ export const enUS = {
     contextTokensUsed: '{{used}} / {{total}} tokens used', contextUsageEstimated: 'Provider-neutral estimate; protocol framing excluded',
     contextUsageUnavailable: 'Context usage unavailable',
     contextUsageAria: 'Context {{usedPercent}}% used, {{used}} of {{total}} tokens',
+    plan: {
+      title: 'Plan',
+      progress: '{{completed}} / {{total}}',
+      status: {
+        pending: 'Pending',
+        in_progress: 'In progress',
+        completed: 'Completed',
+      },
+    },
     contextPanel: {
       title: 'Context window',
       expand: 'Show context breakdown', collapse: 'Hide context breakdown',
@@ -234,11 +243,10 @@ export const enUS = {
     allowBash: 'Allow Bash command', allowWrite: 'Allow writing {{name}}', allowWriteFile: 'Allow writing file',
     allowRead: 'Allow reading {{name}}', allowReadFile: 'Allow reading file', allowList: 'Allow listing {{name}}',
     allowListDirectory: 'Allow listing directory', allowTool: 'Allow tool {{name}}',
-    wroteFiles: 'Wrote files', editedFiles: 'Edited files', readFiles: 'Read files', listedDirectories: 'Listed directories', ranCommands: 'Ran commands',
     ranCommand: 'Ran {{command}}', ranCommandFallback: 'Ran a command', editedFile: 'Edited {{name}}',
     wroteFile: 'Wrote {{name}}', wroteFileFallback: 'Wrote a file', editedFileFallback: 'Edited a file', readFile: 'Read {{name}}', readFileFallback: 'Read a file',
     listedDirectory: 'Listed {{name}}', listedDirectoryFallback: 'Listed a directory', calledTool: 'Called {{name}}',
-    summarySeparator: ', ', stopped: 'Stopped', output: 'Output', shell: 'Shell', copy: 'Copy', copied: 'Copied',
+    stopped: 'Stopped', output: 'Output', shell: 'Shell', copy: 'Copy', copied: 'Copied',
     createdFile: 'Created file', createdNamedFile: 'Created {{name}}', editedOneFile: 'Edited file', editedFileCount: 'Edited {{count}} files',
     undo: 'Undo', undoing: 'Undoing', undone: 'Undone', undoFailed: 'Undo failed: {{message}}',
     reapply: 'Reapply', reapplying: 'Reapplying', reapplyFailed: 'Reapply failed: {{message}}',

@@ -104,6 +104,15 @@ export const zhTW = {
     contextWindow: '上下文視窗：', contextUsagePercent: '已使用 {{usedPercent}}%（剩餘 {{leftPercent}}%）',
     contextTokensUsed: '已使用 {{used}} / {{total}} Tokens', contextUsageEstimated: 'Provider 無關估算，不包含協議包裝',
     contextUsageUnavailable: '暫無上下文用量', contextUsageAria: '上下文已使用 {{usedPercent}}%，{{used}} / {{total}} Tokens',
+    plan: {
+      title: '任務清單',
+      progress: '{{completed}} / {{total}}',
+      status: {
+        pending: '待辦',
+        in_progress: '進行中',
+        completed: '已完成',
+      },
+    },
     contextPanel: {
       title: '上下文視窗',
       expand: '展開上下文分類', collapse: '收合上下文分類',
@@ -229,11 +238,10 @@ export const zhTW = {
     allowBash: '允許執行 Bash 指令', allowWrite: '允許寫入 {{name}}', allowWriteFile: '允許寫入檔案',
     allowRead: '允許讀取 {{name}}', allowReadFile: '允許讀取檔案', allowList: '允許列出 {{name}}',
     allowListDirectory: '允許列出目錄', allowTool: '允許工具 {{name}}',
-    wroteFiles: '寫入了檔案', editedFiles: '編輯了檔案', readFiles: '讀取了檔案', listedDirectories: '查看了目錄', ranCommands: '執行了指令',
     ranCommand: '執行 {{command}}', ranCommandFallback: '執行了指令', editedFile: '編輯 {{name}}',
     wroteFile: '寫入 {{name}}', wroteFileFallback: '寫入了檔案', editedFileFallback: '編輯了檔案', readFile: '讀取 {{name}}', readFileFallback: '讀取了檔案',
     listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目錄', calledTool: '呼叫 {{name}}',
-    summarySeparator: '、', stopped: '已停止', output: '輸出', shell: 'Shell', copy: '複製', copied: '已複製',
+    stopped: '已停止', output: '輸出', shell: 'Shell', copy: '複製', copied: '已複製',
     createdFile: '建立了檔案', createdNamedFile: '建立 {{name}}', editedOneFile: '編輯了檔案', editedFileCount: '編輯了 {{count}} 個檔案',
     undo: '撤銷', undoing: '正在撤銷', undone: '已撤銷', undoFailed: '撤銷失敗：{{message}}',
     reapply: '恢復', reapplying: '正在恢復', reapplyFailed: '恢復失敗：{{message}}',

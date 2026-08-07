@@ -12,6 +12,7 @@
 | [compaction.md](compaction.md) | 四类压缩触发、摘要格式与重试、运行状态、checkpoint、三类恢复 |
 | [trace.md](trace.md) | 质量追踪：内容、token 口径、标注；三层标识、Span 语义、完整度派生 |
 | [tools.md](tools.md) | 工具四层契约、权限两分、路径安全、七个内置工具 |
+| [update-plan.md](update-plan.md) | Turn 级任务清单、Core 控制工具、持久化与 Desktop 投影 |
 | [skills.md](skills.md) | Skill 目录契约、`$` 精确路径选择、三层渐进披露、只读边界 |
 | [permissions.md](permissions.md) | 效果模型、只读判定、`default` / `acceptEdits` 两模式、内置规则、命令解析、审批卡片、会话状态 |
 | [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
@@ -37,7 +38,7 @@
 1. [architecture.md](architecture.md) —— 建立词汇和边界
 2. [session-runtime.md](session-runtime.md) —— 一次请求怎么跑完
 3. [context-window.md](context-window.md) —— 模型每次看到什么
-4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [trace.md](trace.md) / [skills.md](skills.md)
+4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [update-plan.md](update-plan.md) / [trace.md](trace.md) / [skills.md](skills.md)
 
 ## 维护原则
 

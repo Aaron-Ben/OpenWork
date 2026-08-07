@@ -91,6 +91,7 @@ describe('coreEventController', () => {
         draftReasoning: '',
         toolCalls: [],
         pendingPermission: null,
+        plan: null,
       },
     }
     vi.mocked(deps.loadSnapshot).mockResolvedValue(snapshot)

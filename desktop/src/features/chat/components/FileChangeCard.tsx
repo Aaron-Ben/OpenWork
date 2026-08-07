@@ -1,63 +1,37 @@
-import { useId, useState } from 'react'
-import {
-  Check,
-  ChevronDown,
-  Copy,
-  Eye,
-  FilePenLine,
-  Redo2,
-  RotateCcw,
-  X,
-} from 'lucide-react'
+import { useState } from 'react'
+import { Check, ChevronDown, Eye, FilePenLine, Redo2, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { resolveErrorMessage } from '@/lib/commandError'
+import { FileStats, type FileChangeView } from './FileDiffPanel'
 
-export type FileChangeKind = 'created' | 'modified'
-export type FileDiffLineKind = 'context' | 'addition' | 'deletion'
-
-export interface FileDiffLine {
-  kind: FileDiffLineKind
-  oldLine: number | null
-  newLine: number | null
-  content: string
-  noNewline?: boolean
-}
-
-export interface FileDiffHunk {
-  oldStart: number
-  oldLines: number
-  newStart: number
-  newLines: number
-  lines: FileDiffLine[]
-}
-
-export interface FileChangeView {
-  changeId: string
-  path: string
-  kind: FileChangeKind
-  additions: number
-  deletions: number
-  hunks: FileDiffHunk[]
-  beforeHash: string | null
-  afterHash: string
-  undone: boolean
-}
+/// 差异面板与类型定义住在 FileDiffPanel，这里转出去，既有的引用点不必跟着改。
+export {
+  FileDiffPanel,
+  FileStats,
+  type FileChangeKind,
+  type FileChangeView,
+  type FileDiffHunk,
+  type FileDiffLine,
+  type FileDiffLineKind,
+} from './FileDiffPanel'
 
 interface FileChangeCardProps {
   changes: FileChangeView[]
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
   onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
+  /// 审阅面板是页面右栏，不归卡片管，卡片只负责把这批改动递上去。
+  onReviewFileChanges?: (changes: FileChangeView[]) => void
 }
 
 export function FileChangeCard({
   changes,
   onUndoFileChanges,
   onReapplyFileChanges,
+  onReviewFileChanges,
 }: FileChangeCardProps) {
   const { t } = useTranslation()
   const [showAll, setShowAll] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
   const [operation, setOperation] = useState<'undo' | 'reapply' | null>(null)
   const [operationError, setOperationError] = useState<{
     kind: 'undo' | 'reapply'
@@ -131,15 +105,17 @@ export function FileChangeCard({
                 : operation === 'undo' ? t('tool.undoing') : t('tool.undo')}
           </button>
         ) : null}
-        <button
-          type="button"
-          data-file-change-review="true"
-          onClick={() => setReviewOpen(true)}
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line px-3 text-sm text-ink transition-colors hover:bg-paper-hover"
-        >
-          <Eye size={15} />
-          {t('tool.review')}
-        </button>
+        {onReviewFileChanges ? (
+          <button
+            type="button"
+            data-file-change-review="true"
+            onClick={() => onReviewFileChanges(changes)}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line px-3 text-sm text-ink transition-colors hover:bg-paper-hover"
+          >
+            <Eye size={15} />
+            {t('tool.review')}
+          </button>
+        ) : null}
       </div>
 
       {operationError ? (
@@ -182,184 +158,6 @@ export function FileChangeCard({
           />
         </button>
       ) : null}
-
-      {reviewOpen ? (
-        <ReviewDialog changes={changes} onClose={() => setReviewOpen(false)} />
-      ) : null}
     </div>
   )
-}
-
-function ReviewDialog({ changes, onClose }: { changes: FileChangeView[]; onClose: () => void }) {
-  const { t } = useTranslation()
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-4"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('tool.reviewChanges')}
-        className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-line bg-paper shadow-2xl"
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose()
-        }}
-      >
-        <div className="flex items-center border-b border-line px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold text-ink">{t('tool.reviewChanges')}</h2>
-            <p className="mt-0.5 text-xs text-ink-faint">
-              {t('tool.fileChangeCount', { count: changes.length })}
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label={t('tool.closeReview')}
-            onClick={onClose}
-            className="grid size-9 place-items-center rounded-lg text-ink-soft hover:bg-paper-hover"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div className="space-y-4 overflow-auto p-4">
-          {changes.map((change) => (
-            <div key={change.changeId} className="overflow-hidden rounded-xl border border-line">
-              <FileDiffPanel change={change} />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-export function FileDiffPanel({ change }: { change: FileChangeView }) {
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(true)
-  const contentId = useId()
-
-  async function copyDiff() {
-    await navigator.clipboard?.writeText(formatPatch(change))
-  }
-
-  return (
-    <div data-file-change={change.changeId} className="min-w-0 bg-paper">
-      <div
-        className={`flex min-h-11 items-center gap-2 bg-paper-hover/70 px-3 ${expanded ? 'border-b border-line' : ''}`}
-      >
-        <button
-          type="button"
-          data-file-change-toggle="true"
-          aria-expanded={expanded}
-          aria-controls={contentId}
-          aria-label={t(expanded ? 'tool.collapseDiff' : 'tool.expandDiff', { name: change.path })}
-          title={t(expanded ? 'tool.collapseDiff' : 'tool.expandDiff', { name: change.path })}
-          onClick={() => setExpanded((value) => !value)}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left"
-        >
-          <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-soft">{change.path}</span>
-          <FileStats additions={change.additions} deletions={change.deletions} />
-          <ChevronDown
-            size={16}
-            className={`shrink-0 text-ink-faint transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-          />
-        </button>
-        <button
-          type="button"
-          aria-label={t('tool.copyDiff')}
-          title={t('tool.copyDiff')}
-          onClick={() => void copyDiff()}
-          className="grid size-8 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper hover:text-ink"
-        >
-          <Copy size={15} />
-        </button>
-      </div>
-      <div
-        id={contentId}
-        data-file-change-code="true"
-        hidden={!expanded}
-        className="max-h-[58vh] overflow-auto bg-code-bg font-mono text-[12px] leading-5"
-      >
-        {change.hunks.map((hunk, hunkIndex) => (
-          <div key={`${change.changeId}-${hunkIndex}`}>
-            <div className="border-y border-line bg-clay-soft/40 px-3 py-1 text-clay">
-              @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@
-            </div>
-            {hunk.lines.map((line, lineIndex) => (
-              <DiffLineRow key={lineIndex} line={line} />
-            ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function DiffLineRow({ line }: { line: FileDiffLine }) {
-  const marker = line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '-' : ' '
-  const lineNumber = line.kind === 'deletion'
-    ? line.oldLine
-    : line.newLine ?? line.oldLine
-  const classes = line.kind === 'addition'
-    ? 'bg-status-success-soft text-status-success-ink'
-    : line.kind === 'deletion'
-      ? 'bg-status-danger-soft text-status-danger-ink'
-      : 'text-ink-soft'
-  const lineNumberClass = line.kind === 'addition'
-    ? 'text-status-success'
-    : line.kind === 'deletion'
-      ? 'text-status-danger'
-      : 'text-ink-faint'
-  return (
-    <>
-      <div className={`grid min-w-max grid-cols-[3.25rem_1.25rem_minmax(0,1fr)] ${classes}`}>
-        <span
-          data-diff-line-number={lineNumber ?? undefined}
-          className={`select-none border-r border-line/70 px-2 text-right ${lineNumberClass}`}
-        >
-          {lineNumber ?? ''}
-        </span>
-        <span className="select-none text-center">{marker}</span>
-        <span className="whitespace-pre pr-4">{line.content}</span>
-      </div>
-      {line.noNewline ? (
-        <div className="px-[4.75rem] text-[10px] italic text-ink-faint">\ No newline at end of file</div>
-      ) : null}
-    </>
-  )
-}
-
-export function FileStats({
-  additions,
-  deletions,
-  className = '',
-}: {
-  additions: number
-  deletions: number
-  className?: string
-}) {
-  return (
-    <span className={`inline-flex shrink-0 items-center gap-1.5 font-mono text-sm ${className}`}>
-      <span className="text-status-success">+{additions}</span>
-      <span className="text-status-danger">-{deletions}</span>
-    </span>
-  )
-}
-
-function formatPatch(change: FileChangeView): string {
-  const header = change.kind === 'created'
-    ? `--- /dev/null\n+++ b/${change.path}`
-    : `--- a/${change.path}\n+++ b/${change.path}`
-  const hunks = change.hunks.map((hunk) => {
-    const lines = hunk.lines.map((line) => {
-      const marker = line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '-' : ' '
-      return `${marker}${line.content}${line.noNewline ? '\n\\ No newline at end of file' : ''}`
-    })
-    return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@\n${lines.join('\n')}`
-  })
-  return [header, ...hunks].join('\n')
 }

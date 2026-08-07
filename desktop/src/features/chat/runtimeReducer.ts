@@ -6,6 +6,7 @@ import type {
   RuntimeSessionUpdateEnvelope,
   RuntimeToolProgress,
   RuntimeTurnOutcome,
+  RuntimeTurnPlanSnapshot,
 } from '@/bridge/compat'
 import { supportsRuntimeSessionUpdateVersion } from '@/bridge/compat'
 
@@ -45,6 +46,8 @@ export interface SessionRuntimeView {
   orderedToolCallIds: string[]
   pendingPermission: RuntimePermissionRequest | null
   permissionMode: RuntimePermissionMode
+  /** 当前 Turn 的计划。null 表示这个 Turn 没有计划或计划已被清空。 */
+  plan: RuntimeTurnPlanSnapshot | null
   terminal: RuntimeTurnOutcome | null
   syncState: 'current' | 'stale' | 'resyncing'
   error: string | null
@@ -62,6 +65,7 @@ export function createSessionRuntimeView(): SessionRuntimeView {
     orderedToolCallIds: [],
     pendingPermission: null,
     permissionMode: 'default',
+    plan: null,
     terminal: null,
     syncState: 'current',
     error: null,
@@ -126,6 +130,8 @@ export function reduceSessionUpdate(
         clientRequestId: update.clientRequestId,
         phase: state.phase === 'idle' ? 'starting' : state.phase,
         terminal: null,
+        // 新 Turn 从无计划开始，不继承上一个 Turn 的计划。
+        plan: null,
         pendingUserMessage:
           state.pendingUserMessage?.clientRequestId === update.clientRequestId
             ? { ...state.pendingUserMessage, turnId }
@@ -202,6 +208,20 @@ export function reduceSessionUpdate(
             ? null
             : state.pendingPermission,
       }
+    // 完整替换，不与旧步骤 merge：事件本身就是一份完整快照。
+    // 空数组是显式清空，计划卡随之消失。
+    case 'plan_updated':
+      return {
+        ...next,
+        plan:
+          update.plan.length === 0
+            ? null
+            : {
+                explanation: update.explanation,
+                steps: update.plan,
+                updatedAt: update.updatedAt,
+              },
+      }
     case 'turn_finished':
       return {
         ...next,
@@ -227,6 +247,7 @@ export function runtimeViewFromSnapshot(snapshot: RuntimeSessionSnapshot): Sessi
       turnId: runtime.turnId,
       clientRequestId: runtime.clientRequestId,
       terminal: runtime.outcome,
+      plan: planFromSnapshot(runtime.plan),
     }
   }
 
@@ -246,5 +267,14 @@ export function runtimeViewFromSnapshot(snapshot: RuntimeSessionSnapshot): Sessi
     toolCalls,
     orderedToolCallIds: runtime.toolCalls.map((toolCall) => toolCall.toolCallId),
     pendingPermission: runtime.pendingPermission,
+    plan: planFromSnapshot(runtime.plan),
   }
+}
+
+/** 空计划在视图里就是"没有计划"，让快照恢复与 plan_updated 得到同一个结果。 */
+function planFromSnapshot(
+  plan: RuntimeTurnPlanSnapshot | null,
+): RuntimeTurnPlanSnapshot | null {
+  if (!plan || plan.steps.length === 0) return null
+  return plan
 }

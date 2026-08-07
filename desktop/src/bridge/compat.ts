@@ -75,9 +75,37 @@ export interface RuntimeStoredMessage {
   createdAt: string
 }
 
+/** 与工具参数同一套 wire 形式，不再维护第二套状态映射。 */
+export type RuntimePlanStepStatus = 'pending' | 'in_progress' | 'completed'
+
+export interface RuntimePlanStep {
+  step: string
+  status: RuntimePlanStepStatus
+}
+
+/** 活动 Turn 的计划。承载它的 snapshot / envelope 已经有 turnId，这里不重复。 */
+export interface RuntimeTurnPlanSnapshot {
+  explanation: string | null
+  steps: RuntimePlanStep[]
+  updatedAt: string
+}
+
+/** 历史 Turn 的最终计划。 */
+export interface RuntimeTurnPlan {
+  turnId: string
+  explanation: string | null
+  steps: RuntimePlanStep[]
+  updatedAt: string
+}
+
 export interface RuntimeLoadedSession {
   session: RuntimeSessionRecord
   messages: RuntimeStoredMessage[]
+  /**
+   * 按 Turn 返回的最终计划，列表而非 Record：Rust DTO 保持自然结构，
+   * 前端在 transcript 投影边界一次性按 turnId 建索引。
+   */
+  plans: RuntimeTurnPlan[]
 }
 
 export interface RuntimeContextInspectionSystemPart {
@@ -300,6 +328,16 @@ export type RuntimeSessionUpdate =
       decision: RuntimePermissionDecision
       permissionMode?: RuntimePermissionMode
     }
+  | {
+      /**
+       * 每次都是完整快照，reducer 整体替换而不是 merge。
+       * 丢一条不影响业务状态：snapshot 与持久层都能恢复。
+       */
+      type: 'plan_updated'
+      explanation: string | null
+      plan: RuntimePlanStep[]
+      updatedAt: string
+    }
   | { type: 'turn_finished'; outcome: RuntimeTurnOutcome }
 
 export interface RuntimeSessionUpdateEnvelope {
@@ -330,12 +368,15 @@ export type RuntimeSnapshotState =
       draftReasoning: string
       toolCalls: RuntimeLiveToolCall[]
       pendingPermission: RuntimePermissionRequest | null
+      plan: RuntimeTurnPlanSnapshot | null
     }
   | {
       state: 'terminal'
       turnId: string
       clientRequestId: string
       outcome: RuntimeTurnOutcome
+      /** Turn 刚结束时同进程重连不该丢掉计划卡。 */
+      plan: RuntimeTurnPlanSnapshot | null
     }
 
 export interface RuntimeSessionSnapshot {

@@ -132,51 +132,66 @@ export function ApprovalCardView({
         </div>
       </div>
 
-      <ol className="space-y-2 border-t border-clay-soft px-4 py-3">
-        {request.card.units.map((unit, index) => (
-          <li
-            key={`${index}-${unit.display}`}
-            data-permission-unit="true"
-            className="rounded-lg bg-paper-hover px-3 py-2.5"
-          >
-            <div className="flex items-start gap-2">
-              <span className="shrink-0 text-xs font-semibold text-ink-faint">{index + 1}.</span>
-              <code className="min-w-0 flex-1 whitespace-pre-wrap break-words text-xs font-semibold text-ink">
-                {unit.display}
-              </code>
-              {unit.outsideWorkspace ? (
-                <span className="shrink-0 rounded-full bg-status-warning-soft px-2 py-0.5 text-[10px] font-medium text-status-warning-ink">
-                  {t('tool.permission.outsideWorkspace')}
-                </span>
-              ) : null}
-            </div>
-            <ul className="mt-2 space-y-1 pl-5">
-              {unit.effects.map((effect, effectIndex) => (
-                <EffectRow key={effectIndex} display={effect} />
-              ))}
-              {unit.effects.length === 0 ? (
-                <li className="text-xs text-status-warning-ink">{t('tool.permission.unknownEffects')}</li>
-              ) : null}
-            </ul>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-5 text-[11px] text-ink-faint">
-              <span>{verdictLabel(t, unit.verdict)}</span>
-              {unit.verdict.ruleId ? <code>{unit.verdict.ruleId}</code> : null}
-            </div>
-          </li>
-        ))}
-      </ol>
+      {/*
+        卡片正文必须限高并可滚动。一条 heredoc 脚本能让 unit.display 展开成上百行，
+        没有上限时卡片会一路撑高，把下面的操作按钮顶出视口 —— 那不是排版难看，是
+        用户根本无法批准或拒绝，Turn 就此卡死。头部和按钮留在滚动区之外，任何长度
+        的命令都不会让它们失去可达性。
+      */}
+      <div
+        data-approval-scroll="true"
+        className="max-h-[45vh] overflow-y-auto overscroll-contain"
+      >
+        <ol className="space-y-2 border-t border-clay-soft px-4 py-3">
+          {request.card.units.map((unit, index) => (
+            <li
+              key={`${index}-${unit.display}`}
+              data-permission-unit="true"
+              className="rounded-lg bg-paper-hover px-3 py-2.5"
+            >
+              <div className="flex items-start gap-2">
+                <span className="shrink-0 text-xs font-semibold text-ink-faint">{index + 1}.</span>
+                {/*
+                  单条命令再单独限高：一条几百行的脚本不该把后面的影响列表、判定理由
+                  和其余操作全挤到滚动条深处 —— 那些才是决定批不批的依据。
+                */}
+                <code className="max-h-40 min-w-0 flex-1 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words text-xs font-semibold text-ink">
+                  {unit.display}
+                </code>
+                {unit.outsideWorkspace ? (
+                  <span className="shrink-0 rounded-full bg-status-warning-soft px-2 py-0.5 text-[10px] font-medium text-status-warning-ink">
+                    {t('tool.permission.outsideWorkspace')}
+                  </span>
+                ) : null}
+              </div>
+              <ul className="mt-2 space-y-1 pl-5">
+                {unit.effects.map((effect, effectIndex) => (
+                  <EffectRow key={effectIndex} display={effect} />
+                ))}
+                {unit.effects.length === 0 ? (
+                  <li className="text-xs text-status-warning-ink">{t('tool.permission.unknownEffects')}</li>
+                ) : null}
+              </ul>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-5 text-[11px] text-ink-faint">
+                <span>{verdictLabel(t, unit.verdict)}</span>
+                {unit.verdict.ruleId ? <code>{unit.verdict.ruleId}</code> : null}
+              </div>
+            </li>
+          ))}
+        </ol>
 
-      {request.card.unparsed ? (
-        <div className="mx-4 mb-3 rounded-lg bg-status-warning-soft px-3 py-2 text-xs text-status-warning-ink">
-          {t('tool.permission.unparsedWarning')}
+        {request.card.unparsed ? (
+          <div className="mx-4 mb-3 rounded-lg bg-status-warning-soft px-3 py-2 text-xs text-status-warning-ink">
+            {t('tool.permission.unparsedWarning')}
+          </div>
+        ) : null}
+
+        <div className="border-t border-clay-soft px-4 py-3">
+          <div className="mb-1 text-[11px] font-medium text-ink-faint">{t('tool.permission.raw')}</div>
+          <pre className="max-h-32 overflow-auto overscroll-contain whitespace-pre-wrap break-words rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] leading-relaxed text-paper">
+            {request.card.raw}
+          </pre>
         </div>
-      ) : null}
-
-      <div className="border-t border-clay-soft px-4 py-3">
-        <div className="mb-1 text-[11px] font-medium text-ink-faint">{t('tool.permission.raw')}</div>
-        <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-ink px-3 py-2.5 font-mono text-[11px] leading-relaxed text-paper">
-          {request.card.raw}
-        </pre>
       </div>
 
       <div className="flex items-center gap-2 border-t border-clay-soft bg-paper-hover px-4 py-3">

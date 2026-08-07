@@ -51,6 +51,7 @@ describe('sessionStore', () => {
         id: 'message-1', turnId: 'turn-1', sequence: 1, role: 'assistant',
         content: [{ type: 'text', text: 'done' }], messageKind: 'normal', createdAt: '2026-07-18T00:00:01Z',
       }],
+      plans: [],
     })
 
     expect(await useSessionStore.getState().reload('session-1')).toBe(true)
@@ -101,6 +102,7 @@ describe('sessionStore', () => {
           content: [{ type: 'text', text: 'done' }], messageKind: 'normal', createdAt: '2026-07-18T00:00:04Z',
         },
       ],
+      plans: [],
     })
     expect(await newerReload).toBe(true)
 
@@ -115,6 +117,7 @@ describe('sessionStore', () => {
         messageKind: 'normal',
         createdAt: '2026-07-18T00:00:02Z',
       }],
+      plans: [],
     })
 
     expect(await olderReload).toBe(false)

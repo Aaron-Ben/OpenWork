@@ -5,6 +5,7 @@ import type { ProviderConfig } from '@/features/models/contracts'
 import type {
   RuntimeSessionRecord,
   RuntimeStoredMessage,
+  RuntimeTurnPlan,
 } from '@/bridge/compat'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useRuntimeStore } from '@/features/chat/runtimeStore'
@@ -23,6 +24,8 @@ interface SessionStoreState {
   orderedSessionIds: string[]
   activeSessionId: string | null
   messagesBySession: Record<string, RuntimeStoredMessage[]>
+  /** 历史 Turn 的最终计划，来自 turn_plans，不从 Tool Call JSON 重建。 */
+  plansBySession: Record<string, RuntimeTurnPlan[]>
   loadStateBySession: Record<string, LoadState>
   isLoading: boolean
   error: string | null
@@ -51,6 +54,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   orderedSessionIds: [],
   activeSessionId: null,
   messagesBySession: {},
+  plansBySession: {},
   loadStateBySession: {},
   isLoading: false,
   error: null,
@@ -88,6 +92,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         orderedSessionIds: [session.id, ...state.orderedSessionIds],
         activeSessionId: session.id,
         messagesBySession: { ...state.messagesBySession, [session.id]: [] },
+        plansBySession: { ...state.plansBySession, [session.id]: [] },
         loadStateBySession: { ...state.loadStateBySession, [session.id]: 'loaded' },
         error: null,
       }))
@@ -118,6 +123,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
           ? state.orderedSessionIds
           : [sessionId, ...state.orderedSessionIds],
         messagesBySession: { ...state.messagesBySession, [sessionId]: loaded.messages },
+        plansBySession: { ...state.plansBySession, [sessionId]: loaded.plans ?? [] },
         loadStateBySession: { ...state.loadStateBySession, [sessionId]: 'loaded' },
         error: null,
       }))
@@ -154,15 +160,18 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       set((state) => {
         const summaries = { ...state.summaries }
         const messagesBySession = { ...state.messagesBySession }
+        const plansBySession = { ...state.plansBySession }
         const loadStateBySession = { ...state.loadStateBySession }
         delete summaries[sessionId]
         delete messagesBySession[sessionId]
+        delete plansBySession[sessionId]
         delete loadStateBySession[sessionId]
         const orderedSessionIds = state.orderedSessionIds.filter((id) => id !== sessionId)
         return {
           summaries,
           orderedSessionIds,
           messagesBySession,
+          plansBySession,
           loadStateBySession,
           activeSessionId:
             state.activeSessionId === sessionId

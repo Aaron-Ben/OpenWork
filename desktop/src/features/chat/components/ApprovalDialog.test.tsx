@@ -121,6 +121,45 @@ describe('ApprovalCardView', () => {
     expect(exactMarkup).toContain('本会话仅允许这一条命令：custom-tool a b')
   })
 
+  // 一条 heredoc 脚本能让 unit.display 展开成上百行。正文不限高时卡片会一路撑高，
+  // 把批准/拒绝按钮顶出视口 —— 用户无法响应，Turn 卡死。
+  it('keeps a huge command scrollable instead of pushing the actions off screen', () => {
+    const hugeCommand = [
+      "cd /repo && python3 - <<'EOF'",
+      ...Array.from({ length: 200 }, (_, index) => `print("line ${index}")`),
+      'EOF',
+    ].join('\n')
+    const hugeRequest: RuntimePermissionRequest = {
+      ...request,
+      card: {
+        ...request.card,
+        units: [{ ...request.card.units[0], display: hugeCommand }],
+        raw: hugeCommand,
+      },
+    }
+
+    const markup = renderToStaticMarkup(
+      <ApprovalCardView request={hugeRequest} resolving={false} onResolve={vi.fn()} />,
+    )
+
+    // 正文有独立的滚动容器，且限高。
+    expect(markup).toContain('data-approval-scroll="true"')
+    expect(markup).toMatch(/data-approval-scroll="true"[^>]*class="[^"]*max-h-\[45vh\]/)
+    expect(markup).toMatch(/data-approval-scroll="true"[^>]*class="[^"]*overflow-y-auto/)
+
+    // 按钮在滚动容器之外 —— 无论命令多长都够得着。
+    const scrollStart = markup.indexOf('data-approval-scroll')
+    expect(scrollStart).toBeGreaterThan(-1)
+    expect(markup.indexOf('允许一次')).toBeGreaterThan(scrollStart)
+    expect(markup.indexOf('即将执行')).toBeLessThan(scrollStart)
+
+    // 单条命令自身也限高，否则它会把影响列表和判定理由挤到滚动条深处。
+    expect(markup).toMatch(/<code class="[^"]*max-h-40[^"]*overflow-y-auto/)
+
+    // 内容本身没有被截断，只是需要滚动。
+    expect(markup).toContain('print(&quot;line 199&quot;)')
+  })
+
   it('acc_59_60 renders the complete acceptEdits session scope', () => {
     const modeRequest: RuntimePermissionRequest = {
       ...request,

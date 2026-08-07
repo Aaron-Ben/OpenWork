@@ -141,6 +141,15 @@ export const zhCN = {
     contextUsageEstimated: 'Provider 无关估算，不包含协议包装',
     contextUsageUnavailable: '暂无上下文用量',
     contextUsageAria: '上下文已使用 {{usedPercent}}%，{{used}} / {{total}} Tokens',
+    plan: {
+      title: '任务清单',
+      progress: '{{completed}} / {{total}}',
+      status: {
+        pending: '待办',
+        in_progress: '进行中',
+        completed: '已完成',
+      },
+    },
     contextPanel: {
       title: '上下文窗口',
       expand: '展开上下文分类', collapse: '收起上下文分类',
@@ -316,11 +325,10 @@ export const zhCN = {
     allowBash: '允许执行 Bash 命令', allowWrite: '允许写入 {{name}}', allowWriteFile: '允许写入文件',
     allowRead: '允许读取 {{name}}', allowReadFile: '允许读取文件', allowList: '允许列出 {{name}}',
     allowListDirectory: '允许列出目录', allowTool: '允许工具 {{name}}',
-    wroteFiles: '写入了文件', editedFiles: '编辑了文件', readFiles: '读取了文件', listedDirectories: '查看了目录', ranCommands: '运行了命令',
     ranCommand: '运行 {{command}}', ranCommandFallback: '运行了命令', editedFile: '编辑 {{name}}',
     wroteFile: '写入 {{name}}', wroteFileFallback: '写入了文件', editedFileFallback: '编辑了文件', readFile: '读取 {{name}}', readFileFallback: '读取了文件',
     listedDirectory: '查看 {{name}}', listedDirectoryFallback: '查看了目录', calledTool: '调用 {{name}}',
-    summarySeparator: '、', stopped: '已停止', output: '输出', shell: 'Shell', copy: '复制', copied: '已复制',
+    stopped: '已停止', output: '输出', shell: 'Shell', copy: '复制', copied: '已复制',
     createdFile: '创建了文件', createdNamedFile: '创建 {{name}}', editedOneFile: '编辑了文件', editedFileCount: '编辑了 {{count}} 个文件',
     undo: '撤销', undoing: '正在撤销', undone: '已撤销', undoFailed: '撤销失败：{{message}}',
     reapply: '恢复', reapplying: '正在恢复', reapplyFailed: '恢复失败：{{message}}',

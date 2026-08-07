@@ -150,63 +150,71 @@
 
 /* ============================================================
    base —— 全局衬线;代码/输入框强制 mono/sans;选区/滚动条
+
+   必须整段包在 @layer base 里。Tailwind v4 把工具类放进 @layer utilities,
+   而无层(unlayered)规则在级联中压过任何 cascade layer —— 与选择器特异性无关。
+   这一段一旦漏在层外,下面的 `textarea { font-family: sans }` 就会盖掉元素上的
+   `font-serif`,`::selection { color: ink }` 会盖掉 `selection:text-transparent`,
+   而且不会有任何报错:症状是 ChatInput 的光标随字数越偏越远、选中时露出重影。
    ============================================================ */
 
-html,
-body,
-#root {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
 
-html {
-  background-color: var(--paper);
-  font-size: 16px;
-}
+  html {
+    background-color: var(--paper);
+    font-size: 16px;
+  }
 
-body {
-  margin: 0;
-  font-family: var(--font-serif);
-  color: var(--ink);
-  font-weight: var(--content-weight);
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
-}
+  body {
+    margin: 0;
+    font-family: var(--font-serif);
+    color: var(--ink);
+    font-weight: var(--content-weight);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
 
-/* 全局衬线下:代码强制等宽,输入/按钮用 sans 更易读 */
-code,
-pre,
-kbd,
-samp {
-  font-family: var(--font-mono);
-}
+  /* 全局衬线下:代码强制等宽,输入/按钮用 sans 更易读 */
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+  }
 
-textarea,
-input,
-button,
-select {
-  font-family: var(--font-sans);
-}
+  textarea,
+  input,
+  button,
+  select {
+    font-family: var(--font-sans);
+  }
 
-/* 文字选区:clay 半透明(对齐 claude.com) */
-::selection {
-  background: var(--selection);
-  color: var(--ink);
-}
+  /* 文字选区:clay 半透明(对齐 claude.com) */
+  ::selection {
+    background: var(--selection);
+    color: var(--ink);
+  }
 
-/* 滚动条:6px 暖灰(照搬 claude.css) */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
+  /* 滚动条:6px 暖灰(照搬 claude.css) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
 
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-  border-radius: 8px;
-  background-clip: border-box;
-}
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar);
+    border-radius: 8px;
+    background-clip: border-box;
+  }
 
-::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-hover);
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-hover);
+  }
 }

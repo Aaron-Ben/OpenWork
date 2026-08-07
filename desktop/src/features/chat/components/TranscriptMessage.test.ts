@@ -10,9 +10,11 @@ function props(message: ChatItem): TranscriptMessageProps {
   return {
     message,
     highlighted: false,
+    gap: 'section',
     onOpenTrace: vi.fn(),
     onUndoFileChanges: vi.fn(),
     onReapplyFileChanges: vi.fn(),
+    onReviewFileChanges: vi.fn(),
   }
 }
 
@@ -42,6 +44,14 @@ describe('areTranscriptMessagePropsEqual', () => {
         parts: [{ type: 'text', text: 'hello' }],
       },
     }
+
+    expect(areTranscriptMessagePropsEqual(previous, next)).toBe(false)
+  })
+
+  it('rerenders when the gap to the previous message changes', () => {
+    // 上一条消息新增工具行会改变本条的间距档位，消息本身却一字未动。
+    const previous = props({ id: 'message-2', role: 'assistant', parts: [] })
+    const next: TranscriptMessageProps = { ...previous, gap: 'tight' }
 
     expect(areTranscriptMessagePropsEqual(previous, next)).toBe(false)
   })

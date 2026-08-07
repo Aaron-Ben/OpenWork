@@ -93,14 +93,11 @@ describe('ToolActivityList', () => {
     })
   })
 
-  it('renders compact list rows with one collapsible activity summary', () => {
+  it('renders compact list rows without a collapsible summary', () => {
     const markup = renderToStaticMarkup(<ToolActivityList parts={parts} />)
 
     expect(markup).toContain('data-tool-activity-list="true"')
-    expect(markup).toContain('data-tool-activity-summary="true"')
     expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(2)
-    expect(markup).toContain('写入了文件')
-    expect(markup).toContain('运行了命令')
     expect(markup).toContain('cargo test -p openwork-core')
     expect(markup).toContain('main.rs')
     expect(markup).not.toContain('rounded-lg border border-line bg-paper-hover')
@@ -133,6 +130,7 @@ describe('ToolActivityList', () => {
         parts={fileChangeParts}
         fileChangePresentation="summary"
         onUndoFileChanges={async () => undefined}
+        onReviewFileChanges={() => undefined}
       />,
     )
 
@@ -158,7 +156,6 @@ describe('ToolActivityList', () => {
       />,
     )
 
-    expect(markup).toContain('data-tool-activity-summary="true"')
     expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(2)
     expect(markup).toContain('data-file-change-activity="change-edit"')
     expect(markup).toContain('aria-expanded="false"')

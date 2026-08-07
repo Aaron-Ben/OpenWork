@@ -70,7 +70,13 @@ export function SkillMentionOverlay({
       ref={overlayRef}
       data-skill-mention-overlay="true"
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 overflow-hidden px-5 py-3 text-base leading-7 text-ink whitespace-pre-wrap [overflow-wrap:break-word]"
+      /*
+        排版必须与下面的 textarea 逐项一致：字体、字号、行高、内边距。
+        用户看到的字是这一层，光标和选区却由 textarea 按它自己的字体度量绘制 ——
+        任何一项对不上，光标就会随着文字变长越偏越远，选中时还会露出错位的重影。
+        改这里的时候，textarea 的 className 要同步改。
+      */
+      className="pointer-events-none absolute inset-0 overflow-hidden px-5 py-3 font-serif text-base leading-7 text-ink whitespace-pre-wrap [overflow-wrap:break-word]"
     >
       <div ref={contentRef}>
         {segments.map((segment, index) => segment.binding ? (
@@ -401,7 +407,20 @@ export function ChatInput({
           />
           <textarea
             ref={textareaRef}
-            className="relative z-10 max-h-48 min-h-[80px] w-full resize-none border-0 bg-transparent px-5 py-3 text-base leading-7 text-transparent caret-ink outline-none selection:bg-clay-soft/70 placeholder:text-ink-faint focus:ring-0"
+            /*
+              font-serif 覆盖 globals.css 里 `textarea { font-family: var(--font-sans) }`
+              的全局规则：这一层的字是透明的，它只负责光标与选区，而两者的位置按本元素的
+              字体度量算 —— 必须和上面 overlay 用同一套排版，否则光标对不齐文字。
+
+              selection:text-transparent 同样是覆盖：globals.css 的 `::selection` 设了
+              `color: var(--ink)`，会把本该透明的文字在选中时强行画出来，与 overlay 叠成
+              重影。这里只保留选区底色，字仍旧由 overlay 提供。
+
+              这两处覆盖成立的前提是 globals.css 的全局段包在 `@layer base` 里。Tailwind v4
+              的工具类在 `@layer utilities`，而无层规则压过任何 cascade layer —— globals.css
+              那段一旦漏在层外，这里的两个类就会被静默忽略。改动 globals.css 时留意。
+            */
+            className="relative z-10 max-h-48 min-h-[80px] w-full resize-none border-0 bg-transparent px-5 py-3 font-serif text-base leading-7 text-transparent caret-ink outline-none selection:bg-clay-soft/70 selection:text-transparent placeholder:text-ink-faint focus:ring-0"
             value={value}
             onChange={(event) => handleValueChange(
               event.target.value,

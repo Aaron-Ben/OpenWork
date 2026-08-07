@@ -381,3 +381,100 @@ describe('buildTranscript', () => {
     expect(result.map((item) => item.id)).toEqual(['message-1'])
   })
 })
+
+describe('buildTranscript plan attachment', () => {
+  const steps = [
+    { step: 'read schema', status: 'completed' as const },
+    { step: 'add migration', status: 'in_progress' as const },
+  ]
+
+  const twoAssistantTurn: RuntimeStoredMessage[] = [
+    {
+      id: 'plan-user',
+      turnId: 'turn-plan',
+      sequence: 1,
+      role: 'user',
+      content: [{ type: 'text', text: 'do the multi-step task' }],
+      messageKind: 'normal',
+      createdAt: '2026-08-07T00:00:00Z',
+    },
+    {
+      id: 'plan-assistant-1',
+      turnId: 'turn-plan',
+      sequence: 2,
+      role: 'assistant',
+      content: [{ type: 'text', text: 'starting' }],
+      messageKind: 'normal',
+      createdAt: '2026-08-07T00:00:01Z',
+    },
+    {
+      id: 'plan-assistant-2',
+      turnId: 'turn-plan',
+      sequence: 3,
+      role: 'assistant',
+      content: [{ type: 'text', text: 'done' }],
+      messageKind: 'normal',
+      createdAt: '2026-08-07T00:00:02Z',
+    },
+  ]
+
+  it('attaches a historical plan to the last assistant message of its turn', () => {
+    const transcript = buildTranscript(twoAssistantTurn, createSessionRuntimeView(), [
+      { turnId: 'turn-plan', explanation: 'scoping', steps, updatedAt: '2026-08-07T00:00:02+08:00' },
+    ])
+
+    const withPlan = transcript.filter((item) => item.plan)
+    expect(withPlan).toHaveLength(1)
+    expect(withPlan[0].id).toBe('plan-assistant-2')
+    expect(withPlan[0].plan?.steps).toEqual(steps)
+  })
+
+  it('prefers the live plan over the persisted one for the active turn', () => {
+    const runtime = {
+      ...createSessionRuntimeView(),
+      turnId: 'turn-plan',
+      plan: {
+        explanation: 'fresher',
+        steps: [{ step: 'a newer step', status: 'pending' as const }],
+        updatedAt: '2026-08-07T00:00:09+08:00',
+      },
+    }
+
+    const transcript = buildTranscript(twoAssistantTurn, runtime, [
+      { turnId: 'turn-plan', explanation: 'stale', steps, updatedAt: '2026-08-07T00:00:02+08:00' },
+    ])
+
+    const plan = transcript.find((item) => item.plan)?.plan
+    expect(plan?.explanation).toBe('fresher')
+    expect(plan?.steps).toHaveLength(1)
+  })
+
+  it('drops the card when the active turn cleared its plan', () => {
+    const runtime = { ...createSessionRuntimeView(), turnId: 'turn-plan', plan: null }
+
+    const transcript = buildTranscript(twoAssistantTurn, runtime, [
+      { turnId: 'turn-plan', explanation: null, steps, updatedAt: '2026-08-07T00:00:02+08:00' },
+    ])
+
+    expect(transcript.some((item) => item.plan)).toBe(false)
+  })
+
+  it('ignores stored plans that have no steps', () => {
+    const transcript = buildTranscript(twoAssistantTurn, createSessionRuntimeView(), [
+      { turnId: 'turn-plan', explanation: null, steps: [], updatedAt: '2026-08-07T00:00:02+08:00' },
+    ])
+
+    expect(transcript.some((item) => item.plan)).toBe(false)
+  })
+
+  it('leaves other turns untouched', () => {
+    const transcript = buildTranscript(
+      [...canonical, ...twoAssistantTurn],
+      createSessionRuntimeView(),
+      [{ turnId: 'turn-plan', explanation: null, steps, updatedAt: '2026-08-07T00:00:02+08:00' }],
+    )
+
+    expect(transcript.filter((item) => item.plan).every((item) => item.turnId === 'turn-plan'))
+      .toBe(true)
+  })
+})
