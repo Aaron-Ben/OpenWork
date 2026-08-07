@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::context::{ResolvedSystemContext, SystemContextBuilder};
 use crate::model_call::estimate_conversation_tokens;
+use crate::plan::TurnPlan;
 use crate::skills::SkillRoots;
 
 use self::projection::{last_real_user, last_user_source};
@@ -222,6 +223,11 @@ pub(super) struct ConversationCompactionRequest {
     pub model: Arc<dyn ModelPort>,
     pub storage: Arc<dyn SessionStorage>,
     pub state_collector: Arc<CompactionStateCollector>,
+    /// 当前 Turn 的计划，由 Runner 直接带入。
+    ///
+    /// contributor 不查库也不解析历史 Tool Call：`turn_plans` 才是权威状态，而那些
+    /// Tool Call 可能正好是被这次压缩移出投影的部分。
+    pub plan: Option<TurnPlan>,
     pub reload_required: Arc<AtomicBool>,
     pub trigger: CompactionTrigger,
     pub system_context: Option<ResolvedSystemContext>,
@@ -315,7 +321,7 @@ async fn run_compaction_inner(
         .unwrap_or_default();
     let (runtime_state, runtime_reminder) = request
         .state_collector
-        .collect_with_base(&state_messages, base_runtime_state)
+        .collect_with_base(&state_messages, request.plan.as_ref(), base_runtime_state)
         .await
         .map_err(|error| CompactionError::State(error.to_string()))?;
     let system_context = match request.system_context {

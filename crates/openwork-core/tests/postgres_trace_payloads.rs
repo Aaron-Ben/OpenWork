@@ -710,6 +710,7 @@ async fn model_and_tool_response_storage_follows_message_pointer_rules() {
             &TurnOutcome::Completed {
                 final_text: "done".to_string(),
             },
+            None,
         )
         .await
         .unwrap();

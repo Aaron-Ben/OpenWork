@@ -181,9 +181,11 @@ async fn rewind_conversation_inner(
         .await
         .map_err(CompactionError::Persistence)?
         .unwrap_or_default();
+    // Rewind 重装的是某个更早 checkpoint 的投影，没有"当前 Turn"可言，因此不提供计划：
+    // collector 会结转上次收集到的值，而不是把它当成一次清空。
     let (runtime_state, runtime_reminder) = request
         .state_collector
-        .collect_with_base(&state_messages, base_runtime_state)
+        .collect_with_base(&state_messages, None, base_runtime_state)
         .await
         .map_err(|error| CompactionError::State(error.to_string()))?;
     trace.attributes_mut().prepare_ms = Some(elapsed_millis(prepare_started));

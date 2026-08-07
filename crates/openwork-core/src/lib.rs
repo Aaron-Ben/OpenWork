@@ -3,6 +3,7 @@
 mod context;
 mod core;
 mod model_call;
+pub mod plan;
 mod provider;
 pub mod session;
 pub mod skills;

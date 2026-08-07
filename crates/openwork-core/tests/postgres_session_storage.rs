@@ -479,6 +479,7 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             &TurnOutcome::Completed {
                 final_text: "done".to_string(),
             },
+            None,
         )
         .await
         .unwrap();
@@ -537,6 +538,7 @@ async fn postgres_persists_contextual_input_before_the_visible_user_message() {
             &TurnOutcome::Completed {
                 final_text: "stored".to_string(),
             },
+            None,
         )
         .await
         .unwrap();
@@ -585,6 +587,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             "trace_payloads",
             "trace_span_payloads",
             "trace_spans",
+            "turn_plans",
             "turns",
         ]
     );
@@ -600,7 +603,9 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     .fetch_all(storage.pool())
     .await
     .unwrap();
-    assert_eq!(timestamp_columns.len(), 17);
+    // turn_plans.updated_at 是第 18 个。所有时间列都必须是 naive 东八区墙上时间：
+    // 一旦某列变成 timestamptz，这里会立刻失败。
+    assert_eq!(timestamp_columns.len(), 18);
     assert!(
         timestamp_columns
             .iter()
@@ -618,6 +623,12 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             (202_607_260_001, "initial schema".to_string(), true),
             (202_608_040_001, "create skill status".to_string(), true),
             (202_608_050_001, "add message kind".to_string(), true),
+            (202_608_070_001, "create turn plans".to_string(), true),
+            (
+                202_608_070_002,
+                "add turn plan completion signal".to_string(),
+                true,
+            ),
         ]
     );
 
@@ -745,6 +756,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &TurnOutcome::Completed {
                 final_text: "done".to_string(),
             },
+            None,
         )
         .await
         .unwrap();
@@ -825,7 +837,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .await
         .unwrap();
     let (runtime_state_after_undo, _) = CompactionStateCollector::default()
-        .collect_with_base(&state_messages, compacted.runtime_state.clone())
+        .collect_with_base(&state_messages, None, compacted.runtime_state.clone())
         .await
         .unwrap();
     assert!(runtime_state_after_undo.edited_paths.is_empty());
@@ -856,6 +868,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &TurnOutcome::Completed {
                 final_text: "continued".to_string(),
             },
+            None,
         )
         .await
         .unwrap();

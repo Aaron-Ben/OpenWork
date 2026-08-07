@@ -1,5 +1,8 @@
 use super::*;
 
+use super::plan::validate_tool_message;
+use crate::plan::TurnPlan;
+
 #[async_trait]
 impl SessionStorage for PostgresStorage {
     async fn begin_turn(
@@ -70,8 +73,39 @@ impl SessionStorage for PostgresStorage {
             .map_err(|error| error.to_string())
     }
 
-    async fn finish_turn(&self, turn_id: &TurnId, outcome: &TurnOutcome) -> Result<(), String> {
-        self.finish_turn_inner(turn_id, outcome)
+    async fn finish_turn(
+        &self,
+        turn_id: &TurnId,
+        outcome: &TurnOutcome,
+        unfinished_plan_steps: Option<usize>,
+    ) -> Result<(), String> {
+        self.finish_turn_inner(turn_id, outcome, unfinished_plan_steps)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn load_turn_plan(&self, turn_id: &TurnId) -> Result<Option<TurnPlan>, String> {
+        self.load_turn_plan_inner(turn_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn load_session_turn_plans(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<TurnPlan>, String> {
+        self.load_session_turn_plans_inner(session_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn commit_plan_update(
+        &self,
+        turn_id: &TurnId,
+        plan: &TurnPlan,
+        success_tool_result: &Message,
+    ) -> Result<(), String> {
+        self.commit_plan_update_inner(turn_id, plan, success_tool_result)
             .await
             .map_err(|error| error.to_string())
     }
@@ -312,24 +346,7 @@ impl PostgresStorage {
         turn_id: &TurnId,
         message: &Message,
     ) -> Result<(), StorageError> {
-        if message.role != Role::Tool {
-            return Err(StorageError::InvalidInput(
-                "append_tool_result requires a tool message".to_string(),
-            ));
-        }
-        let mut tool_results = message.content.iter().filter_map(|block| match block {
-            ContentBlock::ToolResult(result) => Some(result),
-            _ => None,
-        });
-        let result = tool_results.next().ok_or_else(|| {
-            StorageError::InvalidInput("tool message has no tool result block".to_string())
-        })?;
-        if tool_results.next().is_some() || message.content.len() != 1 {
-            return Err(StorageError::InvalidInput(
-                "tool message must contain exactly one tool result block".to_string(),
-            ));
-        }
-        let content = serde_json::to_value(&message.content)?;
+        let result = validate_tool_message(message)?;
         let mut transaction = self.pool.begin().await?;
         let session_id = lock_turn(&mut transaction, turn_id).await?;
         insert_message(
@@ -337,9 +354,9 @@ impl PostgresStorage {
             &session_id,
             Some(turn_id),
             Role::Tool,
-            content,
+            result.content,
             StoredMessageKind::Normal,
-            Some((&result.id, &result.name)),
+            Some((&result.provider_call_id, &result.tool_name)),
         )
         .await?;
         transaction.commit().await?;
@@ -350,7 +367,16 @@ impl PostgresStorage {
         &self,
         turn_id: &TurnId,
         outcome: &TurnOutcome,
+        unfinished_plan_steps: Option<usize>,
     ) -> Result<(), StorageError> {
+        let unfinished_plan_steps = unfinished_plan_steps
+            .map(i32::try_from)
+            .transpose()
+            .map_err(|_| {
+                StorageError::InvalidInput(
+                    "unfinished plan step count does not fit in an integer".to_string(),
+                )
+            })?;
         let (status, error_code, error_message) = match outcome {
             TurnOutcome::Completed { .. } => ("completed", None, None),
             TurnOutcome::Failed { code, message } => {
@@ -361,6 +387,7 @@ impl PostgresStorage {
         let result = sqlx::query(
             "UPDATE turns
              SET status = $2, error_code = $3, error_message = $4,
+                 plan_unfinished_step_count = $5,
                  ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
                  updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
              WHERE id = $1 AND status = 'running'",
@@ -369,6 +396,7 @@ impl PostgresStorage {
         .bind(status)
         .bind(error_code)
         .bind(error_message)
+        .bind(unfinished_plan_steps)
         .execute(&self.pool)
         .await?;
         if result.rows_affected() == 0 {

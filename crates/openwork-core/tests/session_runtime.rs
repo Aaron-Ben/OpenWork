@@ -14,8 +14,9 @@ use openwork_core::session::{
     PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
     SessionRuntimeConfig, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
     ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId,
-    TurnOutcome,
+    TurnOutcome, TurnToolset,
 };
+use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::skills::SkillRoots;
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
@@ -257,7 +258,11 @@ struct RecordingStorage {
     fail_assistant: bool,
     fail_tool_result: AtomicBool,
     fail_compaction: AtomicBool,
+    fail_plan_commit: AtomicBool,
     compactions: Mutex<Vec<ConversationCompaction>>,
+    plans: Mutex<Vec<TurnPlan>>,
+    /// 外层 Option = finish_turn 是否被调用过；内层 = 该 Turn 有没有计划。
+    unfinished_plan_steps: Mutex<Option<Option<usize>>>,
 }
 
 #[async_trait]
@@ -319,8 +324,40 @@ impl SessionStorage for RecordingStorage {
         }
     }
 
-    async fn finish_turn(&self, _turn_id: &TurnId, _outcome: &TurnOutcome) -> Result<(), String> {
+    async fn finish_turn(
+        &self,
+        _turn_id: &TurnId,
+        _outcome: &TurnOutcome,
+        unfinished_plan_steps: Option<usize>,
+    ) -> Result<(), String> {
         self.events.lock().unwrap().push("finish_turn".to_string());
+        *self.unfinished_plan_steps.lock().unwrap() = Some(unfinished_plan_steps);
+        Ok(())
+    }
+
+    async fn load_turn_plan(&self, _turn_id: &TurnId) -> Result<Option<TurnPlan>, String> {
+        Ok(self.plans.lock().unwrap().last().cloned())
+    }
+
+    async fn load_session_turn_plans(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Vec<TurnPlan>, String> {
+        Ok(self.plans.lock().unwrap().clone())
+    }
+
+    async fn commit_plan_update(
+        &self,
+        _turn_id: &TurnId,
+        plan: &TurnPlan,
+        _success_tool_result: &Message,
+    ) -> Result<(), String> {
+        // 一次事件即代表"计划与成功 Tool Result 一起落库"，与真实实现的原子性对应。
+        self.events.lock().unwrap().push("plan_commit".to_string());
+        if self.fail_plan_commit.load(Ordering::Relaxed) {
+            return Err("plan commit failed".to_string());
+        }
+        self.plans.lock().unwrap().push(plan.clone());
         Ok(())
     }
 
@@ -597,7 +634,10 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
         fail_assistant,
         fail_tool_result: AtomicBool::new(false),
         fail_compaction: AtomicBool::new(false),
+        fail_plan_commit: AtomicBool::new(false),
         compactions: Mutex::new(Vec::new()),
+        plans: Mutex::new(Vec::new()),
+        unfinished_plan_steps: Mutex::new(None),
     });
     let trace = Arc::new(RecordingTrace::default());
     let registry = AgentDefinition::default().tool_names.into_iter().fold(
@@ -638,7 +678,9 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
             model: Arc::new(FakeModel {
                 state: Arc::clone(&model),
             }),
-            tools: Arc::new(toolset),
+            tools: Arc::new(
+                TurnToolset::new(Arc::new(toolset), true).expect("no control tool collision"),
+            ),
             storage: storage.clone(),
             compaction_state: Arc::new(CompactionStateCollector::default()),
             trace: trace.clone(),
@@ -2752,5 +2794,467 @@ async fn tool_trace_records_result_persistence_failure_without_changing_tool_sta
             .expect("tool trace attributes")
             .get("resultPersistErrorCode")
             .is_none()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// update_plan：Core 控制工具
+// ---------------------------------------------------------------------------
+
+fn update_plan_call(id: &str, arguments: serde_json::Value) -> ToolCallBlock {
+    tool_call(id, "update_plan", &arguments.to_string())
+}
+
+async fn collect_updates_until_terminal(
+    updates: &mut broadcast::Receiver<SessionUpdateEnvelope>,
+) -> Vec<SessionUpdate> {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut seen = Vec::new();
+        loop {
+            let event = updates.recv().await.expect("session update");
+            let finished = matches!(event.update, SessionUpdate::TurnFinished { .. });
+            seen.push(event.update);
+            if finished {
+                return seen;
+            }
+        }
+    })
+    .await
+    .expect("turn timed out")
+}
+
+#[tokio::test]
+async fn update_plan_commits_then_broadcasts_a_complete_snapshot() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({
+                        "explanation": "scoping",
+                        "plan": [
+                            { "step": "read schema", "status": "completed" },
+                            { "step": "add migration", "status": "in_progress" },
+                            { "step": "wire runner", "status": "pending" }
+                        ]
+                    }),
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+
+    let updates = collect_updates_until_terminal(&mut fixture.updates).await;
+
+    let plan_update = updates
+        .iter()
+        .find_map(|update| match update {
+            SessionUpdate::PlanUpdated {
+                explanation,
+                plan,
+                updated_at,
+            } => Some((explanation.clone(), plan.clone(), updated_at.clone())),
+            _ => None,
+        })
+        .expect("PlanUpdated");
+    assert_eq!(plan_update.0.as_deref(), Some("scoping"));
+    assert_eq!(plan_update.1.len(), 3);
+    assert_eq!(plan_update.1[1].status, PlanStepStatus::InProgress);
+    assert!(
+        plan_update.2.ends_with("+08:00"),
+        "a Z suffix would put the UI 16 hours off: {}",
+        plan_update.2
+    );
+
+    // 事件只在持久化成功之后发出。
+    let events = fixture.storage.events.lock().unwrap().clone();
+    assert!(
+        events.contains(&"plan_commit".to_string()),
+        "got: {events:?}"
+    );
+    assert!(
+        !events.contains(&"tool_result".to_string()),
+        "the plan and its tool result go in one transaction, not two writes: {events:?}"
+    );
+
+    // Assistant Tool Call 必须先于计划副作用落库。
+    let assistant = events.iter().position(|event| event == "assistant").unwrap();
+    let commit = events
+        .iter()
+        .position(|event| event == "plan_commit")
+        .unwrap();
+    assert!(assistant < commit);
+
+    // 计划提交后仍要发通用的 ToolCallFinished，UI 的工具卡不能因为它是控制工具就少一条。
+    assert!(updates.iter().any(|update| matches!(
+        update,
+        SessionUpdate::ToolCallFinished { tool_name, is_error, .. }
+            if tool_name == "update_plan" && !is_error
+    )));
+
+    let plans = fixture.storage.plans.lock().unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].steps.len(), 3);
+}
+
+#[tokio::test]
+async fn update_plan_never_asks_for_permission_even_in_default_mode() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({ "plan": [{ "step": "a", "status": "pending" }] }),
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        // Default mode 下普通的写工具会走审批；控制工具不该受影响。
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+
+    let updates = collect_updates_until_terminal(&mut fixture.updates).await;
+
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, SessionUpdate::PermissionRequested { .. })),
+        "update_plan does not touch the host, so it must not prompt"
+    );
+    assert!(matches!(
+        updates.last(),
+        Some(SessionUpdate::TurnFinished {
+            outcome: TurnOutcome::Completed { .. }
+        })
+    ));
+}
+
+#[tokio::test]
+async fn an_invalid_plan_fails_the_call_without_changing_stored_state() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    // 两个 in_progress 违反跨元素不变量。
+                    serde_json::json!({
+                        "plan": [
+                            { "step": "a", "status": "in_progress" },
+                            { "step": "b", "status": "in_progress" }
+                        ]
+                    }),
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+
+    let updates = collect_updates_until_terminal(&mut fixture.updates).await;
+
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, SessionUpdate::PlanUpdated { .. })),
+        "a rejected call must not broadcast a plan"
+    );
+    let finished = updates
+        .iter()
+        .find_map(|update| match update {
+            SessionUpdate::ToolCallFinished {
+                tool_name,
+                is_error,
+                output,
+                ..
+            } if tool_name == "update_plan" => Some((*is_error, output.clone())),
+            _ => None,
+        })
+        .expect("a failed tool result still goes back to the model");
+    assert!(finished.0);
+    assert!(
+        finished.1.contains("in_progress"),
+        "the model needs to know which invariant it broke: {}",
+        finished.1
+    );
+
+    assert!(fixture.storage.plans.lock().unwrap().is_empty());
+    let events = fixture.storage.events.lock().unwrap().clone();
+    assert!(
+        !events.contains(&"plan_commit".to_string()),
+        "validation failure must not reach storage: {events:?}"
+    );
+    // 失败结果本身仍要作为普通 Tool Result 落库，否则模型历史里会缺一条。
+    assert!(events.contains(&"tool_result".to_string()));
+}
+
+#[tokio::test]
+async fn a_failed_plan_commit_fails_the_turn_without_broadcasting() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({ "plan": [{ "step": "a", "status": "pending" }] }),
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    fixture
+        .storage
+        .fail_plan_commit
+        .store(true, Ordering::Relaxed);
+    start(&fixture).await;
+
+    let updates = collect_updates_until_terminal(&mut fixture.updates).await;
+
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, SessionUpdate::PlanUpdated { .. })),
+        "nothing was persisted, so nothing may be projected"
+    );
+    assert!(matches!(
+        updates.last(),
+        Some(SessionUpdate::TurnFinished {
+            outcome: TurnOutcome::Failed { code, .. }
+        }) if code == "persistence_error"
+    ));
+    assert!(fixture.storage.plans.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
+    // 压缩把模型看到的对话整体换成"用户消息重放 + 摘要 + reminder"三条，原来的
+    // update_plan Tool Call 和它的结果都不在其中。所以压缩之后 reminder 是当前计划
+    // 唯一的载体——它错了模型就完全失忆，而不是少了一层冗余。
+    let mut fixture = runtime(
+        vec![
+            // 第 1 轮开头的压缩
+            response(compaction_summary(), Vec::new()),
+            // 第 1 轮的模型调用：建立计划
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({
+                        "explanation": "scoping the work",
+                        "plan": [
+                            { "step": "read schema", "status": "completed" },
+                            { "step": "add migration", "status": "in_progress" },
+                            { "step": "wire runner", "status": "pending" }
+                        ]
+                    }),
+                )],
+            ),
+            // 第 2 轮开头的压缩：此时计划已经存在
+            response(compaction_summary(), Vec::new()),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    fixture
+        .handle
+        .start_turn_with_context_window(
+            ClientRequestId::new("plan-compaction-request"),
+            openwork_core::session::PreparedTurnInput::text("do the multi-step task"),
+            1,
+            BTreeSet::new(),
+        )
+        .await
+        .expect("turn accepted");
+    wait_for_terminal(&mut fixture.updates).await;
+
+    let compactions = fixture.storage.compactions.lock().unwrap();
+    assert_eq!(compactions.len(), 2, "one compaction per model call round");
+
+    let before = &compactions[0].runtime_reminder;
+    assert!(
+        !before.contains("Current plan"),
+        "there was no plan yet at the first compaction: {before}"
+    );
+
+    let after = &compactions[1].runtime_reminder;
+    assert!(
+        after.contains("## Current plan"),
+        "the plan must survive compaction: {after}"
+    );
+    assert!(after.contains("- [completed] read schema"), "got: {after}");
+    assert!(after.contains("- [in_progress] add migration"), "got: {after}");
+    assert!(after.contains("- [pending] wire runner"), "got: {after}");
+    assert!(after.contains("scoping the work"), "got: {after}");
+
+    // 计划也要进 extensions，这样下一次压缩能以它为基线。
+    let extensions = &compactions[1].runtime_state.extensions;
+    assert!(
+        extensions.contains_key("turn_plan"),
+        "got keys: {:?}",
+        extensions.keys().collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn clearing_the_plan_removes_it_from_the_next_reminder() {
+    // collector 在 collect 返回 None 时会结转旧值，所以清空计划若实现成"没有数据"，
+    // 模型会一直看到一份已经删掉的计划，而且全程不报错。
+    let mut fixture = runtime(
+        vec![
+            response(compaction_summary(), Vec::new()),
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({
+                        "plan": [{ "step": "temporary step", "status": "in_progress" }]
+                    }),
+                )],
+            ),
+            response(compaction_summary(), Vec::new()),
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-clear",
+                    serde_json::json!({ "plan": [] }),
+                )],
+            ),
+            response(compaction_summary(), Vec::new()),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    fixture
+        .handle
+        .start_turn_with_context_window(
+            ClientRequestId::new("plan-clear-request"),
+            openwork_core::session::PreparedTurnInput::text("do then abandon the plan"),
+            1,
+            BTreeSet::new(),
+        )
+        .await
+        .expect("turn accepted");
+    wait_for_terminal(&mut fixture.updates).await;
+
+    let compactions = fixture.storage.compactions.lock().unwrap();
+    assert_eq!(compactions.len(), 3);
+    assert!(
+        compactions[1].runtime_reminder.contains("temporary step"),
+        "got: {}",
+        compactions[1].runtime_reminder
+    );
+    assert!(
+        !compactions[2].runtime_reminder.contains("temporary step"),
+        "a cleared plan must not linger in extensions: {}",
+        compactions[2].runtime_reminder
+    );
+    assert!(
+        !compactions[2].runtime_reminder.contains("Current plan"),
+        "an empty plan renders no section at all: {}",
+        compactions[2].runtime_reminder
+    );
+}
+
+#[tokio::test]
+async fn a_turn_reports_its_unfinished_plan_steps_when_it_finishes() {
+    // 模型建了 3 步、只标完 1 步就作答收工 —— 提示词里"结束前把所有步骤置为 completed"
+    // 这条规则没生效。Core 不拦它（Turn 本身是成功的），但必须留下可查询的事实。
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({
+                        "plan": [
+                            { "step": "a", "status": "completed" },
+                            { "step": "b", "status": "in_progress" },
+                            { "step": "c", "status": "pending" }
+                        ]
+                    }),
+                )],
+            ),
+            response("here is your answer", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    assert_eq!(
+        *fixture.storage.unfinished_plan_steps.lock().unwrap(),
+        Some(Some(2)),
+        "in_progress 和 pending 都算没收尾"
+    );
+}
+
+#[tokio::test]
+async fn a_turn_that_finished_its_plan_reports_zero() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![update_plan_call(
+                    "call-plan",
+                    serde_json::json!({
+                        "plan": [{ "step": "a", "status": "completed" }]
+                    }),
+                )],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+
+    assert_eq!(
+        *fixture.storage.unfinished_plan_steps.lock().unwrap(),
+        Some(Some(0)),
+    );
+}
+
+#[tokio::test]
+async fn a_turn_without_a_plan_reports_nothing_rather_than_zero() {
+    let mut fixture = runtime(
+        vec![response("a simple answer", Vec::new())],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+
+    assert_eq!(
+        *fixture.storage.unfinished_plan_steps.lock().unwrap(),
+        Some(None),
+        "简单任务本就不该建计划，把它记成 0 会污染规则生效率的分母"
     );
 }

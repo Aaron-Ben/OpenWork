@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use openwork_models::model::{Message, TokenUsage};
 
+use crate::plan::TurnPlan;
 use crate::storage::{ConversationTranscriptPage, ConversationTranscriptQuery};
 
 use super::{
@@ -36,7 +37,36 @@ pub trait SessionStorage: Send + Sync {
 
     async fn append_tool_result(&self, turn_id: &TurnId, message: &Message) -> Result<(), String>;
 
-    async fn finish_turn(&self, turn_id: &TurnId, outcome: &TurnOutcome) -> Result<(), String>;
+    /// 收尾一个 Turn。
+    ///
+    /// `unfinished_plan_steps` 是 §15.1 的观测信号，`None` 表示这个 Turn 没有计划 ——
+    /// 与 `Some(0)`（有计划且全部收尾）语义不同，不要在任何一层把两者合并。
+    async fn finish_turn(
+        &self,
+        turn_id: &TurnId,
+        outcome: &TurnOutcome,
+        unfinished_plan_steps: Option<usize>,
+    ) -> Result<(), String>;
+
+    async fn load_turn_plan(&self, turn_id: &TurnId) -> Result<Option<TurnPlan>, String>;
+
+    /// 一个 Session 下所有 Turn 的最终计划，供 Desktop 重建历史。
+    ///
+    /// 按 Session 一次取全，而不是让前端按 Turn 逐个查。
+    async fn load_session_turn_plans(&self, session_id: &SessionId)
+    -> Result<Vec<TurnPlan>, String>;
+
+    /// 在**同一个事务**里 upsert 当前计划并追加本次成功的 Tool Result。
+    ///
+    /// 这条专用接口存在的唯一理由是防止两种半提交状态：计划已经改变但模型历史里没有对应的
+    /// 成功 Tool Result，或者反过来。不要用两个独立的仓储方法再自行补偿——补偿代码本身
+    /// 也会失败，而那时已经没有第三个地方能记录真相了。
+    async fn commit_plan_update(
+        &self,
+        turn_id: &TurnId,
+        plan: &TurnPlan,
+        success_tool_result: &Message,
+    ) -> Result<(), String>;
 
     async fn save_conversation_compaction(
         &self,
@@ -126,7 +156,32 @@ impl SessionStorage for NoopSessionStorage {
         Ok(())
     }
 
-    async fn finish_turn(&self, _turn_id: &TurnId, _outcome: &TurnOutcome) -> Result<(), String> {
+    async fn finish_turn(
+        &self,
+        _turn_id: &TurnId,
+        _outcome: &TurnOutcome,
+        _unfinished_plan_steps: Option<usize>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn load_turn_plan(&self, _turn_id: &TurnId) -> Result<Option<TurnPlan>, String> {
+        Ok(None)
+    }
+
+    async fn load_session_turn_plans(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Vec<TurnPlan>, String> {
+        Ok(Vec::new())
+    }
+
+    async fn commit_plan_update(
+        &self,
+        _turn_id: &TurnId,
+        _plan: &TurnPlan,
+        _success_tool_result: &Message,
+    ) -> Result<(), String> {
         Ok(())
     }
 

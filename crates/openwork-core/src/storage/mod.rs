@@ -1,7 +1,7 @@
 mod credential;
 mod postgres;
 mod provider;
-mod time;
+pub(crate) mod time;
 mod trace;
 
 // Serializes the two operations that can change Trace payload reachability:

@@ -6,6 +6,7 @@ mod input;
 mod permission_state;
 mod run_loop;
 mod storage;
+mod toolset;
 mod trace;
 mod updates;
 
@@ -29,6 +30,7 @@ pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use input::PreparedTurnInput;
 pub use permission_state::PermissionModeOrigin;
 pub use storage::{NoopSessionStorage, SessionStorage};
+pub use toolset::{TurnToolset, TurnToolsetError};
 pub use trace::{
     CompactionAttemptOutcome, CompactionFinished, CompactionStarted, CompactionSummaryAttemptTrace,
     CompactionTraceAttributesV1, CompactionTraceGuard, DEFAULT_TRACE_PAYLOAD_RETENTION_DAYS,

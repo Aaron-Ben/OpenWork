@@ -33,8 +33,9 @@ use crate::session::{
     ConversationCompaction, ConversationTranscriptTool, PermissionDecision, PreparedTurnInput,
     ResolvedModel, SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot,
     SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy,
-    TracePayloadSlot, TurnAccepted, TurnId,
+    TracePayloadSlot, TurnAccepted, TurnId, TurnToolset,
 };
+use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
@@ -106,6 +107,11 @@ impl CredentialResolver for ProviderCredentialResolver {
 pub struct LoadedSession {
     pub session: SessionRecord,
     pub messages: Vec<StoredMessageRecord>,
+    /// 每个 Turn 的最终计划。
+    ///
+    /// 从 `turn_plans` 读，不重新解析历史里的 Tool Call JSON：那些调用记录的是"模型
+    /// 提交过什么"，而这里要的是"最后生效的是什么"，中途失败的调用不该出现在界面上。
+    pub plans: Vec<TurnPlanRecord>,
 }
 
 #[derive(Debug, Error)]
@@ -402,7 +408,19 @@ impl OpenWorkCore {
             .await?
             .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
         let messages = self.storage.load_message_records(session_id).await?;
-        Ok(LoadedSession { session, messages })
+        let plans = self
+            .storage
+            .load_session_turn_plans(session_id)
+            .await
+            .map_err(OpenWorkCoreError::RuntimeComponent)?
+            .iter()
+            .map(TurnPlan::to_record)
+            .collect();
+        Ok(LoadedSession {
+            session,
+            messages,
+            plans,
+        })
     }
 
     /// Resolves a read-only preview of the three input regions that would be
@@ -963,7 +981,12 @@ impl OpenWorkCore {
                 agent,
                 chat,
                 model: model_port,
-                tools: Arc::new(tools),
+                // Default mode 广告 update_plan。重名在这里确定性失败，而不是留到模型
+                // 某次调用时才暴露成分派歧义。
+                tools: Arc::new(
+                    TurnToolset::new(Arc::new(tools), true)
+                        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?,
+                ),
                 storage: self.storage.clone(),
                 compaction_state: Arc::new(CompactionStateCollector::default()),
                 trace: self.trace.clone(),

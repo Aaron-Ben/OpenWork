@@ -4,6 +4,8 @@ use serde_json::Value;
 use openwork_models::model::ToolResultArtifact;
 use openwork_tools::PermissionMode;
 
+use crate::plan::{PlanStep, TurnPlanSnapshot};
+
 use super::{
     ClientRequestId, PermissionDecision, PermissionRequest, SessionId, ToolCallId, TurnId,
     TurnOutcome,
@@ -63,11 +65,16 @@ pub enum SessionRuntimeSnapshot {
         draft_reasoning: String,
         tool_calls: Vec<LiveToolCall>,
         pending_permission: Option<Box<PermissionRequest>>,
+        plan: Option<TurnPlanSnapshot>,
     },
+    /// Turn 已经结束但仍是同进程可见的最后状态。
+    ///
+    /// 这里也带计划：否则 Turn 刚结束时重连会丢掉卡片，而它明明还在 `turn_plans` 里。
     Terminal {
         turn_id: TurnId,
         client_request_id: ClientRequestId,
         outcome: TurnOutcome,
+        plan: Option<TurnPlanSnapshot>,
     },
 }
 
@@ -125,6 +132,18 @@ pub enum SessionUpdate {
         tool_call_id: ToolCallId,
         decision: PermissionDecision,
         permission_mode: PermissionMode,
+    },
+    /// 当前 Turn 的计划已经变成这个完整快照。
+    ///
+    /// 携带全量而不是增量：前端不需要重放 patch，漏掉一条也能从 Snapshot 或持久层恢复。
+    /// 只在持久化成功之后发送——事件是可丢的投影，不是业务真相。
+    ///
+    /// `updated_at` 带 `+08:00`，与历史计划的字段同形，好让前端对实时与历史用同一套渲染。
+    /// 它也让 Actor 能无损地把事件折进 Snapshot——少了它，快照就得另找时间来源。
+    PlanUpdated {
+        explanation: Option<String>,
+        plan: Vec<PlanStep>,
+        updated_at: String,
     },
     TurnFinished {
         outcome: TurnOutcome,

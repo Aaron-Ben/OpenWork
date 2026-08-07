@@ -23,6 +23,7 @@ mod compaction;
 mod conversation;
 mod internal;
 mod model;
+mod plan;
 mod session;
 mod session_storage;
 mod skill_status;

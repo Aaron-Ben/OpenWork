@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
 use openwork_models::model::ModelPort;
-use openwork_tools::{ApprovalSessionAction, FinalizedToolset, PermissionMode};
+use openwork_tools::{ApprovalSessionAction, PermissionMode};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -26,6 +26,8 @@ use super::{
     SessionRuntimeSnapshot, SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
     ToolCallId, TraceRecorder, TurnAccepted, TurnId,
 };
+use super::toolset::TurnToolset;
+use crate::plan::TurnPlanSnapshot;
 
 const COMMAND_BUFFER: usize = 64;
 const RUNNER_EVENT_BUFFER: usize = 256;
@@ -40,7 +42,7 @@ pub struct SessionRuntimeConfig {
     pub agent: Agent,
     pub chat: ChatStateHandle,
     pub model: Arc<dyn ModelPort>,
-    pub tools: Arc<FinalizedToolset>,
+    pub tools: Arc<TurnToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
     pub trace: Arc<dyn TraceRecorder>,
@@ -332,7 +334,7 @@ struct SessionActor {
     agent: Agent,
     chat: ChatStateHandle,
     model: Arc<dyn ModelPort>,
-    tools: Arc<FinalizedToolset>,
+    tools: Arc<TurnToolset>,
     storage: Arc<dyn SessionStorage>,
     compaction_state: Arc<CompactionStateCollector>,
     reload_required: Arc<AtomicBool>,
@@ -537,6 +539,8 @@ impl SessionActor {
             draft_reasoning: String::new(),
             tool_calls: Vec::new(),
             pending_permission: None,
+            // 新 Turn 从无计划开始，不继承上一个 Turn 的计划。
+            plan: None,
         };
         self.accepted_requests
             .insert(client_request_id.clone(), accepted.clone());
@@ -592,6 +596,9 @@ impl SessionActor {
             model: Arc::clone(&self.model),
             storage: Arc::clone(&self.storage),
             state_collector: Arc::clone(&self.compaction_state),
+            // 手动压缩在 Turn 活动时会被上面的 SessionActive 挡下，所以这里必然没有
+            // 当前计划。传 None 让 collector 结转上次的值，而不是当作一次清空。
+            plan: None,
             reload_required: Arc::clone(&self.reload_required),
             trigger: CompactionTrigger::Manual,
             system_context: None,
@@ -759,10 +766,17 @@ impl SessionActor {
                         outcome: outcome.clone(),
                     },
                 );
+                // Turn 刚结束时同进程重连不该丢掉计划卡：把 Running 里的最后一份快照
+                // 顺延到 Terminal，而不是让 UI 去重新查询。
+                let plan = match &self.snapshot.runtime {
+                    SessionRuntimeSnapshot::Running { plan, .. } => plan.clone(),
+                    _ => None,
+                };
                 self.snapshot.runtime = SessionRuntimeSnapshot::Terminal {
                     turn_id,
                     client_request_id: active.client_request_id,
                     outcome,
+                    plan,
                 };
             }
         }
@@ -787,6 +801,7 @@ impl SessionActor {
             draft_reasoning,
             tool_calls,
             pending_permission,
+            plan,
             ..
         } = &mut self.snapshot.runtime
         else {
@@ -830,6 +845,18 @@ impl SessionActor {
             SessionUpdate::PermissionResolved { .. } => {
                 *phase = SessionPhase::RunningTools;
                 *pending_permission = None;
+            }
+            // 完整替换，绝不与旧步骤按文本合并：事件本身就是一份完整快照。
+            SessionUpdate::PlanUpdated {
+                explanation,
+                plan: steps,
+                updated_at,
+            } => {
+                *plan = Some(TurnPlanSnapshot {
+                    explanation: explanation.clone(),
+                    steps: steps.clone(),
+                    updated_at: updated_at.clone(),
+                });
             }
             SessionUpdate::TurnStarted { .. } | SessionUpdate::TurnFinished { .. } => {}
         }

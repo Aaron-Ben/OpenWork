@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
+use crate::plan::{PlanStateContributor, TurnPlan};
+
 use super::reminder::{ReminderSection, render_system_reminder};
 
 const MAX_EDITED_PATHS: usize = 128;
@@ -55,6 +57,11 @@ pub enum CompactionStateFailurePolicy {
 
 pub struct CompactionStateCollectInput<'a> {
     pub messages: &'a [Message],
+    /// 当前 Turn 的权威计划。
+    ///
+    /// `None` 表示本次压缩没有 Turn 上下文（rewind 路径），contributor 应结转上次的值，
+    /// 而不是把它理解成"计划为空"——两者的区别见 `plan::PlanStateContributor::collect`。
+    pub plan: Option<&'a TurnPlan>,
 }
 
 #[derive(Debug, Error)]
@@ -97,8 +104,11 @@ pub struct CompactionStateCollector {
 
 impl Default for CompactionStateCollector {
     fn default() -> Self {
-        Self::new(vec![Box::new(FileChangeStateContributor)])
-            .expect("built-in compaction state contributor keys are valid")
+        Self::new(vec![
+            Box::new(FileChangeStateContributor),
+            Box::new(PlanStateContributor),
+        ])
+        .expect("built-in compaction state contributor keys are valid")
     }
 }
 
@@ -133,13 +143,14 @@ impl CompactionStateCollector {
         &self,
         messages: &[Message],
     ) -> Result<(CompactionRuntimeState, String), CompactionStateError> {
-        self.collect_with_base(messages, CompactionRuntimeState::default())
+        self.collect_with_base(messages, None, CompactionRuntimeState::default())
             .await
     }
 
     pub async fn collect_with_base(
         &self,
         messages: &[Message],
+        plan: Option<&TurnPlan>,
         mut state: CompactionRuntimeState,
     ) -> Result<(CompactionRuntimeState, String), CompactionStateError> {
         if state.schema_version != 1 {
@@ -147,7 +158,7 @@ impl CompactionStateCollector {
                 state.schema_version,
             ));
         }
-        let input = CompactionStateCollectInput { messages };
+        let input = CompactionStateCollectInput { messages, plan };
         let mut sections = Vec::new();
         state.warnings.clear();
 
@@ -420,6 +431,7 @@ mod tests {
                     tool_message("b.rs", false),
                     tool_message("c.rs", false),
                 ],
+                None,
                 base,
             )
             .await
@@ -449,7 +461,7 @@ mod tests {
         });
 
         let (state, _) = collector
-            .collect_with_base(&[], base)
+            .collect_with_base(&[], None, base)
             .await
             .expect("best effort state");
         assert_eq!(
@@ -465,7 +477,7 @@ mod tests {
             ..CompactionRuntimeState::default()
         };
         assert!(matches!(
-            collector.collect_with_base(&[], unsupported).await,
+            collector.collect_with_base(&[], None, unsupported).await,
             Err(CompactionStateError::UnsupportedRuntimeStateVersion(2))
         ));
     }

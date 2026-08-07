@@ -12,7 +12,7 @@ use openwork_models::model::{
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
-    Authorization, DecisionSource, FinalizedToolset, ToolCallContext as RuntimeToolCallContext,
+    Authorization, DecisionSource, ToolCallContext as RuntimeToolCallContext,
     ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation,
     ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent, ToolResultStatus,
     ToolValidationError,
@@ -24,7 +24,14 @@ use uuid::Uuid;
 
 use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
+use crate::plan::{
+    TurnPlan, UPDATE_PLAN_PROMPT_RULES, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments,
+    update_plan_success_output, validate_args,
+};
 use crate::skills::SkillRoots;
+use crate::storage::time::china_now;
+
+use super::toolset::{ResolvedTurnTool, TurnToolset};
 
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
@@ -50,7 +57,7 @@ pub(super) struct TurnRunRequest {
     pub agent: Agent,
     pub chat: ChatStateHandle,
     pub model: Arc<dyn ModelPort>,
-    pub tools: Arc<FinalizedToolset>,
+    pub tools: Arc<TurnToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
     pub compaction_policy: AutomaticCompactionPolicy,
@@ -84,6 +91,8 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
         request,
         repeated_tool: None,
         last_model_call: None,
+        // 新 Turn 从无计划开始，不继承上一个 Turn 的计划。
+        current_plan: None,
     };
 
     let outcome = match runner.begin().await {
@@ -92,7 +101,14 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
                 Ok(final_text) => TurnOutcome::Completed { final_text },
                 Err(error) => error.into_outcome(),
             };
-            match storage.finish_turn(&turn_id, &outcome).await {
+            // §15.1 的观测信号。这里读的是 Turn 真正结束那一刻的计划，不管 Turn 是
+            // 完成、失败还是被取消 —— 后两种留下未完成步骤是正确的，靠 turns.status
+            // 在查询时区分，而不是在这里提前过滤掉。
+            let unfinished_plan_steps = runner.unfinished_plan_steps();
+            match storage
+                .finish_turn(&turn_id, &outcome, unfinished_plan_steps)
+                .await
+            {
                 Ok(()) => outcome,
                 Err(message) => TurnOutcome::Failed {
                     code: "persistence_error".to_string(),
@@ -117,6 +133,11 @@ struct TurnRunner {
     /// by a Model Call that already failed, so its Span and input estimate are
     /// no longer reachable through the call's return value.
     last_model_call: Option<SubmittedModelCall>,
+    /// 这个 Turn 的当前计划，由成功的 `update_plan` 调用维护。
+    ///
+    /// 压缩要在 Turn 中途把它重新投影给模型，直接从这里取，不回查数据库：提交路径已经
+    /// 保证了内存与 `turn_plans` 一致，而压缩正好可能把原来的 Tool Call 移出投影。
+    current_plan: Option<TurnPlan>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +173,29 @@ impl TurnRunner {
         Ok(())
     }
 
+    /// Turn 收尾时还没标成 `completed` 的计划步骤数。
+    ///
+    /// `None` 表示这个 Turn 从头到尾没建过计划 —— 简单任务本来就不该建，那是正常的。
+    /// 它与 `Some(0)`（建了并且全部收尾）必须分开，否则统计"规则生效率"时分母就错了。
+    fn unfinished_plan_steps(&self) -> Option<usize> {
+        self.current_plan
+            .as_ref()
+            .map(TurnPlan::unfinished_step_count)
+    }
+
+    /// Agent 的系统提示，外加当前工具面所需的行为规则。
+    ///
+    /// 计划规则跟着工具走：`update_plan` 没被广告时不能出现，否则提示里会讲一个模型
+    /// 调用不到的工具。
+    fn system_prompt(&self) -> String {
+        let base = self.request.agent.system_prompt();
+        if self.request.tools.update_plan_enabled() {
+            format!("{base}\n\n{UPDATE_PLAN_PROMPT_RULES}")
+        } else {
+            base.to_string()
+        }
+    }
+
     async fn run_loop(&mut self) -> Result<String, TurnRunError> {
         self.ensure_not_cancelled()?;
         let system_context = SystemContextBuilder::new(
@@ -159,7 +203,7 @@ impl TurnRunner {
             self.request.skill_roots.clone(),
         )
         .with_disabled_skills(self.request.disabled_skill_names.clone())
-        .build(self.request.agent.system_prompt())
+        .build(&self.system_prompt())
         .await?;
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
@@ -392,6 +436,7 @@ impl TurnRunner {
             model: Arc::clone(&self.request.model),
             storage: Arc::clone(&self.request.storage),
             state_collector: Arc::clone(&self.request.compaction_state),
+            plan: self.current_plan.clone(),
             reload_required: Arc::clone(&self.request.reload_required),
             trigger,
             system_context: Some(system_context.clone()),
@@ -523,23 +568,39 @@ impl TurnRunner {
             .await?;
 
         let invocation = ToolInvocation::new(&call.name, input.clone());
-        let resolved_tool_name = match self.request.tools.validate(&invocation) {
-            Ok(definition) => {
-                let name = definition.id.to_string();
-                tool_trace.set_resolved_tool_name(&name);
-                name
-            }
-            Err(error) => {
-                let code = match error {
-                    ToolValidationError::UnknownTool(_) => ToolErrorCode::ToolNotFound,
-                    ToolValidationError::InvalidInput(_) => ToolErrorCode::InvalidArguments,
-                };
-                let result = ToolResult::failed(code, error.to_string(), false);
+
+        // 一次解析，之后按类型分派。控制工具与普通工具从这里开始走两条路：前者提交 Turn
+        // 状态，后者经 PermissionEngine 访问主机能力。后续步骤不再比较工具名字符串。
+        let resolved = self.request.tools.resolve(&call.name);
+        let is_control_tool = matches!(resolved, Some(ResolvedTurnTool::UpdatePlan));
+        let resolved_tool_name = match resolved {
+            Some(ResolvedTurnTool::UpdatePlan) => UPDATE_PLAN_TOOL_NAME.to_string(),
+            Some(ResolvedTurnTool::Registered(id)) => id.to_string(),
+            None => {
+                let error = ToolValidationError::UnknownTool(call.name.clone());
+                let result =
+                    ToolResult::failed(ToolErrorCode::ToolNotFound, error.to_string(), false);
                 return self
                     .append_tool_result(call, tool_call_id, result, tool_trace)
                     .await;
             }
         };
+        tool_trace.set_resolved_tool_name(&resolved_tool_name);
+
+        // 入参校验只对普通工具走注册表的 schema；控制工具的参数由 plan 模块自己解析，
+        // 因为它要区分"JSON 不合法"和"违反领域不变量"两种失败。
+        if !is_control_tool
+            && let Err(error) = self.request.tools.registered().validate(&invocation)
+        {
+            let code = match error {
+                ToolValidationError::UnknownTool(_) => ToolErrorCode::ToolNotFound,
+                ToolValidationError::InvalidInput(_) => ToolErrorCode::InvalidArguments,
+            };
+            let result = ToolResult::failed(code, error.to_string(), false);
+            return self
+                .append_tool_result(call, tool_call_id, result, tool_trace)
+                .await;
+        }
 
         let canonical_input = serde_json::to_string(&input).unwrap_or_else(|_| call.input.clone());
         if self.is_doom_loop(&call.name, &canonical_input) {
@@ -561,7 +622,16 @@ impl TurnRunner {
             },
             permission_state.mode_origin().as_str(),
         );
-        let permit = match self.request.tools.authorize(
+
+        // 控制工具在这里分流：它不访问主机能力，也不改工作区，所以不进 PermissionEngine。
+        // 免审批由这条类型化分支表达，而不是给它伪造一个 ToolRisk::ReadOnly——后者会让
+        // 权限日志把"Core 控制工具"和"被内置规则放行的只读工具"混为一谈。
+        if is_control_tool {
+            return self
+                .run_update_plan(call, tool_call_id, &input, tool_trace)
+                .await;
+        }
+        let permit = match self.request.tools.registered().authorize(
             &invocation,
             permission_state.mode(),
             permission_state.session_rules(),
@@ -695,7 +765,7 @@ impl TurnRunner {
             self.request.cancel.child_token(),
         )
         .with_progress_sender(progress_tx);
-        let tools = Arc::clone(&self.request.tools);
+        let tools = Arc::clone(self.request.tools.registered());
         let execution_started = Instant::now();
         let mut execution = Box::pin(tools.call(call_context, invocation, permit));
         let mut progress_open = true;
@@ -730,6 +800,75 @@ impl TurnRunner {
             return Err(TurnRunError::Cancelled);
         }
         Ok(())
+    }
+
+    /// 执行一次 `update_plan`。
+    ///
+    /// 顺序（见 `docs/update-plan.md` §7）：解析校验 → 单事务提交计划与成功 Tool Result
+    /// → Chat State → 内存中的 current_plan → PlanUpdated → ToolCallFinished。
+    /// 任何一步失败都不能留下"计划变了但历史里没有对应结果"的状态。
+    async fn run_update_plan(
+        &mut self,
+        call: &ToolCallBlock,
+        tool_call_id: ToolCallId,
+        input: &serde_json::Value,
+        mut tool_trace: ToolCallTraceGuard,
+    ) -> Result<(), TurnRunError> {
+        tool_trace.record_permission_policy("allow");
+        // `control_tool` 是一个独立的来源，不复用 `builtin`：事故复盘要能区分
+        // "它是 Core 控制工具，本来就不过权限"和"它被一条内置规则放行了"。
+        tool_trace.record_permission_decision("allow", "control_tool");
+
+        let plan = match parse_update_plan_arguments(input)
+            .and_then(|args| {
+                validate_args(&self.request.turn_id, args, china_now())
+                    .map_err(|error| error.to_string())
+            }) {
+            Ok(plan) => plan,
+            Err(message) => {
+                // 校验失败必须整体失败：不写 turn_plans，已有计划保持不变，模型拿到一条
+                // 说明得够清楚、能据此改正重试的失败结果。
+                let result =
+                    ToolResult::failed(ToolErrorCode::InvalidArguments, message, false);
+                return self
+                    .append_tool_result(call, tool_call_id, result, tool_trace)
+                    .await;
+            }
+        };
+
+        let result = ToolResult::succeeded(update_plan_success_output());
+        let message = tool_result_message(call, &result);
+        if let Err(error) = self
+            .request
+            .storage
+            .commit_plan_update(&self.request.turn_id, &plan, &message)
+            .await
+        {
+            tool_trace.finish_result(&result, false);
+            return Err(TurnRunError::Persistence(error));
+        }
+        tool_trace.finish_result(&result, true);
+
+        self.request.chat.append_tool_result(message).await?;
+        let snapshot = plan.to_snapshot();
+        self.current_plan = Some(plan);
+
+        self.update(SessionUpdate::PlanUpdated {
+            explanation: snapshot.explanation,
+            plan: snapshot.steps,
+            updated_at: snapshot.updated_at,
+        })
+        .await?;
+        self.update(SessionUpdate::ToolCallFinished {
+            tool_call_id,
+            provider_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            status: tool_status_name(result.status).to_string(),
+            output: result.text_content(),
+            is_error: result.is_error(),
+            artifacts: result.artifacts.clone(),
+        })
+        .await
     }
 
     fn start_tool_trace(
