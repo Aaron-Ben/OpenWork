@@ -17,6 +17,10 @@ export const zhCN = {
   sidebar: {
     brand: 'OpenWork',
     projects: '项目',
+    newConversation: '新建对话',
+    newConversationHint: '先打开一个文件夹',
+    sessionRunning: '运行中',
+    projectSessionCount: '{{count}} 个会话',
     openFolder: '打开文件夹',
     emptyProjects: '点击“+”打开一个文件夹',
     projectActions: '{{name}} 项目操作',

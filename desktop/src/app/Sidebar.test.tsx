@@ -17,7 +17,8 @@ describe('Sidebar', () => {
     expect(markup).toContain('OpenWork')
     expect(markup).not.toContain('>OW<')
     expect(markup).toContain('data-tauri-drag-region="deep"')
-    expect(markup).toContain('项目')
+    // 稿件的侧栏直接从项目分组开始，没有"项目"这一行标题。
+    expect(markup).not.toContain('>项目<')
     expect(markup).toContain('OpenWork')
     expect(markup).toContain('aria-label="打开文件夹"')
     expect(markup).not.toContain('aria-label="项目菜单"')
@@ -33,12 +34,44 @@ describe('Sidebar', () => {
     expect(markup).not.toContain('h-screen')
   })
 
+  it('leads with a new-conversation button, disabled until a project is open', () => {
+    const markup = renderToStaticMarkup(
+      <Sidebar
+        view="chat"
+        expanded
+        onToggleExpanded={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('data-new-conversation-row="true"')
+    expect(markup).toContain('新建对话')
+    expect(markup).toContain('title="先打开一个文件夹"')
+    // 没有打开的项目就没有地方放新会话，按钮必须是禁用的而不是点了没反应。
+    expect(markup).toContain('disabled=""')
+  })
+
+  it('carries no search affordance until search actually exists', () => {
+    const markup = renderToStaticMarkup(
+      <Sidebar
+        view="chat"
+        expanded
+        onToggleExpanded={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    )
+
+    expect(markup).not.toContain('lucide-search')
+    expect(markup).not.toContain('搜索')
+  })
+
   it('renders project actions without a destructive filesystem action', () => {
     const markup = renderToStaticMarkup(
       <ProjectItem
         project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
         active
         expanded
+        sessionCount={3}
         onSelect={vi.fn()}
         onRemove={vi.fn()}
         onCreateSession={vi.fn()}
@@ -49,8 +82,66 @@ describe('Sidebar', () => {
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-label="OpenWork 项目操作"')
     expect(markup).toContain('aria-label="在 OpenWork 中创建会话"')
+    expect(markup).toContain('>3<')
     expect(markup).not.toContain('disabled=""')
     expect(markup).not.toContain('删除电脑上的项目')
+  })
+
+  it('tints the project dot by whether anything under it is running', () => {
+    const empty = renderToStaticMarkup(
+      <ProjectItem
+        project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
+        active
+        expanded
+        onSelect={vi.fn()}
+        onRemove={vi.fn()}
+        onCreateSession={vi.fn()}
+      />,
+    )
+    const idle = renderToStaticMarkup(
+      <ProjectItem
+        project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
+        active
+        expanded
+        sessionCount={3}
+        onSelect={vi.fn()}
+        onRemove={vi.fn()}
+        onCreateSession={vi.fn()}
+      />,
+    )
+    const running = renderToStaticMarkup(
+      <ProjectItem
+        project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
+        active
+        expanded
+        running
+        sessionCount={3}
+        onSelect={vi.fn()}
+        onRemove={vi.fn()}
+        onCreateSession={vi.fn()}
+      />,
+    )
+
+    expect(empty).toContain('bg-ink-faint/45')
+    expect(idle).toContain('bg-status-success')
+    expect(running).toContain('bg-clay')
+  })
+
+  it('keeps the project actions hidden until hover so the count stays readable', () => {
+    const markup = renderToStaticMarkup(
+      <ProjectItem
+        project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
+        active
+        expanded
+        sessionCount={3}
+        onSelect={vi.fn()}
+        onRemove={vi.fn()}
+        onCreateSession={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('opacity-0 transition group-hover:opacity-100')
+    expect(markup).toContain('font-semibold')
   })
 
   it('fully hides its navigation when collapsed', () => {

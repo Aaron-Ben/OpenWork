@@ -7,6 +7,8 @@ export const zhTW = {
   },
   sidebar: {
     brand: 'OpenWork', projects: '專案', openFolder: '開啟資料夾', emptyProjects: '點選「+」開啟資料夾',
+    newConversation: '建立對話', newConversationHint: '請先開啟一個資料夾', sessionRunning: '執行中',
+    projectSessionCount: '{{count}} 個對話',
     projectActions: '{{name}} 專案操作', removeProject: '從側欄移除專案', newSessionInProject: '在 {{name}} 中建立對話',
     emptyProjectSessions: '暫無對話', sessions: '對話', emptySessions: '暫無對話', newSession: '建立對話',
     untitledSession: '新對話', settings: '設定', backToApp: '返回 OpenWork', settingsNavigation: '設定導覽',

@@ -7,6 +7,8 @@ export const enUS = {
   },
   sidebar: {
     brand: 'OpenWork', projects: 'Projects', openFolder: 'Open folder', emptyProjects: 'Select “+” to open a folder',
+    newConversation: 'New conversation', newConversationHint: 'Open a folder first', sessionRunning: 'Running',
+    projectSessionCount: '{{count}} conversations',
     projectActions: '{{name}} project actions', removeProject: 'Remove project from sidebar',
     newSessionInProject: 'New conversation in {{name}}', emptyProjectSessions: 'No conversations yet',
     sessions: 'Conversations', emptySessions: 'No conversations yet', newSession: 'New conversation',

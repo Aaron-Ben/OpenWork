@@ -10,7 +10,6 @@ export interface OpenedProject {
 interface StoredProjects {
   projects: OpenedProject[]
   activeProjectPath: string | null
-  projectsExpanded: boolean
   collapsedProjectPaths: string[]
 }
 
@@ -18,7 +17,6 @@ interface ProjectStoreState extends StoredProjects {
   openDirectory: (path: string) => OpenedProject | null
   selectProject: (path: string) => void
   removeProject: (path: string) => void
-  toggleProjects: () => void
   toggleProject: (path: string) => void
   expandProject: (path: string) => void
 }
@@ -59,7 +57,6 @@ function readStoredProjects(): StoredProjects {
   const fallback: StoredProjects = {
     projects: [],
     activeProjectPath: null,
-    projectsExpanded: true,
     collapsedProjectPaths: [],
   }
   if (typeof localStorage === 'undefined') return fallback
@@ -78,7 +75,6 @@ function readStoredProjects(): StoredProjects {
     return {
       projects,
       activeProjectPath,
-      projectsExpanded: value.projectsExpanded !== false,
       collapsedProjectPaths: Array.isArray(value.collapsedProjectPaths)
         ? value.collapsedProjectPaths.filter(
             (path): path is string =>
@@ -106,7 +102,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const next: StoredProjects = {
       projects: addOpenedProject(get().projects, project),
       activeProjectPath: project.path,
-      projectsExpanded: true,
       collapsedProjectPaths: get().collapsedProjectPaths.filter(
         (path) => path !== project.path,
       ),
@@ -120,7 +115,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const next: StoredProjects = {
       projects: get().projects,
       activeProjectPath: path,
-      projectsExpanded: get().projectsExpanded,
       collapsedProjectPaths: get().collapsedProjectPaths,
     }
     saveStoredProjects(next)
@@ -133,18 +127,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const next: StoredProjects = {
       projects,
       activeProjectPath,
-      projectsExpanded: get().projectsExpanded,
       collapsedProjectPaths: get().collapsedProjectPaths.filter((item) => item !== path),
-    }
-    saveStoredProjects(next)
-    set(next)
-  },
-  toggleProjects: () => {
-    const next: StoredProjects = {
-      projects: get().projects,
-      activeProjectPath: get().activeProjectPath,
-      projectsExpanded: !get().projectsExpanded,
-      collapsedProjectPaths: get().collapsedProjectPaths,
     }
     saveStoredProjects(next)
     set(next)
@@ -154,7 +137,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const next: StoredProjects = {
       projects: get().projects,
       activeProjectPath: get().activeProjectPath,
-      projectsExpanded: get().projectsExpanded,
       collapsedProjectPaths: toggleCollapsedProject(get().collapsedProjectPaths, path),
     }
     saveStoredProjects(next)
@@ -165,7 +147,6 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     const next: StoredProjects = {
       projects: get().projects,
       activeProjectPath: get().activeProjectPath,
-      projectsExpanded: true,
       collapsedProjectPaths: get().collapsedProjectPaths.filter((item) => item !== path),
     }
     saveStoredProjects(next)

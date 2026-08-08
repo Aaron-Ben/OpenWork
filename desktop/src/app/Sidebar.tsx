@@ -99,7 +99,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
         <Button
           type="button"
           variant="ghost"
-          className="h-8 w-full justify-start rounded-xl px-3"
+          className="h-9 w-full justify-start rounded-xl px-3"
           aria-label={t('sidebar.settings')}
           title={t('sidebar.settings')}
           onClick={() => onNavigate('settings-models')}
