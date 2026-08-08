@@ -311,6 +311,8 @@ impl AgentControl {
     pub async fn deliver_to_parent(
         &self,
         parent_session_id: &SessionId,
+        child_session_id: &SessionId,
+        child_turn_id: &crate::session::TurnId,
         task_name: &str,
         kind: AgentMessageKind,
         body: &str,
@@ -325,7 +327,13 @@ impl AgentControl {
             .await
             .map_err(AgentControlError::ParentSessionUnavailable)?;
         parent
-            .deliver_agent_message(task_name, kind, body)
+            .deliver_agent_message(
+                child_session_id.clone(),
+                child_turn_id.clone(),
+                task_name,
+                kind,
+                body,
+            )
             .await
             .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))
     }

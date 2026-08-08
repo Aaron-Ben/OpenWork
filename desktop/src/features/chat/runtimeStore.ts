@@ -21,6 +21,7 @@ export interface RuntimeApplyResult {
 
 interface RuntimeStoreState {
   bySession: Record<string, SessionRuntimeView>
+  subAgentParentBySession: Record<string, string>
   beginTurn: (sessionId: string, clientRequestId: string, text: string) => boolean
   acceptTurn: (sessionId: string, clientRequestId: string, turnId: string) => void
   failTurnStart: (sessionId: string, clientRequestId: string, message: string) => void
@@ -31,13 +32,15 @@ interface RuntimeStoreState {
   markSyncFailed: (sessionId: string, message: string) => void
   setError: (sessionId: string, message: string | null) => void
   setPermissionMode: (sessionId: string, mode: RuntimePermissionMode) => void
-  reconcileCanonical: (sessionId: string) => void
+  reconcileCanonical: (sessionId: string, preserveTerminal?: boolean) => void
+  registerSubAgents: (parentSessionId: string, childSessionIds: string[]) => void
   clearSession: (sessionId: string) => void
 }
 
 function reduceRuntimeUpdates(
   previous: SessionRuntimeView,
   envelopes: RuntimeSessionUpdateEnvelope[],
+  isSubAgent: boolean,
 ): { next: SessionRuntimeView; result: RuntimeApplyResult } {
   let next = previous
   let duplicate = false
@@ -48,7 +51,7 @@ function reduceRuntimeUpdates(
   for (const envelope of envelopes) {
     duplicate ||= envelope.sequence <= next.lastSequence
     sequenceGap ||= envelope.sequence > next.lastSequence + 1
-    next = reduceSessionUpdate(next, envelope)
+    next = reduceSessionUpdate(next, envelope, isSubAgent)
     terminal ||= envelope.update.type === 'turn_finished'
     draftCleared ||= envelope.update.type === 'draft_cleared'
   }
@@ -62,6 +65,7 @@ function viewFor(state: RuntimeStoreState, sessionId: string): SessionRuntimeVie
 
 export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
   bySession: {},
+  subAgentParentBySession: {},
 
   beginTurn: (sessionId, clientRequestId, text) => {
     const current = viewFor(get(), sessionId)
@@ -135,7 +139,11 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
 
   apply: (envelope) => {
     const previous = viewFor(get(), envelope.sessionId)
-    const { next, result } = reduceRuntimeUpdates(previous, [envelope])
+    const { next, result } = reduceRuntimeUpdates(
+      previous,
+      [envelope],
+      envelope.sessionId in get().subAgentParentBySession,
+    )
     if (next !== previous) {
       set((state) => ({
         bySession: { ...state.bySession, [envelope.sessionId]: next },
@@ -153,7 +161,11 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
       throw new Error('runtime update batch must contain exactly one session')
     }
     const previous = viewFor(get(), sessionId)
-    const { next, result } = reduceRuntimeUpdates(previous, envelopes)
+    const { next, result } = reduceRuntimeUpdates(
+      previous,
+      envelopes,
+      sessionId in get().subAgentParentBySession,
+    )
     if (next !== previous) {
       set((state) => ({
         bySession: { ...state.bySession, [sessionId]: next },
@@ -211,10 +223,13 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
     }))
   },
 
-  reconcileCanonical: (sessionId) => {
+  reconcileCanonical: (sessionId, preserveTerminal = false) => {
     set((state) => {
       const current = viewFor(state, sessionId)
-      const terminalReconciled = current.phase === 'idle' && current.terminal !== null
+      const terminalReconciled = current.phase === 'idle'
+        && current.terminal !== null
+        && !preserveTerminal
+        && !(sessionId in state.subAgentParentBySession)
       return {
         bySession: {
           ...state.bySession,
@@ -239,11 +254,49 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
     })
   },
 
+  registerSubAgents: (parentSessionId, childSessionIds) => {
+    const currentChildren = new Set(childSessionIds)
+    set((state) => {
+      const subAgentParentBySession = { ...state.subAgentParentBySession }
+      for (const [childSessionId, parent] of Object.entries(subAgentParentBySession)) {
+        if (parent === parentSessionId && !currentChildren.has(childSessionId)) {
+          delete subAgentParentBySession[childSessionId]
+        }
+      }
+      for (const childSessionId of childSessionIds) {
+        subAgentParentBySession[childSessionId] = parentSessionId
+      }
+
+      const bySession = { ...state.bySession }
+      for (const childSessionId of childSessionIds) {
+        const current = bySession[childSessionId]
+        if (!current) continue
+        bySession[childSessionId] = {
+          ...current,
+          assistantDraft: null,
+          toolCalls: {},
+          orderedToolCallIds: [],
+          pendingPermission: null,
+          plan: null,
+        }
+      }
+      return { bySession, subAgentParentBySession }
+    })
+  },
+
   clearSession: (sessionId) => {
     set((state) => {
       const bySession = { ...state.bySession }
-      delete bySession[sessionId]
-      return { bySession }
+      const subAgentParentBySession = { ...state.subAgentParentBySession }
+      const removedSessionIds = new Set([sessionId])
+      for (const [childSessionId, parentSessionId] of Object.entries(subAgentParentBySession)) {
+        if (childSessionId === sessionId || parentSessionId === sessionId) {
+          removedSessionIds.add(childSessionId)
+          delete subAgentParentBySession[childSessionId]
+        }
+      }
+      for (const removedSessionId of removedSessionIds) delete bySession[removedSessionId]
+      return { bySession, subAgentParentBySession }
     })
   },
 }))

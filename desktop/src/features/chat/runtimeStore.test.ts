@@ -15,7 +15,47 @@ function textUpdate(sessionId: string, turnId: string, text: string): RuntimeSes
 }
 
 describe('runtimeStore', () => {
-  beforeEach(() => useRuntimeStore.setState({ bySession: {} }))
+  beforeEach(() => useRuntimeStore.setState({ bySession: {}, subAgentParentBySession: {} }))
+
+  it('routes child updates through the status-only reducer', () => {
+    const store = useRuntimeStore.getState()
+    store.registerSubAgents('parent-1', ['child-1'])
+    store.apply({
+      version: 1,
+      sessionId: 'child-1',
+      turnId: 'child-turn',
+      sequence: 1,
+      occurredAtMs: 100,
+      update: { type: 'turn_started', clientRequestId: 'child-request' },
+    })
+    store.apply({
+      version: 1,
+      sessionId: 'child-1',
+      turnId: 'child-turn',
+      sequence: 2,
+      occurredAtMs: 200,
+      update: { type: 'text_delta', delta: 'discard me' },
+    })
+    store.apply({
+      version: 1,
+      sessionId: 'child-1',
+      turnId: 'child-turn',
+      sequence: 3,
+      occurredAtMs: 300,
+      update: { type: 'turn_finished', outcome: { status: 'completed', finalText: 'keep me' } },
+    })
+    store.reconcileCanonical('child-1')
+
+    expect(useRuntimeStore.getState().bySession['child-1']).toMatchObject({
+      lastSequence: 3,
+      phase: 'idle',
+      assistantDraft: null,
+      toolCalls: {},
+      terminal: { status: 'completed', finalText: 'keep me' },
+      startedAtMs: 100,
+      endedAtMs: 300,
+    })
+  })
 
   it('allows two sessions to hold independent active turns', () => {
     const store = useRuntimeStore.getState()

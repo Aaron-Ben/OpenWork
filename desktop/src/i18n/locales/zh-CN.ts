@@ -150,6 +150,17 @@ export const zhCN = {
         completed: '已完成',
       },
     },
+    subAgents: {
+      title: '子 Agent',
+      listFailed: '无法读取子 Agent：{{reason}}',
+      loadingTranscript: '正在读取只读对话记录……',
+      transcriptFailed: '无法读取对话记录：{{reason}}',
+      emptyTranscript: '暂无持久化对话记录。',
+      cancelledSummary: '子 Agent Turn 已取消。',
+      status: {
+        idle: '空闲', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消',
+      },
+    },
     contextPanel: {
       title: '上下文窗口',
       expand: '展开上下文分类', collapse: '收起上下文分类',

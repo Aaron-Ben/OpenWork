@@ -5,9 +5,11 @@ use async_trait::async_trait;
 
 use openwork_core::{
     API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, CredentialResolver, ModelInput, OpenWorkCore,
-    OpenWorkCoreConfig, PermissionDecision, ProviderInput, RuntimeTurnId, SessionId, SessionInput,
-    SessionUpdate, SubAgentHost, SubAgentSpec, ToolCallId, TurnOutcome,
+    OpenWorkCoreConfig, PermissionDecision, ProviderInput, ResolvedModel, RuntimeTurnId, SessionId,
+    SessionInput, SessionStorage, SessionUpdate, SessionUpdateEnvelope, SubAgentHost,
+    SubAgentSessionInput, SubAgentSpec, ToolCallId, TurnOutcome,
 };
+use openwork_models::model::{Message, Role};
 use openwork_models::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel};
 use uuid::Uuid;
 
@@ -22,6 +24,24 @@ impl CredentialResolver for FixedCredential {
     async fn resolve(&self, _reference: &str) -> Result<ApiCredential, String> {
         Ok(ApiCredential::new("test-credential"))
     }
+}
+
+async fn wait_for_turn_finished(
+    updates: &mut tokio::sync::broadcast::Receiver<SessionUpdateEnvelope>,
+    session_id: &SessionId,
+) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let update = updates.recv().await.expect("runtime update");
+            if update.session_id == *session_id
+                && matches!(update.update, SessionUpdate::TurnFinished { .. })
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("parent turn must finish");
 }
 
 #[tokio::test]
@@ -89,7 +109,7 @@ async fn production_host_persists_and_starts_an_idle_explorer_session() {
         handle.snapshot().await.expect("snapshot").runtime,
         openwork_core::session::SessionRuntimeSnapshot::Idle
     ));
-    let children = storage
+    let children = core
         .list_sub_agent_sessions(&parent_session_id)
         .await
         .expect("children");
@@ -113,9 +133,228 @@ async fn production_host_persists_and_starts_an_idle_explorer_session() {
         .collect::<Vec<_>>();
     assert_eq!(child_tool_names, ["read", "grep", "glob", "list", "bash"]);
 
+    let retained_child_handle = handle.clone();
     core.delete_session(&parent_session_id)
         .await
         .expect("cleanup parent and child");
+    assert!(matches!(
+        retained_child_handle.snapshot().await,
+        Err(openwork_core::SessionError::ActorStopped)
+    ));
+    assert!(
+        SubAgentHost::session_handle(core.as_ref(), &child_session_id)
+            .await
+            .is_err(),
+        "deleting a parent must remove its child handle from the Core map"
+    );
+}
+
+#[tokio::test]
+async fn parent_next_turn_reconciles_restart_results_exactly_once() {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
+    let storage = Arc::new(
+        openwork_core::PostgresStorage::connect(Some(&database_url))
+            .await
+            .expect("storage"),
+    );
+    storage.migrate().await.expect("migrations");
+    let model_id = unique("model-reconciliation");
+    storage
+        .upsert_model(&ModelInput {
+            id: model_id.clone(),
+            display_name: "Reconciliation test".to_string(),
+            provider_kind: "deepseek".to_string(),
+            model_name: unique("reconciliation-model"),
+            base_url: "http://127.0.0.1:9".to_string(),
+            credential_ref: Some("test:credential".to_string()),
+            enabled: true,
+            config: serde_json::json!({}),
+        })
+        .await
+        .expect("model");
+    let parent_session_id = SessionId::new(unique("session-reconciliation-parent"));
+    storage
+        .create_session(&SessionInput {
+            id: parent_session_id.clone(),
+            title: Some("Reconciliation parent".to_string()),
+            working_directory: std::env::current_dir()
+                .expect("cwd")
+                .to_string_lossy()
+                .into_owned(),
+            default_model_id: Some(model_id),
+        })
+        .await
+        .expect("parent");
+
+    let completed_session_id = SessionId::new(unique("session-reconciliation-completed"));
+    let completed = storage
+        .create_sub_agent_session(&SubAgentSessionInput {
+            id: completed_session_id.clone(),
+            parent_session_id: parent_session_id.clone(),
+            task_name: "completed_lookup".to_string(),
+            agent_role: "explorer".to_string(),
+            working_directory: std::env::current_dir()
+                .expect("cwd")
+                .to_string_lossy()
+                .into_owned(),
+            default_model_id: None,
+            spawn_span_id: None,
+        })
+        .await
+        .expect("completed child");
+    let completed_turn_id = RuntimeTurnId::new(unique("turn-reconciliation-completed"));
+    storage
+        .begin_turn(
+            &SessionId::new(completed.id),
+            &completed_turn_id,
+            &ClientRequestId::new(unique("request-reconciliation-completed")),
+            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &[],
+            &Message::text(Role::User, "inspect completion"),
+        )
+        .await
+        .expect("completed turn start");
+    storage
+        .append_assistant_message(
+            &completed_turn_id,
+            &Message::text(Role::Assistant, "persisted completed result"),
+            None,
+        )
+        .await
+        .expect("completed assistant");
+    storage
+        .finish_turn(
+            &completed_turn_id,
+            &TurnOutcome::Completed {
+                final_text: "persisted completed result".to_string(),
+            },
+            None,
+        )
+        .await
+        .expect("completed turn finish");
+
+    let interrupted_session_id = SessionId::new(unique("session-reconciliation-interrupted"));
+    let interrupted = storage
+        .create_sub_agent_session(&SubAgentSessionInput {
+            id: interrupted_session_id.clone(),
+            parent_session_id: parent_session_id.clone(),
+            task_name: "interrupted_lookup".to_string(),
+            agent_role: "explorer".to_string(),
+            working_directory: std::env::current_dir()
+                .expect("cwd")
+                .to_string_lossy()
+                .into_owned(),
+            default_model_id: None,
+            spawn_span_id: None,
+        })
+        .await
+        .expect("interrupted child");
+    let interrupted_turn_id = RuntimeTurnId::new(unique("turn-reconciliation-interrupted"));
+    storage
+        .begin_turn(
+            &SessionId::new(interrupted.id),
+            &interrupted_turn_id,
+            &ClientRequestId::new(unique("request-reconciliation-interrupted")),
+            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &[],
+            &Message::text(Role::User, "inspect interruption"),
+        )
+        .await
+        .expect("interrupted turn start");
+
+    let core = OpenWorkCore::from_storage_with_credentials(
+        Arc::clone(&storage),
+        Arc::new(FixedCredential),
+    )
+    .await
+    .expect("core restart");
+    let orphan_session_id = SessionId::new(unique("session-reconciliation-orphan"));
+    SubAgentHost::start_sub_agent(
+        core.as_ref(),
+        SubAgentSpec {
+            session_id: orphan_session_id.clone(),
+            parent_session_id: parent_session_id.clone(),
+            task_name: "orphan_lookup".to_string(),
+            agent_role: "explorer".to_string(),
+            spawn_span_id: None,
+        },
+    )
+    .await
+    .expect("orphan child session");
+    let orphan_handle = SubAgentHost::session_handle(core.as_ref(), &orphan_session_id)
+        .await
+        .expect("orphan handle");
+    let parent_turns_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+            .bind(parent_session_id.as_str())
+            .fetch_one(storage.pool())
+            .await
+            .expect("parent turn count");
+    assert_eq!(
+        parent_turns_before, 0,
+        "restart alone must not start a parent turn"
+    );
+
+    let mut updates = core.subscribe_updates();
+    core.start_turn(
+        &parent_session_id,
+        ClientRequestId::new(unique("request-reconciliation-parent-first")),
+        vec![openwork_core::UserInput::text("continue after restart")],
+        None,
+    )
+    .await
+    .expect("first parent turn");
+    assert!(matches!(
+        orphan_handle.snapshot().await,
+        Err(openwork_core::SessionError::ActorStopped)
+    ));
+    assert!(
+        SubAgentHost::session_handle(core.as_ref(), &orphan_session_id)
+            .await
+            .is_err()
+    );
+    assert!(
+        storage
+            .load_session(&orphan_session_id)
+            .await
+            .expect("load orphan after reconciliation")
+            .is_none()
+    );
+    wait_for_turn_finished(&mut updates, &parent_session_id).await;
+
+    core.start_turn(
+        &parent_session_id,
+        ClientRequestId::new(unique("request-reconciliation-parent-second")),
+        vec![openwork_core::UserInput::text("continue again")],
+        None,
+    )
+    .await
+    .expect("second parent turn");
+    wait_for_turn_finished(&mut updates, &parent_session_id).await;
+
+    for message_id in [
+        format!(
+            "agent-msg:{}:{}:final_answer",
+            completed_session_id, completed_turn_id
+        ),
+        format!(
+            "agent-msg:{}:{}:interrupted",
+            interrupted_session_id, interrupted_turn_id
+        ),
+    ] {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE id = $1")
+            .bind(message_id)
+            .fetch_one(storage.pool())
+            .await
+            .expect("agent message count");
+        assert_eq!(count, 1, "reconciliation result must be persisted once");
+    }
+
+    core.delete_session(&parent_session_id)
+        .await
+        .expect("cleanup parent");
 }
 
 #[tokio::test]

@@ -73,6 +73,40 @@ pub struct SessionRecord {
     pub spawn_span_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndeliveredSubAgentResult {
+    pub child_session_id: SessionId,
+    pub child_turn_id: TurnId,
+    pub task_name: String,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub final_text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct DeletedOrphanSubAgent {
+    pub session_id: String,
+    pub task_name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubAgentReconciliation {
+    pub undelivered: Vec<UndeliveredSubAgentResult>,
+    pub deleted_orphans: Vec<DeletedOrphanSubAgent>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(super) struct UndeliveredSubAgentResultRow {
+    pub(super) child_session_id: String,
+    pub(super) child_turn_id: String,
+    pub(super) task_name: String,
+    pub(super) status: String,
+    pub(super) error_code: Option<String>,
+    pub(super) error_message: Option<String>,
+    pub(super) assistant_content: Option<Value>,
+}
+
 impl SessionRecord {
     pub fn is_sub_agent(&self) -> bool {
         self.parent_session_id.is_some()

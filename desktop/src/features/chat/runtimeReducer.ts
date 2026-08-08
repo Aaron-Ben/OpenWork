@@ -49,6 +49,8 @@ export interface SessionRuntimeView {
   /** 当前 Turn 的计划。null 表示这个 Turn 没有计划或计划已被清空。 */
   plan: RuntimeTurnPlanSnapshot | null
   terminal: RuntimeTurnOutcome | null
+  startedAtMs: number | null
+  endedAtMs: number | null
   syncState: 'current' | 'stale' | 'resyncing'
   error: string | null
 }
@@ -67,6 +69,8 @@ export function createSessionRuntimeView(): SessionRuntimeView {
     permissionMode: 'default',
     plan: null,
     terminal: null,
+    startedAtMs: null,
+    endedAtMs: null,
     syncState: 'current',
     error: null,
   }
@@ -101,6 +105,7 @@ function appendToolProgress(
 export function reduceSessionUpdate(
   state: SessionRuntimeView,
   envelope: RuntimeSessionUpdateEnvelope,
+  isSubAgent = false,
 ): SessionRuntimeView {
   if (!supportsRuntimeSessionUpdateVersion(envelope.version)) {
     return {
@@ -123,6 +128,20 @@ export function reduceSessionUpdate(
     error: null,
   }
 
+  if (isSubAgent && (
+    update.type === 'text_delta'
+    || update.type === 'reasoning_delta'
+    || update.type === 'draft_cleared'
+    || update.type === 'tool_call_started'
+    || update.type === 'tool_call_progress'
+    || update.type === 'tool_call_finished'
+    || update.type === 'permission_requested'
+    || update.type === 'permission_resolved'
+    || update.type === 'plan_updated'
+  )) {
+    return next
+  }
+
   switch (update.type) {
     case 'turn_started':
       return {
@@ -130,6 +149,8 @@ export function reduceSessionUpdate(
         clientRequestId: update.clientRequestId,
         phase: state.phase === 'idle' ? 'starting' : state.phase,
         terminal: null,
+        startedAtMs: envelope.occurredAtMs,
+        endedAtMs: null,
         // 新 Turn 从无计划开始，不继承上一个 Turn 的计划。
         plan: null,
         pendingUserMessage:
@@ -228,6 +249,7 @@ export function reduceSessionUpdate(
         phase: 'idle',
         pendingPermission: null,
         terminal: update.outcome,
+        endedAtMs: envelope.occurredAtMs,
       }
   }
 }

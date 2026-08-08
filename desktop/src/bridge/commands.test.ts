@@ -23,6 +23,16 @@ describe('trace command bridge', () => {
     })
   })
 
+  it('lists direct sub-agent sessions through the parent-scoped command', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+
+    await coreCommands.listSubAgents('parent-1')
+
+    expect(invoke).toHaveBeenCalledWith('runtime_sub_agent_list', {
+      parentSessionId: 'parent-1',
+    })
+  })
+
   it('maps runtime content-policy updates without a restart command', async () => {
     vi.mocked(invoke).mockResolvedValue('off')
 

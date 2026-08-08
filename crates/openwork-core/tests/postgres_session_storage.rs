@@ -562,6 +562,11 @@ async fn postgres_persists_agent_messages_with_their_contextual_kind() {
         .await
         .unwrap();
     let turn_id = TurnId::new(unique("turn-agent-message"));
+    let agent_message_id = format!(
+        "agent-msg:{}:{}:final_answer",
+        unique("session-child"),
+        unique("turn-child")
+    );
     storage
         .begin_turn(
             &session_id,
@@ -573,9 +578,10 @@ async fn postgres_persists_agent_messages_with_their_contextual_kind() {
         )
         .await
         .unwrap();
-    storage
+    let inserted = storage
         .append_agent_message(
             &turn_id,
+            &agent_message_id,
             &Message::text(
                 Role::User,
                 "<agent_message>\n<task>find_auth</task>\n<kind>final_answer</kind>\n<body>\nFound it.\n</body>\n</agent_message>",
@@ -583,6 +589,19 @@ async fn postgres_persists_agent_messages_with_their_contextual_kind() {
         )
         .await
         .unwrap();
+    let duplicate = storage
+        .append_agent_message(
+            &turn_id,
+            &agent_message_id,
+            &Message::text(
+                Role::User,
+                "<agent_message>duplicate body must not replace the first</agent_message>",
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(inserted);
+    assert!(!duplicate);
 
     let records = storage.load_message_records(&session_id).await.unwrap();
     assert_eq!(records.len(), 2);

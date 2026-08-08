@@ -98,6 +98,106 @@ impl PostgresStorage {
         Ok(sessions)
     }
 
+    /// Finds terminal child turns whose deterministic parent message is absent,
+    /// and removes child Sessions that never started a Turn.
+    ///
+    /// The parent Session row is locked so a concurrent spawn cannot race the
+    /// zero-Turn orphan deletion. This method only prepares mailbox deliveries;
+    /// it never starts a parent Turn.
+    pub async fn reconcile_sub_agent_sessions(
+        &self,
+        parent_session_id: &SessionId,
+    ) -> Result<SubAgentReconciliation, StorageError> {
+        let mut transaction = self.pool.begin().await?;
+        lock_session(&mut transaction, parent_session_id).await?;
+
+        let deleted_orphans = sqlx::query_as::<_, DeletedOrphanSubAgent>(
+            "DELETE FROM sessions AS child
+             WHERE child.parent_session_id = $1
+               AND NOT EXISTS (
+                   SELECT 1 FROM turns AS turn WHERE turn.session_id = child.id
+               )
+             RETURNING child.id AS session_id, child.task_name",
+        )
+        .bind(parent_session_id.as_str())
+        .fetch_all(&mut *transaction)
+        .await?;
+
+        let rows = sqlx::query_as::<_, UndeliveredSubAgentResultRow>(
+            "SELECT child.id AS child_session_id,
+                    turn.id AS child_turn_id,
+                    child.task_name,
+                    turn.status,
+                    turn.error_code,
+                    turn.error_message,
+                    assistant.content AS assistant_content
+             FROM sessions AS child
+             JOIN turns AS turn ON turn.session_id = child.id
+             LEFT JOIN LATERAL (
+                 SELECT message.content
+                 FROM messages AS message
+                 WHERE message.session_id = child.id
+                   AND message.turn_id = turn.id
+                   AND message.role = 'assistant'
+                 ORDER BY message.sequence DESC
+                 LIMIT 1
+             ) AS assistant ON TRUE
+             WHERE child.parent_session_id = $1
+               AND turn.status IN ('completed', 'failed', 'cancelled', 'interrupted')
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM messages AS delivered
+                   WHERE delivered.session_id = $1
+                     AND delivered.id = CONCAT(
+                         'agent-msg:', child.id, ':', turn.id, ':',
+                         CASE
+                             WHEN turn.status = 'completed' THEN 'final_answer'
+                             WHEN turn.status = 'interrupted' THEN 'interrupted'
+                             ELSE 'failed'
+                         END
+                     )
+               )
+             ORDER BY child.created_at, child.id, turn.sequence",
+        )
+        .bind(parent_session_id.as_str())
+        .fetch_all(&mut *transaction)
+        .await?;
+
+        let mut undelivered = Vec::with_capacity(rows.len());
+        for row in rows {
+            let final_text = row
+                .assistant_content
+                .map(serde_json::from_value::<Vec<ContentBlock>>)
+                .transpose()?
+                .map(|content| {
+                    content
+                        .into_iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::Text(text) => Some(text.text),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .filter(|text| !text.is_empty());
+            undelivered.push(UndeliveredSubAgentResult {
+                child_session_id: SessionId::new(row.child_session_id),
+                child_turn_id: TurnId::new(row.child_turn_id),
+                task_name: row.task_name,
+                status: row.status,
+                error_code: row.error_code,
+                error_message: row.error_message,
+                final_text,
+            });
+        }
+
+        transaction.commit().await?;
+        Ok(SubAgentReconciliation {
+            undelivered,
+            deleted_orphans,
+        })
+    }
+
     pub async fn load_session(
         &self,
         session_id: &SessionId,
@@ -145,16 +245,35 @@ impl PostgresStorage {
         // candidate query must run only after in-flight Trace writes commit;
         // otherwise the Session cascade could leave their payload body orphaned.
         lock_session(&mut transaction, session_id).await?;
-        let _: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM trace_spans WHERE session_id = $1 FOR UPDATE")
-                .bind(session_id.as_str())
-                .fetch_all(&mut *transaction)
-                .await?;
+        let _: Vec<String> = sqlx::query_scalar(
+            "SELECT id
+             FROM sessions
+             WHERE parent_session_id = $1
+             FOR UPDATE",
+        )
+        .bind(session_id.as_str())
+        .fetch_all(&mut *transaction)
+        .await?;
+        let _: Vec<String> = sqlx::query_scalar(
+            "SELECT id
+             FROM trace_spans
+             WHERE session_id = $1
+                OR session_id IN (
+                    SELECT id FROM sessions WHERE parent_session_id = $1
+                )
+             FOR UPDATE",
+        )
+        .bind(session_id.as_str())
+        .fetch_all(&mut *transaction)
+        .await?;
         let payload_hashes = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT mapping.payload_hash
              FROM trace_span_payloads AS mapping
              JOIN trace_spans AS span ON span.id = mapping.span_id
-             WHERE span.session_id = $1",
+             WHERE span.session_id = $1
+                OR span.session_id IN (
+                    SELECT id FROM sessions WHERE parent_session_id = $1
+                )",
         )
         .bind(session_id.as_str())
         .fetch_all(&mut *transaction)

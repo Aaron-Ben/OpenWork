@@ -38,13 +38,14 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 use internal::*;
 pub(crate) use validate::is_valid_task_name;
 
-use types::ConversationCompactionRow;
+use types::{ConversationCompactionRow, UndeliveredSubAgentResultRow};
 pub use types::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
-    DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
-    ModelRecord, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
-    SubAgentSessionInput, TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord,
-    TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, DeletedOrphanSubAgent,
+    MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput, ModelRecord, SessionInput, SessionRecord,
+    StorageError, StoredMessageRecord, SubAgentReconciliation, SubAgentSessionInput,
+    TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord,
+    TraceTurnSummary, TurnTrace, UndeliveredSubAgentResult,
 };
 use validate::*;
 

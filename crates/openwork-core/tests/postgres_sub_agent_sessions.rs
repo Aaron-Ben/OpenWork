@@ -4,7 +4,11 @@
 //! database can answer: list filtering, name uniqueness, name format, depth, and
 //! cascade delete.
 
-use openwork_core::{PostgresStorage, SessionId, SessionInput, SubAgentSessionInput};
+use openwork_core::{
+    ClientRequestId, PostgresStorage, ResolvedModel, SessionId, SessionInput, SessionStorage,
+    SubAgentSessionInput, TurnOutcome, session::TurnId,
+};
+use openwork_models::model::{Message, Role};
 use uuid::Uuid;
 
 fn test_database_url() -> Option<String> {
@@ -207,6 +211,55 @@ async fn deleting_the_parent_cascades_to_its_sub_agents() {
         .await
         .unwrap();
     let child_id = SessionId::new(child.id.clone());
+    let child_turn_id = TurnId::new(unique("turn-cascade-child"));
+    storage
+        .begin_turn(
+            &child_id,
+            &child_turn_id,
+            &ClientRequestId::new(unique("request-cascade-child")),
+            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &[],
+            &Message::text(Role::User, "persist child rows"),
+        )
+        .await
+        .unwrap();
+    storage
+        .append_assistant_message(
+            &child_turn_id,
+            &Message::text(Role::Assistant, "child result"),
+            None,
+        )
+        .await
+        .unwrap();
+    storage
+        .finish_turn(
+            &child_turn_id,
+            &TurnOutcome::Completed {
+                final_text: "child result".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let trace_span_id = unique("span-cascade-child");
+    sqlx::query(
+        "INSERT INTO trace_spans (
+             id, trace_id, session_id, turn_id, kind, name, status,
+             started_at, ended_at, attributes
+         ) VALUES (
+             $1, $2, $3, $4, 'model_call', 'cascade test', 'succeeded',
+             CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+             CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+             '{}'::jsonb
+         )",
+    )
+    .bind(&trace_span_id)
+    .bind(unique("trace-cascade-child"))
+    .bind(child_id.as_str())
+    .bind(child_turn_id.as_str())
+    .execute(storage.pool())
+    .await
+    .unwrap();
 
     storage.delete_session(&parent).await.unwrap();
 
@@ -214,6 +267,26 @@ async fn deleting_the_parent_cascades_to_its_sub_agents() {
     assert!(
         storage.load_session(&child_id).await.unwrap().is_none(),
         "the sub-agent session must not outlive its parent"
+    );
+    let remaining_turns: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM turns WHERE id = $1")
+        .bind(child_turn_id.as_str())
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+    let remaining_messages: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE turn_id = $1")
+            .bind(child_turn_id.as_str())
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+    let remaining_spans: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM trace_spans WHERE id = $1")
+        .bind(trace_span_id)
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        (remaining_turns, remaining_messages, remaining_spans),
+        (0, 0, 0)
     );
 }
 
@@ -230,5 +303,134 @@ async fn a_missing_parent_is_reported_rather_than_violating_the_foreign_key() {
     assert!(
         error.to_string().contains(absent.as_str()),
         "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn reconciliation_finds_terminal_results_and_removes_zero_turn_orphans() {
+    let Some(storage) = storage().await else {
+        return;
+    };
+    let parent = root(&storage).await;
+    let completed = storage
+        .create_sub_agent_session(&sub_agent(&parent, "completed_lookup"))
+        .await
+        .unwrap();
+    let interrupted = storage
+        .create_sub_agent_session(&sub_agent(&parent, "interrupted_lookup"))
+        .await
+        .unwrap();
+    let orphan = storage
+        .create_sub_agent_session(&sub_agent(&parent, "orphan_lookup"))
+        .await
+        .unwrap();
+
+    let completed_turn = TurnId::new(unique("turn-completed"));
+    storage
+        .begin_turn(
+            &SessionId::new(completed.id.clone()),
+            &completed_turn,
+            &ClientRequestId::new(unique("request-completed")),
+            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &[],
+            &Message::text(Role::User, "inspect completion"),
+        )
+        .await
+        .unwrap();
+    storage
+        .append_assistant_message(
+            &completed_turn,
+            &Message::text(Role::Assistant, "persisted final answer"),
+            None,
+        )
+        .await
+        .unwrap();
+    storage
+        .finish_turn(
+            &completed_turn,
+            &TurnOutcome::Completed {
+                final_text: "persisted final answer".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let interrupted_turn = TurnId::new(unique("turn-interrupted"));
+    storage
+        .begin_turn(
+            &SessionId::new(interrupted.id.clone()),
+            &interrupted_turn,
+            &ClientRequestId::new(unique("request-interrupted")),
+            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &[],
+            &Message::text(Role::User, "inspect interruption"),
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE turns
+         SET status = 'interrupted',
+             ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+             error_code = 'process_restart',
+             error_message = 'process restarted before turn completed'
+         WHERE id = $1",
+    )
+    .bind(interrupted_turn.as_str())
+    .execute(storage.pool())
+    .await
+    .unwrap();
+
+    let reconciliation = storage.reconcile_sub_agent_sessions(&parent).await.unwrap();
+
+    assert_eq!(reconciliation.deleted_orphans.len(), 1);
+    assert_eq!(reconciliation.deleted_orphans[0].session_id, orphan.id);
+    assert_eq!(reconciliation.deleted_orphans[0].task_name, "orphan_lookup");
+    assert!(
+        storage
+            .load_session(&SessionId::new(orphan.id))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    storage
+        .create_sub_agent_session(&sub_agent(&parent, "orphan_lookup"))
+        .await
+        .expect("orphan cleanup must make its task name reusable");
+
+    assert_eq!(reconciliation.undelivered.len(), 2);
+    let completed_result = reconciliation
+        .undelivered
+        .iter()
+        .find(|result| result.task_name == "completed_lookup")
+        .unwrap();
+    assert_eq!(completed_result.child_session_id.as_str(), completed.id);
+    assert_eq!(completed_result.child_turn_id, completed_turn);
+    assert_eq!(completed_result.status, "completed");
+    assert_eq!(
+        completed_result.final_text.as_deref(),
+        Some("persisted final answer")
+    );
+
+    let interrupted_result = reconciliation
+        .undelivered
+        .iter()
+        .find(|result| result.task_name == "interrupted_lookup")
+        .unwrap();
+    assert_eq!(interrupted_result.child_turn_id, interrupted_turn);
+    assert_eq!(interrupted_result.status, "interrupted");
+    assert_eq!(
+        interrupted_result.error_code.as_deref(),
+        Some("process_restart")
+    );
+
+    let parent_turns: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+        .bind(parent.as_str())
+        .fetch_one(storage.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        parent_turns, 0,
+        "reconciliation must not start a parent turn"
     );
 }

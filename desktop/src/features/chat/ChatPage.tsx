@@ -12,6 +12,7 @@ import { ApprovalDialog } from './components/ApprovalDialog'
 import { FileChangeReviewDrawer } from './components/FileChangeReviewDrawer'
 import type { FileChangeView } from './components/FileDiffPanel'
 import { TranscriptMessage } from './components/TranscriptMessage'
+import { SubAgentPanel } from './components/SubAgentPanel'
 import { transcriptGap } from './transcriptSpacing'
 import { selectDefaultModel, useModelStore } from '@/features/models/modelStore'
 import type {
@@ -376,6 +377,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
               否则一串连续的工具行会被 provider 的分包方式切成远近不等的簇。
             */
             <div className="mx-auto flex w-full max-w-4xl flex-col px-6 py-8 max-[560px]:px-4">
+              {sessionId ? <SubAgentPanel parentSessionId={sessionId} /> : null}
               {messages.map((message, index) => (
                 <TranscriptMessage
                   key={message.id}

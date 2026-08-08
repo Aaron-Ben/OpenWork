@@ -37,8 +37,12 @@ pub trait SessionStorage: Send + Sync {
 
     async fn append_tool_result(&self, turn_id: &TurnId, message: &Message) -> Result<(), String>;
 
-    async fn append_agent_message(&self, turn_id: &TurnId, message: &Message)
-    -> Result<(), String>;
+    async fn append_agent_message(
+        &self,
+        turn_id: &TurnId,
+        message_id: &str,
+        message: &Message,
+    ) -> Result<bool, String>;
 
     /// 收尾一个 Turn。
     ///
@@ -164,9 +168,10 @@ impl SessionStorage for NoopSessionStorage {
     async fn append_agent_message(
         &self,
         _turn_id: &TurnId,
+        _message_id: &str,
         _message: &Message,
-    ) -> Result<(), String> {
-        Ok(())
+    ) -> Result<bool, String> {
+        Ok(true)
     }
 
     async fn finish_turn(

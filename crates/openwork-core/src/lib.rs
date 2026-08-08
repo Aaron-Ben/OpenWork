@@ -50,9 +50,11 @@ pub use session::{
 pub use storage::{
     API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError, ConversationProjectionRecord,
     ConversationTranscriptPage, ConversationTranscriptQuery,
-    DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
-    ModelRecord, PostgresProviderRepository, PostgresStorage, PostgresTraceRecorder, SessionInput,
-    SessionRecord, StorageError, StoredMessageRecord, SubAgentSessionInput, TraceCompleteness,
+    DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, DeletedOrphanSubAgent,
+    MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput, ModelRecord, PostgresProviderRepository,
+    PostgresStorage, PostgresTraceRecorder, SessionInput, SessionRecord, StorageError,
+    StoredMessageRecord, SubAgentReconciliation, SubAgentSessionInput, TraceCompleteness,
     TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    UndeliveredSubAgentResult,
 };
 pub use user_input::UserInput;

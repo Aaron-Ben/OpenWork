@@ -208,11 +208,15 @@ impl SessionHandle {
     /// Turn. An idle Session keeps the message until the next user Turn.
     pub async fn deliver_agent_message(
         &self,
+        child_session_id: SessionId,
+        child_turn_id: TurnId,
         task_name: impl Into<String>,
         kind: super::AgentMessageKind,
         body: impl Into<String>,
     ) -> Result<(), SessionError> {
         self.send(SessionCommand::DeliverAgentMessage {
+            child_session_id,
+            child_turn_id,
             task_name: task_name.into(),
             kind,
             body: body.into(),
@@ -309,6 +313,12 @@ impl SessionHandle {
         response.await.map_err(|_| SessionError::ActorStopped)
     }
 
+    pub(crate) async fn shutdown(&self) -> Result<(), SessionError> {
+        let (respond_to, response) = oneshot::channel();
+        self.send(SessionCommand::Shutdown { respond_to }).await?;
+        response.await.map_err(|_| SessionError::ActorStopped)
+    }
+
     async fn send(&self, command: SessionCommand) -> Result<(), SessionError> {
         self.command_tx
             .send(command)
@@ -338,6 +348,8 @@ enum SessionCommand {
         respond_to: oneshot::Sender<Result<(), SessionError>>,
     },
     DeliverAgentMessage {
+        child_session_id: SessionId,
+        child_turn_id: TurnId,
         task_name: String,
         kind: super::AgentMessageKind,
         body: String,
@@ -364,6 +376,9 @@ enum SessionCommand {
     AcceptedTurn {
         client_request_id: ClientRequestId,
         respond_to: oneshot::Sender<Option<TurnAccepted>>,
+    },
+    Shutdown {
+        respond_to: oneshot::Sender<()>,
     },
 }
 
@@ -467,7 +482,9 @@ impl SessionActor {
             tokio::select! {
                 command = self.command_rx.recv() => {
                     let Some(command) = command else { break };
-                    self.handle_command(command).await;
+                    if !self.handle_command(command).await {
+                        break;
+                    }
                 }
                 event = self.runner_rx.recv() => {
                     let Some(event) = event else { break };
@@ -480,7 +497,7 @@ impl SessionActor {
         }
     }
 
-    async fn handle_command(&mut self, command: SessionCommand) {
+    async fn handle_command(&mut self, command: SessionCommand) -> bool {
         match command {
             SessionCommand::StartTurn {
                 turn_id,
@@ -524,16 +541,20 @@ impl SessionActor {
                 let _ = respond_to.send(result);
             }
             SessionCommand::DeliverAgentMessage {
+                child_session_id,
+                child_turn_id,
                 task_name,
                 kind,
                 body,
             } => {
                 self.mailbox
-                    .push(AgentMessage {
+                    .push(AgentMessage::new(
+                        &child_session_id,
+                        &child_turn_id,
                         task_name,
                         kind,
                         body,
-                    })
+                    ))
                     .await;
             }
             SessionCommand::SetPermissionMode { mode, respond_to } => {
@@ -575,7 +596,15 @@ impl SessionActor {
             } => {
                 let _ = respond_to.send(self.accepted_requests.get(&client_request_id).cloned());
             }
+            SessionCommand::Shutdown { respond_to } => {
+                if let Some(active) = self.active_turn.take() {
+                    active.cancel.cancel();
+                }
+                let _ = respond_to.send(());
+                return false;
+            }
         }
+        true
     }
 
     fn start_turn(
@@ -856,18 +885,20 @@ impl SessionActor {
                     SessionRuntimeSnapshot::Running { plan, .. } => plan.clone(),
                     _ => None,
                 };
+                let child_turn_id = turn_id.clone();
                 self.snapshot.runtime = SessionRuntimeSnapshot::Terminal {
                     turn_id,
                     client_request_id: active.client_request_id,
                     outcome: outcome.clone(),
                     plan,
                 };
-                self.deliver_terminal_outcome(&outcome).await;
+                self.deliver_terminal_outcome(&child_turn_id, &outcome)
+                    .await;
             }
         }
     }
 
-    async fn deliver_terminal_outcome(&self, outcome: &super::TurnOutcome) {
+    async fn deliver_terminal_outcome(&self, child_turn_id: &TurnId, outcome: &super::TurnOutcome) {
         let Some(parent) = &self.parent_link else {
             return;
         };
@@ -891,7 +922,14 @@ impl SessionActor {
         // trace anywhere.
         if let Err(error) = parent
             .agent_control
-            .deliver_to_parent(&parent.parent_session_id, &parent.task_name, kind, &body)
+            .deliver_to_parent(
+                &parent.parent_session_id,
+                &self.session_id,
+                child_turn_id,
+                &parent.task_name,
+                kind,
+                &body,
+            )
             .await
         {
             tracing::warn!(

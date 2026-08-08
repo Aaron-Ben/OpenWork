@@ -38,7 +38,7 @@ describe('sessionStore', () => {
       isLoading: false,
       error: null,
     })
-    useRuntimeStore.setState({ bySession: {} })
+    useRuntimeStore.setState({ bySession: {}, subAgentParentBySession: {} })
   })
 
   it('stores canonical messages without streaming fields', async () => {
@@ -46,6 +46,7 @@ describe('sessionStore', () => {
       session: {
         id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
         status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
+        parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null,
       },
       messages: [{
         id: 'message-1', turnId: 'turn-1', sequence: 1, role: 'assistant',
@@ -60,6 +61,22 @@ describe('sessionStore', () => {
     ])
   })
 
+  it('loads child canonical history without adding the child to the top-level session order', async () => {
+    vi.mocked(coreCommands.loadSession).mockResolvedValue({
+      session: {
+        id: 'child-1', title: null, workingDirectory: '/repo', defaultModelId: null,
+        status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
+        parentSessionId: 'parent-1', taskName: 'inspect_auth', agentRole: 'explorer', spawnSpanId: null,
+      },
+      messages: [],
+      plans: [],
+    })
+
+    expect(await useSessionStore.getState().reload('child-1')).toBe(true)
+    expect(useSessionStore.getState().summaries['child-1']?.taskName).toBe('inspect_auth')
+    expect(useSessionStore.getState().orderedSessionIds).not.toContain('child-1')
+  })
+
   it('does not let an older reload overwrite a newer canonical transcript', async () => {
     type LoadedSession = Awaited<ReturnType<typeof coreCommands.loadSession>>
     let resolveOlder!: (value: LoadedSession) => void
@@ -72,6 +89,7 @@ describe('sessionStore', () => {
       id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
       status: 'active' as const, createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
+      parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null,
     }
     const olderReload = useSessionStore.getState().reload('session-1')
     const newerReload = useSessionStore.getState().reload('session-1')
@@ -154,6 +172,10 @@ describe('sessionStore', () => {
       createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z',
       lastTurnAt: null,
+      parentSessionId: null,
+      taskName: null,
+      agentRole: null,
+      spawnSpanId: null,
     }))
 
     await useSessionStore.getState().create({
@@ -179,6 +201,10 @@ describe('sessionStore', () => {
       createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z',
       lastTurnAt: null,
+      parentSessionId: null,
+      taskName: null,
+      agentRole: null,
+      spawnSpanId: null,
     }])
 
     await useSessionStore.getState().fetchAll()
@@ -193,6 +219,7 @@ describe('sessionStore', () => {
         'session-1': {
           id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
           status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
+          parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null,
         },
       },
       orderedSessionIds: ['session-1'],

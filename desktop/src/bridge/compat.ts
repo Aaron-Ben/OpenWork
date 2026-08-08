@@ -29,6 +29,16 @@ export interface RuntimeSessionRecord {
   createdAt: string
   updatedAt: string
   lastTurnAt: string | null
+  parentSessionId: string | null
+  taskName: string | null
+  agentRole: string | null
+  spawnSpanId: string | null
+}
+
+export type RuntimeSubAgentSessionRecord = RuntimeSessionRecord & {
+  parentSessionId: string
+  taskName: string
+  agentRole: string
 }
 
 export type RuntimeSkillSource = 'agents'

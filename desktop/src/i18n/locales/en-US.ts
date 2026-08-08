@@ -117,6 +117,17 @@ export const enUS = {
         completed: 'Completed',
       },
     },
+    subAgents: {
+      title: 'Sub-agents',
+      listFailed: 'Could not load sub-agents: {{reason}}',
+      loadingTranscript: 'Loading read-only transcript…',
+      transcriptFailed: 'Could not load transcript: {{reason}}',
+      emptyTranscript: 'No persisted transcript.',
+      cancelledSummary: 'The sub-agent turn was cancelled.',
+      status: {
+        idle: 'Idle', running: 'Running', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled',
+      },
+    },
     contextPanel: {
       title: 'Context window',
       expand: 'Show context breakdown', collapse: 'Hide context breakdown',

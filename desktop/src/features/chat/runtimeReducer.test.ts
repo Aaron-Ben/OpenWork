@@ -48,6 +48,56 @@ describe('runtimeReducer', () => {
     expect(text.lastSequence).toBe(3)
   })
 
+  it('keeps child status and terminal summary but drops child draft and tool streams', () => {
+    const started = reduceSessionUpdate(
+      createSessionRuntimeView(),
+      envelope(1, { type: 'turn_started', clientRequestId: 'child-request' }, 'child-1'),
+      true,
+    )
+    const reasoning = reduceSessionUpdate(
+      started,
+      envelope(2, { type: 'reasoning_delta', delta: 'private scratchpad' }, 'child-1'),
+      true,
+    )
+    const text = reduceSessionUpdate(
+      reasoning,
+      envelope(3, { type: 'text_delta', delta: 'streaming answer' }, 'child-1'),
+      true,
+    )
+    const tool = reduceSessionUpdate(
+      text,
+      envelope(4, {
+        type: 'tool_call_started',
+        toolCall: {
+          toolCallId: 'child-tool',
+          providerCallId: 'child-call',
+          name: 'read',
+          input: { path: 'README.md' },
+          status: 'running',
+          output: null,
+          isError: null,
+        },
+      }, 'child-1'),
+      true,
+    )
+    const finished = reduceSessionUpdate(
+      tool,
+      envelope(5, {
+        type: 'turn_finished',
+        outcome: { status: 'completed', finalText: 'final child answer' },
+      }, 'child-1'),
+      true,
+    )
+
+    expect(finished.assistantDraft).toBeNull()
+    expect(finished.toolCalls).toEqual({})
+    expect(finished.orderedToolCallIds).toEqual([])
+    expect(finished.phase).toBe('idle')
+    expect(finished.terminal).toEqual({ status: 'completed', finalText: 'final child answer' })
+    expect(finished.startedAtMs).toBe(1)
+    expect(finished.endedAtMs).toBe(5)
+  })
+
   it('ignores duplicate events and marks a sequence gap stale without applying the delta', () => {
     const first = reduceSessionUpdate(
       createSessionRuntimeView(),

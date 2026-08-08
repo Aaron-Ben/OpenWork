@@ -22,6 +22,16 @@ pub async fn runtime_session_list(
 }
 
 #[tauri::command]
+pub async fn runtime_sub_agent_list(
+    core: tauri::State<'_, OpenWorkCore>,
+    parent_session_id: String,
+) -> Result<Vec<SessionRecord>, CommandError> {
+    core.list_sub_agent_sessions(&SessionId::new(parent_session_id))
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn runtime_session_create(
     core: tauri::State<'_, OpenWorkCore>,
     input: SessionInput,

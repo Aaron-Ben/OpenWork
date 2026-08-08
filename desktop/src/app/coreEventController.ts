@@ -33,7 +33,13 @@ function defaultDependencies(): CoreEventControllerDependencies {
     replayUpdates: coreCommands.replayUpdates,
     loadSnapshot: coreCommands.snapshot,
     reloadCanonical: (sessionId) => useSessionStore.getState().reload(sessionId),
-    reconcileCanonical: (sessionId) => useRuntimeStore.getState().reconcileCanonical(sessionId),
+    reconcileCanonical: (sessionId) => {
+      const session = useSessionStore.getState().summaries[sessionId]
+      useRuntimeStore.getState().reconcileCanonical(
+        sessionId,
+        session?.parentSessionId != null,
+      )
+    },
     refreshSessions: () => useSessionStore.getState().fetchAll(),
   }
 }

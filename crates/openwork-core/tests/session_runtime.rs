@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -262,6 +262,7 @@ struct RecordingStorage {
     fail_plan_commit: AtomicBool,
     compactions: Mutex<Vec<ConversationCompaction>>,
     plans: Mutex<Vec<TurnPlan>>,
+    agent_message_ids: Mutex<HashSet<String>>,
     /// 外层 Option = finish_turn 是否被调用过；内层 = 该 Turn 有没有计划。
     unfinished_plan_steps: Mutex<Option<Option<usize>>>,
 }
@@ -328,13 +329,21 @@ impl SessionStorage for RecordingStorage {
     async fn append_agent_message(
         &self,
         _turn_id: &TurnId,
+        message_id: &str,
         _message: &Message,
-    ) -> Result<(), String> {
-        self.events
+    ) -> Result<bool, String> {
+        let inserted = self
+            .agent_message_ids
             .lock()
             .unwrap()
-            .push("agent_message".to_string());
-        Ok(())
+            .insert(message_id.to_string());
+        if inserted {
+            self.events
+                .lock()
+                .unwrap()
+                .push("agent_message".to_string());
+        }
+        Ok(inserted)
     }
 
     async fn finish_turn(
@@ -850,6 +859,7 @@ fn runtime_with_options(
         fail_plan_commit: AtomicBool::new(false),
         compactions: Mutex::new(Vec::new()),
         plans: Mutex::new(Vec::new()),
+        agent_message_ids: Mutex::new(HashSet::new()),
         unfinished_plan_steps: Mutex::new(None),
     });
     let trace = Arc::new(RecordingTrace::default());
@@ -1379,6 +1389,8 @@ async fn agent_message_is_persisted_after_tool_results_and_seen_by_the_same_turn
     fixture
         .handle
         .deliver_agent_message(
+            SessionId::new("session-find-auth-child"),
+            TurnId::new("turn-find-auth-child"),
             "find_auth_flow",
             AgentMessageKind::FinalAnswer,
             "Authentication is implemented in crates/api/src/auth.rs.",
@@ -1421,6 +1433,63 @@ async fn agent_message_is_persisted_after_tool_results_and_seen_by_the_same_turn
 }
 
 #[tokio::test]
+async fn duplicate_agent_delivery_is_persisted_and_appended_to_chat_once() {
+    let mut fixture = runtime(
+        vec![response("parent saw one result", Vec::new())],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    let child_session_id = SessionId::new("session-idempotent-child");
+    let child_turn_id = TurnId::new("turn-idempotent-child");
+
+    for _ in 0..2 {
+        fixture
+            .handle
+            .deliver_agent_message(
+                child_session_id.clone(),
+                child_turn_id.clone(),
+                "find_auth_flow",
+                AgentMessageKind::FinalAnswer,
+                "Authentication is implemented in auth.rs.",
+            )
+            .await
+            .expect("duplicate delivery enters the mailbox");
+    }
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let delivered = requests[0]
+        .messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message.content.first(),
+                Some(ContentBlock::Text(text))
+                    if text.text.contains("<task>find_auth_flow</task>")
+            )
+        })
+        .count();
+    assert_eq!(delivered, 1);
+    assert_eq!(
+        fixture
+            .storage
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.as_str() == "agent_message")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn an_idle_parent_does_not_start_a_turn_and_consumes_mail_on_the_next_user_turn() {
     let mut fixture = runtime(
         vec![
@@ -1440,6 +1509,8 @@ async fn an_idle_parent_does_not_start_a_turn_and_consumes_mail_on_the_next_user
     fixture
         .handle
         .deliver_agent_message(
+            SessionId::new("session-late-result-child"),
+            TurnId::new("turn-late-result-child"),
             "late_result",
             AgentMessageKind::FinalAnswer,
             "Arrived after the final answer.",
@@ -3758,6 +3829,8 @@ async fn wait_agent_can_timeout_then_wait_again_for_a_delivery() {
                     fixture
                         .handle
                         .deliver_agent_message(
+                            SessionId::new("session-late-explorer-child"),
+                            TurnId::new("turn-late-explorer-child"),
                             "late_explorer",
                             AgentMessageKind::FinalAnswer,
                             "arrived during the second wait",

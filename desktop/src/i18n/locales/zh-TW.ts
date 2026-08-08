@@ -113,6 +113,17 @@ export const zhTW = {
         completed: '已完成',
       },
     },
+    subAgents: {
+      title: '子 Agent',
+      listFailed: '無法讀取子 Agent：{{reason}}',
+      loadingTranscript: '正在讀取唯讀對話記錄……',
+      transcriptFailed: '無法讀取對話記錄：{{reason}}',
+      emptyTranscript: '暫無持久化對話記錄。',
+      cancelledSummary: '子 Agent Turn 已取消。',
+      status: {
+        idle: '閒置', running: '執行中', completed: '已完成', failed: '失敗', cancelled: '已取消',
+      },
+    },
     contextPanel: {
       title: '上下文視窗',
       expand: '展開上下文分類', collapse: '收合上下文分類',

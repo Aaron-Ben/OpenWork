@@ -119,9 +119,10 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       if (latestReloadRequestBySession.get(sessionId) !== requestSequence) return false
       set((state) => ({
         summaries: { ...state.summaries, [sessionId]: loaded.session },
-        orderedSessionIds: state.orderedSessionIds.includes(sessionId)
-          ? state.orderedSessionIds
-          : [sessionId, ...state.orderedSessionIds],
+        orderedSessionIds: loaded.session.parentSessionId == null
+          && !state.orderedSessionIds.includes(sessionId)
+          ? [sessionId, ...state.orderedSessionIds]
+          : state.orderedSessionIds,
         messagesBySession: { ...state.messagesBySession, [sessionId]: loaded.messages },
         plansBySession: { ...state.plansBySession, [sessionId]: loaded.plans ?? [] },
         loadStateBySession: { ...state.loadStateBySession, [sessionId]: 'loaded' },

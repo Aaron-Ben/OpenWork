@@ -36,6 +36,7 @@ pub fn run() {
             commands::provider::provider_delete,
             commands::provider::provider_test,
             commands::runtime::runtime_session_list,
+            commands::runtime::runtime_sub_agent_list,
             commands::runtime::runtime_session_create,
             commands::runtime::runtime_session_load,
             commands::runtime::runtime_context_window_inspect,

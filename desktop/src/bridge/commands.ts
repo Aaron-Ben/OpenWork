@@ -15,6 +15,7 @@ import type {
   RuntimeSessionRecord,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
+  RuntimeSubAgentSessionRecord,
   RuntimeSkillDetail,
   RuntimeSkillDiscovery,
   RuntimeUserInput,
@@ -34,6 +35,8 @@ export const coreCommands = {
     invoke('set_skill_disabled', { name, disabled }),
   readSkill: (path: string): Promise<RuntimeSkillDetail> => invoke('read_skill', { path }),
   listSessions: (): Promise<RuntimeSessionRecord[]> => invoke('runtime_session_list'),
+  listSubAgents: (parentSessionId: string): Promise<RuntimeSubAgentSessionRecord[]> =>
+    invoke('runtime_sub_agent_list', { parentSessionId }),
   createSession: (input: RuntimeSessionInput): Promise<RuntimeSessionRecord> =>
     invoke('runtime_session_create', { input }),
   loadSession: (sessionId: string): Promise<RuntimeLoadedSession> =>

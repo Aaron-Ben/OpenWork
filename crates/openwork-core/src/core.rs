@@ -30,12 +30,12 @@ use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
-    COMPACTION_TRANSCRIPT_TOOL_NAME, ClientRequestId, CompactionError, CompactionStateCollector,
-    ControlToolSurface, ConversationCompaction, ConversationTranscriptTool, ParentLink,
-    PermissionDecision, PreparedTurnInput, ResolvedModel, SessionApproval, SessionError,
-    SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot, SessionStorage,
-    SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy, TracePayloadSlot,
-    TurnAccepted, TurnId, TurnToolset,
+    AgentMessageKind, COMPACTION_TRANSCRIPT_TOOL_NAME, ClientRequestId, CompactionError,
+    CompactionStateCollector, ControlToolSurface, ConversationCompaction,
+    ConversationTranscriptTool, ParentLink, PermissionDecision, PreparedTurnInput, ResolvedModel,
+    SessionApproval, SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot,
+    SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy,
+    TracePayloadSlot, TurnAccepted, TurnId, TurnToolset,
 };
 use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::storage::{
@@ -371,6 +371,16 @@ impl OpenWorkCore {
         Ok(self.storage.list_sessions().await?)
     }
 
+    pub async fn list_sub_agent_sessions(
+        &self,
+        parent_session_id: &SessionId,
+    ) -> Result<Vec<SessionRecord>, OpenWorkCoreError> {
+        Ok(self
+            .storage
+            .list_sub_agent_sessions(parent_session_id)
+            .await?)
+    }
+
     pub async fn list_skills(&self) -> Result<crate::skills::SkillDiscovery, OpenWorkCoreError> {
         let skill_roots = self.skill_roots.clone();
         let disabled_names = self.disabled_skill_names.read().await.clone();
@@ -564,6 +574,7 @@ impl OpenWorkCore {
     }
 
     pub async fn delete_session(&self, session_id: &SessionId) -> Result<(), OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
         if let Some(handle) = self.sessions.read().await.get(session_id).cloned()
             && matches!(
                 handle.snapshot().await?.runtime,
@@ -572,8 +583,10 @@ impl OpenWorkCore {
         {
             return Err(OpenWorkCoreError::SessionActive(session_id.to_string()));
         }
-        self.sessions.write().await.remove(session_id);
+        let children = self.storage.list_sub_agent_sessions(session_id).await?;
         self.storage.delete_session(session_id).await?;
+        self.unload_runtime_session_tree(session_id, &children)
+            .await;
         Ok(())
     }
 
@@ -588,6 +601,11 @@ impl OpenWorkCore {
         let handle = self.session_handle(session_id).await?;
         if let Some(accepted) = handle.accepted_turn(client_request_id.clone()).await? {
             return Ok(accepted);
+        }
+        if let crate::session::SessionRuntimeSnapshot::Running { turn_id, .. } =
+            handle.snapshot().await?.runtime
+        {
+            return Err(SessionError::Busy(turn_id).into());
         }
         let user_content = input
             .iter()
@@ -623,6 +641,13 @@ impl OpenWorkCore {
             user_content,
         );
 
+        // The parent workspace guard is held and no parent Turn is active at
+        // this point, so no legitimate spawn can be in progress. A zero-Turn
+        // child is therefore an abandoned spawn and is safe to delete. Revisit
+        // this invariant if parent operations become concurrent in the future.
+        self.reconcile_sub_agent_sessions(session_id, &handle)
+            .await?;
+
         let accepted = match context_window_tokens {
             Some(context_window_tokens) => {
                 handle
@@ -641,6 +666,66 @@ impl OpenWorkCore {
             }
         };
         Ok(accepted)
+    }
+
+    async fn reconcile_sub_agent_sessions(
+        &self,
+        parent_session_id: &SessionId,
+        parent_handle: &SessionHandle,
+    ) -> Result<(), OpenWorkCoreError> {
+        let reconciliation = self
+            .storage
+            .reconcile_sub_agent_sessions(parent_session_id)
+            .await?;
+
+        let mut orphan_session_ids = Vec::with_capacity(reconciliation.deleted_orphans.len());
+        for orphan in reconciliation.deleted_orphans {
+            tracing::warn!(
+                parent_session_id = %parent_session_id,
+                child_session_id = %orphan.session_id,
+                task_name = %orphan.task_name,
+                "removed zero-turn sub-agent session during parent turn reconciliation"
+            );
+            orphan_session_ids.push(SessionId::new(orphan.session_id));
+        }
+        self.shutdown_runtime_sessions(&orphan_session_ids).await;
+
+        for result in reconciliation.undelivered {
+            let (kind, body) = match result.status.as_str() {
+                "completed" => (
+                    AgentMessageKind::FinalAnswer,
+                    result.final_text.unwrap_or_else(|| {
+                        "Sub-agent completed without a persisted final response.".to_string()
+                    }),
+                ),
+                "interrupted" => (
+                    AgentMessageKind::Interrupted,
+                    "Sub-agent was interrupted by a process restart and is no longer available. Spawn a new explorer if this result is still needed."
+                        .to_string(),
+                ),
+                "cancelled" => (
+                    AgentMessageKind::Failed,
+                    "cancelled: Sub-agent turn was cancelled.".to_string(),
+                ),
+                _ => {
+                    let code = result.error_code.as_deref().unwrap_or(&result.status);
+                    let message = result.error_message.as_deref().unwrap_or(
+                        "Sub-agent terminated without a persisted error message.",
+                    );
+                    (AgentMessageKind::Failed, format!("{code}: {message}"))
+                }
+            };
+            parent_handle
+                .deliver_agent_message(
+                    result.child_session_id,
+                    result.child_turn_id,
+                    result.task_name,
+                    kind,
+                    body,
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn compact_conversation(
@@ -934,7 +1019,9 @@ impl OpenWorkCore {
                 }
                 permission_mode = snapshot.permission_mode;
             }
-            self.sessions.write().await.remove(session_id);
+            let children = self.storage.list_sub_agent_sessions(session_id).await?;
+            self.unload_runtime_session_tree(session_id, &children)
+                .await;
         }
 
         let handle = self
@@ -945,6 +1032,35 @@ impl OpenWorkCore {
             .await
             .insert(session_id.clone(), handle.clone());
         Ok(handle)
+    }
+
+    async fn unload_runtime_session_tree(
+        &self,
+        root_session_id: &SessionId,
+        direct_children: &[SessionRecord],
+    ) {
+        let mut session_ids = direct_children
+            .iter()
+            .map(|child| SessionId::new(child.id.clone()))
+            .collect::<Vec<_>>();
+        session_ids.push(root_session_id.clone());
+
+        self.agent_controls.write().await.remove(root_session_id);
+        self.shutdown_runtime_sessions(&session_ids).await;
+    }
+
+    async fn shutdown_runtime_sessions(&self, session_ids: &[SessionId]) {
+        let handles = {
+            let mut sessions = self.sessions.write().await;
+            session_ids
+                .iter()
+                .filter_map(|session_id| sessions.remove(session_id))
+                .collect::<Vec<_>>()
+        };
+
+        for handle in handles {
+            let _ = handle.shutdown().await;
+        }
     }
 
     async fn workspace_operation_guard(&self, session_id: &SessionId) -> OwnedMutexGuard<()> {

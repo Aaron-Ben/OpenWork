@@ -308,16 +308,20 @@ impl TurnRunner {
 
     async fn drain_agent_messages(&self) -> Result<(), TurnRunError> {
         while let Some(delivered) = self.request.mailbox.front().await {
+            let message_id = delivered.id.clone();
             let message = delivered.into_model_message();
-            self.request
+            let inserted = self
+                .request
                 .storage
-                .append_agent_message(&self.request.turn_id, &message)
+                .append_agent_message(&self.request.turn_id, &message_id, &message)
                 .await
                 .map_err(TurnRunError::Persistence)?;
-            self.request
-                .chat
-                .append_user_with_kind(message.content, MessageKind::AgentMessage)
-                .await?;
+            if inserted {
+                self.request
+                    .chat
+                    .append_user_with_kind(message.content, MessageKind::AgentMessage)
+                    .await?;
+            }
             self.request.mailbox.pop_front().await;
         }
         Ok(())

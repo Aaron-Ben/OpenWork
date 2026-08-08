@@ -46,12 +46,33 @@ impl std::fmt::Debug for ParentLink {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AgentMessage {
+    pub id: String,
     pub task_name: String,
     pub kind: AgentMessageKind,
     pub body: String,
 }
 
 impl AgentMessage {
+    pub fn new(
+        child_session_id: &SessionId,
+        child_turn_id: &super::TurnId,
+        task_name: impl Into<String>,
+        kind: AgentMessageKind,
+        body: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: format!(
+                "agent-msg:{}:{}:{}",
+                child_session_id,
+                child_turn_id,
+                kind.as_str()
+            ),
+            task_name: task_name.into(),
+            kind,
+            body: body.into(),
+        }
+    }
+
     pub fn into_model_message(self) -> Message {
         Message::text(
             Role::User,
@@ -124,6 +145,7 @@ mod tests {
     #[test]
     fn final_answer_uses_the_agent_message_envelope_and_user_role() {
         let message = AgentMessage {
+            id: "agent-msg:session-child:turn-child:final_answer".to_string(),
             task_name: "find_auth_flow".to_string(),
             kind: AgentMessageKind::FinalAnswer,
             body: "Found it.".to_string(),
@@ -139,11 +161,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn message_id_is_deterministic_for_child_turn_and_kind() {
+        let message = AgentMessage::new(
+            &SessionId::new("session-child"),
+            &super::super::TurnId::new("turn-child"),
+            "find_auth_flow",
+            AgentMessageKind::Interrupted,
+            "restart",
+        );
+
+        assert_eq!(message.id, "agent-msg:session-child:turn-child:interrupted");
+    }
+
     #[tokio::test]
     async fn waiting_returns_immediately_when_delivery_is_already_pending() {
         let mailbox = AgentMailbox::default();
         mailbox
             .push(AgentMessage {
+                id: "agent-msg:child:turn:final_answer".to_string(),
                 task_name: "ready".to_string(),
                 kind: AgentMessageKind::FinalAnswer,
                 body: "done".to_string(),
@@ -168,6 +204,7 @@ mod tests {
             tokio::task::yield_now().await;
             sender
                 .push(AgentMessage {
+                    id: "agent-msg:child:turn:final_answer".to_string(),
                     task_name: "racing".to_string(),
                     kind: AgentMessageKind::FinalAnswer,
                     body: "done".to_string(),
@@ -185,6 +222,7 @@ mod tests {
         assert!(!mailbox.wait_for_delivery(Duration::from_millis(1)).await);
         mailbox
             .push(AgentMessage {
+                id: "agent-msg:child:turn:final_answer".to_string(),
                 task_name: "later".to_string(),
                 kind: AgentMessageKind::FinalAnswer,
                 body: "done".to_string(),
@@ -198,6 +236,7 @@ mod tests {
         let mailbox = AgentMailbox::default();
         mailbox
             .push(AgentMessage {
+                id: "agent-msg:child:turn:final_answer".to_string(),
                 task_name: "drained".to_string(),
                 kind: AgentMessageKind::FinalAnswer,
                 body: "done".to_string(),
