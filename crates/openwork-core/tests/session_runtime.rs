@@ -6,16 +6,16 @@ use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use futures_util::stream;
-use openwork_agent::{AgentBuilder, AgentDefinition};
+use openwork_agent::{AgentBuilder, AgentDefinition, explorer_definition};
 use openwork_chat_state::ChatStateHandle;
 use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::session::{
     AgentMessageKind, ClientRequestId, CompactionError, CompactionRuntimeState,
-    CompactionStateCollector, ConversationCompaction, ConversationCompactionKind,
-    NewConversationCompaction, ParentLink, PermissionDecision, ResolvedModel, SessionApproval,
-    SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionStorage, SessionUpdate,
-    SessionUpdateEnvelope, ToolCallId, ToolProgressUpdate, TraceFlushResult, TraceRecorder,
-    TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
+    CompactionStateCollector, ControlToolSurface, ConversationCompaction,
+    ConversationCompactionKind, NewConversationCompaction, ParentLink, PermissionDecision,
+    ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId, SessionRuntimeConfig,
+    SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId, ToolProgressUpdate,
+    TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
 };
 use openwork_core::skills::SkillRoots;
 use openwork_core::{AgentControl, SubAgentHost, SubAgentSpec};
@@ -503,6 +503,7 @@ struct RuntimeOptions {
     session_id: SessionId,
     approval: SessionApproval,
     parent_link: Option<ParentLink>,
+    agent_control: Option<AgentControl>,
 }
 
 impl Default for RuntimeOptions {
@@ -511,6 +512,7 @@ impl Default for RuntimeOptions {
             session_id: SessionId::new("session-test"),
             approval: SessionApproval::Interactive,
             parent_link: None,
+            agent_control: None,
         }
     }
 }
@@ -518,6 +520,46 @@ impl Default for RuntimeOptions {
 #[derive(Default)]
 struct SessionHandleHost {
     handles: Mutex<HashMap<SessionId, SessionHandle>>,
+}
+
+#[derive(Default)]
+struct SlotHoldingHost {
+    specs: Mutex<Vec<SubAgentSpec>>,
+    slots: Mutex<HashMap<SessionId, openwork_core::TurnSlot>>,
+}
+
+#[derive(Default)]
+struct SpawningSessionHost {
+    handles: Mutex<HashMap<SessionId, SessionHandle>>,
+    workspaces: Mutex<Vec<TestWorkspace>>,
+    control: Mutex<Option<AgentControl>>,
+}
+
+#[async_trait]
+impl SubAgentHost for SlotHoldingHost {
+    async fn start_sub_agent(&self, spec: SubAgentSpec) -> Result<(), String> {
+        self.specs.lock().unwrap().push(spec);
+        Ok(())
+    }
+
+    async fn start_sub_agent_turn(
+        &self,
+        session_id: &SessionId,
+        _message: String,
+        turn_slot: openwork_core::TurnSlot,
+    ) -> Result<(), String> {
+        self.slots
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), turn_slot);
+        Ok(())
+    }
+
+    async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
+        Err(format!(
+            "session {session_id} has no actor in this tool dispatch test"
+        ))
+    }
 }
 
 impl SessionHandleHost {
@@ -529,10 +571,97 @@ impl SessionHandleHost {
     }
 }
 
+impl SpawningSessionHost {
+    fn install_control(&self, control: AgentControl) {
+        *self.control.lock().unwrap() = Some(control);
+    }
+
+    fn insert(&self, handle: SessionHandle) {
+        self.handles
+            .lock()
+            .unwrap()
+            .insert(handle.session_id().clone(), handle);
+    }
+}
+
+#[async_trait]
+impl SubAgentHost for SpawningSessionHost {
+    async fn start_sub_agent(&self, spec: SubAgentSpec) -> Result<(), String> {
+        let control = self
+            .control
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "agent control is not installed".to_string())?;
+        let workspace = TestWorkspace::new();
+        let child = runtime_with_options(
+            vec![Ok(response(
+                &format!("finding from {}", spec.task_name),
+                Vec::new(),
+            ))],
+            Vec::new(),
+            PermissionMode::Default,
+            false,
+            workspace,
+            SkillRoots::default(),
+            RuntimeOptions {
+                session_id: spec.session_id,
+                approval: SessionApproval::NonInteractive,
+                parent_link: Some(ParentLink {
+                    parent_session_id: spec.parent_session_id,
+                    task_name: spec.task_name,
+                    agent_control: control.clone(),
+                }),
+                agent_control: Some(control),
+            },
+        );
+        self.insert(child.handle.clone());
+        self.workspaces.lock().unwrap().push(child.workspace);
+        Ok(())
+    }
+
+    async fn start_sub_agent_turn(
+        &self,
+        session_id: &SessionId,
+        message: String,
+        turn_slot: openwork_core::TurnSlot,
+    ) -> Result<(), String> {
+        self.session_handle(session_id)
+            .await?
+            .start_sub_agent_turn(message, BTreeSet::new(), turn_slot)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
+        self.handles
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} is not registered"))
+    }
+}
+
 #[async_trait]
 impl SubAgentHost for SessionHandleHost {
     async fn start_sub_agent(&self, _spec: SubAgentSpec) -> Result<(), String> {
         Err("spawning is outside the P1 test seam".to_string())
+    }
+
+    async fn start_sub_agent_turn(
+        &self,
+        session_id: &SessionId,
+        message: String,
+        turn_slot: openwork_core::TurnSlot,
+    ) -> Result<(), String> {
+        self.session_handle(session_id)
+            .await?
+            .start_sub_agent_turn(message, BTreeSet::new(), turn_slot)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
@@ -694,9 +823,14 @@ fn runtime_with_options(
     options: RuntimeOptions,
 ) -> RuntimeFixture {
     let working_directory = workspace.path().to_path_buf();
-    let agent = AgentBuilder::new(AgentDefinition::default())
-        .build()
-        .expect("agent");
+    let is_sub_agent = options.parent_link.is_some();
+    let agent = AgentBuilder::new(if is_sub_agent {
+        explorer_definition()
+    } else {
+        AgentDefinition::default()
+    })
+    .build()
+    .expect("agent");
     let chat = ChatStateHandle::spawn(Vec::new()).expect("chat");
     let model = Arc::new(ModelState {
         outcomes: Mutex::new(outcomes.into()),
@@ -746,6 +880,12 @@ fn runtime_with_options(
         )
         .expect("toolset");
     let (global_update_tx, global_updates) = broadcast::channel(512);
+    let agent_control = options.agent_control.clone().or_else(|| {
+        options
+            .parent_link
+            .as_ref()
+            .map(|parent| parent.agent_control.clone())
+    });
     let handle = SessionHandle::spawn_with_global_updates(
         SessionRuntimeConfig {
             session_id: options.session_id,
@@ -758,7 +898,17 @@ fn runtime_with_options(
                 state: Arc::clone(&model),
             }),
             tools: Arc::new(
-                TurnToolset::new(Arc::new(toolset), true).expect("no control tool collision"),
+                TurnToolset::new(
+                    Arc::new(toolset),
+                    if is_sub_agent {
+                        ControlToolSurface::SubAgent
+                    } else {
+                        ControlToolSurface::Root {
+                            max_active_sub_agent_turns: 3,
+                        }
+                    },
+                )
+                .expect("no control tool collision"),
             ),
             storage: storage.clone(),
             compaction_state: Arc::new(CompactionStateCollector::default()),
@@ -766,6 +916,7 @@ fn runtime_with_options(
             permission_mode,
             approval: options.approval,
             parent_link: options.parent_link,
+            agent_control,
         },
         global_update_tx,
     );
@@ -1358,6 +1509,7 @@ async fn a_child_terminal_answer_is_delivered_to_its_parent_session() {
                 task_name: "find_auth_flow".to_string(),
                 agent_control,
             }),
+            agent_control: None,
         },
     );
 
@@ -1431,6 +1583,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
                 task_name: "failed_lookup".to_string(),
                 agent_control: agent_control.clone(),
             }),
+            agent_control: None,
         },
     );
     start_with_request(&failed_child, "failed-child-turn").await;
@@ -1462,6 +1615,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
                 task_name: "cancelled_lookup".to_string(),
                 agent_control,
             }),
+            agent_control: None,
         },
     );
     let cancelled_turn = start_with_request(&cancelled_child, "cancelled-child-turn").await;
@@ -1537,6 +1691,7 @@ async fn a_child_still_completes_when_its_parent_can_no_longer_be_reached() {
                 task_name: "orphan_lookup".to_string(),
                 agent_control,
             }),
+            agent_control: None,
         },
     );
 
@@ -3220,6 +3375,456 @@ async fn tool_trace_records_result_persistence_failure_without_changing_tool_sta
             .expect("tool trace attributes")
             .get("resultPersistErrorCode")
             .is_none()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 多智能体：Core 控制工具与 explorer 边界
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn parent_spawns_three_explorers_and_aggregates_their_deliveries() {
+    let parent_session_id = SessionId::new("session-three-explorers");
+    let host = Arc::new(SpawningSessionHost::default());
+    let control = AgentControl::new(
+        parent_session_id.clone(),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    host.install_control(control.clone());
+    let mut parent = runtime_with_options(
+        vec![
+            Ok(response(
+                "",
+                vec![
+                    tool_call(
+                        "spawn-api",
+                        "spawn_agent",
+                        r#"{"task_name":"inspect_api","message":"inspect the API"}"#,
+                    ),
+                    tool_call(
+                        "spawn-storage",
+                        "spawn_agent",
+                        r#"{"task_name":"inspect_storage","message":"inspect storage"}"#,
+                    ),
+                    tool_call(
+                        "spawn-runtime",
+                        "spawn_agent",
+                        r#"{"task_name":"inspect_runtime","message":"inspect runtime"}"#,
+                    ),
+                    tool_call("delivery-barrier", "write", r#"{"path":"barrier"}"#),
+                ],
+            )),
+            Ok(response("aggregated three findings", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: parent_session_id,
+            agent_control: Some(control.clone()),
+            ..RuntimeOptions::default()
+        },
+    );
+    host.insert(parent.handle.clone());
+    start(&parent).await;
+
+    let (turn_id, tool_call_id) = wait_for_permission(&mut parent.updates).await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let statuses = control.list_statuses().await.expect("list explorers");
+            if statuses.len() == 3 && statuses.iter().all(|agent| agent.status == "completed") {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("all three explorers complete");
+    parent
+        .handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowOnce)
+        .await
+        .expect("release parent delivery barrier");
+
+    assert_eq!(
+        wait_for_terminal(&mut parent.updates).await,
+        TurnOutcome::Completed {
+            final_text: "aggregated three findings".to_string()
+        }
+    );
+    let requests = parent.model.requests.lock().unwrap();
+    let delivered = requests[1]
+        .messages
+        .iter()
+        .filter_map(|message| match message.content.first() {
+            Some(ContentBlock::Text(text)) if text.text.contains("<agent_message>") => {
+                Some(text.text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(delivered.len(), 3);
+    for task_name in ["inspect_api", "inspect_storage", "inspect_runtime"] {
+        assert!(
+            delivered
+                .iter()
+                .any(|message| message.contains(&format!("<task>{task_name}</task>")))
+        );
+    }
+}
+
+#[tokio::test]
+async fn fourth_spawn_is_a_failed_tool_result_and_parent_turn_continues() {
+    let host = Arc::new(SlotHoldingHost::default());
+    let control = AgentControl::with_max_active_turns(
+        SessionId::new("session-parent-tools"),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+        3,
+    );
+    let spawn_calls = (0..4)
+        .map(|index| {
+            tool_call(
+                &format!("spawn-{index}"),
+                "spawn_agent",
+                &serde_json::json!({
+                    "task_name": format!("lookup_{index}"),
+                    "message": format!("inspect area {index}")
+                })
+                .to_string(),
+            )
+        })
+        .collect();
+    let mut fixture = runtime_with_options(
+        vec![
+            Ok(response("", spawn_calls)),
+            Ok(response("parent continued", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-parent-tools"),
+            agent_control: Some(control.clone()),
+            ..RuntimeOptions::default()
+        },
+    );
+    start(&fixture).await;
+
+    let updates = collect_updates_until_terminal(&mut fixture.updates).await;
+    assert!(matches!(
+        updates.last(),
+        Some(SessionUpdate::TurnFinished {
+            outcome: TurnOutcome::Completed { final_text }
+        }) if final_text == "parent continued"
+    ));
+    let spawn_results = updates
+        .iter()
+        .filter_map(|update| match update {
+            SessionUpdate::ToolCallFinished {
+                tool_name,
+                output,
+                is_error,
+                ..
+            } if tool_name == "spawn_agent" => Some((*is_error, output.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(spawn_results.len(), 4);
+    assert_eq!(spawn_results.iter().filter(|(error, _)| !error).count(), 3);
+    assert!(
+        spawn_results
+            .iter()
+            .any(|(error, output)| *error && output.contains("agent_limit_reached"))
+    );
+    assert_eq!(control.list().len(), 3);
+    assert_eq!(control.active_turns(), 3);
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, SessionUpdate::PermissionRequested { .. }))
+    );
+}
+
+#[tokio::test]
+async fn child_active_turn_owns_and_releases_its_slot_at_terminal() {
+    let host = Arc::new(SessionHandleHost::default());
+    let parent_session_id = SessionId::new("session-slot-parent");
+    let control = AgentControl::new(
+        parent_session_id.clone(),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut child = runtime_with_options(
+        vec![Ok(response("done", Vec::new()))],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-slot-child"),
+            approval: SessionApproval::NonInteractive,
+            parent_link: Some(ParentLink {
+                parent_session_id,
+                task_name: "slot_child".to_string(),
+                agent_control: control.clone(),
+            }),
+            agent_control: Some(control.clone()),
+        },
+    );
+    let slot = control.try_acquire_turn_slot().expect("slot");
+    child
+        .handle
+        .start_sub_agent_turn("inspect".to_string(), BTreeSet::new(), slot)
+        .await
+        .expect("child turn accepted");
+    assert_eq!(control.active_turns(), 1);
+
+    assert!(matches!(
+        wait_for_terminal(&mut child.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    child.handle.snapshot().await.expect("actor barrier");
+    assert_eq!(control.active_turns(), 0);
+}
+
+#[tokio::test]
+async fn explorer_denies_ask_then_runs_readonly_without_permission_card() {
+    let host = Arc::new(SessionHandleHost::default());
+    let parent_session_id = SessionId::new("session-readonly-parent");
+    let control = AgentControl::new(
+        parent_session_id.clone(),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut child = runtime_with_options(
+        vec![
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "cargo-check",
+                    "bash",
+                    r#"{"program":"cargo","args":["check"]}"#,
+                )],
+            )),
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "git-log",
+                    "bash",
+                    r#"{"command":"git log","readonlyProofKey":"git log"}"#,
+                )],
+            )),
+            Ok(response("readonly investigation complete", Vec::new())),
+        ],
+        vec![ToolResult::succeeded("commit history")],
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-readonly-child"),
+            approval: SessionApproval::NonInteractive,
+            parent_link: Some(ParentLink {
+                parent_session_id,
+                task_name: "readonly_child".to_string(),
+                agent_control: control.clone(),
+            }),
+            agent_control: Some(control),
+        },
+    );
+    start(&child).await;
+
+    let updates = collect_updates_until_terminal(&mut child.updates).await;
+    assert!(matches!(
+        updates.last(),
+        Some(SessionUpdate::TurnFinished {
+            outcome: TurnOutcome::Completed { .. }
+        })
+    ));
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, SessionUpdate::PermissionRequested { .. }))
+    );
+    let bash_results = updates
+        .iter()
+        .filter_map(|update| match update {
+            SessionUpdate::ToolCallFinished {
+                tool_name,
+                output,
+                is_error,
+                ..
+            } if tool_name == "bash" => Some((*is_error, output.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bash_results.len(), 2);
+    assert!(bash_results[0].0);
+    assert!(bash_results[0].1.contains("cannot request approval"));
+    assert!(!bash_results[1].0);
+    assert_eq!(child.tools.invocations.lock().unwrap().len(), 1);
+
+    let requests = child.model.requests.lock().unwrap();
+    let advertised = requests[0]
+        .tools
+        .iter()
+        .map(|definition| definition.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(advertised, ["read", "grep", "glob", "list", "bash"]);
+    for excluded in ["write", "edit", "spawn_agent", "update_plan"] {
+        assert!(!advertised.contains(&excluded));
+    }
+    let readonly_trace = child
+        .trace
+        .signals
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished)
+                if finished.attributes.readonly_proof_key.as_deref() == Some("git log") =>
+            {
+                Some(finished.clone())
+            }
+            _ => None,
+        })
+        .expect("readonly proof trace");
+    assert_eq!(
+        readonly_trace
+            .attributes
+            .permission_decision_source
+            .as_deref(),
+        Some("readonly_proof")
+    );
+}
+
+#[tokio::test]
+async fn wait_agent_can_timeout_then_wait_again_for_a_delivery() {
+    let host = Arc::new(SessionHandleHost::default());
+    let control = AgentControl::new(
+        SessionId::new("session-wait-parent"),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut fixture = runtime_with_options(
+        vec![
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-timeout",
+                    "wait_agent",
+                    r#"{"timeout_ms":10000}"#,
+                )],
+            )),
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-delivery",
+                    "wait_agent",
+                    r#"{"timeout_ms":60000}"#,
+                )],
+            )),
+            Ok(response("delivery handled", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-wait-parent"),
+            agent_control: Some(control),
+            ..RuntimeOptions::default()
+        },
+    );
+    start(&fixture).await;
+
+    let mut saw_timeout = false;
+    let mut delivered = false;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let event = fixture.updates.recv().await.expect("session update");
+            match event.update {
+                SessionUpdate::ToolCallFinished {
+                    tool_name, output, ..
+                } if tool_name == "wait_agent" && output.contains("\"timed_out\":true") => {
+                    saw_timeout = true;
+                }
+                SessionUpdate::ToolCallStarted { tool_call }
+                    if saw_timeout && tool_call.name == "wait_agent" && !delivered =>
+                {
+                    fixture
+                        .handle
+                        .deliver_agent_message(
+                            "late_explorer",
+                            AgentMessageKind::FinalAnswer,
+                            "arrived during the second wait",
+                        )
+                        .await
+                        .expect("deliver while waiting");
+                    delivered = true;
+                }
+                SessionUpdate::TurnFinished { outcome } => break outcome,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("two waits should finish within the bounded timeout");
+
+    assert!(saw_timeout);
+    assert!(delivered);
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let requests = fixture.model.requests.lock().unwrap();
+    assert!(requests[2].messages.iter().any(|message| {
+        matches!(
+            message.content.first(),
+            Some(ContentBlock::Text(text))
+                if text.text.contains("<task>late_explorer</task>")
+        )
+    }));
+}
+
+#[tokio::test]
+async fn cancelling_parent_interrupts_wait_agent_immediately() {
+    let host = Arc::new(SessionHandleHost::default());
+    let control = AgentControl::new(
+        SessionId::new("session-cancel-wait-parent"),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut fixture = runtime_with_options(
+        vec![Ok(response(
+            "",
+            vec![tool_call(
+                "wait-long",
+                "wait_agent",
+                r#"{"timeout_ms":600000}"#,
+            )],
+        ))],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-cancel-wait-parent"),
+            agent_control: Some(control),
+            ..RuntimeOptions::default()
+        },
+    );
+    let turn_id = start_with_request(&fixture, "cancel-wait-turn").await;
+    wait_for_tool_start(&mut fixture.updates).await;
+    fixture
+        .handle
+        .cancel_turn(turn_id)
+        .await
+        .expect("cancel wait turn");
+
+    assert_eq!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Cancelled
     );
 }
 

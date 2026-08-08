@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
-use openwork_agent::{Agent, AgentBuilder, AgentDefinition};
+use openwork_agent::{Agent, AgentBuilder, AgentDefinition, explorer_definition};
 use openwork_chat_state::{ChatStateHandle, ConversationView};
 use openwork_models::ProviderFactory;
 use openwork_models::model::{ContentBlock, Message, Role};
@@ -31,17 +31,19 @@ use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
     COMPACTION_TRANSCRIPT_TOOL_NAME, ClientRequestId, CompactionError, CompactionStateCollector,
-    ConversationCompaction, ConversationTranscriptTool, PermissionDecision, PreparedTurnInput,
-    ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId, SessionRuntimeConfig,
-    SessionSnapshot, SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig,
-    TraceContentPolicy, TracePayloadSlot, TurnAccepted, TurnId, TurnToolset,
+    ControlToolSurface, ConversationCompaction, ConversationTranscriptTool, ParentLink,
+    PermissionDecision, PreparedTurnInput, ResolvedModel, SessionApproval, SessionError,
+    SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot, SessionStorage,
+    SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy, TracePayloadSlot,
+    TurnAccepted, TurnId, TurnToolset,
 };
 use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
     PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
-    TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    SubAgentSessionInput, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
 };
+use crate::{AgentControl, SubAgentHost, SubAgentSpec, TurnSlot};
 
 const CORE_UPDATE_BROADCAST_CAPACITY: usize = 4096;
 
@@ -165,6 +167,7 @@ pub enum OpenWorkCoreError {
 }
 
 pub struct OpenWorkCore {
+    self_weak: Weak<OpenWorkCore>,
     storage: Arc<PostgresStorage>,
     provider_factory: ProviderFactory,
     trace: Arc<PostgresTraceRecorder>,
@@ -176,12 +179,13 @@ pub struct OpenWorkCore {
     skill_status_update: Mutex<()>,
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
     sessions: RwLock<HashMap<SessionId, SessionHandle>>,
+    agent_controls: RwLock<HashMap<SessionId, AgentControl>>,
     session_creation: Mutex<()>,
     workspace_operations: Mutex<HashMap<SessionId, Weak<Mutex<()>>>>,
 }
 
 impl OpenWorkCore {
-    pub async fn bootstrap(config: OpenWorkCoreConfig) -> Result<Self, OpenWorkCoreError> {
+    pub async fn bootstrap(config: OpenWorkCoreConfig) -> Result<Arc<Self>, OpenWorkCoreError> {
         let storage = Arc::new(
             PostgresStorage::connect(config.database_url.as_deref())
                 .await
@@ -205,7 +209,9 @@ impl OpenWorkCore {
         .await
     }
 
-    pub async fn from_storage(storage: Arc<PostgresStorage>) -> Result<Self, OpenWorkCoreError> {
+    pub async fn from_storage(
+        storage: Arc<PostgresStorage>,
+    ) -> Result<Arc<Self>, OpenWorkCoreError> {
         Self::from_storage_parts(
             storage,
             Arc::new(EnvironmentCredentialResolver),
@@ -219,7 +225,7 @@ impl OpenWorkCore {
     pub async fn from_storage_with_credentials(
         storage: Arc<PostgresStorage>,
         credentials: Arc<dyn CredentialResolver>,
-    ) -> Result<Self, OpenWorkCoreError> {
+    ) -> Result<Arc<Self>, OpenWorkCoreError> {
         Self::from_storage_parts(
             storage,
             credentials,
@@ -236,7 +242,7 @@ impl OpenWorkCore {
         providers: Option<Arc<dyn ProviderRepository>>,
         trace_content: TraceContentConfig,
         skill_roots: SkillRoots,
-    ) -> Result<Self, OpenWorkCoreError> {
+    ) -> Result<Arc<Self>, OpenWorkCoreError> {
         storage.migrate().await?;
         let disabled_skill_names = RwLock::new(storage.disabled_skill_names().await?);
         let permission_root_source = skill_roots.clone();
@@ -253,7 +259,8 @@ impl OpenWorkCore {
             trace_content,
         ));
         let (update_tx, _) = broadcast::channel(CORE_UPDATE_BROADCAST_CAPACITY);
-        Ok(Self {
+        Ok(Arc::new_cyclic(|self_weak| Self {
+            self_weak: self_weak.clone(),
             storage,
             provider_factory: ProviderFactory::default(),
             trace,
@@ -265,9 +272,10 @@ impl OpenWorkCore {
             skill_status_update: Mutex::new(()),
             update_tx,
             sessions: RwLock::new(HashMap::new()),
+            agent_controls: RwLock::new(HashMap::new()),
             session_creation: Mutex::new(()),
             workspace_operations: Mutex::new(HashMap::new()),
-        })
+        }))
     }
 
     pub fn storage(&self) -> &PostgresStorage {
@@ -446,16 +454,33 @@ impl OpenWorkCore {
             .await?
             .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools) = build_default_agent_and_tools(
-            session_id,
-            &working_directory,
-            &self.skill_permission_roots,
-            self.storage.clone(),
-        )?;
+        let (agent, tools, control_surface) = if loaded.session.is_sub_agent() {
+            let (agent, tools) =
+                build_explorer_agent_and_tools(&working_directory, &self.skill_permission_roots)?;
+            (agent, tools, ControlToolSurface::SubAgent)
+        } else {
+            let control = self.agent_control_for_root(session_id).await;
+            let (agent, tools) = build_default_agent_and_tools(
+                session_id,
+                &working_directory,
+                &self.skill_permission_roots,
+                self.storage.clone(),
+            )?;
+            (
+                agent,
+                tools,
+                ControlToolSurface::Root {
+                    max_active_sub_agent_turns: control.max_active_turns(),
+                },
+            )
+        };
+        let tools = TurnToolset::new(Arc::new(tools), control_surface)
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let system_prompt = tools.system_prompt(agent.system_prompt());
         let system_context =
             SystemContextBuilder::new(&working_directory, self.skill_roots.clone())
                 .with_disabled_skills(self.disabled_skill_names.read().await.clone())
-                .build(agent.system_prompt())
+                .build(&system_prompt)
                 .await
                 .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
 
@@ -961,12 +986,48 @@ impl OpenWorkCore {
         let chat = ChatStateHandle::spawn_items(conversation)
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools) = build_default_agent_and_tools(
-            session_id,
-            &working_directory,
-            &self.skill_permission_roots,
-            self.storage.clone(),
-        )?;
+        let (agent, tools, control_surface, approval, parent_link, agent_control) = if let (
+            Some(parent_session_id),
+            Some(task_name),
+        ) = (
+            loaded.session.parent_session_id.as_deref(),
+            loaded.session.task_name.as_deref(),
+        ) {
+            let parent_session_id = SessionId::new(parent_session_id);
+            let agent_control = self.agent_control_for_root(&parent_session_id).await;
+            let (agent, tools) =
+                build_explorer_agent_and_tools(&working_directory, &self.skill_permission_roots)?;
+            (
+                agent,
+                tools,
+                ControlToolSurface::SubAgent,
+                SessionApproval::NonInteractive,
+                Some(ParentLink {
+                    parent_session_id,
+                    task_name: task_name.to_string(),
+                    agent_control: agent_control.clone(),
+                }),
+                agent_control,
+            )
+        } else {
+            let agent_control = self.agent_control_for_root(session_id).await;
+            let (agent, tools) = build_default_agent_and_tools(
+                session_id,
+                &working_directory,
+                &self.skill_permission_roots,
+                self.storage.clone(),
+            )?;
+            (
+                agent,
+                tools,
+                ControlToolSurface::Root {
+                    max_active_sub_agent_turns: agent_control.max_active_turns(),
+                },
+                SessionApproval::Interactive,
+                None,
+                agent_control,
+            )
+        };
 
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
@@ -984,7 +1045,7 @@ impl OpenWorkCore {
                 // Default mode 广告 update_plan。重名在这里确定性失败，而不是留到模型
                 // 某次调用时才暴露成分派歧义。
                 tools: Arc::new(
-                    TurnToolset::new(Arc::new(tools), true)
+                    TurnToolset::new(Arc::new(tools), control_surface)
                         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?,
                 ),
                 storage: self.storage.clone(),
@@ -994,11 +1055,91 @@ impl OpenWorkCore {
                 // A Session opened from the Desktop always has a user behind it.
                 // Sub-agent Sessions are started elsewhere and are the only
                 // `NonInteractive` ones.
-                approval: SessionApproval::Interactive,
-                parent_link: None,
+                approval,
+                parent_link,
+                agent_control: Some(agent_control),
             },
             self.update_tx.clone(),
         ))
+    }
+
+    async fn agent_control_for_root(&self, session_id: &SessionId) -> AgentControl {
+        if let Some(control) = self.agent_controls.read().await.get(session_id).cloned() {
+            return control;
+        }
+        let host: Weak<dyn SubAgentHost> = self.self_weak.clone();
+        let mut controls = self.agent_controls.write().await;
+        controls
+            .entry(session_id.clone())
+            .or_insert_with(|| AgentControl::new(session_id.clone(), host))
+            .clone()
+    }
+}
+
+#[async_trait]
+impl SubAgentHost for OpenWorkCore {
+    async fn start_sub_agent(&self, spec: SubAgentSpec) -> Result<(), String> {
+        let _creation = self.session_creation.lock().await;
+        if self.sessions.read().await.contains_key(&spec.session_id) {
+            return Err(format!("session {} is already live", spec.session_id));
+        }
+        let parent = self
+            .storage
+            .load_session(&spec.parent_session_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("parent session {} was not found", spec.parent_session_id))?;
+        self.storage
+            .create_sub_agent_session(&SubAgentSessionInput {
+                id: spec.session_id.clone(),
+                parent_session_id: spec.parent_session_id,
+                task_name: spec.task_name,
+                agent_role: spec.agent_role,
+                working_directory: parent.working_directory,
+                default_model_id: parent.default_model_id,
+                spawn_span_id: spec.spawn_span_id,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        let handle = self
+            .build_session_handle(&spec.session_id, PermissionMode::Default)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.sessions.write().await.insert(spec.session_id, handle);
+        Ok(())
+    }
+
+    async fn start_sub_agent_turn(
+        &self,
+        session_id: &SessionId,
+        message: String,
+        turn_slot: TurnSlot,
+    ) -> Result<(), String> {
+        let handle = self
+            .sessions
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} is not live"))?;
+        handle
+            .start_sub_agent_turn(
+                message,
+                self.disabled_skill_names.read().await.clone(),
+                turn_slot,
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
+        self.sessions
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} is not live"))
     }
 }
 
@@ -1028,6 +1169,25 @@ fn build_default_agent_and_tools(
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
     let tools = builtin_registry()
         .register(ConversationTranscriptTool::new(session_id.clone(), storage))
+        .finalize(
+            agent.toolset_config(),
+            ToolSessionContext::local(
+                working_directory.to_path_buf(),
+                skill_permission_profile(working_directory, skill_permission_roots),
+            ),
+        )
+        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+    Ok((agent, tools))
+}
+
+fn build_explorer_agent_and_tools(
+    working_directory: &Path,
+    skill_permission_roots: &[PathBuf],
+) -> Result<(Agent, FinalizedToolset), OpenWorkCoreError> {
+    let agent = AgentBuilder::new(explorer_definition())
+        .build()
+        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+    let tools = builtin_registry()
         .finalize(
             agent.toolset_config(),
             ToolSessionContext::local(
@@ -1248,6 +1408,29 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn production_explorer_builder_exposes_only_the_readonly_role_surface() {
+        let workspace = std::env::temp_dir().join(format!(
+            "openwork-explorer-toolset-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        let (agent, tools) =
+            build_explorer_agent_and_tools(&workspace, &[]).expect("explorer toolset");
+
+        assert_eq!(agent.definition().name, "explorer");
+        assert_eq!(
+            tools
+                .definitions()
+                .iter()
+                .map(|definition| definition.name.as_str())
+                .collect::<Vec<_>>(),
+            ["read", "grep", "glob", "list", "bash"]
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
 
     #[cfg(unix)]
     #[test]

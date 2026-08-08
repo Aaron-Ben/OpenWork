@@ -96,4 +96,20 @@ mod tests {
             Some("missing")
         );
     }
+
+    #[test]
+    fn explorer_is_a_bounded_read_only_agent() {
+        let definition = crate::explorer_definition();
+
+        assert_eq!(definition.name, "explorer");
+        assert_eq!(
+            definition.tool_names,
+            ["read", "grep", "glob", "list", "bash"]
+        );
+        assert_eq!(definition.policy.max_model_calls, 15);
+        assert_eq!(definition.policy.doom_loop_threshold, 3);
+        assert!(definition.system_prompt.contains("git status"));
+        assert!(definition.system_prompt.contains("Do not modify"));
+        assert!(definition.system_prompt.contains("Do not ask questions"));
+    }
 }

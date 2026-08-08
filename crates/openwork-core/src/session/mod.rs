@@ -32,7 +32,7 @@ pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use input::PreparedTurnInput;
 pub use permission_state::{NON_INTERACTIVE_DENIAL, PermissionModeOrigin, SessionApproval};
 pub use storage::{NoopSessionStorage, SessionStorage};
-pub use toolset::{TurnToolset, TurnToolsetError};
+pub use toolset::{ControlToolSurface, TurnToolset, TurnToolsetError};
 pub use trace::{
     CompactionAttemptOutcome, CompactionFinished, CompactionStarted, CompactionSummaryAttemptTrace,
     CompactionTraceAttributesV1, CompactionTraceGuard, DEFAULT_TRACE_PAYLOAD_RETENTION_DAYS,

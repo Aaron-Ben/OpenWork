@@ -18,6 +18,8 @@ pub struct SubAgent {
     pub task_name: String,
     pub session_id: SessionId,
     pub agent_role: String,
+    /// 注册进当前进程控制面的时间，使用带偏移的 RFC 3339 文本。
+    pub started_at: String,
 }
 
 /// `task_name` → live sub-agent, scoped to one root Session tree.
@@ -137,6 +139,7 @@ mod tests {
             task_name: task_name.to_string(),
             session_id: SessionId::new(format!("sess-{task_name}")),
             agent_role: "explorer".to_string(),
+            started_at: "2026-08-08T00:00:00+08:00".to_string(),
         }
     }
 

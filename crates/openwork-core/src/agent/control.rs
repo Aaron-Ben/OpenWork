@@ -3,8 +3,13 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::session::{AgentMessageKind, SessionHandle, SessionId};
+use serde::Serialize;
+
+use crate::session::{
+    AgentMessageKind, SessionHandle, SessionId, SessionRuntimeSnapshot, TurnOutcome,
+};
 use crate::storage::is_valid_task_name;
+use crate::storage::time::{china_now, to_wire};
 
 use super::limiter::{DEFAULT_MAX_ACTIVE_SUB_AGENT_TURNS, TurnSlot, TurnSlots};
 use super::registry::{SubAgent, SubAgentRegistry};
@@ -35,6 +40,14 @@ pub trait SubAgentHost: Send + Sync {
     /// Inserts the sub-agent's `sessions` row and starts its actor.
     async fn start_sub_agent(&self, spec: SubAgentSpec) -> Result<(), String>;
 
+    /// 在已启动的子 Session 上开始一个 Turn，并接管并发 guard。
+    async fn start_sub_agent_turn(
+        &self,
+        session_id: &SessionId,
+        message: String,
+        turn_slot: TurnSlot,
+    ) -> Result<(), String>;
+
     /// Returns the Core-owned handle for a live Session.
     async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String>;
 }
@@ -59,6 +72,37 @@ pub enum AgentControlError {
     ParentSessionUnavailable(String),
     #[error("failed to deliver sub-agent message: {0}")]
     DeliveryFailed(String),
+    #[error("failed to start sub-agent turn: {0}")]
+    TurnStartFailed(String),
+    #[error("failed to inspect sub-agent: {0}")]
+    InspectFailed(String),
+    #[error("failed to interrupt sub-agent: {0}")]
+    InterruptFailed(String),
+}
+
+impl AgentControlError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::TurnLimitReached { .. } => "agent_limit_reached",
+            Self::DuplicateTaskName(_) => "duplicate_task_name",
+            Self::InvalidTaskName(_) => "invalid_task_name",
+            Self::UnknownTaskName(_) => "unknown_agent",
+            Self::HostUnavailable => "agent_host_unavailable",
+            Self::StartFailed(_) => "agent_start_failed",
+            Self::ParentSessionUnavailable(_) => "parent_session_unavailable",
+            Self::DeliveryFailed(_) => "agent_delivery_failed",
+            Self::TurnStartFailed(_) => "agent_turn_start_failed",
+            Self::InspectFailed(_) => "agent_inspection_failed",
+            Self::InterruptFailed(_) => "agent_interrupt_failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubAgentStatus {
+    pub task_name: String,
+    pub status: String,
+    pub started_at: String,
 }
 
 /// Runtime control plane shared by a root Session and every sub-agent under it.
@@ -142,7 +186,7 @@ impl AgentControl {
     pub async fn spawn(
         &self,
         task_name: &str,
-        agent_role: &str,
+        message: String,
         spawn_span_id: Option<String>,
     ) -> Result<SubAgent, AgentControlError> {
         if !is_valid_task_name(task_name) {
@@ -150,6 +194,7 @@ impl AgentControl {
         }
 
         let reservation = self.inner.registry.reserve(task_name)?;
+        let turn_slot = self.try_acquire_turn_slot()?;
         let host = self
             .inner
             .host
@@ -161,16 +206,22 @@ impl AgentControl {
             session_id: session_id.clone(),
             parent_session_id: self.inner.root_session_id.clone(),
             task_name: reservation.task_name().to_string(),
-            agent_role: agent_role.to_string(),
+            agent_role: "explorer".to_string(),
             spawn_span_id,
         })
         .await
         .map_err(AgentControlError::StartFailed)?;
 
+        host.start_sub_agent_turn(&session_id, message, turn_slot)
+            .await
+            .map_err(AgentControlError::TurnStartFailed)?;
+
+        let started_at = china_now();
         let agent = SubAgent {
             task_name: reservation.task_name().to_string(),
             session_id,
-            agent_role: agent_role.to_string(),
+            agent_role: "explorer".to_string(),
+            started_at: to_wire(started_at).unwrap_or_else(|| started_at.to_string()),
         };
         reservation.commit(agent.clone());
         Ok(agent)
@@ -186,6 +237,75 @@ impl AgentControl {
     /// Live sub-agents ordered by `task_name`.
     pub fn list(&self) -> Vec<SubAgent> {
         self.inner.registry.list()
+    }
+
+    pub async fn list_statuses(&self) -> Result<Vec<SubAgentStatus>, AgentControlError> {
+        let host = self
+            .inner
+            .host
+            .upgrade()
+            .ok_or(AgentControlError::HostUnavailable)?;
+        let mut statuses = Vec::new();
+        for agent in self.list() {
+            let handle = host
+                .session_handle(&agent.session_id)
+                .await
+                .map_err(AgentControlError::InspectFailed)?;
+            let snapshot = handle
+                .snapshot()
+                .await
+                .map_err(|error| AgentControlError::InspectFailed(error.to_string()))?;
+            statuses.push(SubAgentStatus {
+                task_name: agent.task_name,
+                status: runtime_status(&snapshot.runtime).to_string(),
+                started_at: agent.started_at,
+            });
+        }
+        Ok(statuses)
+    }
+
+    pub async fn followup(
+        &self,
+        task_name: &str,
+        message: String,
+    ) -> Result<(), AgentControlError> {
+        let agent = self.get(task_name)?;
+        let turn_slot = self.try_acquire_turn_slot()?;
+        let host = self
+            .inner
+            .host
+            .upgrade()
+            .ok_or(AgentControlError::HostUnavailable)?;
+        host.start_sub_agent_turn(&agent.session_id, message, turn_slot)
+            .await
+            .map_err(AgentControlError::TurnStartFailed)
+    }
+
+    pub async fn interrupt(&self, task_name: &str) -> Result<(), AgentControlError> {
+        let agent = self.get(task_name)?;
+        let host = self
+            .inner
+            .host
+            .upgrade()
+            .ok_or(AgentControlError::HostUnavailable)?;
+        let handle = host
+            .session_handle(&agent.session_id)
+            .await
+            .map_err(AgentControlError::InterruptFailed)?;
+        let snapshot = handle
+            .snapshot()
+            .await
+            .map_err(|error| AgentControlError::InterruptFailed(error.to_string()))?;
+        let SessionRuntimeSnapshot::Running { turn_id, .. } = snapshot.runtime else {
+            return Err(AgentControlError::InterruptFailed(format!(
+                "sub-agent `{task_name}` has no active turn"
+            )));
+        };
+        handle
+            .cancel_turn(turn_id)
+            .await
+            .map_err(|error| AgentControlError::InterruptFailed(error.to_string()))?;
+        Ok(())
     }
 
     pub async fn deliver_to_parent(
@@ -211,14 +331,64 @@ impl AgentControl {
     }
 }
 
+fn runtime_status(runtime: &SessionRuntimeSnapshot) -> &'static str {
+    match runtime {
+        SessionRuntimeSnapshot::Idle => "idle",
+        SessionRuntimeSnapshot::Running { .. } => "running",
+        SessionRuntimeSnapshot::Terminal { outcome, .. } => match outcome {
+            TurnOutcome::Completed { .. } => "completed",
+            TurnOutcome::Failed { .. } => "failed",
+            TurnOutcome::Cancelled => "cancelled",
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     struct RecordingHost {
         started: Mutex<Vec<SubAgentSpec>>,
         fail_with: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct HoldingHost {
+        slots: Mutex<HashMap<SessionId, TurnSlot>>,
+    }
+
+    impl HoldingHost {
+        fn finish(&self, session_id: &SessionId) {
+            self.slots.lock().expect("held slots").remove(session_id);
+        }
+    }
+
+    #[async_trait]
+    impl SubAgentHost for HoldingHost {
+        async fn start_sub_agent(&self, _spec: SubAgentSpec) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn start_sub_agent_turn(
+            &self,
+            session_id: &SessionId,
+            _message: String,
+            turn_slot: TurnSlot,
+        ) -> Result<(), String> {
+            self.slots
+                .lock()
+                .expect("held slots")
+                .insert(session_id.clone(), turn_slot);
+            Ok(())
+        }
+
+        async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
+            Err(format!(
+                "session {session_id} has no actor in this limiter test"
+            ))
+        }
     }
 
     impl RecordingHost {
@@ -251,6 +421,15 @@ mod tests {
             Ok(())
         }
 
+        async fn start_sub_agent_turn(
+            &self,
+            _session_id: &SessionId,
+            _message: String,
+            _turn_slot: TurnSlot,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
         async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
             Err(format!(
                 "session {session_id} is not configured in this host"
@@ -272,7 +451,11 @@ mod tests {
         let control = control_for(&host, 3);
 
         let agent = control
-            .spawn("find_auth_flow", "explorer", Some("span-1".to_string()))
+            .spawn(
+                "find_auth_flow",
+                "inspect auth flow".to_string(),
+                Some("span-1".to_string()),
+            )
             .await
             .expect("spawn");
 
@@ -289,16 +472,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spawn_and_followup_share_the_active_turn_limit() {
+        let host = Arc::new(HoldingHost::default());
+        let control = AgentControl::with_max_active_turns(
+            SessionId::new("sess-root"),
+            Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+            3,
+        );
+        let mut agents = Vec::new();
+        for index in 0..3 {
+            agents.push(
+                control
+                    .spawn(
+                        &format!("lookup_{index}"),
+                        format!("inspect area {index}"),
+                        None,
+                    )
+                    .await
+                    .expect("within limit"),
+            );
+        }
+
+        let error = control
+            .spawn("lookup_3", "inspect fourth area".to_string(), None)
+            .await
+            .expect_err("fourth active turn must be rejected");
+        assert!(matches!(
+            error,
+            AgentControlError::TurnLimitReached { max: 3 }
+        ));
+        assert_eq!(error.code(), "agent_limit_reached");
+
+        host.finish(&agents[0].session_id);
+        control
+            .followup("lookup_0", "inspect one more detail".to_string())
+            .await
+            .expect("an idle child frees and can reacquire its slot");
+        assert_eq!(control.active_turns(), 3);
+    }
+
+    #[tokio::test]
     async fn duplicate_task_names_are_refused_without_reaching_the_host() {
         let host = RecordingHost::new();
         let control = control_for(&host, 3);
         control
-            .spawn("find_auth", "explorer", None)
+            .spawn("find_auth", "inspect auth".to_string(), None)
             .await
             .expect("first");
 
         let error = control
-            .spawn("find_auth", "explorer", None)
+            .spawn("find_auth", "inspect auth".to_string(), None)
             .await
             .expect_err("second");
         assert!(matches!(error, AgentControlError::DuplicateTaskName(name) if name == "find_auth"));
@@ -320,7 +543,7 @@ mod tests {
             too_long.as_str(),
         ] {
             let error = control
-                .spawn(name, "explorer", None)
+                .spawn(name, "inspect".to_string(), None)
                 .await
                 .expect_err("must reject");
             assert!(
@@ -338,7 +561,7 @@ mod tests {
         let longest = format!("a{}", "b".repeat(47));
         assert_eq!(longest.len(), 48);
         control
-            .spawn(&longest, "explorer", None)
+            .spawn(&longest, "inspect".to_string(), None)
             .await
             .expect("48 characters must be accepted");
     }
@@ -348,7 +571,7 @@ mod tests {
         let failing = RecordingHost::failing("provider unavailable");
         let control = control_for(&failing, 3);
         let error = control
-            .spawn("find_auth", "explorer", None)
+            .spawn("find_auth", "inspect auth".to_string(), None)
             .await
             .expect_err("fail");
         assert!(matches!(error, AgentControlError::StartFailed(_)));
@@ -360,7 +583,7 @@ mod tests {
         let working = RecordingHost::new();
         let control = control_for(&working, 3);
         control
-            .spawn("find_auth", "explorer", None)
+            .spawn("find_auth", "inspect auth".to_string(), None)
             .await
             .expect("the name must be reusable after a failure");
     }
@@ -371,7 +594,7 @@ mod tests {
         let control = control_for(&host, 3);
         drop(host);
         let error = control
-            .spawn("find_auth", "explorer", None)
+            .spawn("find_auth", "inspect auth".to_string(), None)
             .await
             .expect_err("no host");
         assert!(matches!(error, AgentControlError::HostUnavailable));
@@ -388,7 +611,7 @@ mod tests {
         let child_view = parent.clone();
 
         parent
-            .spawn("find_auth", "explorer", None)
+            .spawn("find_auth", "inspect auth".to_string(), None)
             .await
             .expect("spawn");
         assert_eq!(

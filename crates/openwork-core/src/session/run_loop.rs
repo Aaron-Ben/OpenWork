@@ -22,11 +22,16 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::AgentControl;
+use crate::agent::{
+    AgentTool, FollowupTaskArgs, InterruptAgentArgs, NoArgs, SpawnAgentArgs, WaitAgentArgs,
+    parse_args as parse_agent_args, validate_wait_timeout,
+};
 use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::plan::{
-    TurnPlan, UPDATE_PLAN_PROMPT_RULES, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments,
-    update_plan_success_output, validate_args,
+    TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
+    validate_args,
 };
 use crate::skills::SkillRoots;
 use crate::storage::time::china_now;
@@ -70,6 +75,7 @@ pub(super) struct TurnRunRequest {
     /// `NonInteractive` turns every `Ask` into an immediate denial.
     pub approval: SessionApproval,
     pub mailbox: AgentMailbox,
+    pub agent_control: Option<AgentControl>,
 }
 
 pub(super) enum RunnerEvent {
@@ -195,12 +201,9 @@ impl TurnRunner {
     /// 计划规则跟着工具走：`update_plan` 没被广告时不能出现，否则提示里会讲一个模型
     /// 调用不到的工具。
     fn system_prompt(&self) -> String {
-        let base = self.request.agent.system_prompt();
-        if self.request.tools.update_plan_enabled() {
-            format!("{base}\n\n{UPDATE_PLAN_PROMPT_RULES}")
-        } else {
-            base.to_string()
-        }
+        self.request
+            .tools
+            .system_prompt(self.request.agent.system_prompt())
     }
 
     async fn run_loop(&mut self) -> Result<String, TurnRunError> {
@@ -597,9 +600,13 @@ impl TurnRunner {
         // 一次解析，之后按类型分派。控制工具与普通工具从这里开始走两条路：前者提交 Turn
         // 状态，后者经 PermissionEngine 访问主机能力。后续步骤不再比较工具名字符串。
         let resolved = self.request.tools.resolve(&call.name);
-        let is_control_tool = matches!(resolved, Some(ResolvedTurnTool::UpdatePlan));
-        let resolved_tool_name = match resolved {
+        let is_control_tool = matches!(
+            &resolved,
+            Some(ResolvedTurnTool::UpdatePlan | ResolvedTurnTool::Agent(_))
+        );
+        let resolved_tool_name = match &resolved {
             Some(ResolvedTurnTool::UpdatePlan) => UPDATE_PLAN_TOOL_NAME.to_string(),
+            Some(ResolvedTurnTool::Agent(tool)) => tool.name().to_string(),
             Some(ResolvedTurnTool::Registered(id)) => id.to_string(),
             None => {
                 let error = ToolValidationError::UnknownTool(call.name.clone());
@@ -651,10 +658,18 @@ impl TurnRunner {
         // 控制工具在这里分流：它不访问主机能力，也不改工作区，所以不进 PermissionEngine。
         // 免审批由这条类型化分支表达，而不是给它伪造一个 ToolRisk::ReadOnly——后者会让
         // 权限日志把"Core 控制工具"和"被内置规则放行的只读工具"混为一谈。
-        if is_control_tool {
-            return self
-                .run_update_plan(call, tool_call_id, &input, tool_trace)
-                .await;
+        match resolved.expect("unknown tools returned above") {
+            ResolvedTurnTool::UpdatePlan => {
+                return self
+                    .run_update_plan(call, tool_call_id, &input, tool_trace)
+                    .await;
+            }
+            ResolvedTurnTool::Agent(tool) => {
+                return self
+                    .run_agent_tool(call, tool_call_id, tool, &input, tool_trace)
+                    .await;
+            }
+            ResolvedTurnTool::Registered(_) => {}
         }
         let permit = match self.request.tools.registered().authorize(
             &invocation,
@@ -908,6 +923,110 @@ impl TurnRunner {
         .await
     }
 
+    /// 执行一次多智能体控制调用。所有领域错误都写成失败 Tool Result，父 Turn 继续运行。
+    async fn run_agent_tool(
+        &mut self,
+        call: &ToolCallBlock,
+        tool_call_id: ToolCallId,
+        tool: AgentTool,
+        input: &serde_json::Value,
+        mut tool_trace: ToolCallTraceGuard,
+    ) -> Result<(), TurnRunError> {
+        tool_trace.record_permission_policy("allow");
+        tool_trace.record_permission_decision("allow", "control_tool");
+
+        let Some(control) = self.request.agent_control.clone() else {
+            let result = ToolResult::failed(
+                ToolErrorCode::ExecutionFailed,
+                "agent_control_unavailable: this session has no collaboration control plane",
+                false,
+            );
+            return self
+                .append_tool_result(call, tool_call_id, result, tool_trace)
+                .await;
+        };
+
+        let result = match tool {
+            AgentTool::Spawn => match parse_agent_args::<SpawnAgentArgs>(tool, input) {
+                Ok(args) if !args.message.trim().is_empty() => {
+                    let spawn_span_id = Some(tool_trace.span_id().to_string());
+                    match control
+                        .spawn(&args.task_name, args.message, spawn_span_id)
+                        .await
+                    {
+                        Ok(agent) => ToolResult::succeeded(
+                            serde_json::json!({ "task_name": agent.task_name }).to_string(),
+                        ),
+                        Err(error) => agent_error_result(error),
+                    }
+                }
+                Ok(_) => invalid_agent_args("message must not be blank"),
+                Err(message) => invalid_agent_args(message),
+            },
+            AgentTool::Wait => match parse_agent_args::<WaitAgentArgs>(tool, input)
+                .and_then(|args| validate_wait_timeout(args.timeout_ms))
+            {
+                Ok(timeout_ms) => {
+                    let delivered = tokio::select! {
+                        _ = self.request.cancel.cancelled() => {
+                            let result = ToolResult::cancelled(
+                                "turn cancelled while waiting for a sub-agent"
+                            );
+                            self.append_tool_result(call, tool_call_id, result, tool_trace)
+                                .await?;
+                            return Err(TurnRunError::Cancelled);
+                        }
+                        delivered = self.request.mailbox.wait_for_delivery(
+                            std::time::Duration::from_millis(timeout_ms)
+                        ) => delivered,
+                    };
+                    ToolResult::succeeded(
+                        serde_json::json!({
+                            "delivered": delivered,
+                            "timed_out": !delivered,
+                        })
+                        .to_string(),
+                    )
+                }
+                Err(message) => invalid_agent_args(message),
+            },
+            AgentTool::List => match parse_agent_args::<NoArgs>(tool, input) {
+                Ok(_) => match control.list_statuses().await {
+                    Ok(statuses) => match serde_json::to_string(&statuses) {
+                        Ok(output) => ToolResult::succeeded(output),
+                        Err(error) => ToolResult::failed(
+                            ToolErrorCode::ExecutionFailed,
+                            format!("failed to serialize agent statuses: {error}"),
+                            false,
+                        ),
+                    },
+                    Err(error) => agent_error_result(error),
+                },
+                Err(message) => invalid_agent_args(message),
+            },
+            AgentTool::Followup => match parse_agent_args::<FollowupTaskArgs>(tool, input) {
+                Ok(args) if !args.message.trim().is_empty() => {
+                    match control.followup(&args.task_name, args.message).await {
+                        Ok(()) => ToolResult::succeeded("Follow-up task started"),
+                        Err(error) => agent_error_result(error),
+                    }
+                }
+                Ok(_) => invalid_agent_args("message must not be blank"),
+                Err(message) => invalid_agent_args(message),
+            },
+            AgentTool::Interrupt => match parse_agent_args::<InterruptAgentArgs>(tool, input) {
+                Ok(args) => match control.interrupt(&args.task_name).await {
+                    Ok(()) => ToolResult::succeeded("Interrupt requested"),
+                    Err(error) => agent_error_result(error),
+                },
+                Err(message) => invalid_agent_args(message),
+            },
+        };
+
+        self.append_tool_result(call, tool_call_id, result, tool_trace)
+            .await
+    }
+
     fn start_tool_trace(
         &mut self,
         call: &ToolCallBlock,
@@ -1043,6 +1162,18 @@ fn tool_progress_update(progress: RuntimeToolProgress) -> ToolProgressUpdate {
         RuntimeToolProgress::Stderr { chunk } => ToolProgressUpdate::Stderr { chunk },
         RuntimeToolProgress::Message { message } => ToolProgressUpdate::Message { message },
     }
+}
+
+fn invalid_agent_args(message: impl Into<String>) -> ToolResult {
+    ToolResult::failed(ToolErrorCode::InvalidArguments, message, false)
+}
+
+fn agent_error_result(error: crate::AgentControlError) -> ToolResult {
+    ToolResult::failed(
+        ToolErrorCode::ExecutionFailed,
+        format!("{}: {error}", error.code()),
+        false,
+    )
 }
 
 fn assistant_message(response: &ModelResponse) -> Message {

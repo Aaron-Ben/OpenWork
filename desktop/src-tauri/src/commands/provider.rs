@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use openwork_core::{
-    OpenWorkCore, ProviderIndex, ProviderInput, ProviderPreset, ProviderProfile, ProviderTestResult,
+    OpenWorkCore as OpenWorkCoreService, ProviderIndex, ProviderInput, ProviderPreset,
+    ProviderProfile, ProviderTestResult,
 };
+
+type OpenWorkCore = Arc<OpenWorkCoreService>;
 
 use crate::CommandError;
 

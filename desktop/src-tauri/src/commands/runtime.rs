@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use openwork_core::{
     session::TurnId, ClientRequestId, ContextWindowInspection, ConversationCompaction,
     ConversationProjectionRecord, ConversationProjectionSelector, ConversationTranscriptPage,
-    ConversationTranscriptQuery, LoadedSession, OpenWorkCore, PermissionDecision, PermissionMode,
-    ReapplyFileChangesResult, SessionId, SessionInput, SessionRecord, SessionSnapshot,
-    SessionUpdateEnvelope, ToolCallId, TraceContentPolicy, TracePayloadSlot,
-    TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted, TurnTrace,
-    UndoFileChangesResult,
+    ConversationTranscriptQuery, LoadedSession, OpenWorkCore as OpenWorkCoreService,
+    PermissionDecision, PermissionMode, ReapplyFileChangesResult, SessionId, SessionInput,
+    SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TraceContentPolicy,
+    TracePayloadSlot, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted,
+    TurnTrace, UndoFileChangesResult,
 };
+
+type OpenWorkCore = Arc<OpenWorkCoreService>;
 
 use crate::CommandError;
 

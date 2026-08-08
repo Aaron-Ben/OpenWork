@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use openwork_core::{
     skills::{SkillDetail, SkillDiscovery},
-    OpenWorkCore,
+    OpenWorkCore as OpenWorkCoreService,
 };
+
+type OpenWorkCore = Arc<OpenWorkCoreService>;
 
 use crate::CommandError;
 

@@ -10,7 +10,8 @@ use openwork_models::model::ToolDefinition as ModelToolDefinition;
 use openwork_tools::{FinalizedToolset, ToolId};
 use thiserror::Error;
 
-use crate::plan::{UPDATE_PLAN_TOOL_NAME, update_plan_definition};
+use crate::agent::{AGENT_TOOLS, AgentTool, agent_prompt_rules, agent_tool_definitions};
+use crate::plan::{UPDATE_PLAN_PROMPT_RULES, UPDATE_PLAN_TOOL_NAME, update_plan_definition};
 
 /// 一次调用解析出的工具身份。
 ///
@@ -23,7 +24,14 @@ use crate::plan::{UPDATE_PLAN_TOOL_NAME, update_plan_definition};
 /// 的借用会和它们冲突。ToolId 是个字符串 newtype，每次调用克隆一次可以忽略不计。
 pub(super) enum ResolvedTurnTool {
     UpdatePlan,
+    Agent(AgentTool),
     Registered(ToolId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlToolSurface {
+    Root { max_active_sub_agent_turns: usize },
+    SubAgent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -41,30 +49,50 @@ pub struct TurnToolset {
     /// Default mode 下为 true。Plan mode 落地后由 collaboration mode 决定工具面，
     /// 而不是在 handler 里补一个兼容拒绝分支。
     update_plan_enabled: bool,
+    max_active_sub_agent_turns: Option<usize>,
 }
 
 impl TurnToolset {
     pub fn new(
         tools: Arc<FinalizedToolset>,
-        update_plan_enabled: bool,
+        control_surface: ControlToolSurface,
     ) -> Result<Self, TurnToolsetError> {
         let mut definitions = tools.definitions().to_vec();
-        if update_plan_enabled {
-            // 重名必须在构造时确定性失败，而不是等到模型某次调用才发现分派歧义。
+        let max_active_sub_agent_turns = match control_surface {
+            ControlToolSurface::Root {
+                max_active_sub_agent_turns,
+            } => Some(max_active_sub_agent_turns),
+            ControlToolSurface::SubAgent => None,
+        };
+        let mut control_definitions = Vec::new();
+        if let Some(max_active_sub_agent_turns) = max_active_sub_agent_turns {
+            definitions.push(update_plan_definition());
+            control_definitions.extend(agent_tool_definitions(max_active_sub_agent_turns));
+        }
+        for control in &control_definitions {
             if definitions
                 .iter()
-                .any(|definition| definition.name == UPDATE_PLAN_TOOL_NAME)
+                .any(|definition| definition.name == control.name)
             {
-                return Err(TurnToolsetError::NameCollision(
-                    UPDATE_PLAN_TOOL_NAME.to_string(),
-                ));
+                return Err(TurnToolsetError::NameCollision(control.name.clone()));
             }
-            definitions.push(update_plan_definition());
         }
+        if max_active_sub_agent_turns.is_some()
+            && tools
+                .definitions()
+                .iter()
+                .any(|definition| definition.name == UPDATE_PLAN_TOOL_NAME)
+        {
+            return Err(TurnToolsetError::NameCollision(
+                UPDATE_PLAN_TOOL_NAME.to_string(),
+            ));
+        }
+        definitions.extend(control_definitions);
         Ok(Self {
             definitions,
             tools,
-            update_plan_enabled,
+            update_plan_enabled: max_active_sub_agent_turns.is_some(),
+            max_active_sub_agent_turns,
         })
     }
 
@@ -80,12 +108,38 @@ impl TurnToolset {
         self.update_plan_enabled
     }
 
+    pub fn max_active_sub_agent_turns(&self) -> Option<usize> {
+        self.max_active_sub_agent_turns
+    }
+
+    /// 将控制工具规则和工具定义作为同一个工具面的两个投影统一组装。
+    ///
+    /// 运行 Turn 和只读上下文检查必须走这里；否则很容易出现模型实际拿到一套工具，
+    /// 检查器却展示另一套提示词的情况。
+    pub(crate) fn system_prompt(&self, base: &str) -> String {
+        let mut prompt = base.to_string();
+        if self.update_plan_enabled {
+            prompt.push_str("\n\n");
+            prompt.push_str(UPDATE_PLAN_PROMPT_RULES);
+        }
+        if let Some(max) = self.max_active_sub_agent_turns {
+            prompt.push_str("\n\n");
+            prompt.push_str(&agent_prompt_rules(max));
+        }
+        prompt
+    }
+
     /// 解析工具名。
     ///
     /// 返回 `None` 表示未知工具，由调用方生成失败 Tool Result——与既有行为一致。
     pub(super) fn resolve(&self, name: &str) -> Option<ResolvedTurnTool> {
         if self.update_plan_enabled && name == UPDATE_PLAN_TOOL_NAME {
             return Some(ResolvedTurnTool::UpdatePlan);
+        }
+        if self.max_active_sub_agent_turns.is_some()
+            && let Some(tool) = AGENT_TOOLS.into_iter().find(|tool| tool.name() == name)
+        {
+            return Some(ResolvedTurnTool::Agent(tool));
         }
         self.tools
             .resolve(name)
@@ -114,7 +168,13 @@ mod tests {
 
     #[test]
     fn advertises_update_plan_exactly_once_and_resolves_it() {
-        let turn_tools = TurnToolset::new(toolset(&["read", "bash"]), true).expect("toolset");
+        let turn_tools = TurnToolset::new(
+            toolset(&["read", "bash"]),
+            ControlToolSurface::Root {
+                max_active_sub_agent_turns: 3,
+            },
+        )
+        .expect("toolset");
 
         let advertised = turn_tools
             .definitions()
@@ -124,7 +184,7 @@ mod tests {
         assert_eq!(advertised, 1);
         assert_eq!(
             turn_tools.definitions().len(),
-            3,
+            8,
             "the control tool is added on top of the registered surface, not instead of it"
         );
         assert!(matches!(
@@ -135,12 +195,25 @@ mod tests {
             turn_tools.resolve("read"),
             Some(ResolvedTurnTool::Registered(_))
         ));
+        for name in [
+            "spawn_agent",
+            "wait_agent",
+            "list_agents",
+            "followup_task",
+            "interrupt_agent",
+        ] {
+            assert!(matches!(
+                turn_tools.resolve(name),
+                Some(ResolvedTurnTool::Agent(_))
+            ));
+        }
         assert!(turn_tools.resolve("nope").is_none());
     }
 
     #[test]
     fn a_disabled_control_tool_is_neither_advertised_nor_dispatched() {
-        let turn_tools = TurnToolset::new(toolset(&["read"]), false).expect("toolset");
+        let turn_tools =
+            TurnToolset::new(toolset(&["read"]), ControlToolSurface::SubAgent).expect("toolset");
 
         assert!(
             !turn_tools
@@ -152,10 +225,24 @@ mod tests {
             turn_tools.resolve(UPDATE_PLAN_TOOL_NAME).is_none(),
             "not advertising it must also mean not dispatching it"
         );
+        for name in [
+            "spawn_agent",
+            "wait_agent",
+            "list_agents",
+            "followup_task",
+            "interrupt_agent",
+        ] {
+            assert!(
+                turn_tools.resolve(name).is_none(),
+                "sub-agents must not receive collaboration controls: {name}"
+            );
+        }
     }
 
     /// 一个恰好占用了 `update_plan` 这个名字的普通工具。
     struct CollidingTool;
+
+    struct SpawnCollidingTool;
 
     #[derive(serde::Deserialize, schemars::JsonSchema)]
     struct NoInput {}
@@ -187,6 +274,33 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl openwork_tools::Tool for SpawnCollidingTool {
+        type Input = NoInput;
+        type Output = openwork_tools::TextToolOutput;
+
+        fn id(&self) -> openwork_tools::ToolId {
+            openwork_tools::ToolId::new("spawn_agent")
+        }
+
+        fn description(&self) -> &'static str {
+            "a registered tool that squats on a collaboration control name"
+        }
+
+        fn risk(&self) -> openwork_tools::ToolRisk {
+            openwork_tools::ToolRisk::ReadOnly
+        }
+
+        async fn execute(
+            &self,
+            _session: &ToolSessionContext,
+            _call: openwork_tools::ToolCallContext,
+            _input: Self::Input,
+        ) -> Result<Self::Output, openwork_tools::ToolExecutionError> {
+            Ok(openwork_tools::TextToolOutput::new("never runs"))
+        }
+    }
+
     #[test]
     fn a_registered_tool_with_the_same_name_fails_at_construction() {
         let colliding = Arc::new(
@@ -202,7 +316,12 @@ mod tests {
                 .expect("finalize"),
         );
 
-        let error = match TurnToolset::new(colliding, true) {
+        let error = match TurnToolset::new(
+            colliding,
+            ControlToolSurface::Root {
+                max_active_sub_agent_turns: 3,
+            },
+        ) {
             Err(error) => error,
             Ok(_) => panic!("a collision must fail while building the surface, not at dispatch"),
         };
@@ -215,7 +334,13 @@ mod tests {
 
     #[test]
     fn every_advertised_name_resolves() {
-        let turn_tools = TurnToolset::new(toolset(&["read", "write", "bash"]), true).expect("ok");
+        let turn_tools = TurnToolset::new(
+            toolset(&["read", "write", "bash"]),
+            ControlToolSurface::Root {
+                max_active_sub_agent_turns: 3,
+            },
+        )
+        .expect("ok");
 
         for definition in turn_tools.definitions() {
             assert!(
@@ -224,5 +349,58 @@ mod tests {
                 definition.name
             );
         }
+    }
+
+    #[test]
+    fn every_collaboration_control_name_participates_in_collision_detection() {
+        let colliding = Arc::new(
+            builtin_registry()
+                .register(SpawnCollidingTool)
+                .finalize(
+                    &ToolsetConfig::from_names(["spawn_agent"]),
+                    ToolSessionContext::local(
+                        std::env::temp_dir(),
+                        PermissionProfile::from_builtin_rules(std::env::temp_dir()),
+                    ),
+                )
+                .expect("finalize"),
+        );
+
+        let error = TurnToolset::new(
+            colliding,
+            ControlToolSurface::Root {
+                max_active_sub_agent_turns: 3,
+            },
+        )
+        .err()
+        .expect("collision");
+        assert_eq!(
+            error,
+            TurnToolsetError::NameCollision("spawn_agent".to_string())
+        );
+    }
+
+    #[test]
+    fn collaboration_descriptions_explain_when_not_to_delegate_and_the_limit() {
+        let turn_tools = TurnToolset::new(
+            toolset(&["read"]),
+            ControlToolSurface::Root {
+                max_active_sub_agent_turns: 3,
+            },
+        )
+        .expect("toolset");
+        let spawn = turn_tools
+            .definitions()
+            .iter()
+            .find(|definition| definition.name == "spawn_agent")
+            .expect("spawn definition");
+
+        assert!(spawn.description.contains("specific, bounded"));
+        assert!(spawn.description.contains("Do not use"));
+        assert!(spawn.description.contains("intermediate material"));
+        assert!(spawn.description.contains("next action depends"));
+        assert!(spawn.description.contains("already investigated"));
+        assert!(spawn.description.contains("same unresolved question"));
+        assert!(spawn.description.contains("3"));
     }
 }

@@ -1115,6 +1115,10 @@ impl ToolCallTraceGuard {
         self.resolved_tool_name = Some(bounded(name, MAX_TRACE_STRING_CHARS));
     }
 
+    pub fn span_id(&self) -> &str {
+        &self.started.span_id
+    }
+
     pub fn record_permission_policy(&mut self, policy: &str) {
         self.attributes.permission_policy = Some(bounded(policy, MAX_TRACE_STRING_CHARS));
     }

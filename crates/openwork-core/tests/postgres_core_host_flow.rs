@@ -1,15 +1,121 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+
 use openwork_core::{
-    API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, OpenWorkCore, OpenWorkCoreConfig,
-    PermissionDecision, ProviderInput, RuntimeTurnId, SessionId, SessionInput, SessionUpdate,
-    ToolCallId, TurnOutcome,
+    API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, CredentialResolver, ModelInput, OpenWorkCore,
+    OpenWorkCoreConfig, PermissionDecision, ProviderInput, RuntimeTurnId, SessionId, SessionInput,
+    SessionUpdate, SubAgentHost, SubAgentSpec, ToolCallId, TurnOutcome,
 };
-use openwork_models::provider::{ModelTier, ProviderKind, ProviderModel};
+use openwork_models::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel};
 use uuid::Uuid;
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+struct FixedCredential;
+
+#[async_trait]
+impl CredentialResolver for FixedCredential {
+    async fn resolve(&self, _reference: &str) -> Result<ApiCredential, String> {
+        Ok(ApiCredential::new("test-credential"))
+    }
+}
+
+#[tokio::test]
+async fn production_host_persists_and_starts_an_idle_explorer_session() {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
+    let storage = Arc::new(
+        openwork_core::PostgresStorage::connect(Some(&database_url))
+            .await
+            .expect("storage"),
+    );
+    let model_id = unique("model-sub-agent-host");
+    let model_name = unique("sub-agent-host-model");
+    storage
+        .upsert_model(&ModelInput {
+            id: model_id.clone(),
+            display_name: "Sub-agent host test".to_string(),
+            provider_kind: "deepseek".to_string(),
+            model_name: model_name.clone(),
+            base_url: format!("https://example.invalid/{model_name}"),
+            credential_ref: Some("test:credential".to_string()),
+            enabled: true,
+            config: serde_json::json!({}),
+        })
+        .await
+        .expect("model");
+    let core = OpenWorkCore::from_storage_with_credentials(
+        Arc::clone(&storage),
+        Arc::new(FixedCredential),
+    )
+    .await
+    .expect("core");
+    let parent_session_id = SessionId::new(unique("session-sub-agent-parent"));
+    core.create_session(&SessionInput {
+        id: parent_session_id.clone(),
+        title: Some("Sub-agent parent".to_string()),
+        working_directory: std::env::current_dir()
+            .expect("cwd")
+            .to_string_lossy()
+            .into_owned(),
+        default_model_id: Some(model_id),
+    })
+    .await
+    .expect("parent session");
+    let child_session_id = SessionId::new(unique("session-sub-agent-child"));
+
+    SubAgentHost::start_sub_agent(
+        core.as_ref(),
+        SubAgentSpec {
+            session_id: child_session_id.clone(),
+            parent_session_id: parent_session_id.clone(),
+            task_name: "inspect_runtime".to_string(),
+            agent_role: "explorer".to_string(),
+            spawn_span_id: Some("span-parent-tool".to_string()),
+        },
+    )
+    .await
+    .expect("production sub-agent host");
+
+    let handle = SubAgentHost::session_handle(core.as_ref(), &child_session_id)
+        .await
+        .expect("same Core session map");
+    assert!(matches!(
+        handle.snapshot().await.expect("snapshot").runtime,
+        openwork_core::session::SessionRuntimeSnapshot::Idle
+    ));
+    let children = storage
+        .list_sub_agent_sessions(&parent_session_id)
+        .await
+        .expect("children");
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].id, child_session_id.to_string());
+    assert_eq!(children[0].task_name.as_deref(), Some("inspect_runtime"));
+    assert_eq!(children[0].agent_role.as_deref(), Some("explorer"));
+    assert_eq!(
+        children[0].spawn_span_id.as_deref(),
+        Some("span-parent-tool")
+    );
+
+    let child_context = core
+        .inspect_context_window(&child_session_id)
+        .await
+        .expect("inspect child context");
+    let child_tool_names = child_context
+        .tool_surface
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(child_tool_names, ["read", "grep", "glob", "list", "bash"]);
+
+    core.delete_session(&parent_session_id)
+        .await
+        .expect("cleanup parent and child");
 }
 
 #[tokio::test]

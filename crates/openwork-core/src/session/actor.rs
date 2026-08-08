@@ -13,6 +13,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::skills::SkillRoots;
+use crate::{AgentControl, TurnSlot};
 
 use super::agent_message::{AgentMailbox, AgentMessage};
 use super::compaction::{
@@ -54,6 +55,8 @@ pub struct SessionRuntimeConfig {
     /// Present only for a sub-agent Session. It identifies the parent and
     /// carries the shared control plane used for terminal delivery.
     pub parent_link: Option<super::ParentLink>,
+    /// 根 Session 与直属子 Session 共享同一个控制面实例。
+    pub agent_control: Option<AgentControl>,
 }
 
 #[derive(Clone)]
@@ -163,6 +166,28 @@ impl SessionHandle {
             input,
             compaction_policy,
             disabled_skill_names,
+            turn_slot: None,
+            respond_to,
+        })
+        .await?;
+        response.await.map_err(|_| SessionError::ActorStopped)?
+    }
+
+    /// 只供 `AgentControl` 启动子 Turn；guard 的所有权交给 Actor。
+    pub async fn start_sub_agent_turn(
+        &self,
+        message: String,
+        disabled_skill_names: BTreeSet<String>,
+        turn_slot: TurnSlot,
+    ) -> Result<TurnAccepted, SessionError> {
+        let (respond_to, response) = oneshot::channel();
+        self.send(SessionCommand::StartTurn {
+            turn_id: TurnId::generate(),
+            client_request_id: ClientRequestId::generate(),
+            input: PreparedTurnInput::text(message),
+            compaction_policy: AutomaticCompactionPolicy::default(),
+            disabled_skill_names,
+            turn_slot: Some(turn_slot),
             respond_to,
         })
         .await?;
@@ -299,6 +324,7 @@ enum SessionCommand {
         input: PreparedTurnInput,
         compaction_policy: AutomaticCompactionPolicy,
         disabled_skill_names: BTreeSet<String>,
+        turn_slot: Option<TurnSlot>,
         respond_to: oneshot::Sender<Result<TurnAccepted, SessionError>>,
     },
     CancelTurn {
@@ -346,6 +372,8 @@ struct ActiveTurn {
     client_request_id: ClientRequestId,
     cancel: CancellationToken,
     permission: Option<PendingPermission>,
+    /// 子 Turn 持有；根 Turn 为 `None`。Drop 即释放并发名额。
+    _turn_slot: Option<TurnSlot>,
 }
 
 struct PendingPermission {
@@ -369,6 +397,7 @@ struct SessionActor {
     trace: Arc<dyn TraceRecorder>,
     approval: SessionApproval,
     parent_link: Option<super::ParentLink>,
+    agent_control: Option<AgentControl>,
     mailbox: AgentMailbox,
     command_rx: mpsc::Receiver<SessionCommand>,
     runner_tx: mpsc::Sender<RunnerEvent>,
@@ -418,6 +447,7 @@ impl SessionActor {
             trace: config.trace,
             approval: config.approval,
             parent_link: config.parent_link,
+            agent_control: config.agent_control,
             mailbox: AgentMailbox::default(),
             command_rx,
             runner_tx,
@@ -458,6 +488,7 @@ impl SessionActor {
                 input,
                 compaction_policy,
                 disabled_skill_names,
+                turn_slot,
                 respond_to,
             } => {
                 let result = self.start_turn(
@@ -466,6 +497,7 @@ impl SessionActor {
                     input,
                     compaction_policy,
                     disabled_skill_names,
+                    turn_slot,
                 );
                 let _ = respond_to.send(result);
             }
@@ -553,6 +585,7 @@ impl SessionActor {
         input: PreparedTurnInput,
         compaction_policy: AutomaticCompactionPolicy,
         disabled_skill_names: BTreeSet<String>,
+        turn_slot: Option<TurnSlot>,
     ) -> Result<TurnAccepted, SessionError> {
         if input.is_empty() {
             return Err(SessionError::EmptyInput);
@@ -577,6 +610,7 @@ impl SessionActor {
             client_request_id: client_request_id.clone(),
             cancel: cancel.clone(),
             permission: None,
+            _turn_slot: turn_slot,
         });
         self.snapshot.runtime = SessionRuntimeSnapshot::Running {
             turn_id: turn_id.clone(),
@@ -621,6 +655,7 @@ impl SessionActor {
             permission_state: self.permission_state_tx.subscribe(),
             approval: self.approval,
             mailbox: self.mailbox.clone(),
+            agent_control: self.agent_control.clone(),
         };
         tokio::spawn(run_turn(request));
         Ok(accepted)

@@ -12,7 +12,12 @@
 mod control;
 mod limiter;
 mod registry;
+mod tool;
 
-pub use control::{AgentControl, AgentControlError, SubAgentHost, SubAgentSpec};
+pub use control::{AgentControl, AgentControlError, SubAgentHost, SubAgentSpec, SubAgentStatus};
 pub use limiter::{DEFAULT_MAX_ACTIVE_SUB_AGENT_TURNS, TurnSlot};
 pub use registry::{SpawnReservation, SubAgent};
+pub(crate) use tool::{
+    AGENT_TOOLS, AgentTool, FollowupTaskArgs, InterruptAgentArgs, NoArgs, SpawnAgentArgs,
+    WaitAgentArgs, agent_prompt_rules, agent_tool_definitions, parse_args, validate_wait_timeout,
+};
