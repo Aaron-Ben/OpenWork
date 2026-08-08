@@ -14,12 +14,18 @@ OpenWorkCore
         ├── FinalizedToolset
         ├── SessionStorage
         ├── TraceRecorder
+        ├── AgentControl       子 Agent 的创建、注册、限额；父子共享同一实例
+        ├── Mailbox            子 Agent 回传消息的内存队列，不持久化
         └── ActiveTurn?
 ```
+
+子 Agent 本身也是一个 `SessionActor`，走完全相同的路径。**它不是这张表的例外，只是它的 `SessionApproval` 是 `NonInteractive`**（Ask 立即 Deny，见 [permissions.md](permissions.md)）。整套设计见 [multi-agent.md](multi-agent.md)。
 
 | 状态 | 唯一 Owner | 其他组件怎么访问 |
 |---|---|---|
 | 当前 Turn / Phase | `SessionActor` | Command / Snapshot |
+| 子 Agent 注册表与并发名额 | `AgentControl` | 五个 Core 控制工具 |
+| 未消费的 Agent Message | `SessionActor` 的 Mailbox | `DeliverAgentMessage` 命令 |
 | Conversation | `ChatStateActor` | Append / Snapshot Command |
 | Agent 定义 | `Agent` | 构建后只读 |
 | 工具副作用与路径安全 | `openwork-tools` | `ToolSessionContext` |
@@ -38,6 +44,7 @@ enum SessionCommand {
     ResolvePermission { turn_id, tool_call_id, decision },
     CompactConversation { respond_to },
     RewindConversation { compaction_id, respond_to },
+    DeliverAgentMessage { task_name, kind, body },
     Snapshot { respond_to },
     Shutdown,
 }
@@ -49,6 +56,7 @@ enum SessionCommand {
 - `turn_id` 由 Core 在接受请求时生成；Turn 与 User Message 提交后通过 `accepted_to` 返回 `TurnAccepted`；
 - **`StartTurn` 不等待整个 Agent Loop**，终态通过 `SessionUpdate` / `SessionSnapshot` 获取；
 - 同一 Session 同时只运行一个 Turn，新 Turn 排队或显式取消旧 Turn，**不能隐式并发**；
+- **`StartTurn` 不再是唯一的输入来源，但仍是唯一能创建 Turn 的命令。** `DeliverAgentMessage` 由子 Agent 的 SessionActor 发来，**只入队，永不创建 Turn**——Turn 的定义仍是"一次用户输入触发的完整 Agent Loop"。父会话空闲时收到的消息留在队列，等下一个用户 Turn；详见 [multi-agent.md §6](multi-agent.md)；
 - Permission Decision 必须同时匹配 Session、Turn 和 Tool Call 三者；
 - 压缩与 rewind 只在 Session 空闲时允许，有活跃 Turn 时返回 `SessionActive`。
 
@@ -78,6 +86,7 @@ accepted
 持久化 Turn 开始 → 追加已物化的 User Message（可含 Skill 正文快照）
 循环 1..=max_model_calls:
     检查取消
+    排空 Mailbox → 有 Agent Message 就追加进 Conversation（见 multi-agent.md §6.3）
     检查压缩阈值 → 必要时压缩（见 compaction.md）
     组装请求 → 调用模型
         若 ContextOverflow 且未产生语义输出 → 压缩一次并重提交
@@ -87,7 +96,7 @@ accepted
 到达上限 → 失败
 ```
 
-**六条必须保持的性质：**
+**七条必须保持的性质：**
 
 1. Assistant 的 Tool Call Message 在执行任何副作用**之前**形成完整记录；
 2. 每个 Tool Call 必须产生一个 Tool Result，哪怕是错误结果；
@@ -95,6 +104,7 @@ accepted
 4. Tool 执行错误通常作为结果返回给模型，而不是直接丢失上下文；
 5. Permission Deny、用户取消、达到循环上限都是明确终态；
 6. **Trace 写入成功与否不进入任何分支判断。**
+7. **"无 Tool Call → 立即完成 Turn"之后不得再发起任何 Model Call。** 这条过去只是循环的自然形状，现在是承重的：[multi-agent.md §6.3](multi-agent.md) 靠它保证"父输出最终回答后到达的 Agent Message 自然留给下一个用户 Turn"，从而不需要投递阶段状态机。若将来引入"Turn 结束前再问一次模型"之类的逻辑，这条门控就破了，必须同时补上状态机。
 
 Permission Deny 与 Cancel 也要写入合成的错误 Tool Result。若一次响应含多个 Tool Call 而前一个导致 Turn 终止，**其余未执行的调用必须按原顺序写入 `cancelled` Tool Result**——否则 Conversation 里会留下无法发送给下一次模型的悬空 Tool Call。
 

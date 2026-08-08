@@ -78,6 +78,8 @@ interface SessionRuntimeView {
 
 **每个 Session 有独立状态**，没有全局唯一的 `activeStream`。
 
+子 Agent 的 Session 走的就是这一层——它的 Update 带自己的 `sessionId` 从同一条全局事件流进来，Reducer 无需特判。差别只在渲染：子 Agent 的 `assistantDraft` 与 `toolCalls` **不进面板**（见 §8），Reducer 对子会话的 delta 直接丢弃，避免为一个折叠面板维护 N 份完整 runtime view。
+
 ### local UI state
 
 当前导航、Sidebar 展开、Composer 草稿、Trace 面板选中项、主题、语言、Modal/Tab。**它们不能写回 runtime view。**
@@ -224,7 +226,25 @@ Trace 详情顶部有 好 / 不确定 / 差 三档加一个可选备注，Span �
 
 改评价是覆盖，不是追加。已标注的 Trace 在列表上有标记——它们不会被自动清理，用户应该看得出来哪些被留住了。
 
-## 8. 时间显示
+## 8. 子 Agent 面板
+
+主 Agent 派生的子 Agent（[multi-agent.md](multi-agent.md)）在父会话里表现为一个可折叠面板。
+
+**不新增 SessionUpdate 类型。** 子 Session 用 `spawn_with_global_updates` 启动，它的 Update 走现有全局流，携带自己的 `sessionId`；Event Controller 与 Reducer 一行不改。
+
+面板按 `parent_session_id` 找到子 Session，从它的 per-session runtime view 取状态渲染：
+
+| V1 渲染 | V1 不渲染 |
+|---|---|
+| `task_name`、`agent_role`、运行/终态 | 子 Agent 的 `text_delta` 与 `reasoning` |
+| 最终回答摘要 | 子 Agent 的 `toolCalls` 实时流 |
+| 用时 | 权限卡片（子 Agent 不会产生，见 [permissions.md §6.6](permissions.md)） |
+
+点开详情时调 Tauri Command 读子 Session 的持久化 `messages` 与 snapshot，展示完整 transcript，**只读**：不能发消息、不能重命名、不能独立管理。子 Session 也不出现在顶层会话列表——`list_sessions` 已在 Core 侧过滤。
+
+父会话侧另有五个协作工具的 `tool_call` 渲染，走现有 Tool 活动组件，不需要专门的组件。
+
+## 9. 时间显示
 
 后端返回的时间字符串是带 `+08:00` 的 RFC 3339，前端**只有两种合法操作**：
 
@@ -235,11 +255,11 @@ formatBeijingDateTime(value)         // 显示
 
 **禁止对时间字符串做 slice / split / replace / 正则。** 新增时间显示一律走 `src/lib/dateTime.ts`，不在组件里各自 `new Intl.DateTimeFormat`。
 
-## 9. i18n
+## 10. i18n
 
 三种语言（zh-CN / zh-TW / en-US）**结构必须完全一致**，有测试强制。Trace 属性白名单里的每个 key 都必须有三语标签——新增属性时漏掉会直接测试失败。
 
-## 10. 验收
+## 11. 验收
 
 1. App 根部只有一个 Event listener，切换 Session 不重复注册；
 2. Reducer 是纯函数，对所有 update variant 穷尽处理；

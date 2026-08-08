@@ -30,7 +30,8 @@ Session
 ├── ConversationCompaction
 ├── TraceSpan ── child TraceSpan
 │   └── TraceSpanPayload ── TracePayload（按哈希去重，跨 Session 共享）
-└── TraceAnnotation
+├── TraceAnnotation
+└── Session（子 Agent，parent_session_id 自引用，深度上限 1）
 ```
 
 `trace_annotations` 是 Trace 家族里**唯一的业务真相**：其余三张丢了只是排查变难，标注丢了是用户的输入丢了。由此推出保留策略的例外，见 [trace.md](trace.md) §14。
@@ -157,13 +158,41 @@ CREATE TABLE sessions (
     working_directory   TEXT NOT NULL,
     default_model_id    TEXT REFERENCES models(id) ON DELETE SET NULL,
     status              TEXT NOT NULL DEFAULT 'active',   -- active | archived
-    created_at / updated_at / last_turn_at
+    created_at / updated_at / last_turn_at,
+
+    -- 子 Agent 从属关系。四列同生共死：全 NULL 是根会话，全非 NULL 是子 Agent。
+    parent_session_id   TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    task_name           TEXT,     -- 父会话内唯一，模型用它寻址
+    agent_role          TEXT,     -- V1 只有 'explorer'
+    -- 发起它的 Tool Call Span。Trace 是 best-effort，Span 可能没落库，故不建外键。
+    spawn_span_id       TEXT,
+
+    CONSTRAINT sessions_subagent_fields_consistent CHECK (
+        (parent_session_id IS     NULL AND task_name IS     NULL AND agent_role IS     NULL) OR
+        (parent_session_id IS NOT NULL AND task_name IS NOT NULL AND agent_role IS NOT NULL)
+    ),
+    CONSTRAINT sessions_task_name_format CHECK (
+        task_name IS NULL OR task_name ~ '^[a-z][a-z0-9_]{0,47}$'
+    ),
+    CONSTRAINT sessions_spawn_depth_at_most_one CHECK (
+        parent_session_id IS NULL OR parent_session_id <> id
+    )
 );
+
+CREATE UNIQUE INDEX uq_sessions_parent_task_name
+    ON sessions(parent_session_id, task_name) WHERE parent_session_id IS NOT NULL;
+
+CREATE INDEX idx_sessions_parent
+    ON sessions(parent_session_id, created_at) WHERE parent_session_id IS NOT NULL;
 ```
 
-`working_directory` 是工具执行根目录，可以不是 Git 仓库。**不为它建立 Workspace 记录、Trust 状态或 Git 元数据。**
+`working_directory` 是工具执行根目录，可以不是 Git 仓库。**不为它建立 Workspace 记录、Trust 状态或 Git 元数据。** 子 Agent 继承父的 `working_directory`，不放宽也不收紧。
 
-Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。
+Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。**也不保存子 Agent 的 mailbox**——未消费的 Agent Message 只在内存里，事实来源是子 Session 自己的 `turns` 与 `messages`，重启后由父的下一个用户 Turn 做幂等对账，见 [multi-agent.md §8](multi-agent.md)。
+
+子 Agent 的深度上限有两道防线：工具面不给它注册 `spawn_agent`，`sessions_spawn_depth_at_most_one` 在数据库兜底。**只靠工具面不够**——那是运行时决策，判断写错就没有第二道防线。
+
+`list_sessions` 加 `WHERE parent_session_id IS NULL`：子 Agent 不进顶层会话列表。删除父会话时 `ON DELETE CASCADE` 连带删除子 Session 及其 `turns` / `messages` / `trace_spans`。
 
 ### turns
 
@@ -226,7 +255,8 @@ CREATE TABLE messages (
     CONSTRAINT messages_turn_session_fk
         FOREIGN KEY (turn_id, session_id) REFERENCES turns(id, session_id) ON DELETE CASCADE,
     CONSTRAINT messages_role_valid CHECK (role IN ('system','user','assistant','tool')),
-    CONSTRAINT messages_kind_valid CHECK (message_kind IN ('normal','skill_instruction')),
+    CONSTRAINT messages_kind_valid
+        CHECK (message_kind IN ('normal','skill_instruction','agent_message')),
     CONSTRAINT messages_content_is_array CHECK (jsonb_typeof(content) = 'array'),
     CONSTRAINT messages_content_format_positive CHECK (content_format_version > 0),
     CONSTRAINT messages_turn_required CHECK (turn_id IS NOT NULL OR role = 'system'),
@@ -243,6 +273,12 @@ CREATE UNIQUE INDEX uq_messages_tool_result
 `content_format_version` 是**产品最核心持久化事实的版本标记**。`content` 的唯一结构约束只有"它是个数组"——`ContentBlock` 形状一旦变化，没有这一列就无法区分新旧行，也无法写针对性回填。
 
 用户显式选择 Skill 时，Core 先写入一条 `message_kind = 'skill_instruction'` 的 User-role Message；`content` 只含普通 Text block，正文使用 `<skill><name>…</name><path>…</path>…</skill>` 标记。随后写入 `message_kind = 'normal'` 的用户可见原始 Text Message。Desktop transcript 过滤 Skill instruction，模型 Conversation、Trace、summarizer 和精确 transcript 仍能读取完整快照；不新增 skill invocation 表。压缩语义见 [compaction.md §4](compaction.md)。
+
+子 Agent 回传的消息同样落在 `messages` 上：`message_kind = 'agent_message'` 的 **User-role** Message，正文使用 `<agent_message><task>…</task><kind>…</kind><body>…</body></agent_message>` 标记。**用 user role 而不是 assistant role 是被 provider 逼出来的**——排空点在组装 Model Request 之前，assistant-role 会成为 Anthropic 请求的最后一条并被当作 prefill 续写。不新增 agent message 表。
+
+`message_kind` 现在有三个值，`normal` 之外的两个都是"模型可见、Desktop transcript 不渲染"。**任何依赖"user role 就是用户请求"的代码都必须改成按 kind 判断**——`last_real_user` 是第一个，见 [multi-agent.md §6.2](multi-agent.md)。
+
+重启对账补发的 Agent Message 使用确定性 ID `agent-msg:{child_session_id}:{child_turn_id}:{kind}`，靠主键冲突白拿幂等，不需要先查再写。
 
 `uq_messages_tool_result` 保证一个 Turn 下同一 Provider Tool Call 只有一个结果。
 

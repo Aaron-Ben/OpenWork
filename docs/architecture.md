@@ -100,11 +100,12 @@ React **不**直接调用这些。`src-tauri` 把它们映射成短生命周期 
 
 ```text
 Session
-└── Turn                     一次用户输入触发的完整 Agent Loop
-    ├── Model Call           循环内一次模型请求/响应
-    ├── Tool Call            Provider Tool Call 从解析到结果
-    ├── Permission Request   Tool Call 的临时等待状态，不是独立聚合
-    └── Turn Outcome
+├── Turn                     一次用户输入触发的完整 Agent Loop
+│   ├── Model Call           循环内一次模型请求/响应
+│   ├── Tool Call            Provider Tool Call 从解析到结果
+│   ├── Permission Request   Tool Call 的临时等待状态，不是独立聚合
+│   └── Turn Outcome
+└── Sub-Agent                本身也是一个 Session，父子关系记在 sessions 表
 ```
 
 其他术语：
@@ -112,13 +113,17 @@ Session
 - **Prompt** 只表示 System/User Prompt 等指令内容，不是运行聚合；
 - **Compaction** 是把 Conversation 压成摘要投影的操作，见 [compaction.md](compaction.md)；
 - **SessionUpdate** 是 Live UI 消息，不是持久化事实；
-- **Trace Span** 是质量记录（模型看到什么、说了什么、烧了多少 token），不是恢复状态。
+- **Trace Span** 是质量记录（模型看到什么、说了什么、烧了多少 token），不是恢复状态；
+- **Sub-Agent** 是主 Agent 派生的只读从属 Session，见 [multi-agent.md](multi-agent.md)。它不是新的运行聚合——一切 Turn 语义与根会话完全相同；
+- **Agent Message** 是子 Agent 回传给父的消息，以 `message_kind = 'agent_message'` 存在父的 Conversation 里，**永不触发 Turn**。
 
 **不要重新引入的退役术语**：`StepId`、`ToolRunId`、`ApprovalId`、`TurnRecorderPort`、`JournalTurnRecorder`、Event Journal。
 
 ## 6. V1 非目标
 
-不要添加：MCP、Memory、Plan、Artifact、Git/Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩、后台任务恢复。
+不要添加：MCP、Memory、Artifact、Git/Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩、后台任务恢复。
+
+多智能体已从非目标移出，设计见 [multi-agent.md](multi-agent.md)。它**不引入新 crate、不新增 Trace kind、不新增 SessionUpdate 类型**：子 Agent 本身就是一个 Session，复用 `SessionActor` 与唯一的 Agent Loop；父子拓扑是 `sessions` 表的四个新列；五个控制工具按 `update_plan` 的先例由 Core 拥有；子 Agent 的 Trace 独立成树，靠 `sessions.parent_session_id` / `spawn_span_id` 关联。**范围严格限定在只读、单层、异步**——可写子 Agent、多层嵌套、角色文件加载、跨子 Agent 通信都仍是非目标。子 Agent 完成时只入队不唤醒父会话，因此"后台任务恢复"仍在上面那行里。若某次改动要求新增 crate、Trace kind 或让子 Agent 能写文件，先回到 multi-agent.md 确认是不是设计走偏了。
 
 Skill 已从非目标移出，设计见 [skills.md](skills.md)。它**不引入新 crate、不新增 Trace kind**：目录挂在 System Context 上，正文走 Conversation，启停偏好单独保存在 `skill_status`，资源与脚本复用 `read` / `bash`。用户在 Desktop 选择 `$name` 时，可见 token 与 `{ name, path }` 绑定分离；Tauri 把文本和显式选择编码为同一个有序 `Vec<UserInput>`。Core 在接受 Turn 前把 `UserInput::Skill` 解析为持久化的 contextual User-role Text，模型内容层不定义 Skill 专用类型，`ModelRequestBuilder` 和 provider adapter 只处理已有 ContentBlock。文件读取不下沉到 Bridge、Chat State 或 provider adapter。若某次改动要求新增 Skill crate 或 Trace kind，先回到 skills.md 确认是不是设计走偏了。
 

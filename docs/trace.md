@@ -639,13 +639,20 @@ appVersion    三个属性类型各带一份，每行存一次进程级常量。
 
 `summaryRetryDelayMs` **保留**——它是摘要重试的节奏，落在采样子 Span 上有意义，不属于被删的传输层明细。它没有出现在上面任何一组里，是清单的疏漏，不是待决项。
 
-## 16. 未来 subagent
+## 16. 子 Agent
 
-subagent 落地时按 **"subagent 自己是一个 Session"** 建模：`sessions` 增加 `parent_session_id` 与 `spawn_span_id`（指向发起它的 Tool Call Span），**Trace 结构不变**。
+设计见 [multi-agent.md](multi-agent.md)，落地形态与本节原先的预案一致：**子 Agent 自己是一个 Session**，`sessions` 增加 `parent_session_id` 与 `spawn_span_id`（指向发起它的 Tool Call Span），**Trace 结构不变，不新增 `kind`，不新增列**。
 
-理由：subagent 本来就有自己的上下文窗口、对话和压缩，建模成 Session 是事实描述而非绕路。这样它天然拥有合法的 `turn_id`，不污染父 Turn 的调用计数，跨会话汇总走 `sessions` 的递归 join。
+理由：子 Agent 本来就有自己的上下文窗口、对话和压缩，建模成 Session 是事实描述而非绕路。这样它天然拥有合法的 `turn_id`，不污染父 Turn 的调用计数，跨会话汇总走 `sessions` 的递归 join。
 
-**不要采用的两种形态**：让 subagent 的 Span 共享父 `turn_id`（污染完整度对账），或给 subagent 单独插 `turns` 行（占用会话轮次编号，并与"一个 Session 一个活跃 Turn"冲突）。
+具体规则：
+
+- 子 Turn 的 `trace_id` **等于子 `turn_id`**，按 §2 的主规则走，不继承父的；
+- **不设跨 Trace 的 `parent_span_id`。** §12 的 orphan 定义是"指向同一 Trace 中不存在的 Span"，子 Agent 根 Span 若指向父 Trace 就永远被判成 orphan；
+- 关联关系由业务列表达：`sessions.parent_session_id` 给拓扑，`sessions.spawn_span_id` 给"哪个 Tool Call Span 发起了它"。Trace UI 要跳转就用这两列。`spawn_span_id` **不建外键**——Trace 是 best-effort，那个 Span 可能因队列满而根本没落库，符合 §2「结构标识不建外键」；
+- 父侧照常：`spawn_agent` / `wait_agent` / `list_agents` / `followup_task` / `interrupt_agent` 各产生一个普通的 `tool_call` Span。
+
+**不要采用的两种形态**：让子 Agent 的 Span 共享父 `trace_id`（§12 的 expected 来自 `turns.model_submission_count`，captured 是顶层 `model_call` 数，混进来会让 captured 恒大于 expected，**每个用了子 Agent 的正常 Turn 都被误判成 `Partial`**——与摘要采样子 Span 当年的坑一模一样），或给子 Agent 单独插父 Session 下的 `turns` 行（占用会话轮次编号，并与"一个 Session 一个活跃 Turn"冲突）。
 
 ## 17. 常见诊断规则
 
