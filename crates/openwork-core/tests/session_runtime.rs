@@ -1512,6 +1512,48 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
 }
 
 #[tokio::test]
+async fn a_child_still_completes_when_its_parent_can_no_longer_be_reached() {
+    // A parent that is gone is not the child's problem: the child must finish
+    // normally rather than fail or hang. The failure is reported through
+    // `tracing` instead, so it is diagnosable without being fatal.
+    let host = Arc::new(SessionHandleHost::default());
+    let orphan_parent_id = SessionId::new("session-parent-never-registered");
+    let agent_control = AgentControl::new(
+        orphan_parent_id.clone(),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut child = runtime_with_options(
+        vec![Ok(response("Answer nobody will read.", Vec::new()))],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-orphan-child"),
+            approval: SessionApproval::NonInteractive,
+            parent_link: Some(ParentLink {
+                parent_session_id: orphan_parent_id,
+                task_name: "orphan_lookup".to_string(),
+                agent_control,
+            }),
+        },
+    );
+
+    start_with_request(&child, "orphan-child-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut child.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    // The actor must still be responsive after the failed delivery.
+    child
+        .handle
+        .snapshot()
+        .await
+        .expect("the child actor survives an undeliverable result");
+}
+
+#[tokio::test]
 async fn tool_result_artifacts_are_persisted_in_messages_and_forwarded_live() {
     let artifact = ToolResultArtifact {
         kind: "file_change".to_string(),

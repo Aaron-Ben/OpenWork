@@ -849,10 +849,25 @@ impl SessionActor {
                 "Sub-agent turn was interrupted.".to_string(),
             ),
         };
-        let _ = parent
+        // Swallowing the error is the correct behaviour: if the parent Session is
+        // already gone there is nothing to deliver to, and a sub-agent must not
+        // fail because of it. But it must not be silent — without this line,
+        // "the sub-agent finished and the parent never got its result" leaves no
+        // trace anywhere.
+        if let Err(error) = parent
             .agent_control
             .deliver_to_parent(&parent.parent_session_id, &parent.task_name, kind, &body)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                session_id = %self.session_id,
+                parent_session_id = %parent.parent_session_id,
+                task_name = %parent.task_name,
+                kind = kind.as_str(),
+                reason = %error,
+                "sub-agent result was not delivered to its parent"
+            );
+        }
     }
 
     fn set_permission_mode(&mut self, mode: PermissionMode, origin: PermissionModeOrigin) {
