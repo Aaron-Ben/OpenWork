@@ -374,7 +374,9 @@ mod tests {
             // 关掉重试，让测试只观察超时本身。
             RetryPolicy::new(1, Duration::from_millis(0), Duration::from_millis(0)),
         );
-        let mut stream = port.invoke(ModelRequest::text("test-model", "hi"), options).await?;
+        let mut stream = port
+            .invoke(ModelRequest::text("test-model", "hi"), options)
+            .await?;
         let mut count = 0;
         while let Some(event) = stream.next().await {
             event?;

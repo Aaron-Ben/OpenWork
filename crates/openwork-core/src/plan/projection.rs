@@ -312,9 +312,11 @@ mod tests {
                 .render(TURN_PLAN_STATE_SCHEMA_VERSION + 1, &json!({ "steps": [] }))
                 .is_err()
         );
-        assert!(PlanStateContributor
-            .render(TURN_PLAN_STATE_SCHEMA_VERSION, &json!({}))
-            .is_err());
+        assert!(
+            PlanStateContributor
+                .render(TURN_PLAN_STATE_SCHEMA_VERSION, &json!({}))
+                .is_err()
+        );
         assert!(
             PlanStateContributor
                 .render(

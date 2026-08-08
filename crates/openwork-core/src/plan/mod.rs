@@ -15,9 +15,7 @@ use crate::session::TurnId;
 mod projection;
 mod tool;
 
-pub use projection::{
-    PlanStateContributor, TURN_PLAN_STATE_KEY, TurnPlanRecord, TurnPlanSnapshot,
-};
+pub use projection::{PlanStateContributor, TURN_PLAN_STATE_KEY, TurnPlanRecord, TurnPlanSnapshot};
 pub use tool::{
     UPDATE_PLAN_PROMPT_RULES, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments,
     update_plan_definition, update_plan_success_output,
@@ -299,7 +297,10 @@ mod tests {
             Err(PlanValidationError::TooManySteps)
         );
 
-        let too_long = vec![step(&"x".repeat(MAX_STEP_CHARS + 1), PlanStepStatus::Pending)];
+        let too_long = vec![step(
+            &"x".repeat(MAX_STEP_CHARS + 1),
+            PlanStepStatus::Pending,
+        )];
         assert_eq!(
             validate_steps(&too_long),
             Err(PlanValidationError::StepTooLong { index: 0 })

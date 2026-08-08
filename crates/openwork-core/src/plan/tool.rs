@@ -113,13 +113,15 @@ mod tests {
 
         assert_eq!(definition.name, UPDATE_PLAN_TOOL_NAME);
         assert!(
-            definition.description.contains("one step may be in_progress"),
+            definition
+                .description
+                .contains("one step may be in_progress"),
             "the model needs the cross-element rule in prose; JSON Schema cannot express it"
         );
         assert!(definition.description.contains("replaces the whole plan"));
 
-        let statuses = &definition.parameters["properties"]["plan"]["items"]["properties"]
-            ["status"]["enum"];
+        let statuses =
+            &definition.parameters["properties"]["plan"]["items"]["properties"]["status"]["enum"];
         assert_eq!(
             statuses,
             &json!(["pending", "in_progress", "completed"]),

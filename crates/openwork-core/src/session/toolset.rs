@@ -96,9 +96,7 @@ impl TurnToolset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openwork_tools::{
-        PermissionProfile, ToolSessionContext, ToolsetConfig, builtin_registry,
-    };
+    use openwork_tools::{PermissionProfile, ToolSessionContext, ToolsetConfig, builtin_registry};
 
     fn toolset(names: &[&str]) -> Arc<FinalizedToolset> {
         Arc::new(

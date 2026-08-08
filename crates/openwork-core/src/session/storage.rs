@@ -53,8 +53,10 @@ pub trait SessionStorage: Send + Sync {
     /// 一个 Session 下所有 Turn 的最终计划，供 Desktop 重建历史。
     ///
     /// 按 Session 一次取全，而不是让前端按 Turn 逐个查。
-    async fn load_session_turn_plans(&self, session_id: &SessionId)
-    -> Result<Vec<TurnPlan>, String>;
+    async fn load_session_turn_plans(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<TurnPlan>, String>;
 
     /// 在**同一个事务**里 upsert 当前计划并追加本次成功的 Tool Result。
     ///

@@ -130,13 +130,11 @@ impl Fixture {
     }
 
     async fn tool_message_count(&self, turn_id: &TurnId) -> i64 {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM messages WHERE turn_id = $1 AND role = 'tool'",
-        )
-        .bind(turn_id.as_str())
-        .fetch_one(self.storage.pool())
-        .await
-        .unwrap()
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE turn_id = $1 AND role = 'tool'")
+            .bind(turn_id.as_str())
+            .fetch_one(self.storage.pool())
+            .await
+            .unwrap()
     }
 
     /// 删除测试 Session，级联清掉它的 Turn。
@@ -161,7 +159,12 @@ async fn commit_writes_the_plan_and_the_success_tool_result_together() {
     let turn_id = fixture.begin_turn().await;
 
     assert!(
-        fixture.storage.load_turn_plan(&turn_id).await.unwrap().is_none(),
+        fixture
+            .storage
+            .load_turn_plan(&turn_id)
+            .await
+            .unwrap()
+            .is_none(),
         "a fresh turn starts with no plan"
     );
 
