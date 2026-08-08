@@ -37,6 +37,9 @@ pub trait SessionStorage: Send + Sync {
 
     async fn append_tool_result(&self, turn_id: &TurnId, message: &Message) -> Result<(), String>;
 
+    async fn append_agent_message(&self, turn_id: &TurnId, message: &Message)
+    -> Result<(), String>;
+
     /// 收尾一个 Turn。
     ///
     /// `unfinished_plan_steps` 是 §15.1 的观测信号，`None` 表示这个 Turn 没有计划 ——
@@ -151,6 +154,14 @@ impl SessionStorage for NoopSessionStorage {
     }
 
     async fn append_tool_result(
+        &self,
+        _turn_id: &TurnId,
+        _message: &Message,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn append_agent_message(
         &self,
         _turn_id: &TurnId,
         _message: &Message,

@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     AssistantDraftSnapshot, ConversationCompactionView, ConversationItem, ConversationSnapshot,
-    ConversationView,
+    ConversationView, MessageKind,
 };
 
 pub(crate) struct ConversationState {
@@ -34,6 +34,7 @@ impl ConversationState {
     pub(crate) fn append_user(
         &mut self,
         content: Vec<ContentBlock>,
+        kind: MessageKind,
     ) -> Result<Message, ChatStateError> {
         if content.is_empty() {
             return Err(ChatStateError::EmptyMessage);
@@ -42,7 +43,8 @@ impl ConversationState {
             role: Role::User,
             content,
         };
-        self.items.push(ConversationItem::real(message.clone()));
+        self.items
+            .push(ConversationItem::real_with_kind(message.clone(), kind));
         Ok(message)
     }
 

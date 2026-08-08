@@ -545,6 +545,66 @@ async fn postgres_persists_contextual_input_before_the_visible_user_message() {
 }
 
 #[tokio::test]
+async fn postgres_persists_agent_messages_with_their_contextual_kind() {
+    let Some(database_url) = test_database_url() else {
+        return;
+    };
+    let storage = PostgresStorage::connect(Some(&database_url)).await.unwrap();
+    storage.migrate().await.unwrap();
+    let session_id = SessionId::new(unique("session-agent-message"));
+    storage
+        .create_session(&SessionInput {
+            id: session_id.clone(),
+            title: Some("Agent message persistence".to_string()),
+            working_directory: "/tmp/openwork-agent-message".to_string(),
+            default_model_id: None,
+        })
+        .await
+        .unwrap();
+    let turn_id = TurnId::new(unique("turn-agent-message"));
+    storage
+        .begin_turn(
+            &session_id,
+            &turn_id,
+            &ClientRequestId::new(unique("request-agent-message")),
+            &ResolvedModel::new(None::<String>, "deepseek", "agent-message-test"),
+            &[],
+            &Message::text(Role::User, "continue the task"),
+        )
+        .await
+        .unwrap();
+    storage
+        .append_agent_message(
+            &turn_id,
+            &Message::text(
+                Role::User,
+                "<agent_message>\n<task>find_auth</task>\n<kind>final_answer</kind>\n<body>\nFound it.\n</body>\n</agent_message>",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let records = storage.load_message_records(&session_id).await.unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].role, Role::User);
+    assert_eq!(records[1].message_kind, MessageKind::AgentMessage);
+    assert!(matches!(
+        records[1].content.first(),
+        Some(ContentBlock::Text(text)) if text.text.contains("<task>find_auth</task>")
+    ));
+    storage
+        .finish_turn(
+            &turn_id,
+            &TurnOutcome::Completed {
+                final_text: "stored".to_string(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn postgres_storage_round_trips_a_complete_tool_turn() {
     let Some(database_url) = test_database_url() else {
         return;

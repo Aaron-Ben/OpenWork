@@ -5,7 +5,7 @@ use crate::commands::ChatStateCommand;
 use crate::state::ConversationState;
 use crate::{
     AssistantDraftSnapshot, ChatStateError, ConversationCompactionView, ConversationItem,
-    ConversationSnapshot, ConversationView,
+    ConversationSnapshot, ConversationView, MessageKind,
 };
 
 #[derive(Clone)]
@@ -31,9 +31,24 @@ impl ChatStateHandle {
     }
 
     pub async fn append_user(&self, content: Vec<ContentBlock>) -> Result<Message, ChatStateError> {
+        self.append_user_with_kind(content, MessageKind::Normal)
+            .await
+    }
+
+    /// Appends a User-role message while preserving what the message means.
+    ///
+    /// Skill instructions and sub-agent messages share the provider-facing User
+    /// role with real requests, so live Conversation state must retain their
+    /// kind just like the resume path does.
+    pub async fn append_user_with_kind(
+        &self,
+        content: Vec<ContentBlock>,
+        kind: MessageKind,
+    ) -> Result<Message, ChatStateError> {
         let (respond_to, response) = oneshot::channel();
         self.send(ChatStateCommand::AppendUser {
             content,
+            kind,
             respond_to,
         })
         .await?;
@@ -156,9 +171,10 @@ async fn run_actor(mut state: ConversationState, mut command_rx: mpsc::Receiver<
         match command {
             ChatStateCommand::AppendUser {
                 content,
+                kind,
                 respond_to,
             } => {
-                let _ = respond_to.send(state.append_user(content));
+                let _ = respond_to.send(state.append_user(content, kind));
             }
             ChatStateCommand::AppendAssistant {
                 message,

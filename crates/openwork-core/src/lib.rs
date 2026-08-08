@@ -29,8 +29,8 @@ pub use openwork_models::provider::{ProviderInput, ProviderProfile};
 pub use openwork_tools::{PermissionMode, ReapplyFileChangesResult, UndoFileChangesResult};
 pub use provider::{ProviderIndex, ProviderPreset, ProviderPresetModel, ProviderTestResult};
 pub use session::{
-    ClientRequestId, CompactionAttemptOutcome, CompactionError, CompactionFinished,
-    CompactionRuntimeState, CompactionStarted, CompactionStateCollectInput,
+    AgentMessageKind, ClientRequestId, CompactionAttemptOutcome, CompactionError,
+    CompactionFinished, CompactionRuntimeState, CompactionStarted, CompactionStateCollectInput,
     CompactionStateCollector, CompactionStateContributor, CompactionStateEntry,
     CompactionStateError, CompactionStateFailurePolicy, CompactionStateWarning,
     CompactionSummaryAttemptTrace, CompactionTraceAttributesV1, CompactionTraceGuard,
@@ -38,13 +38,14 @@ pub use session::{
     DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT, DEFAULT_CONTEXT_WINDOW_TOKENS,
     DEFAULT_TRACE_PAYLOAD_RETENTION_DAYS, DEFAULT_TRACE_PAYLOAD_SLOT_MAX_BYTES, LiveToolCall,
     ModelCallFinished, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
-    NewConversationCompaction, NoopSessionStorage, NoopTraceRecorder, PermissionDecision,
-    PermissionRequest, ReminderSection, ResolvedModel, SessionError, SessionHandle, SessionId,
-    SessionPhase, SessionRuntimeConfig, SessionRuntimeSnapshot, SessionSnapshot, SessionStorage,
-    SessionUpdate, SessionUpdateEnvelope, ToolCallFinished, ToolCallId, ToolCallStarted,
-    ToolCallTraceGuard, ToolProgressUpdate, ToolTraceAttributesV1, TraceContentConfig,
-    TraceContentConfigError, TraceContentPolicy, TraceFlushResult, TracePayloadSlot, TracePayloads,
-    TraceRecorder, TraceSignal, TraceStatus, TurnAccepted, TurnId as RuntimeTurnId, TurnOutcome,
+    NewConversationCompaction, NoopSessionStorage, NoopTraceRecorder, ParentLink,
+    PermissionDecision, PermissionRequest, ReminderSection, ResolvedModel, SessionError,
+    SessionHandle, SessionId, SessionPhase, SessionRuntimeConfig, SessionRuntimeSnapshot,
+    SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallFinished,
+    ToolCallId, ToolCallStarted, ToolCallTraceGuard, ToolProgressUpdate, ToolTraceAttributesV1,
+    TraceContentConfig, TraceContentConfigError, TraceContentPolicy, TraceFlushResult,
+    TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TraceStatus, TurnAccepted,
+    TurnId as RuntimeTurnId, TurnOutcome,
 };
 pub use storage::{
     API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError, ConversationProjectionRecord,

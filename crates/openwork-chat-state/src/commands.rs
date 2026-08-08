@@ -3,12 +3,13 @@ use tokio::sync::oneshot;
 
 use crate::{
     AssistantDraftSnapshot, ChatStateError, ConversationCompactionView, ConversationItem,
-    ConversationSnapshot, ConversationView,
+    ConversationSnapshot, ConversationView, MessageKind,
 };
 
 pub(crate) enum ChatStateCommand {
     AppendUser {
         content: Vec<ContentBlock>,
+        kind: MessageKind,
         respond_to: oneshot::Sender<Result<Message, ChatStateError>>,
     },
     AppendAssistant {

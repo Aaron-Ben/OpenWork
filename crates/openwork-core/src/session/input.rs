@@ -1,3 +1,4 @@
+use openwork_chat_state::MessageKind;
 use openwork_models::model::{ContentBlock, Message, Role};
 
 /// Fully materialized input passed from Core to the Session actor.
@@ -34,13 +35,39 @@ impl PreparedTurnInput {
         &self.user_message
     }
 
-    pub(crate) fn into_messages(self) -> impl Iterator<Item = Message> {
+    pub(crate) fn into_messages_with_kind(self) -> impl Iterator<Item = (MessageKind, Message)> {
         self.contextual_messages
             .into_iter()
-            .chain(std::iter::once(self.user_message))
+            .map(|message| (MessageKind::SkillInstruction, message))
+            .chain(std::iter::once((MessageKind::Normal, self.user_message)))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         self.user_message.content.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use openwork_chat_state::MessageKind;
+
+    use super::*;
+
+    #[test]
+    fn turn_input_labels_skill_context_separately_from_the_user_request() {
+        let input = PreparedTurnInput::new(
+            vec![Message::text(Role::User, "<skill>body</skill>")],
+            vec![ContentBlock::text("Use $review.")],
+        );
+
+        let kinds = input
+            .into_messages_with_kind()
+            .map(|(kind, _)| kind)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            kinds,
+            vec![MessageKind::SkillInstruction, MessageKind::Normal]
+        );
     }
 }

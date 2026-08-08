@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::session::SessionId;
+use crate::session::{AgentMessageKind, SessionHandle, SessionId};
 use crate::storage::is_valid_task_name;
 
 use super::limiter::{DEFAULT_MAX_ACTIVE_SUB_AGENT_TURNS, TurnSlot, TurnSlots};
@@ -34,6 +34,9 @@ pub struct SubAgentSpec {
 pub trait SubAgentHost: Send + Sync {
     /// Inserts the sub-agent's `sessions` row and starts its actor.
     async fn start_sub_agent(&self, spec: SubAgentSpec) -> Result<(), String>;
+
+    /// Returns the Core-owned handle for a live Session.
+    async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -52,6 +55,10 @@ pub enum AgentControlError {
     HostUnavailable,
     #[error("failed to start sub-agent: {0}")]
     StartFailed(String),
+    #[error("failed to find parent session: {0}")]
+    ParentSessionUnavailable(String),
+    #[error("failed to deliver sub-agent message: {0}")]
+    DeliveryFailed(String),
 }
 
 /// Runtime control plane shared by a root Session and every sub-agent under it.
@@ -180,6 +187,28 @@ impl AgentControl {
     pub fn list(&self) -> Vec<SubAgent> {
         self.inner.registry.list()
     }
+
+    pub async fn deliver_to_parent(
+        &self,
+        parent_session_id: &SessionId,
+        task_name: &str,
+        kind: AgentMessageKind,
+        body: &str,
+    ) -> Result<(), AgentControlError> {
+        let host = self
+            .inner
+            .host
+            .upgrade()
+            .ok_or(AgentControlError::HostUnavailable)?;
+        let parent = host
+            .session_handle(parent_session_id)
+            .await
+            .map_err(AgentControlError::ParentSessionUnavailable)?;
+        parent
+            .deliver_agent_message(task_name, kind, body)
+            .await
+            .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -220,6 +249,12 @@ mod tests {
             }
             self.started.lock().expect("started specs").push(spec);
             Ok(())
+        }
+
+        async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
+            Err(format!(
+                "session {session_id} is not configured in this host"
+            ))
         }
     }
 

@@ -1,4 +1,5 @@
 mod actor;
+mod agent_message;
 mod commands;
 mod compaction;
 mod ids;
@@ -11,6 +12,7 @@ mod trace;
 mod updates;
 
 pub use actor::{SessionHandle, SessionRuntimeConfig};
+pub use agent_message::{AgentMessageKind, ParentLink};
 pub use commands::{
     PermissionDecision, PermissionRequest, ResolvedModel, SessionError, TurnAccepted, TurnOutcome,
 };

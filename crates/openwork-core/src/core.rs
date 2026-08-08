@@ -995,6 +995,7 @@ impl OpenWorkCore {
                 // Sub-agent Sessions are started elsewhere and are the only
                 // `NonInteractive` ones.
                 approval: SessionApproval::Interactive,
+                parent_link: None,
             },
             self.update_tx.clone(),
         ))

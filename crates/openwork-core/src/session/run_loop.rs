@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use futures_util::StreamExt;
 use openwork_agent::Agent;
-use openwork_chat_state::{ChatStateError, ChatStateHandle};
+use openwork_chat_state::{ChatStateError, ChatStateHandle, MessageKind};
 use openwork_models::model::{
     ContentBlock, DeliveryState, Message, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent,
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
@@ -33,6 +33,7 @@ use crate::storage::time::china_now;
 
 use super::toolset::{ResolvedTurnTool, TurnToolset};
 
+use super::agent_message::AgentMailbox;
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
 };
@@ -68,6 +69,7 @@ pub(super) struct TurnRunRequest {
     pub permission_state: watch::Receiver<SessionPermissionState>,
     /// `NonInteractive` turns every `Ask` into an immediate denial.
     pub approval: SessionApproval,
+    pub mailbox: AgentMailbox,
 }
 
 pub(super) enum RunnerEvent {
@@ -169,8 +171,11 @@ impl TurnRunner {
             )
             .await
             .map_err(TurnRunError::Persistence)?;
-        for message in self.request.input.clone().into_messages() {
-            self.request.chat.append_user(message.content).await?;
+        for (kind, message) in self.request.input.clone().into_messages_with_kind() {
+            self.request
+                .chat
+                .append_user_with_kind(message.content, kind)
+                .await?;
         }
         Ok(())
     }
@@ -209,6 +214,7 @@ impl TurnRunner {
         .await?;
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
+            self.drain_agent_messages().await?;
             self.update(SessionUpdate::PhaseChanged {
                 phase: SessionPhase::RunningModel,
             })
@@ -295,6 +301,23 @@ impl TurnRunner {
         Err(TurnRunError::MaxModelCalls(
             self.request.agent.policy().max_model_calls,
         ))
+    }
+
+    async fn drain_agent_messages(&self) -> Result<(), TurnRunError> {
+        while let Some(delivered) = self.request.mailbox.front().await {
+            let message = delivered.into_model_message();
+            self.request
+                .storage
+                .append_agent_message(&self.request.turn_id, &message)
+                .await
+                .map_err(TurnRunError::Persistence)?;
+            self.request
+                .chat
+                .append_user_with_kind(message.content, MessageKind::AgentMessage)
+                .await?;
+            self.request.mailbox.pop_front().await;
+        }
+        Ok(())
     }
 
     async fn call_model(

@@ -73,6 +73,16 @@ impl SessionStorage for PostgresStorage {
             .map_err(|error| error.to_string())
     }
 
+    async fn append_agent_message(
+        &self,
+        turn_id: &TurnId,
+        message: &Message,
+    ) -> Result<(), String> {
+        self.append_agent_message_inner(turn_id, message)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     async fn finish_turn(
         &self,
         turn_id: &TurnId,
@@ -357,6 +367,32 @@ impl PostgresStorage {
             result.content,
             MessageKind::Normal,
             Some((&result.provider_call_id, &result.tool_name)),
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    async fn append_agent_message_inner(
+        &self,
+        turn_id: &TurnId,
+        message: &Message,
+    ) -> Result<(), StorageError> {
+        if message.role != Role::User || message.content.is_empty() {
+            return Err(StorageError::InvalidInput(
+                "append_agent_message requires a non-empty user-role message".to_string(),
+            ));
+        }
+        let mut transaction = self.pool.begin().await?;
+        let session_id = lock_turn(&mut transaction, turn_id).await?;
+        insert_message(
+            &mut transaction,
+            &session_id,
+            Some(turn_id),
+            Role::User,
+            serde_json::to_value(&message.content)?,
+            MessageKind::AgentMessage,
+            None,
         )
         .await?;
         transaction.commit().await?;

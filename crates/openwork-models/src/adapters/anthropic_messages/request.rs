@@ -296,6 +296,52 @@ mod tests {
     }
 
     #[test]
+    fn agent_message_after_tool_results_is_a_user_input_not_an_assistant_prefill() {
+        let req = ModelRequest {
+            model: "claude-sonnet".to_string(),
+            messages: vec![
+                Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::ToolCall(ToolCallBlock {
+                        id: "toolu_1".to_string(),
+                        name: "read".to_string(),
+                        input: r#"{"path":"Cargo.toml"}"#.to_string(),
+                        state: ToolCallState::Submitted,
+                    })],
+                },
+                Message {
+                    role: Role::Tool,
+                    content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                        id: "toolu_1".to_string(),
+                        name: "read".to_string(),
+                        output: vec![ContentBlock::text("workspace")],
+                        state: ToolResultState::Success,
+                        artifacts: Vec::new(),
+                    })],
+                },
+                Message::text(
+                    Role::User,
+                    "<agent_message>\n<task>find_auth</task>\n<kind>final_answer</kind>\n<body>\nFound it.\n</body>\n</agent_message>",
+                ),
+            ],
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            thinking: None,
+            tools: Vec::new(),
+        };
+
+        let body = encode_request(&req, false).expect("valid Anthropic request");
+        let messages = body["messages"].as_array().expect("messages");
+        assert_eq!(messages.last().expect("agent message")["role"], "user");
+        assert!(
+            messages.last().expect("agent message")["content"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("<task>find_auth</task>"))
+        );
+    }
+
+    #[test]
     fn preserves_anthropic_opaque_thinking_blocks_in_history() {
         let req = ModelRequest {
             model: "claude-sonnet".to_string(),

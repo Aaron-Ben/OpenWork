@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::skills::SkillRoots;
 
+use super::agent_message::{AgentMailbox, AgentMessage};
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest,
     ConversationRewindRequest, new_trace_id, rewind_conversation, run_compaction,
@@ -50,6 +51,9 @@ pub struct SessionRuntimeConfig {
     /// Whether anyone can answer an approval prompt. Sub-agent Sessions are
     /// `NonInteractive`, which turns every `Ask` into an immediate denial.
     pub approval: SessionApproval,
+    /// Present only for a sub-agent Session. It identifies the parent and
+    /// carries the shared control plane used for terminal delivery.
+    pub parent_link: Option<super::ParentLink>,
 }
 
 #[derive(Clone)]
@@ -175,6 +179,22 @@ impl SessionHandle {
         response.await.map_err(|_| SessionError::ActorStopped)?
     }
 
+    /// Queues a sub-agent result for the next Model Call without starting a
+    /// Turn. An idle Session keeps the message until the next user Turn.
+    pub async fn deliver_agent_message(
+        &self,
+        task_name: impl Into<String>,
+        kind: super::AgentMessageKind,
+        body: impl Into<String>,
+    ) -> Result<(), SessionError> {
+        self.send(SessionCommand::DeliverAgentMessage {
+            task_name: task_name.into(),
+            kind,
+            body: body.into(),
+        })
+        .await
+    }
+
     pub async fn resolve_permission(
         &self,
         turn_id: TurnId,
@@ -291,6 +311,11 @@ enum SessionCommand {
         decision: PermissionDecision,
         respond_to: oneshot::Sender<Result<(), SessionError>>,
     },
+    DeliverAgentMessage {
+        task_name: String,
+        kind: super::AgentMessageKind,
+        body: String,
+    },
     SetPermissionMode {
         mode: PermissionMode,
         respond_to: oneshot::Sender<PermissionMode>,
@@ -343,6 +368,8 @@ struct SessionActor {
     reload_required: Arc<AtomicBool>,
     trace: Arc<dyn TraceRecorder>,
     approval: SessionApproval,
+    parent_link: Option<super::ParentLink>,
+    mailbox: AgentMailbox,
     command_rx: mpsc::Receiver<SessionCommand>,
     runner_tx: mpsc::Sender<RunnerEvent>,
     runner_rx: mpsc::Receiver<RunnerEvent>,
@@ -390,6 +417,8 @@ impl SessionActor {
             reload_required,
             trace: config.trace,
             approval: config.approval,
+            parent_link: config.parent_link,
+            mailbox: AgentMailbox::default(),
             command_rx,
             runner_tx,
             runner_rx,
@@ -412,7 +441,7 @@ impl SessionActor {
                 }
                 event = self.runner_rx.recv() => {
                     let Some(event) = event else { break };
-                    self.handle_runner_event(event);
+                    self.handle_runner_event(event).await;
                 }
             }
         }
@@ -461,6 +490,19 @@ impl SessionActor {
             } => {
                 let result = self.resolve_permission(turn_id, tool_call_id, decision);
                 let _ = respond_to.send(result);
+            }
+            SessionCommand::DeliverAgentMessage {
+                task_name,
+                kind,
+                body,
+            } => {
+                self.mailbox
+                    .push(AgentMessage {
+                        task_name,
+                        kind,
+                        body,
+                    })
+                    .await;
             }
             SessionCommand::SetPermissionMode { mode, respond_to } => {
                 self.set_permission_mode(mode, PermissionModeOrigin::UserToggle);
@@ -578,6 +620,7 @@ impl SessionActor {
             events: self.runner_tx.clone(),
             permission_state: self.permission_state_tx.subscribe(),
             approval: self.approval,
+            mailbox: self.mailbox.clone(),
         };
         tokio::spawn(run_turn(request));
         Ok(accepted)
@@ -721,7 +764,7 @@ impl SessionActor {
         Ok(())
     }
 
-    fn handle_runner_event(&mut self, event: RunnerEvent) {
+    async fn handle_runner_event(&mut self, event: RunnerEvent) {
         match event {
             RunnerEvent::Update { turn_id, update } => {
                 if self.is_active(&turn_id) {
@@ -781,11 +824,35 @@ impl SessionActor {
                 self.snapshot.runtime = SessionRuntimeSnapshot::Terminal {
                     turn_id,
                     client_request_id: active.client_request_id,
-                    outcome,
+                    outcome: outcome.clone(),
                     plan,
                 };
+                self.deliver_terminal_outcome(&outcome).await;
             }
         }
+    }
+
+    async fn deliver_terminal_outcome(&self, outcome: &super::TurnOutcome) {
+        let Some(parent) = &self.parent_link else {
+            return;
+        };
+        let (kind, body) = match outcome {
+            super::TurnOutcome::Completed { final_text } => {
+                (super::AgentMessageKind::FinalAnswer, final_text.clone())
+            }
+            super::TurnOutcome::Failed { code, message } => (
+                super::AgentMessageKind::Failed,
+                format!("{code}: {message}"),
+            ),
+            super::TurnOutcome::Cancelled => (
+                super::AgentMessageKind::Interrupted,
+                "Sub-agent turn was interrupted.".to_string(),
+            ),
+        };
+        let _ = parent
+            .agent_control
+            .deliver_to_parent(&parent.parent_session_id, &parent.task_name, kind, &body)
+            .await;
     }
 
     fn set_permission_mode(&mut self, mode: PermissionMode, origin: PermissionModeOrigin) {

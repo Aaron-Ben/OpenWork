@@ -1,8 +1,8 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use futures_util::stream;
@@ -10,14 +10,15 @@ use openwork_agent::{AgentBuilder, AgentDefinition};
 use openwork_chat_state::ChatStateHandle;
 use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::session::{
-    ClientRequestId, CompactionError, CompactionRuntimeState, CompactionStateCollector,
-    ConversationCompaction, ConversationCompactionKind, NewConversationCompaction,
-    PermissionDecision, ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId,
-    SessionRuntimeConfig, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
-    ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId,
-    TurnOutcome, TurnToolset,
+    AgentMessageKind, ClientRequestId, CompactionError, CompactionRuntimeState,
+    CompactionStateCollector, ConversationCompaction, ConversationCompactionKind,
+    NewConversationCompaction, ParentLink, PermissionDecision, ResolvedModel, SessionApproval,
+    SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionStorage, SessionUpdate,
+    SessionUpdateEnvelope, ToolCallId, ToolProgressUpdate, TraceFlushResult, TraceRecorder,
+    TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
 };
 use openwork_core::skills::SkillRoots;
+use openwork_core::{AgentControl, SubAgentHost, SubAgentSpec};
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
@@ -324,6 +325,18 @@ impl SessionStorage for RecordingStorage {
         }
     }
 
+    async fn append_agent_message(
+        &self,
+        _turn_id: &TurnId,
+        _message: &Message,
+    ) -> Result<(), String> {
+        self.events
+            .lock()
+            .unwrap()
+            .push("agent_message".to_string());
+        Ok(())
+    }
+
     async fn finish_turn(
         &self,
         _turn_id: &TurnId,
@@ -486,6 +499,52 @@ struct RuntimeFixture {
     workspace: TestWorkspace,
 }
 
+struct RuntimeOptions {
+    session_id: SessionId,
+    approval: SessionApproval,
+    parent_link: Option<ParentLink>,
+}
+
+impl Default for RuntimeOptions {
+    fn default() -> Self {
+        Self {
+            session_id: SessionId::new("session-test"),
+            approval: SessionApproval::Interactive,
+            parent_link: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct SessionHandleHost {
+    handles: Mutex<HashMap<SessionId, SessionHandle>>,
+}
+
+impl SessionHandleHost {
+    fn insert(&self, handle: SessionHandle) {
+        self.handles
+            .lock()
+            .unwrap()
+            .insert(handle.session_id().clone(), handle);
+    }
+}
+
+#[async_trait]
+impl SubAgentHost for SessionHandleHost {
+    async fn start_sub_agent(&self, _spec: SubAgentSpec) -> Result<(), String> {
+        Err("spawning is outside the P1 test seam".to_string())
+    }
+
+    async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
+        self.handles
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} is not registered"))
+    }
+}
+
 struct TestWorkspace {
     root: PathBuf,
 }
@@ -614,6 +673,26 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
     workspace: TestWorkspace,
     skill_roots: SkillRoots,
 ) -> RuntimeFixture {
+    runtime_with_options(
+        outcomes,
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        workspace,
+        skill_roots,
+        RuntimeOptions::default(),
+    )
+}
+
+fn runtime_with_options(
+    outcomes: Vec<Result<ModelResponse, ModelError>>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    workspace: TestWorkspace,
+    skill_roots: SkillRoots,
+    options: RuntimeOptions,
+) -> RuntimeFixture {
     let working_directory = workspace.path().to_path_buf();
     let agent = AgentBuilder::new(AgentDefinition::default())
         .build()
@@ -669,7 +748,7 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
     let (global_update_tx, global_updates) = broadcast::channel(512);
     let handle = SessionHandle::spawn_with_global_updates(
         SessionRuntimeConfig {
-            session_id: SessionId::new("session-test"),
+            session_id: options.session_id,
             working_directory,
             skill_roots,
             resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
@@ -685,7 +764,8 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
             compaction_state: Arc::new(CompactionStateCollector::default()),
             trace: trace.clone(),
             permission_mode,
-            approval: SessionApproval::Interactive,
+            approval: options.approval,
+            parent_link: options.parent_link,
         },
         global_update_tx,
     );
@@ -1126,6 +1206,309 @@ async fn tool_result_is_in_the_next_model_request() {
             "finish_turn"
         ]
     );
+}
+
+#[tokio::test]
+async fn agent_message_is_persisted_after_tool_results_and_seen_by_the_same_turn() {
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![tool_call("call-1", "write", r#"{"path":"README.md"}"#)],
+            ),
+            response("final", Vec::new()),
+        ],
+        vec![ToolResult::succeeded("file contents")],
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+
+    fixture
+        .handle
+        .deliver_agent_message(
+            "find_auth_flow",
+            AgentMessageKind::FinalAnswer,
+            "Authentication is implemented in crates/api/src/auth.rs.",
+        )
+        .await
+        .expect("agent message delivered");
+    fixture
+        .handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowOnce)
+        .await
+        .expect("permission resolved");
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let delivered = requests[1].messages.last().expect("last request message");
+    assert_eq!(delivered.role, Role::User);
+    assert_eq!(
+        delivered.content,
+        [ContentBlock::text(
+            "<agent_message>\n<task>find_auth_flow</task>\n<kind>final_answer</kind>\n<body>\nAuthentication is implemented in crates/api/src/auth.rs.\n</body>\n</agent_message>"
+        )]
+    );
+    assert_eq!(
+        *fixture.storage.events.lock().unwrap(),
+        [
+            "begin_turn",
+            "model_1",
+            "assistant",
+            "tool_result",
+            "agent_message",
+            "model_2",
+            "assistant",
+            "finish_turn"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_idle_parent_does_not_start_a_turn_and_consumes_mail_on_the_next_user_turn() {
+    let mut fixture = runtime(
+        vec![
+            response("first turn done", Vec::new()),
+            response("second turn done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+    );
+    start_with_request(&fixture, "first-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    fixture
+        .handle
+        .deliver_agent_message(
+            "late_result",
+            AgentMessageKind::FinalAnswer,
+            "Arrived after the final answer.",
+        )
+        .await
+        .expect("agent message delivered");
+    // Snapshot 与投递走同一条命令通道；它返回就证明 actor 已处理消息，期间没有创建 Turn。
+    let snapshot = fixture.handle.snapshot().await.expect("snapshot");
+    assert!(matches!(
+        snapshot.runtime,
+        openwork_core::session::SessionRuntimeSnapshot::Terminal { .. }
+    ));
+    assert_eq!(fixture.model.requests.lock().unwrap().len(), 1);
+
+    start_with_request(&fixture, "second-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].messages.last().expect("mail message").role,
+        Role::User
+    );
+    assert!(matches!(
+        requests[1].messages.last().expect("mail message").content.first(),
+        Some(ContentBlock::Text(text))
+            if text.text.contains("<task>late_result</task>")
+                && text.text.contains("Arrived after the final answer.")
+    ));
+}
+
+#[tokio::test]
+async fn a_child_terminal_answer_is_delivered_to_its_parent_session() {
+    let parent_session_id = SessionId::new("session-parent");
+    let host = Arc::new(SessionHandleHost::default());
+    let agent_control = AgentControl::new(
+        parent_session_id.clone(),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut parent = runtime_with_options(
+        vec![Ok(response("parent consumed result", Vec::new()))],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: parent_session_id.clone(),
+            ..RuntimeOptions::default()
+        },
+    );
+    host.insert(parent.handle.clone());
+    let mut child = runtime_with_options(
+        vec![Ok(response("Authentication lives in auth.rs.", Vec::new()))],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-child"),
+            approval: SessionApproval::NonInteractive,
+            parent_link: Some(ParentLink {
+                parent_session_id,
+                task_name: "find_auth_flow".to_string(),
+                agent_control,
+            }),
+        },
+    );
+
+    start_with_request(&child, "child-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut child.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    child
+        .handle
+        .snapshot()
+        .await
+        .expect("child delivery barrier");
+    parent
+        .handle
+        .snapshot()
+        .await
+        .expect("parent mailbox barrier");
+
+    start_with_request(&parent, "parent-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut parent.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let requests = parent.model.requests.lock().unwrap();
+    assert!(requests[0].messages.iter().any(|message| {
+        matches!(
+            message.content.first(),
+            Some(ContentBlock::Text(text))
+                if text.text.contains("<task>find_auth_flow</task>")
+                    && text.text.contains("<kind>final_answer</kind>")
+                    && text.text.contains("Authentication lives in auth.rs.")
+        )
+    }));
+}
+
+#[tokio::test]
+async fn failed_and_cancelled_children_both_notify_the_parent() {
+    let parent_session_id = SessionId::new("session-parent-terminal-errors");
+    let host = Arc::new(SessionHandleHost::default());
+    let agent_control = AgentControl::new(
+        parent_session_id.clone(),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut parent = runtime_with_options(
+        vec![Ok(response("parent handled failures", Vec::new()))],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: parent_session_id.clone(),
+            ..RuntimeOptions::default()
+        },
+    );
+    host.insert(parent.handle.clone());
+
+    let mut failed_child = runtime_with_options(
+        vec![Err(ModelError::protocol("child model failed"))],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-failed-child"),
+            approval: SessionApproval::NonInteractive,
+            parent_link: Some(ParentLink {
+                parent_session_id: parent_session_id.clone(),
+                task_name: "failed_lookup".to_string(),
+                agent_control: agent_control.clone(),
+            }),
+        },
+    );
+    start_with_request(&failed_child, "failed-child-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut failed_child.updates).await,
+        TurnOutcome::Failed { .. }
+    ));
+    failed_child
+        .handle
+        .snapshot()
+        .await
+        .expect("failed child delivery barrier");
+
+    let mut cancelled_child = runtime_with_options(
+        vec![Ok(response(
+            "",
+            vec![tool_call("call-wait", "read", r#"{"waitForCancel":true}"#)],
+        ))],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-cancelled-child"),
+            approval: SessionApproval::NonInteractive,
+            parent_link: Some(ParentLink {
+                parent_session_id,
+                task_name: "cancelled_lookup".to_string(),
+                agent_control,
+            }),
+        },
+    );
+    let cancelled_turn = start_with_request(&cancelled_child, "cancelled-child-turn").await;
+    wait_for_tool_start(&mut cancelled_child.updates).await;
+    cancelled_child
+        .handle
+        .cancel_turn(cancelled_turn)
+        .await
+        .expect("cancel child turn");
+    assert_eq!(
+        wait_for_terminal(&mut cancelled_child.updates).await,
+        TurnOutcome::Cancelled
+    );
+    cancelled_child
+        .handle
+        .snapshot()
+        .await
+        .expect("cancelled child delivery barrier");
+    parent
+        .handle
+        .snapshot()
+        .await
+        .expect("parent mailbox barrier");
+
+    start_with_request(&parent, "parent-turn").await;
+    assert!(matches!(
+        wait_for_terminal(&mut parent.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let request = &parent.model.requests.lock().unwrap()[0];
+    let delivered = request
+        .messages
+        .iter()
+        .filter_map(|message| match message.content.first() {
+            Some(ContentBlock::Text(text)) if text.text.contains("<agent_message>") => {
+                Some(text.text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(delivered.len(), 2);
+    assert!(delivered.iter().any(|text| {
+        text.contains("<task>failed_lookup</task>") && text.contains("<kind>failed</kind>")
+    }));
+    assert!(delivered.iter().any(|text| {
+        text.contains("<task>cancelled_lookup</task>") && text.contains("<kind>interrupted</kind>")
+    }));
 }
 
 #[tokio::test]

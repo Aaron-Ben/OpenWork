@@ -68,12 +68,16 @@ pub struct ConversationItem {
 
 impl ConversationItem {
     pub fn real(message: Message) -> Self {
+        Self::real_with_kind(message, MessageKind::Normal)
+    }
+
+    pub fn real_with_kind(message: Message, kind: MessageKind) -> Self {
         Self {
             origin: ConversationItemOrigin::Real {
                 message_id: None,
                 sequence: None,
             },
-            kind: MessageKind::Normal,
+            kind,
             message,
         }
     }

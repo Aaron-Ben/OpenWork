@@ -186,4 +186,27 @@ mod tests {
             "contextual entries must never stand in for a user request"
         );
     }
+
+    #[tokio::test]
+    async fn a_live_agent_message_never_displaces_the_real_user_request() {
+        let chat = openwork_chat_state::ChatStateHandle::spawn(Vec::new()).expect("chat state");
+        chat.append_user(vec![ContentBlock::text("Where is auth handled?")])
+            .await
+            .expect("user request");
+        chat.append_user_with_kind(
+            vec![ContentBlock::text(
+                "<agent_message><task>find_auth</task>…</agent_message>",
+            )],
+            MessageKind::AgentMessage,
+        )
+        .await
+        .expect("agent message");
+
+        let source = chat.compaction_view().await.expect("compaction view");
+        let last_user = last_real_user(&source).expect("a user request must be found");
+        assert_eq!(
+            last_user.message.content,
+            [ContentBlock::text("Where is auth handled?")]
+        );
+    }
 }

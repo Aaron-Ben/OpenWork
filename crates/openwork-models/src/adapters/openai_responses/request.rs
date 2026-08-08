@@ -204,6 +204,52 @@ mod tests {
     }
 
     #[test]
+    fn agent_message_after_tool_results_is_the_last_user_input_item() {
+        let req = ModelRequest {
+            model: "gpt-5".to_string(),
+            messages: vec![
+                Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::ToolCall(ToolCallBlock {
+                        id: "call_1".to_string(),
+                        name: "read".to_string(),
+                        input: r#"{"path":"Cargo.toml"}"#.to_string(),
+                        state: ToolCallState::Submitted,
+                    })],
+                },
+                Message {
+                    role: Role::Tool,
+                    content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                        id: "call_1".to_string(),
+                        name: "read".to_string(),
+                        output: vec![ContentBlock::text("workspace")],
+                        state: ToolResultState::Success,
+                        artifacts: Vec::new(),
+                    })],
+                },
+                Message::text(
+                    Role::User,
+                    "<agent_message>\n<task>find_auth</task>\n<kind>final_answer</kind>\n<body>\nFound it.\n</body>\n</agent_message>",
+                ),
+            ],
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            thinking: None,
+            tools: Vec::new(),
+        };
+
+        let body = encode_request(&req, false).expect("valid OpenAI request");
+        let input = body["input"].as_array().expect("input");
+        assert_eq!(input.last().expect("agent message")["role"], "user");
+        assert!(
+            input.last().expect("agent message")["content"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("<task>find_auth</task>"))
+        );
+    }
+
+    #[test]
     fn maps_enabled_thinking_to_medium_reasoning_effort() {
         let req = ModelRequest::text("gpt-5.1", "hello")
             .with_thinking(crate::model::ThinkingConfig::enabled());
