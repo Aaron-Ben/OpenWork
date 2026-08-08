@@ -20,13 +20,13 @@ use super::compaction::{
 };
 use super::permission_state::{PermissionModeOrigin, SessionPermissionState};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
+use super::toolset::TurnToolset;
 use super::{
     ClientRequestId, CompactionError, CompactionStateCollector, ConversationCompaction,
-    PermissionDecision, PreparedTurnInput, ResolvedModel, SessionError, SessionId, SessionPhase,
-    SessionRuntimeSnapshot, SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
-    ToolCallId, TraceRecorder, TurnAccepted, TurnId,
+    PermissionDecision, PreparedTurnInput, ResolvedModel, SessionApproval, SessionError, SessionId,
+    SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionStorage, SessionUpdate,
+    SessionUpdateEnvelope, ToolCallId, TraceRecorder, TurnAccepted, TurnId,
 };
-use super::toolset::TurnToolset;
 use crate::plan::TurnPlanSnapshot;
 
 const COMMAND_BUFFER: usize = 64;
@@ -47,6 +47,9 @@ pub struct SessionRuntimeConfig {
     pub compaction_state: Arc<CompactionStateCollector>,
     pub trace: Arc<dyn TraceRecorder>,
     pub permission_mode: PermissionMode,
+    /// Whether anyone can answer an approval prompt. Sub-agent Sessions are
+    /// `NonInteractive`, which turns every `Ask` into an immediate denial.
+    pub approval: SessionApproval,
 }
 
 #[derive(Clone)]
@@ -339,6 +342,7 @@ struct SessionActor {
     compaction_state: Arc<CompactionStateCollector>,
     reload_required: Arc<AtomicBool>,
     trace: Arc<dyn TraceRecorder>,
+    approval: SessionApproval,
     command_rx: mpsc::Receiver<SessionCommand>,
     runner_tx: mpsc::Sender<RunnerEvent>,
     runner_rx: mpsc::Receiver<RunnerEvent>,
@@ -385,6 +389,7 @@ impl SessionActor {
             compaction_state: config.compaction_state,
             reload_required,
             trace: config.trace,
+            approval: config.approval,
             command_rx,
             runner_tx,
             runner_rx,
@@ -572,6 +577,7 @@ impl SessionActor {
             cancel,
             events: self.runner_tx.clone(),
             permission_state: self.permission_state_tx.subscribe(),
+            approval: self.approval,
         };
         tokio::spawn(run_turn(request));
         Ok(accepted)

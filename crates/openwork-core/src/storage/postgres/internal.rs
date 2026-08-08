@@ -102,7 +102,7 @@ pub(super) async fn insert_message(
     turn_id: Option<&TurnId>,
     role: Role,
     content: Value,
-    message_kind: StoredMessageKind,
+    message_kind: MessageKind,
     tool: Option<(&str, &str)>,
 ) -> Result<String, StorageError> {
     let (provider_call_id, tool_name) = tool
@@ -242,10 +242,11 @@ pub(super) fn parse_role(value: &str) -> Result<Role, StorageError> {
     }
 }
 
-pub(super) fn parse_message_kind(value: &str) -> Result<StoredMessageKind, StorageError> {
+pub(super) fn parse_message_kind(value: &str) -> Result<MessageKind, StorageError> {
     match value {
-        "normal" => Ok(StoredMessageKind::Normal),
-        "skill_instruction" => Ok(StoredMessageKind::SkillInstruction),
+        "normal" => Ok(MessageKind::Normal),
+        "skill_instruction" => Ok(MessageKind::SkillInstruction),
+        "agent_message" => Ok(MessageKind::AgentMessage),
         other => Err(StorageError::InvalidInput(format!(
             "unknown stored message kind: {other}"
         ))),

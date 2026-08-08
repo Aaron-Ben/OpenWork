@@ -3,7 +3,8 @@ use super::*;
 const SESSION_COLUMNS: &str = "SELECT id, title, working_directory, default_model_id, status,
             to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at,
             to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS updated_at,
-            to_char(last_turn_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS last_turn_at
+            to_char(last_turn_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS last_turn_at,
+            parent_session_id, task_name, agent_role, spawn_span_id
      FROM sessions";
 
 impl PostgresStorage {
@@ -27,9 +28,71 @@ impl PostgresStorage {
             .ok_or_else(|| StorageError::SessionNotFound(input.id.to_string()))
     }
 
+    /// Creates a sub-agent Session under `parent_session_id`.
+    ///
+    /// The parent must exist and must itself be a root Session: nesting depth is
+    /// capped at one. The database also carries `sessions_spawn_not_self`, but
+    /// that only blocks a direct self-loop — the real depth rule lives here, on
+    /// the single insert path.
+    pub async fn create_sub_agent_session(
+        &self,
+        input: &SubAgentSessionInput,
+    ) -> Result<SessionRecord, StorageError> {
+        validate_sub_agent_session(input)?;
+
+        let parent = self
+            .load_session(&input.parent_session_id)
+            .await?
+            .ok_or_else(|| StorageError::SessionNotFound(input.parent_session_id.to_string()))?;
+        if parent.is_sub_agent() {
+            return Err(StorageError::InvalidInput(format!(
+                "session {} is already a sub-agent; nesting depth is capped at one",
+                input.parent_session_id
+            )));
+        }
+
+        sqlx::query(
+            "INSERT INTO sessions
+                 (id, working_directory, default_model_id,
+                  parent_session_id, task_name, agent_role, spawn_span_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(input.id.as_str())
+        .bind(&input.working_directory)
+        .bind(&input.default_model_id)
+        .bind(input.parent_session_id.as_str())
+        .bind(&input.task_name)
+        .bind(&input.agent_role)
+        .bind(&input.spawn_span_id)
+        .execute(&self.pool)
+        .await?;
+
+        self.load_session(&input.id)
+            .await?
+            .ok_or_else(|| StorageError::SessionNotFound(input.id.to_string()))
+    }
+
+    /// Lists top-level Sessions only. Sub-agents are reachable through their
+    /// parent, never through the session list.
     pub async fn list_sessions(&self) -> Result<Vec<SessionRecord>, StorageError> {
-        let query = format!("{SESSION_COLUMNS} ORDER BY updated_at DESC, id");
+        let query = format!(
+            "{SESSION_COLUMNS} WHERE parent_session_id IS NULL ORDER BY updated_at DESC, id"
+        );
         let sessions = sqlx::query_as::<_, SessionRecord>(&query)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(sessions)
+    }
+
+    /// Lists the direct sub-agents of `parent_session_id`, oldest first.
+    pub async fn list_sub_agent_sessions(
+        &self,
+        parent_session_id: &SessionId,
+    ) -> Result<Vec<SessionRecord>, StorageError> {
+        let query =
+            format!("{SESSION_COLUMNS} WHERE parent_session_id = $1 ORDER BY created_at, id");
+        let sessions = sqlx::query_as::<_, SessionRecord>(&query)
+            .bind(parent_session_id.as_str())
             .fetch_all(&self.pool)
             .await?;
         Ok(sessions)

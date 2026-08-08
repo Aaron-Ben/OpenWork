@@ -35,10 +35,14 @@ impl PostgresStorage {
                     .map_err(|error| StorageError::InvalidInput(error.to_string()))?,
             );
         }
+        // The kind must survive the round trip: `last_real_user` distinguishes a
+        // real user request from Skill bodies and sub-agent messages by kind, not
+        // by role or position. Dropping it here silently reintroduces that bug.
         items.extend(rows.into_iter().map(|record| {
-            ConversationItem::persisted(
+            ConversationItem::persisted_with_kind(
                 record.id,
                 record.sequence,
+                record.message_kind,
                 Message {
                     role: record.role,
                     content: record.content,
@@ -71,7 +75,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: last_user.role,
                 content: last_user.content,
-                message_kind: StoredMessageKind::Normal,
+                message_kind: MessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             });
             records.push(StoredMessageRecord {
@@ -80,7 +84,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: compaction_summary_message(&compaction.summary).content,
-                message_kind: StoredMessageKind::Normal,
+                message_kind: MessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             });
             records.push(StoredMessageRecord {
@@ -89,7 +93,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: Message::text(Role::User, &compaction.runtime_reminder).content,
-                message_kind: StoredMessageKind::Normal,
+                message_kind: MessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             });
         }
@@ -170,7 +174,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: last_user.role,
                 content: last_user.content,
-                message_kind: StoredMessageKind::Normal,
+                message_kind: MessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             },
             StoredMessageRecord {
@@ -179,7 +183,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: compaction_summary_message(&compaction.summary).content,
-                message_kind: StoredMessageKind::Normal,
+                message_kind: MessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             },
             StoredMessageRecord {
@@ -188,7 +192,7 @@ impl PostgresStorage {
                 sequence: compaction.replaced_through_message_sequence,
                 role: Role::User,
                 content: Message::text(Role::User, &compaction.runtime_reminder).content,
-                message_kind: StoredMessageKind::Normal,
+                message_kind: MessageKind::Normal,
                 created_at: compaction.created_at.clone(),
             },
         ])

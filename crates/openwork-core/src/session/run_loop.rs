@@ -36,7 +36,7 @@ use super::toolset::{ResolvedTurnTool, TurnToolset};
 use super::compaction::{
     AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
 };
-use super::permission_state::SessionPermissionState;
+use super::permission_state::{NON_INTERACTIVE_DENIAL, SessionApproval, SessionPermissionState};
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
     ModelTraceAttributesV1, PermissionDecision, PermissionRequest, PreparedTurnInput,
@@ -66,6 +66,8 @@ pub(super) struct TurnRunRequest {
     pub cancel: CancellationToken,
     pub events: mpsc::Sender<RunnerEvent>,
     pub permission_state: watch::Receiver<SessionPermissionState>,
+    /// `NonInteractive` turns every `Ask` into an immediate denial.
+    pub approval: SessionApproval,
 }
 
 pub(super) enum RunnerEvent {
@@ -688,6 +690,20 @@ impl TurnRunner {
             }
             Authorization::Ask { card, permit } => {
                 tool_trace.record_permission_policy("ask");
+                // An unattended Session has nobody to ask. Suspending here would
+                // hang the sub-agent until the parent Turn is cancelled, so the
+                // call is denied straight away — but the Turn continues, exactly
+                // like a rule-based `Deny`, so the model can switch to a
+                // provably read-only command. See permissions.md §6.6.
+                if !self.request.approval.is_interactive() {
+                    // §7 still applies: the denial has to be reconstructable, or
+                    // "why did the explorer find nothing" is unanswerable.
+                    tool_trace.record_permission_decision("deny", "non_interactive");
+                    let result = ToolResult::denied(NON_INTERACTIVE_DENIAL);
+                    self.append_tool_result(call, tool_call_id, result, tool_trace)
+                        .await?;
+                    return Ok(());
+                }
                 let request = PermissionRequest {
                     session_id: self.request.session_id.clone(),
                     turn_id: self.request.turn_id.clone(),
@@ -819,17 +835,15 @@ impl TurnRunner {
         // "它是 Core 控制工具，本来就不过权限"和"它被一条内置规则放行了"。
         tool_trace.record_permission_decision("allow", "control_tool");
 
-        let plan = match parse_update_plan_arguments(input)
-            .and_then(|args| {
-                validate_args(&self.request.turn_id, args, china_now())
-                    .map_err(|error| error.to_string())
-            }) {
+        let plan = match parse_update_plan_arguments(input).and_then(|args| {
+            validate_args(&self.request.turn_id, args, china_now())
+                .map_err(|error| error.to_string())
+        }) {
             Ok(plan) => plan,
             Err(message) => {
                 // 校验失败必须整体失败：不写 turn_plans，已有计划保持不变，模型拿到一条
                 // 说明得够清楚、能据此改正重试的失败结果。
-                let result =
-                    ToolResult::failed(ToolErrorCode::InvalidArguments, message, false);
+                let result = ToolResult::failed(ToolErrorCode::InvalidArguments, message, false);
                 return self
                     .append_tool_result(call, tool_call_id, result, tool_trace)
                     .await;

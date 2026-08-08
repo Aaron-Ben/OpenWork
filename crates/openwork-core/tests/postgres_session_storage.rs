@@ -2,11 +2,11 @@ use openwork_chat_state::{ChatStateHandle, ConversationItemOrigin, SyntheticReas
 use openwork_core::{
     ClientRequestId, CompactionFinished, CompactionRuntimeState, CompactionStarted,
     CompactionStateCollector, CompactionTraceAttributesV1, ConversationCompactionKind,
-    ConversationProjectionSelector, ConversationTranscriptQuery, ModelCallFinished,
+    ConversationProjectionSelector, ConversationTranscriptQuery, MessageKind, ModelCallFinished,
     ModelCallStarted, ModelInput, ModelTraceAttributesV1, NewConversationCompaction,
     PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    StoredMessageKind, ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads,
-    TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
+    ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads, TraceRecorder,
+    TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
@@ -521,13 +521,13 @@ async fn postgres_persists_contextual_input_before_the_visible_user_message() {
     let records = storage.load_message_records(&session_id).await.unwrap();
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].sequence, 1);
-    assert_eq!(records[0].message_kind, StoredMessageKind::SkillInstruction);
+    assert_eq!(records[0].message_kind, MessageKind::SkillInstruction);
     assert!(matches!(
         &records[0].content[0],
         ContentBlock::Text(block) if block.text.contains("private skill body")
     ));
     assert_eq!(records[1].sequence, 2);
-    assert_eq!(records[1].message_kind, StoredMessageKind::Normal);
+    assert_eq!(records[1].message_kind, MessageKind::Normal);
     assert!(matches!(
         &records[1].content[0],
         ContentBlock::Text(block) if block.text == "read the file"
@@ -629,6 +629,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 "add turn plan completion signal".to_string(),
                 true,
             ),
+            (202_608_080_001, "add subagent sessions".to_string(), true),
         ]
     );
 
@@ -963,7 +964,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     assert_eq!(checkpoint_replay.messages.len(), 3);
     assert_eq!(
         checkpoint_replay.messages[0].message_kind,
-        openwork_core::StoredMessageKind::Normal
+        openwork_core::MessageKind::Normal
     );
     assert_eq!(
         checkpoint_replay.checkpoint_id.as_deref(),

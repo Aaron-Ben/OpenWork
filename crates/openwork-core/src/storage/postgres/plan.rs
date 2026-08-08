@@ -134,7 +134,7 @@ impl PostgresStorage {
             Some(turn_id),
             Role::Tool,
             tool_result.content,
-            StoredMessageKind::Normal,
+            MessageKind::Normal,
             Some((&tool_result.provider_call_id, &tool_result.tool_name)),
         )
         .await?;
@@ -203,7 +203,8 @@ mod tests {
 
     #[test]
     fn decodes_steps_and_rejects_unknown_statuses() {
-        let steps = decode_steps(json!([{ "step": "a", "status": "in_progress" }])).expect("decode");
+        let steps =
+            decode_steps(json!([{ "step": "a", "status": "in_progress" }])).expect("decode");
         assert_eq!(steps.len(), 1);
 
         assert!(decode_steps(json!([{ "step": "a", "status": "bogus" }])).is_err());

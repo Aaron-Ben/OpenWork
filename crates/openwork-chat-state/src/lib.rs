@@ -8,7 +8,7 @@ mod state;
 mod view;
 
 pub use actor::ChatStateHandle;
-pub use item::{ConversationItem, ConversationItemOrigin, SyntheticReason};
+pub use item::{ConversationItem, ConversationItemOrigin, MessageKind, SyntheticReason};
 pub use snapshot::{AssistantDraftSnapshot, ConversationSnapshot};
 pub use state::ChatStateError;
 pub use view::{ConversationCompactionView, ConversationView};

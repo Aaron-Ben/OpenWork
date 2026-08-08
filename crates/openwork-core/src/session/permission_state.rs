@@ -7,6 +7,41 @@ use serde::{Deserialize, Serialize};
 
 use super::ToolCallId;
 
+/// Whether anyone can answer an approval prompt for this Session.
+///
+/// **Not a third [`PermissionMode`].** A mode is an approval latitude the user
+/// chose; this is a property of the runtime environment — whether a user exists
+/// at all. Sub-agent Sessions run unattended, so an `Ask` there can never be
+/// answered. See `docs/permissions.md` §6.6.
+///
+/// Everything else is unchanged: the same rule set, the same read-only proof,
+/// the same built-in denials. Only the landing place of `Ask` differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionApproval {
+    /// A user is in the loop: `Ask` suspends the Tool Call and waits.
+    #[default]
+    Interactive,
+    /// Nobody is in the loop: `Ask` is denied immediately.
+    NonInteractive,
+}
+
+impl SessionApproval {
+    pub fn is_interactive(self) -> bool {
+        matches!(self, Self::Interactive)
+    }
+}
+
+/// Returned to the model when an unattended Session hits `Ask`.
+///
+/// The wording has to be actionable. "Denied" alone makes the model retry the
+/// same command until it burns through `max_model_calls`; naming the cause and
+/// the way out lets it switch to a provably read-only command and carry on.
+pub const NON_INTERACTIVE_DENIAL: &str = "This sub-agent runs unattended and cannot request approval. \
+     Only provably read-only commands run without asking — for example \
+     `git status`, `git log`, `git diff`, `rg`, `ls`, `cat`. \
+     Re-run with one of those, or report what you could not determine.";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionModeOrigin {

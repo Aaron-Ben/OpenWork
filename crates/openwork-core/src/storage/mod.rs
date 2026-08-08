@@ -11,11 +11,12 @@ const TRACE_PAYLOAD_ADVISORY_LOCK: i64 = 0x4f50_454e_574f_524b;
 
 pub use crate::session::ConversationProjectionSelector;
 pub use credential::{API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError};
+pub(crate) use postgres::is_valid_task_name;
 pub use postgres::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
-    ModelRecord, PostgresStorage, SessionInput, SessionRecord, StorageError, StoredMessageKind,
-    StoredMessageRecord, TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord,
+    ModelRecord, PostgresStorage, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
+    SubAgentSessionInput, TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord,
     TraceSpanRecord, TraceTurnSummary, TurnTrace,
 };
 pub use provider::PostgresProviderRepository;

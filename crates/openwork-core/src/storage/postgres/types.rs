@@ -33,6 +33,27 @@ pub struct SessionInput {
     pub default_model_id: Option<String>,
 }
 
+/// Creation input for a sub-agent Session.
+///
+/// Deliberately a separate type from [`SessionInput`] rather than four optional
+/// fields on it: the two paths have different callers (a user versus a spawning
+/// agent), different required fields, and different validation. Optional fields
+/// would let a caller build a half-filled sub-agent that only the database
+/// rejects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubAgentSessionInput {
+    pub id: SessionId,
+    pub parent_session_id: SessionId,
+    /// Unique within the parent Session. This is what the model addresses.
+    pub task_name: String,
+    pub agent_role: String,
+    /// Inherited from the parent; never widened or narrowed.
+    pub working_directory: String,
+    pub default_model_id: Option<String>,
+    /// Tool Call Span that spawned it. `None` when the Trace write was dropped.
+    pub spawn_span_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
@@ -44,6 +65,18 @@ pub struct SessionRecord {
     pub created_at: String,
     pub updated_at: String,
     pub last_turn_at: Option<String>,
+    /// All four are `None` for a root Session and `Some` for a sub-agent,
+    /// except `spawn_span_id` which may be `None` either way.
+    pub parent_session_id: Option<String>,
+    pub task_name: Option<String>,
+    pub agent_role: Option<String>,
+    pub spawn_span_id: Option<String>,
+}
+
+impl SessionRecord {
+    pub fn is_sub_agent(&self) -> bool {
+        self.parent_session_id.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,24 +87,8 @@ pub struct StoredMessageRecord {
     pub sequence: i64,
     pub role: Role,
     pub content: Vec<ContentBlock>,
-    pub message_kind: StoredMessageKind,
+    pub message_kind: MessageKind,
     pub created_at: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StoredMessageKind {
-    Normal,
-    SkillInstruction,
-}
-
-impl StoredMessageKind {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::SkillInstruction => "skill_instruction",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -27,15 +27,15 @@ use crate::context::{
     ContextInspectionSystemPart, ContextWindowInspection, SystemContextBuilder, list_skills,
 };
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
+use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
     COMPACTION_TRANSCRIPT_TOOL_NAME, ClientRequestId, CompactionError, CompactionStateCollector,
     ConversationCompaction, ConversationTranscriptTool, PermissionDecision, PreparedTurnInput,
-    ResolvedModel, SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot,
-    SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy,
-    TracePayloadSlot, TurnAccepted, TurnId, TurnToolset,
+    ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId, SessionRuntimeConfig,
+    SessionSnapshot, SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig,
+    TraceContentPolicy, TracePayloadSlot, TurnAccepted, TurnId, TurnToolset,
 };
-use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
@@ -991,6 +991,10 @@ impl OpenWorkCore {
                 compaction_state: Arc::new(CompactionStateCollector::default()),
                 trace: self.trace.clone(),
                 permission_mode,
+                // A Session opened from the Desktop always has a user behind it.
+                // Sub-agent Sessions are started elsewhere and are the only
+                // `NonInteractive` ones.
+                approval: SessionApproval::Interactive,
             },
             self.update_tx.clone(),
         ))
@@ -1234,6 +1238,7 @@ fn parse_provider_kind(value: &str) -> Result<ProviderKind, OpenWorkCoreError> {
 
 #[cfg(test)]
 mod tests {
+    use openwork_chat_state::MessageKind;
     use openwork_models::model::{ContentBlock, Role, ToolResultBlock, ToolResultState};
     use openwork_tools::{
         Authorization, FileChangeArtifact, FileChangeKind, FileDiffHunk, PermissionMode,
@@ -1451,7 +1456,7 @@ mod tests {
                     .collect::<Result<Vec<_>, _>>()
                     .expect("encode changes"),
             })],
-            message_kind: crate::storage::StoredMessageKind::Normal,
+            message_kind: MessageKind::Normal,
             created_at: "2026-07-19T00:00:00Z".to_string(),
         }
     }

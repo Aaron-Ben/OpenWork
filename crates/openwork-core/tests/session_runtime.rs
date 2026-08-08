@@ -8,15 +8,15 @@ use async_trait::async_trait;
 use futures_util::stream;
 use openwork_agent::{AgentBuilder, AgentDefinition};
 use openwork_chat_state::ChatStateHandle;
+use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::session::{
     ClientRequestId, CompactionError, CompactionRuntimeState, CompactionStateCollector,
     ConversationCompaction, ConversationCompactionKind, NewConversationCompaction,
-    PermissionDecision, ResolvedModel, SessionError, SessionHandle, SessionId,
+    PermissionDecision, ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId,
     SessionRuntimeConfig, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId,
     ToolProgressUpdate, TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId,
     TurnOutcome, TurnToolset,
 };
-use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::skills::SkillRoots;
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
@@ -685,6 +685,7 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
             compaction_state: Arc::new(CompactionStateCollector::default()),
             trace: trace.clone(),
             permission_mode,
+            approval: SessionApproval::Interactive,
         },
         global_update_tx,
     );
@@ -2883,7 +2884,10 @@ async fn update_plan_commits_then_broadcasts_a_complete_snapshot() {
     );
 
     // Assistant Tool Call 必须先于计划副作用落库。
-    let assistant = events.iter().position(|event| event == "assistant").unwrap();
+    let assistant = events
+        .iter()
+        .position(|event| event == "assistant")
+        .unwrap();
     let commit = events
         .iter()
         .position(|event| event == "plan_commit")
@@ -3099,7 +3103,10 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
         "the plan must survive compaction: {after}"
     );
     assert!(after.contains("- [completed] read schema"), "got: {after}");
-    assert!(after.contains("- [in_progress] add migration"), "got: {after}");
+    assert!(
+        after.contains("- [in_progress] add migration"),
+        "got: {after}"
+    );
     assert!(after.contains("- [pending] wire runner"), "got: {after}");
     assert!(after.contains("scoping the work"), "got: {after}");
 

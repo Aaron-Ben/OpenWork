@@ -28,7 +28,7 @@ pub use compaction::{
 };
 pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use input::PreparedTurnInput;
-pub use permission_state::PermissionModeOrigin;
+pub use permission_state::{NON_INTERACTIVE_DENIAL, PermissionModeOrigin, SessionApproval};
 pub use storage::{NoopSessionStorage, SessionStorage};
 pub use toolset::{TurnToolset, TurnToolsetError};
 pub use trace::{

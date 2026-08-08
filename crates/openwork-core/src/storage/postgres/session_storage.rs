@@ -250,7 +250,7 @@ impl PostgresStorage {
                 Some(turn_id),
                 Role::User,
                 serde_json::to_value(&message.content)?,
-                StoredMessageKind::SkillInstruction,
+                MessageKind::SkillInstruction,
                 None,
             )
             .await?;
@@ -261,7 +261,7 @@ impl PostgresStorage {
             Some(turn_id),
             Role::User,
             serde_json::to_value(&user_message.content)?,
-            StoredMessageKind::Normal,
+            MessageKind::Normal,
             None,
         )
         .await?;
@@ -311,7 +311,7 @@ impl PostgresStorage {
             Some(turn_id),
             Role::Assistant,
             content,
-            StoredMessageKind::Normal,
+            MessageKind::Normal,
             None,
         )
         .await?;
@@ -355,7 +355,7 @@ impl PostgresStorage {
             Some(turn_id),
             Role::Tool,
             result.content,
-            StoredMessageKind::Normal,
+            MessageKind::Normal,
             Some((&result.provider_call_id, &result.tool_name)),
         )
         .await?;

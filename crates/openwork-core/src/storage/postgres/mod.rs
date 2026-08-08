@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use openwork_chat_state::ConversationItem;
+use openwork_chat_state::{ConversationItem, MessageKind};
 use openwork_models::model::{ContentBlock, Message, Role, TokenUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,13 +36,15 @@ const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 use internal::*;
+pub(crate) use validate::is_valid_task_name;
+
 use types::ConversationCompactionRow;
 pub use types::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput,
-    ModelRecord, SessionInput, SessionRecord, StorageError, StoredMessageKind, StoredMessageRecord,
-    TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord,
-    TraceTurnSummary, TurnTrace,
+    ModelRecord, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
+    SubAgentSessionInput, TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord,
+    TraceSpanRecord, TraceTurnSummary, TurnTrace,
 };
 use validate::*;
 
