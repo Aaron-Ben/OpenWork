@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeStoredMessage } from '@/bridge/compat'
 import { createSessionRuntimeView } from './runtimeReducer'
-import { buildTranscript } from './transcript'
+import { buildReadonlyTranscript, buildTranscript } from './transcript'
 
 const canonical: RuntimeStoredMessage[] = [
   {
@@ -547,5 +547,113 @@ describe('buildTranscript plan attachment', () => {
 
     expect(transcript.filter((item) => item.plan).every((item) => item.turnId === 'turn-plan'))
       .toBe(true)
+  })
+})
+
+const readonlyToolTurn: RuntimeStoredMessage[] = [
+  {
+    id: 'child-user',
+    turnId: 'child-turn',
+    sequence: 1,
+    role: 'user',
+    content: [{ type: 'text', text: 'inspect the skill' }],
+    messageKind: 'normal',
+    createdAt: '2026-08-09T22:00:00+08:00',
+  },
+  {
+    id: 'child-skill',
+    turnId: 'child-turn',
+    sequence: 2,
+    role: 'user',
+    content: [{ type: 'text', text: 'skill body that is not part of the conversation' }],
+    messageKind: 'skill_instruction',
+    createdAt: '2026-08-09T22:00:01+08:00',
+  },
+  {
+    id: 'child-call',
+    turnId: 'child-turn',
+    sequence: 3,
+    role: 'assistant',
+    content: [{
+      type: 'tool_call',
+      id: 'provider-read',
+      name: 'read',
+      input: JSON.stringify({ path: '/repo/SKILL.md' }),
+      // 落库的 tool_call 永远停在 submitted：状态由配对的 tool_result 接管。
+      state: 'submitted',
+    }],
+    messageKind: 'normal',
+    createdAt: '2026-08-09T22:00:02+08:00',
+  },
+  {
+    id: 'child-result',
+    turnId: 'child-turn',
+    sequence: 4,
+    role: 'tool',
+    content: [{
+      type: 'tool_result',
+      id: 'provider-read',
+      name: 'read',
+      output: [{ type: 'text', text: '     1\tfirst line' }],
+      state: 'success',
+    }],
+    messageKind: 'normal',
+    createdAt: '2026-08-09T22:00:03+08:00',
+  },
+]
+
+describe('buildReadonlyTranscript', () => {
+  it('folds the tool result back onto its call so the row is not stuck in progress', () => {
+    const transcript = buildReadonlyTranscript(readonlyToolTurn)
+
+    expect(transcript.some((item) => item.role === 'tool')).toBe(false)
+    const call = transcript.find((item) => item.id === 'child-call')
+    expect(call?.parts).toEqual([
+      readonlyToolTurn[2].content[0],
+      readonlyToolTurn[3].content[0],
+    ])
+  })
+
+  it('drops skill instructions the same way the live transcript does', () => {
+    const transcript = buildReadonlyTranscript(readonlyToolTurn)
+
+    expect(transcript.some((item) => item.id === 'child-skill')).toBe(false)
+  })
+
+  it('hides update_plan blocks instead of rendering them as tool rows', () => {
+    const transcript = buildReadonlyTranscript([
+      {
+        id: 'plan-call',
+        turnId: 'child-turn',
+        sequence: 1,
+        role: 'assistant',
+        content: [{
+          type: 'tool_call',
+          id: 'provider-plan',
+          name: 'update_plan',
+          input: '{"steps":[]}',
+          state: 'submitted',
+        }],
+        messageKind: 'normal',
+        createdAt: '2026-08-09T22:00:00+08:00',
+      },
+      {
+        id: 'plan-result',
+        turnId: 'child-turn',
+        sequence: 2,
+        role: 'tool',
+        content: [{
+          type: 'tool_result',
+          id: 'provider-plan',
+          name: 'update_plan',
+          output: [{ type: 'text', text: 'plan updated' }],
+          state: 'success',
+        }],
+        messageKind: 'normal',
+        createdAt: '2026-08-09T22:00:01+08:00',
+      },
+    ])
+
+    expect(transcript).toEqual([])
   })
 })

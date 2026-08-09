@@ -209,6 +209,20 @@ function projectPlan(transcript: ChatItem[], candidate: PlanCandidate | null): C
   )
 }
 
+/**
+ * 落库消息的只读投影：没有活动 Turn，也没有实时快照可叠加。
+ *
+ * `mergeToolMessages` 不能省。Core 把一次工具调用拆成两条消息落库——assistant 里的
+ * tool_call 与 Role::Tool 里的 tool_result——而 tool_call 的 state 落库后恒为
+ * `submitted`，靠配对的结果接管状态。少了这次折叠，调用与结果会落进两个
+ * ToolActivityList 实例，配不上对：调用那一行永远转圈。
+ */
+export function buildReadonlyTranscript(messages: RuntimeStoredMessage[]): ChatItem[] {
+  // 计划快照要 SessionRuntimeView 才能定位，只读页不渲染 PlanCard；
+  // 但 update_plan 是状态更新而非动作，无论如何都不该以工具行的形式出现。
+  return stripPlanParts(mergeToolMessages(canonicalItems(messages)))
+}
+
 export function buildTranscript(
   messages: RuntimeStoredMessage[],
   runtime: SessionRuntimeView,

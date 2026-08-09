@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { coreCommands } from '@/bridge/commands'
 import type { RuntimeLoadedSession, RuntimeSubAgentSessionRecord } from '@/bridge/compat'
 import type { AgentRailItem } from './agentRailModel'
-import { loadSubAgentTranscript, SubAgentDetailPage } from './SubAgentDetailPage'
+import {
+  loadSubAgentTranscript,
+  ReadonlySubAgentTranscript,
+  SubAgentDetailPage,
+} from './SubAgentDetailPage'
 
 const child: RuntimeSubAgentSessionRecord = {
   id: 'child-1',
@@ -114,5 +118,54 @@ describe('SubAgentDetailPage', () => {
 
     await expect(loadSubAgentTranscript('child-1')).resolves.toBe(detail)
     expect(coreCommands.loadSession).toHaveBeenCalledWith('child-1')
+  })
+})
+
+const toolTurn: RuntimeLoadedSession['messages'] = [
+  {
+    id: 'child-call',
+    turnId: 'child-turn',
+    sequence: 1,
+    role: 'assistant',
+    content: [{
+      type: 'tool_call',
+      id: 'provider-read',
+      name: 'read',
+      input: JSON.stringify({ path: '/repo/SKILL.md' }),
+      state: 'submitted',
+    }],
+    messageKind: 'normal',
+    createdAt: '2026-08-09T22:00:02+08:00',
+  },
+  {
+    id: 'child-result',
+    turnId: 'child-turn',
+    sequence: 2,
+    role: 'tool',
+    content: [{
+      type: 'tool_result',
+      id: 'provider-read',
+      name: 'read',
+      output: [{ type: 'text', text: '     1\tfirst\n     2\tsecond' }],
+      state: 'success',
+    }],
+    messageKind: 'normal',
+    createdAt: '2026-08-09T22:00:03+08:00',
+  },
+]
+
+describe('ReadonlySubAgentTranscript', () => {
+  it('pairs a persisted call with its result instead of leaving the call spinning', () => {
+    const markup = renderToStaticMarkup(
+      <ReadonlySubAgentTranscript messages={toolTurn} workspaceRoot="/repo" />,
+    )
+
+    expect(markup).not.toContain('animate-spin')
+    expect(markup).not.toContain('aria-label="执行中"')
+    // 一次调用一行：配不上对时会裂成"只有路径"和"只有行数"两行。
+    expect(markup.split('data-tool-activity-row=')).toHaveLength(2)
+    // 路径来自 tool_call、行数来自 tool_result，两者都落在这一行里。
+    expect(markup).toContain('/repo/SKILL.md')
+    expect(markup).toContain('2 行')
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -11,6 +11,7 @@ import type { AgentRailItem } from './agentRailModel'
 import { AssistantMessage } from './components/AssistantMessage'
 import { ToolActivityList } from './components/ToolActivityList'
 import { UserMessage } from './components/UserMessage'
+import { buildReadonlyTranscript } from './transcript'
 
 export type SubAgentDetailState =
   | { state: 'loading' }
@@ -116,11 +117,14 @@ function useSubAgentDetail(childSessionId: string): SubAgentDetailState {
 /**
  * 落库消息的只读渲染。
  *
- * 不能复用 TranscriptMessage：它吃的是 ChatItem（字段 parts），而 loadSession 给的是
- * RuntimeStoredMessage（字段 content）；它还要求 Trace、撤销文件、重新应用这些交互回调，
+ * 投影必须走 buildReadonlyTranscript：Core 把一次工具调用拆成 assistant 的 tool_call 与
+ * Role::Tool 的 tool_result 两条消息落库，而配对只在单个 parts 数组内进行。直接按角色
+ * 逐条分派会把两半丢进不同的 ToolActivityList，调用那一行就永远停在 submitted 转圈。
+ *
+ * 不能复用 TranscriptMessage：它要求 Trace、撤销文件、重新应用这些交互回调，
  * 而这一页不该暴露任何交互。所以这里只按角色分派到三个展示组件。
  */
-function ReadonlySubAgentTranscript({
+export function ReadonlySubAgentTranscript({
   messages,
   workspaceRoot,
 }: {
@@ -128,19 +132,21 @@ function ReadonlySubAgentTranscript({
   workspaceRoot?: string
 }) {
   const { t } = useTranslation()
-  if (messages.length === 0) {
+  const items = useMemo(() => buildReadonlyTranscript(messages), [messages])
+  if (items.length === 0) {
     return <p className="text-xs text-ink-faint">{t('chat.subAgents.emptyTranscript')}</p>
   }
   return (
     <div className="flex flex-col gap-4" data-readonly-sub-agent-transcript="true">
-      {messages.map((message) => (
-        <div key={message.id} className="min-w-0">
-          {message.role === 'user' ? (
-            <UserMessage parts={message.content} />
-          ) : message.role === 'tool' ? (
-            <ToolActivityList parts={message.content} workspaceRoot={workspaceRoot} />
+      {items.map((item) => (
+        <div key={item.id} className="min-w-0">
+          {item.role === 'user' ? (
+            <UserMessage parts={item.parts} />
+          ) : item.role === 'tool' ? (
+            // 折叠后仍留在这里的，是找不到对应 tool_call 的孤儿结果。
+            <ToolActivityList parts={item.parts} workspaceRoot={workspaceRoot} />
           ) : (
-            <AssistantMessage parts={message.content} workspaceRoot={workspaceRoot} />
+            <AssistantMessage parts={item.parts} workspaceRoot={workspaceRoot} />
           )}
         </div>
       ))}
