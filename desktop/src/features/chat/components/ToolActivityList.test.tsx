@@ -243,14 +243,14 @@ describe('ToolActivityList', () => {
     expect(activities[0]).toMatchObject({
       id: 'call-bash',
       name: 'bash',
-      summary: 'cargo test -p openwork-core',
+      input: { command: 'cargo test -p openwork-core' },
       output: '2 passed',
       state: 'success',
     })
     expect(activities[1]).toMatchObject({
       id: 'call-write',
       name: 'write',
-      summary: '/workspace/src/main.rs',
+      input: { path: '/workspace/src/main.rs', content: 'fn main() {}' },
     })
   })
 

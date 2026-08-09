@@ -309,12 +309,14 @@ function BashStatusIcon({
   failed: boolean
   running: boolean
 }) {
-  if (running) return <Loader2 size={14} className="shrink-0 animate-spin text-ink-faint" />
-  if (failed) return <CircleAlert size={14} className="shrink-0 text-status-danger" />
+  const { t } = useTranslation()
+  if (running) return <Loader2 size={14} aria-label={t('tool.running')} className="shrink-0 animate-spin text-ink-faint" />
+  if (failed) return <CircleAlert size={14} aria-label={t('tool.error')} className="shrink-0 text-status-danger" />
   if (activity.state === 'denied' || activity.state === 'interrupted') {
-    return <CircleX size={14} className="shrink-0 text-status-danger" />
+    return <CircleX size={14} aria-label={t('tool.stopped')} className="shrink-0 text-status-danger" />
   }
-  return <SquareTerminal size={14} className="shrink-0 text-ink-faint" />
+  // 成功态图标是装饰：动作名就在紧邻的摘要里，读屏再念一遍只是噪音。
+  return <SquareTerminal size={14} aria-hidden="true" className="shrink-0 text-ink-faint" />
 }
 
 function parseBashOutput(output: string): BashResultView {
@@ -374,5 +376,5 @@ function isInProgress(activity: ToolActivity): boolean {
 }
 
 function Separator(): ReactNode {
-  return <span className="shrink-0 text-[10px] text-ink-faint/70">·</span>
+  return <span aria-hidden="true" className="shrink-0 text-[10px] text-ink-faint/70">·</span>
 }

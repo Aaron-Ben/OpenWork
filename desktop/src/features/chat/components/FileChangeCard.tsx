@@ -5,17 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { FileStats, type FileChangeView } from './FileDiffPanel'
 
-/// 差异面板与类型定义住在 FileDiffPanel，这里转出去，既有的引用点不必跟着改。
-export {
-  FileDiffPanel,
-  FileStats,
-  type FileChangeKind,
-  type FileChangeView,
-  type FileDiffHunk,
-  type FileDiffLine,
-  type FileDiffLineKind,
-} from './FileDiffPanel'
-
 interface FileChangeCardProps {
   changes: FileChangeView[]
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>

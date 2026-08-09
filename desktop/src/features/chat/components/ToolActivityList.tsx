@@ -1,18 +1,12 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
-  Check,
   ChevronRight,
   CircleAlert,
   CircleX,
-  Copy,
-  FileText,
-  Folder,
   Loader2,
-  Pencil,
-  SquareTerminal,
   Wrench,
 } from 'lucide-react'
 
@@ -22,14 +16,7 @@ import {
   type ToolResultArtifact,
   type ToolResultState,
 } from '@/types/parts'
-import {
-  FileChangeCard,
-  FileDiffPanel,
-  FileStats,
-  type FileChangeView,
-  type FileDiffHunk,
-  type FileDiffLine,
-} from './FileChangeCard'
+import { FileChangeCard } from './FileChangeCard'
 import {
   isReadonlyDisplayTool,
   ReadonlyToolActivityRow,
@@ -37,6 +24,9 @@ import {
 import {
   FileChangeActivityRow,
   isFileChangeDisplayTool,
+  type FileChangeView,
+  type FileDiffHunk,
+  type FileDiffLine,
 } from './FileDiffPanel'
 import {
   bashActivityFailed,
@@ -51,7 +41,6 @@ export interface ToolActivity {
   name: string
   input: Record<string, unknown> | null
   rawInput: string
-  summary: string
   output: string
   state: ActivityState
   artifacts: ToolResultArtifact[]
@@ -67,14 +56,6 @@ interface ToolActivityListProps {
   onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
   onReviewFileChanges?: (changes: FileChangeView[]) => void
   fileChangePresentation?: 'activity' | 'summary'
-}
-
-const TOOL_ICONS: Record<string, typeof SquareTerminal> = {
-  read: FileText,
-  write: Pencil,
-  edit: Pencil,
-  list: Folder,
-  bash: SquareTerminal,
 }
 
 export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
@@ -93,7 +74,6 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
         name: part.name,
         input,
         rawInput: part.input,
-        summary: summarize(part.name, input),
         output: existing?.output ?? '',
         state: existing?.state ?? part.state,
         artifacts: existing?.artifacts ?? [],
@@ -112,7 +92,6 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
         name: existing?.name ?? part.name,
         input: existing?.input ?? null,
         rawInput: existing?.rawInput ?? '',
-        summary: existing?.summary ?? '',
         output: extractText(part.output),
         state: part.state,
         artifacts: part.artifacts ?? [],
@@ -289,24 +268,12 @@ function ToolActivityRow({
 }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
-  const fileChanges = collectFileChanges([activity])
-  const primaryFileChange = fileChanges[0]
   const details = activityDetails(activity, (key) => t(key))
-  const hasDetails = fileChanges.length > 0 || details.length > 0
-  const label = primaryFileChange
-    ? expanded
-      ? primaryFileChange.kind === 'created'
-        ? t('tool.createdFile')
-        : t('tool.editedOneFile')
-      : primaryFileChange.kind === 'created'
-        ? t('tool.createdNamedFile', { name: fileName(primaryFileChange.path) })
-        : t('tool.editedFile', { name: fileName(primaryFileChange.path) })
-    : activityLabel(activity, (key, options) => t(key, options))
+  const hasDetails = details.length > 0
 
   return (
     <div
       data-tool-activity-row={activity.id}
-      data-file-change-activity={fileChanges[0]?.changeId}
       className="group/row min-w-0"
     >
       <div className="flex min-w-0 items-center rounded-md transition-colors hover:bg-paper-hover">
@@ -318,15 +285,8 @@ function ToolActivityRow({
         >
           <LeadingIcon activity={activity} />
           <span className="min-w-0 truncate font-mono text-xs leading-5 text-ink-soft">
-            {label}
+            {t('tool.calledTool', { name: activity.name })}
           </span>
-          {primaryFileChange && !expanded ? (
-            <FileStats
-              additions={primaryFileChange.additions}
-              deletions={primaryFileChange.deletions}
-              className="text-xs"
-            />
-          ) : null}
           {hasDetails ? (
             <ChevronRight
               size={13}
@@ -360,38 +320,24 @@ function ToolActivityRow({
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            {fileChanges.length > 0 ? (
-              <div data-file-change-details="true" className="space-y-2 py-1 pl-7">
-                {fileChanges.map((change) => (
-                  <div key={change.changeId} className="overflow-hidden rounded-xl border border-line">
-                    <FileDiffPanel change={change} />
+            <div className="py-1 pl-7">
+              <div className="overflow-hidden rounded-xl border border-line bg-paper">
+                {details.map((detail, index) => (
+                  <div key={detail.label} className={index > 0 ? 'border-t border-line' : ''}>
+                    <div className="px-3 pt-1.5 text-[11px] text-ink-faint">
+                      {detail.label}
+                    </div>
+                    <pre
+                      className={`max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 pt-0.5 font-mono text-xs leading-relaxed ${
+                        detail.error ? 'text-status-danger-ink' : 'text-ink-soft'
+                      }`}
+                    >
+                      {detail.value}
+                    </pre>
                   </div>
                 ))}
               </div>
-            ) : activity.name === 'bash' ? (
-              <div className="py-1 pl-7">
-                <ShellDetailsCard activity={activity} />
-              </div>
-            ) : (
-              <div className="py-1 pl-7">
-                <div className="overflow-hidden rounded-xl border border-line bg-paper">
-                  {details.map((detail, index) => (
-                    <div key={detail.label} className={index > 0 ? 'border-t border-line' : ''}>
-                      <div className="px-3 pt-1.5 text-[11px] text-ink-faint">
-                        {detail.label}
-                      </div>
-                      <pre
-                        className={`max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 pb-2 pt-0.5 font-mono text-xs leading-relaxed ${
-                          detail.error ? 'text-status-danger-ink' : 'text-ink-soft'
-                        }`}
-                      >
-                        {detail.value}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            </div>
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -426,69 +372,8 @@ function LeadingIcon({ activity }: { activity: ToolActivity }) {
       </span>
     )
   }
-  const Icon = TOOL_ICONS[activity.name] ?? Wrench
-  return (
-    <span className="inline-flex shrink-0 items-center text-ink-faint" title={t('tool.done')}>
-      <Icon size={14} strokeWidth={1.9} />
-      <span className="sr-only">{t('tool.done')}</span>
-    </span>
-  )
-}
-
-function ShellDetailsCard({ activity }: { activity: ToolActivity }) {
-  const { t } = useTranslation()
-  const command = activity.summary
-  const output = activity.output
-  const isError = activity.state === 'error'
-  const [copied, setCopied] = useState(false)
-  const copiedTimerRef = useRef<number | null>(null)
-
-  useEffect(() => () => {
-    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
-  }, [])
-
-  async function copyTranscript() {
-    const text = output ? `$ ${command}\n${output}` : `$ ${command}`
-    try {
-      await navigator.clipboard?.writeText(text)
-    } catch {
-      return
-    }
-    setCopied(true)
-    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
-    copiedTimerRef.current = window.setTimeout(() => setCopied(false), 1_500)
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-line bg-paper">
-      <div className="flex items-center gap-2 px-3 pt-1.5">
-        <span className="min-w-0 flex-1 text-[11px] text-ink-faint">{t('tool.shell')}</span>
-        <button
-          type="button"
-          aria-label={copied ? t('tool.copied') : t('tool.copy')}
-          title={copied ? t('tool.copied') : t('tool.copy')}
-          onClick={() => void copyTranscript()}
-          className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper-hover hover:text-ink"
-        >
-          {copied ? <Check size={12} className="text-status-success" /> : <Copy size={12} />}
-        </button>
-      </div>
-      <div className="max-h-72 overflow-auto px-3 pb-2 pt-0.5 font-mono text-xs leading-relaxed">
-        {command ? (
-          <div className="whitespace-pre-wrap break-words text-ink-soft">$ {command}</div>
-        ) : null}
-        {output ? (
-          <div
-            className={`whitespace-pre-wrap break-words ${
-              isError ? 'text-status-danger-ink' : 'text-ink-faint'
-            }`}
-          >
-            {output}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  )
+  // 成功态图标是装饰：动作名就在紧邻的文字里，读屏再念一遍只是噪音。
+  return <Wrench size={14} strokeWidth={1.9} aria-hidden="true" className="shrink-0 text-ink-faint" />
 }
 
 function parseInput(input: string): Record<string, unknown> | null {
@@ -500,49 +385,6 @@ function parseInput(input: string): Record<string, unknown> | null {
       : null
   } catch {
     return null
-  }
-}
-
-function summarize(toolName: string, input: Record<string, unknown> | null): string {
-  if (!input) return ''
-  if (toolName === 'bash' && typeof input.command === 'string') return input.command
-  if (typeof input.path === 'string') return input.path
-  if (typeof input.filePath === 'string') return input.filePath
-  return ''
-}
-
-function fileName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
-}
-
-function activityLabel(
-  activity: ToolActivity,
-  translate: (key: string, options?: Record<string, unknown>) => string,
-): string {
-  const target = activity.name === 'bash' ? activity.summary : fileName(activity.summary)
-  switch (activity.name) {
-    case 'bash':
-      return target
-        ? translate('tool.ranCommand', { command: target })
-        : translate('tool.ranCommandFallback')
-    case 'write':
-      return target
-        ? translate('tool.wroteFile', { name: target })
-        : translate('tool.wroteFileFallback')
-    case 'edit':
-      return target
-        ? translate('tool.editedFile', { name: target })
-        : translate('tool.editedFileFallback')
-    case 'read':
-      return target
-        ? translate('tool.readFile', { name: target })
-        : translate('tool.readFileFallback')
-    case 'list':
-      return target
-        ? translate('tool.listedDirectory', { name: target })
-        : translate('tool.listedDirectoryFallback')
-    default:
-      return translate('tool.calledTool', { name: activity.name })
   }
 }
 
@@ -618,14 +460,9 @@ function activityDetails(
   error?: boolean
 }> {
   const details: Array<{ label: string; value: string; error?: boolean }> = []
-  const inputValue = (() => {
-    if (activity.name === 'bash') return ''
-    if (activity.name === 'write' && typeof activity.input?.content === 'string') {
-      return activity.input.content
-    }
-    if (!activity.rawInput) return ''
-    return activity.input ? JSON.stringify(activity.input, null, 2) : activity.rawInput
-  })()
+  const inputValue = activity.rawInput
+    ? activity.input ? JSON.stringify(activity.input, null, 2) : activity.rawInput
+    : ''
   if (inputValue) {
     details.push({ label: translate('tool.input'), value: inputValue })
   }

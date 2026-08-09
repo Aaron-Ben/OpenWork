@@ -1,11 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import {
-  FileChangeCard,
-  FileDiffPanel,
-  type FileChangeView,
-} from './FileChangeCard'
+import { FileChangeCard } from './FileChangeCard'
+import { FileDiffPanel, type FileChangeView } from './FileDiffPanel'
 
 function change(index: number): FileChangeView {
   return {

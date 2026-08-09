@@ -502,18 +502,20 @@ function WritePreviewHeading({ activity }: { activity: ToolActivity }) {
 }
 
 function FileChangeStatusIcon({ activity }: { activity: ToolActivity }) {
+  const { t } = useTranslation()
   if (activity.state === 'pending' || activity.state === 'submitted' || activity.state === 'running') {
-    return <Loader2 size={14} className="shrink-0 animate-spin text-ink-faint" />
+    return <Loader2 size={14} aria-label={t('tool.running')} className="shrink-0 animate-spin text-ink-faint" />
   }
   if (activity.state === 'error') {
-    return <CircleAlert size={14} className="shrink-0 text-status-danger" />
+    return <CircleAlert size={14} aria-label={t('tool.error')} className="shrink-0 text-status-danger" />
   }
   if (activity.state === 'denied' || activity.state === 'interrupted') {
-    return <CircleX size={14} className="shrink-0 text-status-danger" />
+    return <CircleX size={14} aria-label={t('tool.stopped')} className="shrink-0 text-status-danger" />
   }
   const Icon = activity.name === 'write' ? FilePlusCorner : Pencil
+  // 成功态图标是装饰：动作名就在紧邻的摘要里，读屏再念一遍只是噪音。
   return (
-    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-status-success text-paper">
+    <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center rounded-full bg-status-success text-paper">
       <Icon size={11} strokeWidth={2.2} />
     </span>
   )
@@ -533,5 +535,5 @@ function isInProgress(activity: ToolActivity): boolean {
 }
 
 function Separator() {
-  return <span className="shrink-0 text-[10px] text-ink-faint/70">·</span>
+  return <span aria-hidden="true" className="shrink-0 text-[10px] text-ink-faint/70">·</span>
 }

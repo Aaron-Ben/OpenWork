@@ -73,13 +73,6 @@ const READONLY_TOOL_ICONS: Record<ReadonlyToolName, typeof FileText> = {
   grep: Search,
 }
 
-const READONLY_ICON_LABELS = {
-  read: 'tool.readonly.readAction',
-  list: 'tool.readonly.listAction',
-  glob: 'tool.readonly.globAction',
-  grep: 'tool.readonly.grepAction',
-} as const
-
 export function isReadonlyDisplayTool(name: string): name is ReadonlyToolName {
   return name === 'read' || name === 'list' || name === 'glob' || name === 'grep'
 }
@@ -204,7 +197,8 @@ function ReadonlyStatusIcon({
   }
   const tool = isReadonlyDisplayTool(activity.name) ? activity.name : 'read'
   const Icon = READONLY_TOOL_ICONS[tool]
-  return <Icon size={14} className="shrink-0 text-ink-faint" aria-label={t(READONLY_ICON_LABELS[tool])} />
+  // 成功态图标是装饰：动作名就在紧邻的摘要里，读屏再念一遍只是噪音。
+  return <Icon size={14} aria-hidden="true" className="shrink-0 text-ink-faint" />
 }
 
 function ReadonlyActivityDetails({
