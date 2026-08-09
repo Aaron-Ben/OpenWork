@@ -334,8 +334,13 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   }, [])
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
-      <div className="relative min-h-0">
+    /*
+      两个行元素都要 min-w-0。grid item 的自动最小尺寸取内容的 min-content，
+      而下面的 max-w-4xl 会把 min-content 顶到 896px：中间栏窄于这个值时
+      （三栏布局下很常见），列宽被撑破，超出的正文被外层 overflow-hidden 切掉。
+    */
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] bg-paper">
+      <div className="relative min-h-0 min-w-0">
         <div
           ref={scrollContainerRef}
           className="h-full overflow-auto"
@@ -426,7 +431,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         ) : null}
       </div>
 
-      <div>
+      <div className="min-w-0">
         {runtime.syncState !== 'current' ? (
           <p className="mx-auto mb-2 max-w-4xl px-6 text-xs text-status-warning-ink max-[560px]:px-4">
             {runtime.syncState === 'resyncing' ? t('chat.syncResyncing') : t('chat.syncStale')}

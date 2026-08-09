@@ -13,6 +13,12 @@ function SelectTrigger({ className, children, ...props }: ComponentProps<typeof 
       data-slot="select-trigger"
       className={cn(
         'flex h-8 items-center justify-between gap-2 rounded-xl bg-transparent px-2.5 text-sm font-medium text-ink outline-none transition hover:bg-paper-hover disabled:cursor-not-allowed disabled:text-ink-faint',
+        /*
+          触发器是定宽的，值必须单行截断 —— 否则长模型名会折行、把 h-8 撑破，
+          从输入框里溢出来。截断只能加在这里：Radix 的 Value 不会把 className
+          转发到它渲染的那个 span 上，在调用点写 truncate 是静默失效的。
+        */
+        'overflow-hidden [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left',
         className,
       )}
       {...props}

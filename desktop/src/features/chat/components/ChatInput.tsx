@@ -504,7 +504,12 @@ export function ChatInput({
             onValueChange={onModelChange}
             disabled={disabled || modelSelectionLocked || isSending || isCompacting || modelOptions.length === 0}
           >
-            <SelectTrigger className="w-[clamp(104px,20vw,200px)] overflow-hidden" aria-label={t('chat.selectModel')}>
+            <SelectTrigger
+              className="w-[clamp(104px,20vw,200px)] overflow-hidden"
+              aria-label={t('chat.selectModel')}
+              /* 触发器定宽，长模型名会被截断 —— 悬停要能看到全名。 */
+              title={selectedModel ? formatModelLabel(selectedModel) : undefined}
+            >
               <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={t('chat.noModel')}>
                 {selectedModel ? formatModelLabel(selectedModel) : undefined}
               </SelectValue>
