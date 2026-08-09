@@ -16,6 +16,7 @@ export interface TranscriptMessageProps {
   onUndoFileChanges: (changeIds: string[]) => Promise<void>
   onReapplyFileChanges: (changeIds: string[]) => Promise<void>
   onReviewFileChanges: (changes: FileChangeView[]) => void
+  workspaceRoot?: string
 }
 
 function sameParts(left: ChatItem['parts'], right: ChatItem['parts']): boolean {
@@ -61,6 +62,7 @@ export function areTranscriptMessagePropsEqual(
     && previous.onUndoFileChanges === next.onUndoFileChanges
     && previous.onReapplyFileChanges === next.onReapplyFileChanges
     && previous.onReviewFileChanges === next.onReviewFileChanges
+    && previous.workspaceRoot === next.workspaceRoot
     && previous.message.id === next.message.id
     && previous.message.turnId === next.message.turnId
     && previous.message.role === next.message.role
@@ -82,6 +84,7 @@ export const TranscriptMessage = memo(function TranscriptMessage({
   onUndoFileChanges,
   onReapplyFileChanges,
   onReviewFileChanges,
+  workspaceRoot,
 }: TranscriptMessageProps) {
   const openTrace = message.turnId
     ? (providerToolCallId?: string) => onOpenTrace(message.turnId!, providerToolCallId)
@@ -110,6 +113,7 @@ export const TranscriptMessage = memo(function TranscriptMessage({
           onReapplyFileChanges={onReapplyFileChanges}
           onReviewFileChanges={onReviewFileChanges}
           fileChangePresentation={fileChangePresentation}
+          workspaceRoot={workspaceRoot}
         />
       ) : (
         <AssistantMessage
@@ -124,6 +128,7 @@ export const TranscriptMessage = memo(function TranscriptMessage({
           onReviewFileChanges={onReviewFileChanges}
           fileChangePresentation={fileChangePresentation}
           plan={message.plan}
+          workspaceRoot={workspaceRoot}
         />
       )}
     </div>

@@ -268,7 +268,7 @@ export const zhTW = {
   tool: {
     mutation: {
       createAction: '新增', editAction: '修改', writeAction: '寫入',
-      changeCount: '{{count}} 處變更', addedLines: '+{{count}} 行',
+      changeCount: '{{count}} 處變更', fileCount: '{{count}} 個檔案', addedLines: '+{{count}} 行',
       expandFullContent: '展開全文（還有 {{count}} 行）', collapseFullContent: '收起全文',
       emptyFile: '空檔案', availableAfterTurn: 'Turn 結束後可復原',
       hunkStart: '第 {{line}} 行起',
@@ -309,7 +309,7 @@ export const zhTW = {
     undo: '撤銷', undoing: '正在撤銷', undone: '已撤銷', undoFailed: '撤銷失敗：{{message}}',
     reapply: '恢復', reapplying: '正在恢復', reapplyFailed: '恢復失敗：{{message}}',
     review: '查看', reviewChanges: '查看檔案修改', closeReview: '關閉修改查看',
-    fileChangeCount: '共 {{count}} 個檔案', copyDiff: '複製 Diff',
+    fileChangeCount: '共 {{count}} 個檔案', inProject: '於 {{name}}', copyDiff: '複製 Diff',
     collapseDiff: '收起 {{name}} 的程式碼差異', expandDiff: '展開 {{name}} 的程式碼差異',
     showMoreFiles: '再顯示 {{count}} 個檔案', showFewerFiles: '收起檔案列表',
     readonly: {

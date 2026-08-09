@@ -101,7 +101,10 @@ export function SubAgentDetailPage({
 
           <div className="pt-6">
             {detail.state === 'loaded' ? (
-              <ReadonlySubAgentTranscript messages={detail.session.messages} />
+              <ReadonlySubAgentTranscript
+                messages={detail.session.messages}
+                workspaceRoot={detail.session.session.workingDirectory}
+              />
             ) : detail.state === 'error' ? (
               <p className="text-xs text-status-danger-ink" role="alert">
                 {t('chat.subAgents.transcriptFailed', { reason: detail.message })}
@@ -147,7 +150,13 @@ function useSubAgentDetail(childSessionId: string): SubAgentDetailState {
  * RuntimeStoredMessage（字段 content）；它还要求 Trace、撤销文件、重新应用这些交互回调，
  * 而这一页不该暴露任何交互。所以这里只按角色分派到三个展示组件。
  */
-function ReadonlySubAgentTranscript({ messages }: { messages: RuntimeStoredMessage[] }) {
+function ReadonlySubAgentTranscript({
+  messages,
+  workspaceRoot,
+}: {
+  messages: RuntimeStoredMessage[]
+  workspaceRoot?: string
+}) {
   const { t } = useTranslation()
   if (messages.length === 0) {
     return <p className="text-xs text-ink-faint">{t('chat.subAgents.emptyTranscript')}</p>
@@ -159,9 +168,9 @@ function ReadonlySubAgentTranscript({ messages }: { messages: RuntimeStoredMessa
           {message.role === 'user' ? (
             <UserMessage parts={message.content} />
           ) : message.role === 'tool' ? (
-            <ToolActivityList parts={message.content} />
+            <ToolActivityList parts={message.content} workspaceRoot={workspaceRoot} />
           ) : (
-            <AssistantMessage parts={message.content} />
+            <AssistantMessage parts={message.content} workspaceRoot={workspaceRoot} />
           )}
         </div>
       ))}

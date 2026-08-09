@@ -42,6 +42,7 @@ interface ToolActivityListProps {
   onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
   onReviewFileChanges?: (changes: FileChangeView[]) => void
   fileChangePresentation?: 'activity' | 'summary'
+  workspaceRoot?: string
 }
 
 export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
@@ -115,6 +116,7 @@ export const ToolActivityList = memo(function ToolActivityList({
   onReapplyFileChanges,
   onReviewFileChanges,
   fileChangePresentation = 'activity',
+  workspaceRoot,
 }: ToolActivityListProps) {
   const [toolExpansion, setToolExpansion] = useState<Record<string, boolean>>({})
   const allActivities = useMemo(
@@ -149,6 +151,7 @@ export const ToolActivityList = memo(function ToolActivityList({
           onUndoFileChanges={onUndoFileChanges}
           onReapplyFileChanges={onReapplyFileChanges}
           onReviewFileChanges={onReviewFileChanges}
+          workspaceRoot={workspaceRoot}
         />
       ) : null}
       {activities.length > 0 ? (
@@ -181,6 +184,7 @@ export const ToolActivityList = memo(function ToolActivityList({
                 onOpenTrace={onOpenTrace}
                 onUndoFileChanges={onUndoFileChanges}
                 onReapplyFileChanges={onReapplyFileChanges}
+                workspaceRoot={workspaceRoot}
               />
             )
             if (isBashDisplayTool(group.activities[0].name)) return (

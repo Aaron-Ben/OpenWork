@@ -19,15 +19,39 @@ function change(index: number): FileChangeView {
 }
 
 describe('FileChangeCard', () => {
+  it('shows a compact project-relative summary for workspace changes', () => {
+    const workspaceRoot = '/Volumes/Extreme SSD/Code/ProjectTest'
+    const changes = ['tetris.js', 'tetris.html', 'tetris.test.mjs', 'tetris.test.mjs', 'index.html']
+      .map((name, index) => ({
+        ...change(index + 1),
+        path: `${workspaceRoot}/${name}`,
+        additions: index === 1 || index === 4 ? 0 : index + 1,
+        deletions: index === 1 || index === 4 ? 1 : 0,
+      }))
+    const markup = renderToStaticMarkup(
+      <FileChangeCard changes={changes} workspaceRoot={workspaceRoot} />,
+    )
+
+    expect(markup).toContain('编辑了 4 个文件')
+    expect(markup).toContain('于 ProjectTest')
+    expect(markup.match(/data-file-change-row=/g)).toHaveLength(3)
+    expect(markup).toContain('data-file-change-path="ProjectTest/tetris.js"')
+    expect(markup).not.toContain('data-file-change-path="ProjectTest/index.html"')
+    expect(markup).toContain('data-file-change-tone="addition"')
+    expect(markup).toContain('data-file-change-tone="deletion"')
+    expect(markup).toContain('data-file-change-show-more="true"')
+  })
+
   it('previews three files and offers to reveal the remainder', () => {
     const markup = renderToStaticMarkup(
-      <FileChangeCard changes={[1, 2, 3, 4, 5].map(change)} />,
+      <FileChangeCard changes={[1, 2, 3, 4, 5, 6].map(change)} />,
     )
 
     expect(markup.match(/data-file-change-row=/g)).toHaveLength(3)
     expect(markup).toContain('src/file-1.ts')
     expect(markup).toContain('src/file-3.ts')
     expect(markup).not.toContain('src/file-4.ts')
+    expect(markup).not.toContain('src/file-6.ts')
     expect(markup).toContain('data-file-change-show-more="true"')
   })
 

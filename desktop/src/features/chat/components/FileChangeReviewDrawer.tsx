@@ -1,13 +1,45 @@
 import { useEffect, useRef } from 'react'
-import { X } from 'lucide-react'
+import { FilePenLine, X } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { FileDiffPanel, FileStats, type FileChangeView } from './FileDiffPanel'
+import { workspaceDisplayName } from './FileChangePathLabel'
 
 interface FileChangeReviewDrawerProps {
   changes: FileChangeView[]
   onClose: () => void
+  workspaceRoot?: string
+}
+
+interface ReviewFileChange {
+  change: FileChangeView
+  sourceChangeIds: string[]
+}
+
+function groupChangesByFile(changes: FileChangeView[]): ReviewFileChange[] {
+  const byPath = new Map<string, ReviewFileChange>()
+  for (const change of changes) {
+    const previous = byPath.get(change.path)
+    byPath.set(change.path, previous ? {
+      sourceChangeIds: [...previous.sourceChangeIds, change.changeId],
+      change: {
+        ...previous.change,
+        kind: previous.change.kind === 'created' && change.kind === 'created'
+          ? 'created'
+          : 'modified',
+        additions: previous.change.additions + change.additions,
+        deletions: previous.change.deletions + change.deletions,
+        hunks: [...previous.change.hunks, ...change.hunks],
+        afterHash: change.afterHash,
+        undone: previous.change.undone && change.undone,
+      },
+    } : {
+      sourceChangeIds: [change.changeId],
+      change,
+    })
+  }
+  return [...byPath.values()]
 }
 
 /**
@@ -18,12 +50,18 @@ interface FileChangeReviewDrawerProps {
  * 为每个入口重新学一遍。宽度取 TurnTraceDrawer 的 1120：diff 和 trace 一样是宽内容，
  * 680 会把行号槽加代码挤到横向滚动。
  */
-export function FileChangeReviewDrawer({ changes, onClose }: FileChangeReviewDrawerProps) {
+export function FileChangeReviewDrawer({
+  changes,
+  onClose,
+  workspaceRoot,
+}: FileChangeReviewDrawerProps) {
   const { t } = useTranslation()
   const drawerRef = useRef<HTMLElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
   const additions = changes.reduce((total, change) => total + change.additions, 0)
   const deletions = changes.reduce((total, change) => total + change.deletions, 0)
+  const files = groupChangesByFile(changes)
+  const projectName = workspaceDisplayName(workspaceRoot)
 
   useEffect(() => {
     previousFocus.current = document.activeElement as HTMLElement | null
@@ -52,14 +90,22 @@ export function FileChangeReviewDrawer({ changes, onClose }: FileChangeReviewDra
         className="absolute inset-y-0 right-0 flex w-[min(1120px,96vw)] flex-col border-l border-line bg-paper shadow-[-18px_0_45px_rgba(20,20,19,0.12)] outline-none max-[640px]:w-full"
         onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}
       >
-        <header className="flex items-start gap-4 border-b border-line px-5 py-4">
+        <header className="flex items-center gap-3 border-b border-line px-5 py-3.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-status-success-soft text-status-success-ink">
+            <FilePenLine size={17} />
+          </span>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-base font-semibold text-ink">{t('tool.reviewChanges')}</h2>
-            <div className="mt-1 flex items-center gap-3">
-              <p className="truncate text-xs text-ink-faint">
-                {t('tool.fileChangeCount', { count: changes.length })}
-              </p>
+            <h2 className="truncate text-sm font-semibold text-ink">{t('tool.reviewChanges')}</h2>
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs">
+              <span className="shrink-0 text-ink-faint">
+                {t('tool.fileChangeCount', { count: files.length })}
+              </span>
               <FileStats additions={additions} deletions={deletions} className="text-xs" />
+              {projectName ? (
+                <span className="truncate text-ink-faint">
+                  {t('tool.inProject', { name: projectName })}
+                </span>
+              ) : null}
             </div>
           </div>
           <button
@@ -74,12 +120,27 @@ export function FileChangeReviewDrawer({ changes, onClose }: FileChangeReviewDra
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
-          {changes.map((change) => (
-            <div key={change.changeId} className="overflow-hidden rounded-xl border border-line">
-              <FileDiffPanel change={change} />
-            </div>
-          ))}
+        <div className="min-h-0 flex-1 overflow-auto p-5 max-[640px]:p-3">
+          <div
+            data-file-change-review-list="true"
+            className="overflow-hidden rounded-xl border border-line bg-paper shadow-sm"
+          >
+            {files.map(({ change, sourceChangeIds }, index) => (
+              <div
+                key={change.path}
+                data-file-change-review-group={sourceChangeIds.join(' ')}
+                className="border-b border-line last:border-b-0"
+              >
+                <FileDiffPanel
+                  change={change}
+                  compact
+                  defaultExpanded={index === 0}
+                  showCopyAction
+                  workspaceRoot={workspaceRoot}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </motion.aside>
     </motion.div>

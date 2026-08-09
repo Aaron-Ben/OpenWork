@@ -614,8 +614,7 @@ describe('ToolActivityList', () => {
     )
 
     expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(1)
-    expect(markup).toContain('×2')
-    expect(markup).toContain('写入')
+    expect(markup).toContain('写入 2 个文件')
     expect(markup).not.toContain('>新建<')
     expect(markup.match(/data-write-diff=/g)).toHaveLength(2)
     expect(markup.match(/data-file-change-code="true"/g)).toHaveLength(2)
@@ -650,9 +649,63 @@ describe('ToolActivityList', () => {
       ]} />,
     )
 
-    expect(markup).toContain('×2')
-    expect(markup.match(/>src\/a\.ts</g)).toHaveLength(1)
-    expect(markup.match(/>src\/b\.ts</g)).toHaveLength(1)
+    expect(markup).toContain('写入 2 个文件')
+    expect(markup.match(/data-file-change-path="src\/a\.ts"/g)).toHaveLength(1)
+    expect(markup.match(/data-file-change-path="src\/b\.ts"/g)).toHaveLength(1)
+  })
+
+  it('shows grouped edits as compact project-relative file rows', () => {
+    const workspaceRoot = '/Volumes/Extreme SSD/Code/ProjectTest'
+    const edit = (id: string, name: string, additions: number, deletions: number): ContentBlock[] => [{
+      type: 'tool_call', id, name: 'edit', state: 'finished',
+      input: JSON.stringify({
+        filePath: `${workspaceRoot}/${name}`,
+        oldString: 'old',
+        newString: 'new',
+      }),
+    }, {
+      type: 'tool_result', id, name: 'edit', state: 'success',
+      output: [{ type: 'text', text: `edited ${name}` }],
+      artifacts: [{
+        kind: 'file_change',
+        payload: {
+          changeId: `change-${id}`,
+          path: `${workspaceRoot}/${name}`,
+          kind: 'modified',
+          additions,
+          deletions,
+          beforeHash: 'before',
+          afterHash: 'after',
+          undone: false,
+          hunks: [{
+            oldStart: 1,
+            oldLines: deletions,
+            newStart: 1,
+            newLines: additions,
+            lines: [{ kind: 'addition', oldLine: null, newLine: 1, content: 'new' }],
+          }],
+        },
+      }],
+    }]
+    const markup = renderToStaticMarkup(
+      <ToolActivityList
+        parts={[
+          ...edit('edit-index', 'index.html', 1, 1),
+          ...edit('edit-tetris', 'tetris.html', 0, 1),
+        ]}
+        workspaceRoot={workspaceRoot}
+        onUndoFileChanges={async () => undefined}
+      />,
+    )
+
+    expect(markup).toContain('data-file-change-activity-summary="true"')
+    expect(markup).toContain('修改 2 个文件')
+    expect(markup).toContain('2 处改动')
+    expect(markup).toContain('data-file-change-path="ProjectTest/index.html"')
+    expect(markup).toContain('data-file-change-path="ProjectTest/tetris.html"')
+    expect(markup.match(/data-file-change-compact="true"/g)).toHaveLength(2)
+    expect(markup.match(/data-file-change-toggle="true"/g)).toHaveLength(2)
+    expect(markup).not.toContain('复制 Diff')
   })
 
   it('keeps both the executable and trailing arguments visible for a long bash command', () => {
@@ -715,7 +768,7 @@ describe('ToolActivityList', () => {
     )
 
     expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(1)
-    expect(markup).toContain('×2')
+    expect(markup).toContain('修改 2 个文件')
     expect(markup).toContain('animate-spin')
   })
 

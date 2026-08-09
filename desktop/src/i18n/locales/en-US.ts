@@ -273,7 +273,7 @@ export const enUS = {
   tool: {
     mutation: {
       createAction: 'Create', editAction: 'Edit', writeAction: 'Write',
-      changeCount: '{{count}} change', addedLines: '+{{count}} lines',
+      changeCount: '{{count}} change', fileCount: '{{count}} files', addedLines: '+{{count}} lines',
       expandFullContent: 'Expand full content ({{count}} more lines)', collapseFullContent: 'Collapse content',
       emptyFile: 'Empty file', availableAfterTurn: 'Undo is available after the turn finishes',
       hunkStart: 'starting at line {{line}}',
@@ -314,7 +314,7 @@ export const enUS = {
     undo: 'Undo', undoing: 'Undoing', undone: 'Undone', undoFailed: 'Undo failed: {{message}}',
     reapply: 'Reapply', reapplying: 'Reapplying', reapplyFailed: 'Reapply failed: {{message}}',
     review: 'Review', reviewChanges: 'Review file changes', closeReview: 'Close file review',
-    fileChangeCount: '{{count}} files', copyDiff: 'Copy diff',
+    fileChangeCount: '{{count}} files', inProject: 'in {{name}}', copyDiff: 'Copy diff',
     collapseDiff: 'Collapse code diff for {{name}}', expandDiff: 'Expand code diff for {{name}}',
     showMoreFiles: 'Show {{count}} more files', showFewerFiles: 'Show fewer files',
     readonly: {

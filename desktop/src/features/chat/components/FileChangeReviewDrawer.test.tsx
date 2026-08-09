@@ -19,9 +19,13 @@ function change(index: number, additions: number, deletions: number): FileChange
   }
 }
 
-function markup(changes: FileChangeView[]): string {
+function markup(changes: FileChangeView[], workspaceRoot?: string): string {
   return renderToStaticMarkup(
-    <FileChangeReviewDrawer changes={changes} onClose={() => undefined} />,
+    <FileChangeReviewDrawer
+      changes={changes}
+      workspaceRoot={workspaceRoot}
+      onClose={() => undefined}
+    />,
   )
 }
 
@@ -65,6 +69,48 @@ describe('FileChangeReviewDrawer', () => {
     expect(html).toContain('data-file-change="change-1"')
     expect(html).toContain('data-file-change="change-2"')
     expect(html.match(/data-file-change-toggle=/g)).toHaveLength(2)
+  })
+
+  it('按唯一文件汇总重复修改，并默认展开第一个项目相对路径', () => {
+    const workspaceRoot = '/Volumes/Extreme SSD/Code/ProjectTest'
+    const first = {
+      ...change(1, 2, 1),
+      path: `${workspaceRoot}/snake.test.mjs`,
+      hunks: [{
+        oldStart: 10,
+        oldLines: 0,
+        newStart: 10,
+        newLines: 1,
+        lines: [{ kind: 'addition' as const, oldLine: null, newLine: 10, content: 'first edit' }],
+      }],
+    }
+    const second = {
+      ...change(2, 3, 1),
+      path: first.path,
+      hunks: [{
+        oldStart: 20,
+        oldLines: 0,
+        newStart: 20,
+        newLines: 1,
+        lines: [{ kind: 'addition' as const, oldLine: null, newLine: 20, content: 'second edit' }],
+      }],
+    }
+    const third = {
+      ...change(3, 5, 0),
+      path: `${workspaceRoot}/snake.mjs`,
+    }
+
+    const html = markup([first, second, third], workspaceRoot)
+
+    expect(html).toContain('共 2 个文件')
+    expect(html.match(/data-file-change-review-group=/g)).toHaveLength(2)
+    expect(html).toContain('data-file-change-path="ProjectTest/snake.test.mjs"')
+    expect(html).toContain('data-file-change-path="ProjectTest/snake.mjs"')
+    expect(html.match(/aria-expanded="true"/g)).toHaveLength(1)
+    expect(html.match(/aria-expanded="false"/g)).toHaveLength(1)
+    expect(html.match(/aria-label="复制 Diff"/g)).toHaveLength(2)
+    expect(html).toContain('first edit')
+    expect(html).toContain('second edit')
   })
 })
 

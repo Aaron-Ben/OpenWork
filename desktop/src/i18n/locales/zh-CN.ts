@@ -356,7 +356,7 @@ export const zhCN = {
   tool: {
     mutation: {
       createAction: '新建', editAction: '修改', writeAction: '写入',
-      changeCount: '{{count}} 处改动', addedLines: '+{{count}} 行',
+      changeCount: '{{count}} 处改动', fileCount: '{{count}} 个文件', addedLines: '+{{count}} 行',
       expandFullContent: '展开全文（还有 {{count}} 行）', collapseFullContent: '收起全文',
       emptyFile: '空文件', availableAfterTurn: 'Turn 结束后可撤销',
       hunkStart: '第 {{line}} 行起',
@@ -398,7 +398,7 @@ export const zhCN = {
     undo: '撤销', undoing: '正在撤销', undone: '已撤销', undoFailed: '撤销失败：{{message}}',
     reapply: '恢复', reapplying: '正在恢复', reapplyFailed: '恢复失败：{{message}}',
     review: '查看', reviewChanges: '查看文件修改', closeReview: '关闭修改查看',
-    fileChangeCount: '共 {{count}} 个文件', copyDiff: '复制 Diff',
+    fileChangeCount: '共 {{count}} 个文件', inProject: '于 {{name}}', copyDiff: '复制 Diff',
     collapseDiff: '收起 {{name}} 的代码差异', expandDiff: '展开 {{name}} 的代码差异',
     showMoreFiles: '再显示 {{count}} 个文件', showFewerFiles: '收起文件列表',
     readonly: {

@@ -23,6 +23,7 @@ interface AssistantMessageProps {
   onReviewFileChanges?: (changes: FileChangeView[]) => void
   fileChangePresentation?: 'activity' | 'summary'
   plan?: TurnPlanView
+  workspaceRoot?: string
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -37,6 +38,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   onReviewFileChanges,
   fileChangePresentation = 'activity',
   plan,
+  workspaceRoot,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const messageParts = parts.filter((part) => part.type !== 'tool_call' && part.type !== 'tool_result')
@@ -98,6 +100,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           onReapplyFileChanges={onReapplyFileChanges}
           onReviewFileChanges={onReviewFileChanges}
           fileChangePresentation={fileChangePresentation}
+          workspaceRoot={workspaceRoot}
         />
       ) : null}
       {plan ? <PlanCard plan={plan} /> : null}

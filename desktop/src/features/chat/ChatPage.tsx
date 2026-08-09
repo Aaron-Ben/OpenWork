@@ -393,6 +393,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                   onUndoFileChanges={undoFileChanges}
                   onReapplyFileChanges={reapplyFileChanges}
                   onReviewFileChanges={reviewFileChanges}
+                  workspaceRoot={session?.workingDirectory}
                 />
               ))}
             </div>
@@ -413,6 +414,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         {reviewChanges ? (
           <FileChangeReviewDrawer
             changes={reviewChanges}
+            workspaceRoot={session?.workingDirectory}
             onClose={() => setReviewChanges(null)}
           />
         ) : null}

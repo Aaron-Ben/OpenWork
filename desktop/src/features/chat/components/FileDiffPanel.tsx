@@ -23,6 +23,7 @@ import {
   Separator,
   ToolActivityFrame,
 } from './ToolActivityFrame'
+import { FileChangePathLabel, projectFilePath } from './FileChangePathLabel'
 
 export type FileChangeKind = 'created' | 'modified'
 export type FileDiffLineKind = 'context' | 'addition' | 'deletion'
@@ -64,6 +65,7 @@ interface FileChangeActivityRowProps {
   onOpenTrace?: (providerToolCallId: string) => void
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
   onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
+  workspaceRoot?: string
 }
 
 export function isFileChangeDisplayTool(name: string): name is 'edit' | 'write' {
@@ -83,6 +85,7 @@ export function FileChangeActivityRow({
   onOpenTrace,
   onUndoFileChanges,
   onReapplyFileChanges,
+  workspaceRoot,
 }: FileChangeActivityRowProps) {
   const { t } = useTranslation()
   const [operation, setOperation] = useState<'undo' | 'reapply' | null>(null)
@@ -92,8 +95,12 @@ export function FileChangeActivityRow({
   const failed = activities.some((activity) => isFailure(activity))
   const statusActivity = activities.find((activity) => isInProgress(activity)) ?? primary
   const expanded = failed || (rememberedExpanded ?? true)
-  const target = activities.map(activityPath).filter(Boolean).join(', ')
-    || changes.map((change) => change.path).join(', ')
+  const paths = [...new Set([
+    ...activities.map(activityPath).filter(Boolean),
+    ...changes.map((change) => change.path),
+  ])]
+  const target = paths[0] ? projectFilePath(paths[0], workspaceRoot) : ''
+  const multipleFiles = paths.length > 1
   const additions = changes.reduce((total, change) => total + change.additions, 0)
   const deletions = changes.reduce((total, change) => total + change.deletions, 0)
   const hunkCount = changes.reduce((total, change) => total + change.hunks.length, 0)
@@ -136,16 +143,18 @@ export function FileChangeActivityRow({
   const summary = (
     <>
       <span className="shrink-0 text-xs font-medium text-ink-soft" title={primary.name}>
-        {action}
+        <span data-file-change-activity-summary="true">{multipleFiles
+          ? `${action} ${t('tool.mutation.fileCount', { count: paths.length })}`
+          : action}</span>
       </span>
-      {target ? <Separator /> : null}
-      {target ? (
+      {!multipleFiles && target ? <Separator /> : null}
+      {!multipleFiles && target ? (
         <span className="min-w-0 truncate font-mono text-xs text-ink" title={target}>
           {target}
         </span>
       ) : null}
-      {activities.length > 1 ? <Separator /> : null}
-      {activities.length > 1 ? <span className="shrink-0 text-xs text-ink-faint">×{activities.length}</span> : null}
+      {!multipleFiles && activities.length > 1 ? <Separator /> : null}
+      {!multipleFiles && activities.length > 1 ? <span className="shrink-0 text-xs text-ink-faint">×{activities.length}</span> : null}
       {primary.name === 'edit' && hunkCount > 0 ? <Separator /> : null}
       {primary.name === 'edit' && hunkCount > 0 ? (
         <span className="shrink-0 text-xs text-ink-faint">
@@ -219,6 +228,7 @@ export function FileChangeActivityRow({
                       key={change.changeId}
                       change={change}
                       grouped={activities.length > 1}
+                      workspaceRoot={workspaceRoot}
                     />
                   ))}
                 </div>
@@ -229,6 +239,7 @@ export function FileChangeActivityRow({
                 key={activity.id}
                 activity={activity}
                 grouped={activities.length > 1}
+                workspaceRoot={workspaceRoot}
               />
             )
           })
@@ -237,6 +248,7 @@ export function FileChangeActivityRow({
             key={change.changeId}
             change={change}
             grouped={activities.length > 1}
+            workspaceRoot={workspaceRoot}
           />
         ))}
         {changes.length === 0 && primary.output ? (
@@ -279,22 +291,35 @@ export function FileChangeActivityRow({
 export function FileDiffPanel({
   change,
   hunkLabel = 'patch',
+  compact = false,
+  defaultExpanded,
+  showCopyAction,
+  workspaceRoot,
 }: {
   change: FileChangeView
   hunkLabel?: 'patch' | 'start'
+  compact?: boolean
+  defaultExpanded?: boolean
+  showCopyAction?: boolean
+  workspaceRoot?: string
 }) {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(defaultExpanded ?? !compact)
   const contentId = useId()
+  const copyEnabled = showCopyAction ?? !compact
 
   async function copyDiff() {
     await navigator.clipboard?.writeText(formatPatch(change))
   }
 
   return (
-    <div data-file-change={change.changeId} className="min-w-0 bg-paper">
+    <div
+      data-file-change={change.changeId}
+      data-file-change-compact={compact ? 'true' : undefined}
+      className={`min-w-0 bg-paper ${compact ? 'border-b border-line last:border-b-0' : ''}`}
+    >
       <div
-        className={`flex min-h-11 items-center gap-2 bg-paper-hover/70 px-3 ${expanded ? 'border-b border-line' : ''}`}
+        className={`flex items-center gap-2 bg-paper-hover/70 px-3 ${compact ? 'min-h-9' : 'min-h-11'} ${expanded ? 'border-b border-line' : ''}`}
       >
         <button
           type="button"
@@ -304,24 +329,39 @@ export function FileDiffPanel({
           aria-label={t(expanded ? 'tool.collapseDiff' : 'tool.expandDiff', { name: change.path })}
           title={t(expanded ? 'tool.collapseDiff' : 'tool.expandDiff', { name: change.path })}
           onClick={() => setExpanded((value) => !value)}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left"
+          className={`flex min-w-0 flex-1 items-center text-left ${compact ? 'min-h-9 gap-2' : 'min-h-11 gap-3'}`}
         >
-          <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-soft">{change.path}</span>
-          <FileStats additions={change.additions} deletions={change.deletions} />
+          {compact ? (
+            <FileChangePathLabel
+              path={change.path}
+              workspaceRoot={workspaceRoot}
+              additions={change.additions}
+              deletions={change.deletions}
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-soft">{change.path}</span>
+          )}
+          <FileStats
+            additions={change.additions}
+            deletions={change.deletions}
+            className={compact ? 'text-xs' : ''}
+          />
           <ChevronDown
-            size={16}
+            size={compact ? 13 : 16}
             className={`shrink-0 text-ink-faint transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
           />
         </button>
-        <button
-          type="button"
-          aria-label={t('tool.copyDiff')}
-          title={t('tool.copyDiff')}
-          onClick={() => void copyDiff()}
-          className="grid size-8 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper hover:text-ink"
-        >
-          <Copy size={15} />
-        </button>
+        {copyEnabled ? (
+          <button
+            type="button"
+            aria-label={t('tool.copyDiff')}
+            title={t('tool.copyDiff')}
+            onClick={() => void copyDiff()}
+            className={`grid shrink-0 place-items-center rounded-md text-ink-faint hover:bg-paper hover:text-ink ${compact ? 'size-7' : 'size-8'}`}
+          >
+            <Copy size={15} />
+          </button>
+        ) : null}
       </div>
       <FileDiffContent
         change={change}
@@ -337,11 +377,20 @@ export function FileDiffPanel({
 function ActivityFileDiff({
   change,
   grouped,
+  workspaceRoot,
 }: {
   change: FileChangeView
   grouped: boolean
+  workspaceRoot?: string
 }) {
-  if (grouped) return <FileDiffPanel change={change} hunkLabel="start" />
+  if (grouped) return (
+    <FileDiffPanel
+      change={change}
+      hunkLabel="start"
+      compact
+      workspaceRoot={workspaceRoot}
+    />
+  )
   return (
     <div data-file-change={change.changeId} className="min-w-0 bg-paper">
       <FileDiffContent change={change} hunkLabel="start" />
@@ -459,9 +508,11 @@ function formatPatch(change: FileChangeView): string {
 function WritePreview({
   activity,
   grouped,
+  workspaceRoot,
 }: {
   activity: ToolActivity
   grouped: boolean
+  workspaceRoot?: string
 }) {
   const { t } = useTranslation()
   const [showAll, setShowAll] = useState(false)
@@ -473,7 +524,7 @@ function WritePreview({
 
   return (
     <div data-write-preview={activity.id} className="bg-code-bg font-mono text-xs leading-5">
-      {grouped ? <WritePreviewHeading activity={activity} /> : null}
+      {grouped ? <WritePreviewHeading activity={activity} workspaceRoot={workspaceRoot} /> : null}
       {content === '' ? (
         <div data-write-empty="true" className="px-3 py-2 text-ink-faint">
           {t('tool.mutation.emptyFile')}
@@ -505,10 +556,17 @@ function shouldRenderWriteDiff(activity: ToolActivity, changes: FileChangeView[]
   return content !== '' || changes.some((change) => change.kind === 'modified' || change.additions > 0)
 }
 
-function WritePreviewHeading({ activity }: { activity: ToolActivity }) {
+function WritePreviewHeading({
+  activity,
+  workspaceRoot,
+}: {
+  activity: ToolActivity
+  workspaceRoot?: string
+}) {
+  const path = activityPath(activity)
   return (
-    <div className="truncate border-b border-line bg-paper px-3 py-1.5 text-ink-soft" title={activityPath(activity)}>
-      {activityPath(activity)}
+    <div className="truncate border-b border-line bg-paper px-3 py-1.5 text-ink-soft" title={path}>
+      {projectFilePath(path, workspaceRoot)}
     </div>
   )
 }
