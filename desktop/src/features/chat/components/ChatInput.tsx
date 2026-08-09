@@ -328,7 +328,7 @@ export function ChatInput({
       ) : null}
       <motion.form
         data-motion-component="chat-input"
-        className="relative rounded-[18px] border border-line bg-paper shadow-[0_18px_60px_rgba(31,30,29,0.10)]"
+        className="relative rounded-[18px] border border-line-strong bg-paper shadow-[0_2px_14px_color-mix(in_srgb,var(--ink)_7%,transparent)]"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -343,7 +343,7 @@ export function ChatInput({
             data-slash-command-menu="true"
             role="listbox"
             aria-label={t('chat.commands.menu')}
-            className="absolute inset-x-0 bottom-full z-20 mb-2 rounded-xl border border-line bg-paper p-1.5 shadow-[0_14px_36px_rgba(31,30,29,0.14)]"
+            className="absolute inset-x-0 bottom-full z-20 mb-2 rounded-xl border border-line bg-paper p-1.5 shadow-[0_10px_30px_color-mix(in_srgb,var(--ink)_12%,transparent)]"
           >
             <button
               type="button"
@@ -366,7 +366,7 @@ export function ChatInput({
             data-skill-menu="true"
             role="listbox"
             aria-label={t('chat.skills.menu')}
-            className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-64 overflow-y-auto rounded-xl border border-line bg-paper p-1.5 shadow-[0_14px_36px_rgba(31,30,29,0.14)]"
+            className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-64 overflow-y-auto rounded-xl border border-line bg-paper p-1.5 shadow-[0_10px_30px_color-mix(in_srgb,var(--ink)_12%,transparent)]"
           >
             {skillCandidates.map((skill, index) => {
               const selected = index === activeSkillIndex
@@ -475,7 +475,7 @@ export function ChatInput({
             disabled={disabled || isSending || isCompacting}
           >
             <SelectTrigger
-              className="w-[clamp(96px,18vw,180px)] overflow-hidden"
+              className="w-[clamp(96px,18vw,180px)] overflow-hidden rounded-full border border-line text-ink-soft"
               aria-label={t('chat.permissionMode')}
               title={t(`chat.permissionModes.${permissionMode}Description`)}
             >
@@ -505,12 +505,12 @@ export function ChatInput({
             disabled={disabled || modelSelectionLocked || isSending || isCompacting || modelOptions.length === 0}
           >
             <SelectTrigger
-              className="w-[clamp(104px,20vw,200px)] overflow-hidden"
+              className="w-[clamp(104px,20vw,200px)] overflow-hidden rounded-full border border-line text-ink-soft"
               aria-label={t('chat.selectModel')}
               /* 触发器定宽，长模型名会被截断 —— 悬停要能看到全名。 */
               title={selectedModel ? formatModelLabel(selectedModel) : undefined}
             >
-              <SelectValue className="min-w-0 flex-1 truncate text-left" placeholder={t('chat.noModel')}>
+              <SelectValue placeholder={t('chat.noModel')}>
                 {selectedModel ? formatModelLabel(selectedModel) : undefined}
               </SelectValue>
             </SelectTrigger>
@@ -543,6 +543,7 @@ export function ChatInput({
               ) : (
                 <Button
                   size="icon"
+                  variant="accent"
                   type="submit"
                   aria-label={t('chat.send')}
                   disabled={disabled || !model || !value.trim()}
