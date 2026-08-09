@@ -121,18 +121,27 @@ describe('AgentRailCard', () => {
     expect(markup).not.toContain('sr-only')
   })
 
-  it('gives the orchestrator a control icon and the sub-agents a soft initial badge', () => {
+  it('gives the orchestrator its fixed avatar and sub-agents a graphic avatar', () => {
     const orchestrator = renderToStaticMarkup(
       <AgentRailCard item={item({ role: '主控', orchestrator: true })} selected={false} onSelect={vi.fn()} />,
     )
     const subAgent = renderToStaticMarkup(
       <AgentRailCard item={item()} selected={false} onSelect={vi.fn()} />,
     )
+    const sameSubAgent = renderToStaticMarkup(
+      <AgentRailCard item={item()} selected={false} onSelect={vi.fn()} />,
+    )
+    const orchestratorSrc = orchestrator.match(/<img src="([^"]+)"/)?.[1]
+    const subAgentSrc = subAgent.match(/<img src="([^"]+)"/)?.[1]
+    const sameSubAgentSrc = sameSubAgent.match(/<img src="([^"]+)"/)?.[1]
 
-    expect(orchestrator).toContain('lucide-sliders-horizontal')
-    expect(orchestrator).toContain('bg-clay text-paper')
-    expect(subAgent).toContain('bg-status-success-soft')
-    expect(subAgent).toContain('>A<')
+    expect(orchestrator).toContain('data-agent-avatar="orchestrator"')
+    expect(subAgent).toContain('data-agent-avatar="subagent"')
+    expect(subAgent).not.toContain('>A<')
+    expect(orchestratorSrc).toMatch(/^data:image\/svg\+xml/)
+    expect(subAgentSrc).toMatch(/^data:image\/svg\+xml/)
+    expect(subAgentSrc).not.toBe(orchestratorSrc)
+    expect(sameSubAgentSrc).toBe(subAgentSrc)
   })
 
   it('keeps an unknown duration visible on the child card as a placeholder', () => {

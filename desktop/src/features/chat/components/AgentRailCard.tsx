@@ -1,9 +1,33 @@
 import type { TFunction } from 'i18next'
-import { SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { agentInitial, formatTokenCount } from '../agentPresentation'
+import orchestratorAvatar from '@/assets/agents/orchestrator.svg'
+import subAgentOrbitAvatar from '@/assets/agents/subagent-orbit.svg'
+import subAgentPinwheelAvatar from '@/assets/agents/subagent-pinwheel.svg'
+import subAgentPrismAvatar from '@/assets/agents/subagent-prism.svg'
+import subAgentRippleAvatar from '@/assets/agents/subagent-ripple.svg'
+
+import { formatTokenCount } from '../agentPresentation'
 import type { AgentRailItem } from '../agentRailModel'
+
+const CHILD_AGENT_AVATARS = [
+  subAgentOrbitAvatar,
+  subAgentPrismAvatar,
+  subAgentPinwheelAvatar,
+  subAgentRippleAvatar,
+] as const
+
+const childAvatarBySession = new Map<string, string>()
+
+function childAvatar(sessionId: string): string {
+  const assigned = childAvatarBySession.get(sessionId)
+  if (assigned) return assigned
+
+  // 随机只发生在子会话第一次出现时，避免状态和 token 更新让图案不断跳变。
+  const avatar = CHILD_AGENT_AVATARS[Math.floor(Math.random() * CHILD_AGENT_AVATARS.length)]
+  childAvatarBySession.set(sessionId, avatar)
+  return avatar
+}
 
 /*
   状态色一律走 status-* / clay 语义 token，暗色下自动跟随。
@@ -54,13 +78,14 @@ export function AgentRailCard({
         onClick={() => onSelect(item.sessionId)}
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          <span
+          <img
+            src={childAvatar(item.sessionId)}
+            alt=""
             aria-hidden="true"
             title={item.role}
-            className="grid size-6 shrink-0 place-items-center rounded-full bg-status-success-soft text-[11px] font-semibold text-status-success-ink"
-          >
-            {agentInitial(item.role)}
-          </span>
+            data-agent-avatar="subagent"
+            className="size-6 shrink-0"
+          />
           <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink" title={item.task}>
             {item.task}
           </span>
@@ -103,12 +128,13 @@ export function AgentRailCard({
       onClick={() => onSelect(item.sessionId)}
     >
       <div className="flex items-start gap-2.5">
-        <span
+        <img
+          src={orchestratorAvatar}
+          alt=""
           aria-hidden="true"
-          className="grid size-7 shrink-0 place-items-center rounded-full bg-clay text-paper"
-        >
-          <SlidersHorizontal size={14} />
-        </span>
+          data-agent-avatar="orchestrator"
+          className="size-7 shrink-0"
+        />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate font-sans text-sm font-medium text-ink">

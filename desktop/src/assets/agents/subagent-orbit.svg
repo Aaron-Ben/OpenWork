@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="orbit-fill" x1="7" y1="6" x2="25" y2="27" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F39A91"/>
+      <stop offset="1" stop-color="#C55255"/>
+    </linearGradient>
+    <filter id="orbit-shadow" x="3" y="3" width="26" height="27" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#7C2832" flood-opacity=".3"/>
+    </filter>
+  </defs>
+  <g filter="url(#orbit-shadow)" stroke="url(#orbit-fill)" stroke-width="3">
+    <circle cx="11" cy="11" r="6"/>
+    <circle cx="21" cy="11" r="6"/>
+    <circle cx="11" cy="21" r="6"/>
+    <circle cx="21" cy="21" r="6"/>
+  </g>
+  <circle cx="16" cy="16" r="4.25" fill="url(#orbit-fill)" stroke="#FFD8D2" stroke-width="1"/>
+  <circle cx="14.8" cy="14.7" r="1" fill="#FFF4F1" fill-opacity=".75"/>
+</svg>

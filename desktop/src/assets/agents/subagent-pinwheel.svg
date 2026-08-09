@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="pinwheel-fill" x1="7" y1="5" x2="25" y2="27" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8AB7FF"/>
+      <stop offset="1" stop-color="#426CC8"/>
+    </linearGradient>
+    <filter id="pinwheel-shadow" x="3" y="3" width="26" height="27" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.1" flood-color="#24437E" flood-opacity=".3"/>
+    </filter>
+  </defs>
+  <g filter="url(#pinwheel-shadow)" fill="url(#pinwheel-fill)" stroke="#DDEAFF" stroke-opacity=".75" stroke-width=".8">
+    <path d="M16 15.8C10.2 14.7 6.3 12 6.3 8.8c0-2.4 2-4.3 4.4-4.3 4.2 0 6.8 5.1 5.3 11.3Z"/>
+    <path d="M16.2 16C17.3 10.2 20 6.3 23.2 6.3c2.4 0 4.3 2 4.3 4.4 0 4.2-5.1 6.8-11.3 5.3Z"/>
+    <path d="M16 16.2c5.8 1.1 9.7 3.8 9.7 7 0 2.4-2 4.3-4.4 4.3-4.2 0-6.8-5.1-5.3-11.3Z"/>
+    <path d="M15.8 16c-1.1 5.8-3.8 9.7-7 9.7-2.4 0-4.3-2-4.3-4.4 0-4.2 5.1-6.8 11.3-5.3Z"/>
+  </g>
+  <circle cx="16" cy="16" r="3.25" fill="#315CAA" stroke="#EEF5FF" stroke-width="1.2"/>
+  <circle cx="15.1" cy="15" r=".85" fill="#FFF" fill-opacity=".8"/>
+</svg>
