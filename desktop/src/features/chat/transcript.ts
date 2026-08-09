@@ -23,6 +23,7 @@ function canonicalItems(messages: RuntimeStoredMessage[]): ChatItem[] {
       turnId: message.turnId ?? undefined,
       role: message.role,
       parts: message.content,
+      createdAt: message.createdAt,
     }))
 }
 
@@ -101,48 +102,111 @@ function attachLiveResultsToCanonicalCalls(
   })
 }
 
-/**
- * 按 turnId 建计划索引。
- *
- * 活动 Turn 以 runtime 为准:它反映刚广播的事件,比上次加载的持久化快照新。
- */
-function planIndex(
-  plans: RuntimeTurnPlan[],
-  runtime: SessionRuntimeView,
-): Map<string, TurnPlanView> {
-  const index = new Map<string, TurnPlanView>(
-    plans
-      .filter((plan) => plan.steps.length > 0)
-      .map((plan) => [plan.turnId, { explanation: plan.explanation, steps: plan.steps }]),
-  )
-  if (runtime.turnId) {
-    if (runtime.plan) {
-      index.set(runtime.turnId, {
-        explanation: runtime.plan.explanation,
-        steps: runtime.plan.steps,
-      })
-    } else {
-      // 活动 Turn 明确没有计划(或刚被清空)时移除历史条目,卡片随之消失。
-      index.delete(runtime.turnId)
-    }
-  }
-  return index
+interface PlanCandidate {
+  turnId: string
+  explanation: string | null
+  steps: TurnPlanView['steps']
+  updatedAt: string
 }
 
-/** 计划挂在该 Turn 最后一条 assistant 消息上,一个 Turn 只显示一张卡。 */
-function attachPlans(transcript: ChatItem[], plans: Map<string, TurnPlanView>): ChatItem[] {
-  if (plans.size === 0) return transcript
-  const lastAssistantIndexByTurn = new Map<string, number>()
-  transcript.forEach((item, index) => {
-    if (item.role === 'assistant' && item.turnId) {
-      lastAssistantIndexByTurn.set(item.turnId, index)
-    }
-  })
-  return transcript.map((item, index) => {
-    if (!item.turnId || lastAssistantIndexByTurn.get(item.turnId) !== index) return item
-    const plan = plans.get(item.turnId)
-    return plan ? { ...item, plan } : item
-  })
+/**
+ * 只投影会话中最新的计划。活动 Turn 的事件快照比加载时的持久化值新，
+ * 但显式清空只应移除该 Turn 的旧值，不影响更早的已完成计划。
+ */
+function latestPlan(
+  plans: RuntimeTurnPlan[],
+  runtime: SessionRuntimeView,
+): PlanCandidate | null {
+  const candidates = plans
+    .filter((plan) => plan.steps.length > 0 && plan.turnId !== runtime.turnId)
+    .map((plan): PlanCandidate => plan)
+
+  if (runtime.turnId && runtime.plan) {
+    candidates.push({
+      turnId: runtime.turnId,
+      explanation: runtime.plan.explanation,
+      steps: runtime.plan.steps,
+      updatedAt: runtime.plan.updatedAt,
+    })
+  }
+
+  return candidates.reduce<PlanCandidate | null>((latest, plan) => (
+    !latest || Date.parse(plan.updatedAt) >= Date.parse(latest.updatedAt) ? plan : latest
+  ), null)
+}
+
+function isPlanPart(part: ContentBlock): boolean {
+  return (part.type === 'tool_call' || part.type === 'tool_result') && part.name === 'update_plan'
+}
+
+/** 隐藏计划工具块时仍保留源消息身份，否则 Trace 的“打开消息”会找不到被折叠的响应。 */
+function stripPlanParts(transcript: ChatItem[]): ChatItem[] {
+  const projected = transcript.map((item) => ({
+    item: { ...item, parts: item.parts.filter((part) => !isPlanPart(part)) },
+    hadNoParts: item.parts.length === 0,
+    hiddenPlanOnly: item.parts.length > 0 && item.parts.every(isPlanPart),
+  }))
+  const hiddenIdsByTurn = new Map<string, string[]>()
+  for (const entry of projected) {
+    if (!entry.hiddenPlanOnly || !entry.item.turnId) continue
+    const ids = entry.item.sourceMessageIds ?? [entry.item.id]
+    hiddenIdsByTurn.set(entry.item.turnId, [
+      ...(hiddenIdsByTurn.get(entry.item.turnId) ?? []),
+      ...ids,
+    ])
+  }
+  for (const [turnId, hiddenIds] of hiddenIdsByTurn) {
+    const anchor = projected.find((entry) => entry.item.turnId === turnId && entry.item.plan)
+      ?? projected.find((entry) => (
+        entry.item.turnId === turnId
+        && entry.item.role === 'assistant'
+        && entry.item.parts.length > 0
+      ))
+      ?? projected.find((entry) => entry.item.turnId === turnId && entry.item.parts.length > 0)
+    if (!anchor) continue
+    anchor.item.sourceMessageIds = [...new Set([
+      ...(anchor.item.sourceMessageIds ?? []),
+      ...hiddenIds.filter((id) => id !== anchor.item.id),
+    ])]
+  }
+
+  return projected.flatMap(({ item, hadNoParts }) => (
+    item.parts.length > 0 || item.plan || hadNoParts ? [item] : []
+  ))
+}
+
+/** update_plan 是状态更新：原始 Tool Call 从消息流消失，最新快照固定在首次调用处。 */
+function projectPlan(transcript: ChatItem[], candidate: PlanCandidate | null): ChatItem[] {
+  if (!candidate) return stripPlanParts(transcript)
+
+  const calls = transcript.flatMap((item, itemIndex) => (
+    item.turnId === candidate.turnId
+      ? item.parts.flatMap((part) => part.type === 'tool_call' && part.name === 'update_plan'
+        ? [{ id: part.id, itemIndex, createdAt: item.createdAt ?? null }]
+        : [])
+      : []
+  ))
+  const firstCall = calls[0]
+  const fallbackIndex = transcript.findIndex(
+    (item) => item.turnId === candidate.turnId && item.role === 'assistant',
+  )
+  const anchorIndex = firstCall?.itemIndex ?? fallbackIndex
+  if (anchorIndex < 0) return transcript
+
+  const plan: TurnPlanView = {
+    explanation: candidate.explanation,
+    steps: candidate.steps,
+    updateCount: Math.max(1, new Set(calls.map((call) => call.id)).size),
+    startedAt: firstCall?.createdAt ?? null,
+    updatedAt: candidate.updatedAt,
+  }
+
+  return stripPlanParts(
+    transcript.map((item, index) => ({
+      ...item,
+      ...(index === anchorIndex ? { plan } : {}),
+    })),
+  )
 }
 
 export function buildTranscript(
@@ -205,11 +269,11 @@ export function buildTranscript(
       requestId: runtime.clientRequestId ?? undefined,
     })
   }
-  return attachPlans(
+  return projectPlan(
     appendCompletedFileChangeSummaries(
       mergeToolMessages(transcript),
       runtime.phase === 'idle' ? null : runtime.turnId,
     ),
-    planIndex(plans, runtime),
+    latestPlan(plans, runtime),
   )
 }

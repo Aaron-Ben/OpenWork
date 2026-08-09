@@ -1,10 +1,13 @@
 import type { ContentBlock } from './parts'
 import type { RuntimePlanStep } from '@/bridge/compat'
 
-/// 一个 Turn 的任务清单快照。位置即身份:服务端顺序原样保留。
+/// 会话中最新的计划快照。步骤顺序仍以服务端为准。
 export interface TurnPlanView {
   explanation: string | null
   steps: RuntimePlanStep[]
+  updateCount: number
+  startedAt: string | null
+  updatedAt: string
 }
 
 /// 前端渲染单元:一条消息(user/assistant/tool)。`parts` 为有序 ContentBlock。
@@ -15,6 +18,7 @@ export interface ChatItem {
   turnId?: string
   role: 'user' | 'assistant' | 'tool'
   parts: ContentBlock[]
+  createdAt?: string
   model?: string
   isStreaming?: boolean
   /// 该消息所属 Turn 仍在执行；文件变更只有在 Turn 结束后才能撤销。
@@ -22,6 +26,6 @@ export interface ChatItem {
   isCompacting?: boolean
   requestId?: string
   fileChangePresentation?: 'activity' | 'summary'
-  /// 该 Turn 的计划,只挂在这个 Turn 最后一条 assistant 消息上。
+  /// 会话中最新的计划，固定在它第一次 update_plan 的位置。
   plan?: TurnPlanView
 }

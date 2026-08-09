@@ -454,7 +454,12 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         ) : null}
         <ChatInput
           key={sessionId ?? 'no-session'}
-          topContent={<ApprovalDialog sessionId={sessionId} />}
+          topContent={(
+            <ApprovalDialog
+              sessionId={sessionId}
+              workspaceRoot={session?.workingDirectory}
+            />
+          )}
           model={sessionModel?.modelId ?? ''}
           modelOptions={sessionModel ? [sessionModel] : []}
           modelSelectionLocked

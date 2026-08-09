@@ -41,6 +41,9 @@ function samePlan(left?: TurnPlanView, right?: TurnPlanView): boolean {
   if (left === right) return true
   if (!left || !right) return false
   return left.explanation === right.explanation
+    && left.updateCount === right.updateCount
+    && left.startedAt === right.startedAt
+    && left.updatedAt === right.updatedAt
     && (left.steps === right.steps || (
       left.steps.length === right.steps.length
       && left.steps.every((step, index) =>

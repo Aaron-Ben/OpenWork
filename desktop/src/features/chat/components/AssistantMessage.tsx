@@ -100,7 +100,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           fileChangePresentation={fileChangePresentation}
         />
       ) : null}
-      {plan ? <PlanCard explanation={plan.explanation} steps={plan.steps} /> : null}
+      {plan ? <PlanCard plan={plan} /> : null}
     </div>
   )
 })

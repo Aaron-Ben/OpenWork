@@ -236,6 +236,24 @@ const readonlyParts: ContentBlock[] = [
 ]
 
 describe('ToolActivityList', () => {
+  it('does not render update_plan as a generic tool activity', () => {
+    const planParts: ContentBlock[] = [{
+      type: 'tool_call',
+      id: 'plan-call',
+      name: 'update_plan',
+      input: '{"plan":[{"step":"test","status":"pending"}]}',
+      state: 'finished',
+    }, {
+      type: 'tool_result',
+      id: 'plan-call',
+      name: 'update_plan',
+      output: [{ type: 'text', text: 'Plan updated' }],
+      state: 'success',
+    }]
+
+    expect(renderToStaticMarkup(<ToolActivityList parts={planParts} />)).toBe('')
+  })
+
   it('pairs a tool result with its call instead of rendering a duplicate row', () => {
     const activities = collectToolActivities(parts)
 

@@ -14,8 +14,8 @@ import {
   extractText,
   type ContentBlock,
   type ToolResultArtifact,
-  type ToolResultState,
 } from '@/types/parts'
+import { isFailure, type ToolActivity } from '../toolActivity'
 import { FileChangeCard } from './FileChangeCard'
 import {
   isReadonlyDisplayTool,
@@ -33,21 +33,6 @@ import {
   BashToolActivityRow,
   isBashDisplayTool,
 } from './BashToolActivity'
-import { isFailure } from './ToolActivityFrame'
-
-type ActivityState = ToolResultState | 'pending' | 'submitted' | 'finished'
-
-export interface ToolActivity {
-  id: string
-  name: string
-  input: Record<string, unknown> | null
-  rawInput: string
-  output: string
-  state: ActivityState
-  artifacts: ToolResultArtifact[]
-  sequence: number
-  separatedBefore: boolean
-}
 
 interface ToolActivityListProps {
   parts: ContentBlock[]
@@ -132,7 +117,10 @@ export const ToolActivityList = memo(function ToolActivityList({
   fileChangePresentation = 'activity',
 }: ToolActivityListProps) {
   const [toolExpansion, setToolExpansion] = useState<Record<string, boolean>>({})
-  const allActivities = useMemo(() => collectToolActivities(parts), [parts])
+  const allActivities = useMemo(
+    () => collectToolActivities(parts).filter((activity) => activity.name !== 'update_plan'),
+    [parts],
+  )
   const fileChanges = useMemo(() => collectFileChanges(allActivities), [allActivities])
   const fileActivityIds = useMemo(
     () => new Set(

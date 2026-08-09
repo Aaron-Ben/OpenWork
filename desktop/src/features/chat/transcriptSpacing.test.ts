@@ -54,10 +54,16 @@ describe('transcriptGap', () => {
     expect(transcriptGap(mixed, toolsOnly('b', 'c2'))).toBe('tight')
   })
 
-  it('计划卡钉在末尾，其后的工具行不贴合', () => {
+  it('计划卡作为独立块，其后的工具行不贴合', () => {
     const planned = item('a', {
       parts: [toolCall('c1'), toolResult('c1')],
-      plan: { explanation: null, steps: [] },
+      plan: {
+        explanation: null,
+        steps: [],
+        updateCount: 1,
+        startedAt: null,
+        updatedAt: '2026-08-09T00:00:00Z',
+      },
     })
     expect(transcriptGap(planned, toolsOnly('b', 'c2'))).toBe('block')
   })

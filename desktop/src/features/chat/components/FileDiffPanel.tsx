@@ -17,10 +17,12 @@ import { resolveErrorMessage } from '@/lib/commandError'
 import {
   isFailure,
   isInProgress,
+  type ToolActivity,
+} from '../toolActivity'
+import {
   Separator,
   ToolActivityFrame,
 } from './ToolActivityFrame'
-import type { ToolActivity } from './ToolActivityList'
 
 export type FileChangeKind = 'created' | 'modified'
 export type FileDiffLineKind = 'context' | 'addition' | 'deletion'
@@ -347,18 +349,21 @@ function ActivityFileDiff({
   )
 }
 
-function FileDiffContent({
+/** 执行后的文件变更与执行前的审批预览共用行渲染，避免两套 Diff 视觉逐渐分叉。 */
+export function FileDiffContent({
   change,
-  hunkLabel,
+  hunkLabel = 'patch',
   contentId,
   hidden = false,
   scrollable = false,
+  showHunkHeaders = true,
 }: {
-  change: FileChangeView
-  hunkLabel: 'patch' | 'start'
+  change: Pick<FileChangeView, 'changeId' | 'hunks'>
+  hunkLabel?: 'patch' | 'start'
   contentId?: string
   hidden?: boolean
   scrollable?: boolean
+  showHunkHeaders?: boolean
 }) {
   const { t } = useTranslation()
   return (
@@ -370,11 +375,13 @@ function FileDiffContent({
     >
       {change.hunks.map((hunk, hunkIndex) => (
         <div key={`${change.changeId}-${hunkIndex}`}>
-          <div className="border-y border-line bg-clay-soft/40 px-3 py-1 text-clay">
-            {hunkLabel === 'start'
-              ? `@@ ${t('tool.mutation.hunkStart', { line: hunk.newStart })}`
-              : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
-          </div>
+          {showHunkHeaders ? (
+            <div className="border-y border-line bg-clay-soft/40 px-3 py-1 text-clay">
+              {hunkLabel === 'start'
+                ? `@@ ${t('tool.mutation.hunkStart', { line: hunk.newStart })}`
+                : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
+            </div>
+          ) : null}
           {hunk.lines.map((line, lineIndex) => (
             <DiffLineRow key={lineIndex} line={line} />
           ))}

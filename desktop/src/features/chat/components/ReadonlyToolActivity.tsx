@@ -17,10 +17,12 @@ import { useTranslation } from 'react-i18next'
 import {
   isFailure,
   isInProgress,
+  type ToolActivity,
+} from '../toolActivity'
+import {
   Separator,
   ToolActivityFrame,
 } from './ToolActivityFrame'
-import type { ToolActivity } from './ToolActivityList'
 
 export type ReadonlyToolName = 'read' | 'list' | 'glob' | 'grep'
 

@@ -149,6 +149,15 @@
   --color-quote-ink: var(--quote-ink);
 }
 
+@keyframes plan-step-flash {
+  0% { background-color: var(--status-success-soft); }
+  100% { background-color: transparent; }
+}
+
+.plan-step-flash {
+  animation: plan-step-flash 600ms ease-out;
+}
+
 /* ============================================================
    base —— 全局衬线;代码/输入框强制 mono/sans;选区/滚动条
 

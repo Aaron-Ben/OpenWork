@@ -3,8 +3,6 @@ import { AnimatePresence, motion } from 'motion/react'
 import { Activity, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type { ToolActivity } from './ToolActivityList'
-
 export type ToolActivityTier = 'readonly' | 'write' | 'failure'
 
 interface ToolActivityFrameProps {
@@ -23,24 +21,12 @@ interface ToolActivityFrameProps {
   children: ReactNode
 }
 
-export function isFailure(activity: ToolActivity): boolean {
-  return activity.state === 'error'
-    || activity.state === 'denied'
-    || activity.state === 'interrupted'
-}
-
-export function isInProgress(activity: ToolActivity): boolean {
-  return activity.state === 'pending'
-    || activity.state === 'submitted'
-    || activity.state === 'running'
-}
-
 export function Separator() {
   return <span aria-hidden="true" className="shrink-0 text-[10px] text-ink-faint/70">·</span>
 }
 
 /**
- * 工具卡片只在这里定义状态、摘要、目标、量级、耗时与操作区的排列。
+ * 工具卡片只在这里定义状态图标、摘要、目标、量级、耗时与操作区的排列。
  * 各工具组件只负责把自己的返回文本转换为这些展示字段，避免七类工具逐渐长出不同外壳。
  */
 export function ToolActivityFrame({

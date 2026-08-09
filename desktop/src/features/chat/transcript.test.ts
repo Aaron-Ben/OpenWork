@@ -404,7 +404,13 @@ describe('buildTranscript plan attachment', () => {
       turnId: 'turn-plan',
       sequence: 2,
       role: 'assistant',
-      content: [{ type: 'text', text: 'starting' }],
+      content: [{ type: 'text', text: 'starting' }, {
+        type: 'tool_call',
+        id: 'plan-call-1',
+        name: 'update_plan',
+        input: '{"plan":[]}',
+        state: 'finished',
+      }],
       messageKind: 'normal',
       createdAt: '2026-08-07T00:00:01Z',
     },
@@ -419,15 +425,79 @@ describe('buildTranscript plan attachment', () => {
     },
   ]
 
-  it('attaches a historical plan to the last assistant message of its turn', () => {
+  it('pins a historical plan to the first update_plan call and hides its JSON', () => {
     const transcript = buildTranscript(twoAssistantTurn, createSessionRuntimeView(), [
       { turnId: 'turn-plan', explanation: 'scoping', steps, updatedAt: '2026-08-07T00:00:02+08:00' },
     ])
 
     const withPlan = transcript.filter((item) => item.plan)
     expect(withPlan).toHaveLength(1)
-    expect(withPlan[0].id).toBe('plan-assistant-2')
+    expect(withPlan[0].id).toBe('plan-assistant-1')
     expect(withPlan[0].plan?.steps).toEqual(steps)
+    expect(withPlan[0].plan?.updateCount).toBe(1)
+    expect(withPlan[0].parts.some((part) => (
+      (part.type === 'tool_call' || part.type === 'tool_result') && part.name === 'update_plan'
+    ))).toBe(false)
+  })
+
+  it('keeps ten update_plan calls as one card at the first call position', () => {
+    const updates: RuntimeStoredMessage[] = Array.from({ length: 10 }, (_, index) => ({
+      id: `plan-update-${index + 1}`,
+      turnId: 'turn-plan-many',
+      sequence: index + 2,
+      role: 'assistant' as const,
+      content: [{
+        type: 'tool_call' as const,
+        id: `plan-call-${index + 1}`,
+        name: 'update_plan',
+        input: '{"plan":[]}',
+        state: 'finished' as const,
+      }],
+      messageKind: 'normal' as const,
+      createdAt: `2026-08-07T00:00:${String(index + 1).padStart(2, '0')}Z`,
+    }))
+    const transcript = buildTranscript([{
+      id: 'plan-many-user',
+      turnId: 'turn-plan-many',
+      sequence: 1,
+      role: 'user',
+      content: [{ type: 'text', text: 'do it' }],
+      messageKind: 'normal',
+      createdAt: '2026-08-07T00:00:00Z',
+    }, ...updates], createSessionRuntimeView(), [{
+      turnId: 'turn-plan-many',
+      explanation: null,
+      steps,
+      updatedAt: '2026-08-07T00:00:10Z',
+    }])
+
+    const cards = transcript.filter((item) => item.plan)
+    expect(cards).toHaveLength(1)
+    expect(cards[0].id).toBe('plan-update-1')
+    expect(cards[0].plan?.updateCount).toBe(10)
+    expect(transcript.some((item) => item.parts.some((part) => (
+      (part.type === 'tool_call' || part.type === 'tool_result') && part.name === 'update_plan'
+    )))).toBe(false)
+  })
+
+  it('shows only the latest plan across a conversation', () => {
+    const oldTurn = twoAssistantTurn.map((message) => ({ ...message, turnId: 'turn-old' }))
+    const latestTurn = twoAssistantTurn.map((message, index) => ({
+      ...message,
+      id: `latest-${index}`,
+      turnId: 'turn-latest',
+      createdAt: `2026-08-08T00:00:0${index}Z`,
+    }))
+    const transcript = buildTranscript(
+      [...oldTurn, ...latestTurn],
+      createSessionRuntimeView(),
+      [{ turnId: 'turn-old', explanation: 'old', steps, updatedAt: '2026-08-07T00:00:02Z' },
+        { turnId: 'turn-latest', explanation: 'latest', steps, updatedAt: '2026-08-08T00:00:02Z' }],
+    )
+
+    expect(transcript.filter((item) => item.plan)).toHaveLength(1)
+    expect(transcript.find((item) => item.plan)?.turnId).toBe('turn-latest')
+    expect(transcript.find((item) => item.plan)?.plan?.explanation).toBe('latest')
   })
 
   it('prefers the live plan over the persisted one for the active turn', () => {
