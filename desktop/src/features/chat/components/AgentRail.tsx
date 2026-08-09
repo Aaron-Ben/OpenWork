@@ -1,5 +1,8 @@
+import { PanelRightClose } from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { formatTokenCount } from '../agentPresentation'
 import {
   agentRailCounts,
@@ -14,10 +17,12 @@ interface AgentRailProps {
   selectedSessionId: string | null
   error: string | null
   onSelect: (sessionId: string) => void
+  onCollapse: () => void
 }
 
-export function AgentRail({ items, selectedSessionId, error, onSelect }: AgentRailProps) {
+export function AgentRail({ items, selectedSessionId, error, onSelect, onCollapse }: AgentRailProps) {
   const { t } = useTranslation()
+  const reduceMotion = useReducedMotion()
   const counts = agentRailCounts(items)
   const totalTokens = agentRailTotalTokens(items)
   const orchestrator = items.find((item) => item.orchestrator) ?? null
@@ -25,12 +30,16 @@ export function AgentRail({ items, selectedSessionId, error, onSelect }: AgentRa
   const maxChildTokens = Math.max(1, ...children.map((item) => item.tokens))
 
   return (
-    <aside
+    <motion.aside
       data-agent-rail="true"
       aria-label={t('chat.agents.panel')}
-      className="flex h-full w-[300px] shrink-0 flex-col overflow-hidden border-l border-line bg-paper-hover"
+      className="flex h-full shrink-0 flex-col overflow-hidden border-l border-line bg-paper-hover"
+      initial={{ width: 0, opacity: 0 }}
+      animate={{ width: 300, opacity: 1 }}
+      exit={{ width: 0, opacity: 0 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: 'easeOut' }}
     >
-      <div className="shrink-0 px-4 pb-3 pt-4">
+      <div className="w-[300px] shrink-0 px-4 pb-3 pt-4">
         <div className="flex items-center gap-2">
           <h2 className="min-w-0 flex-1 truncate font-sans text-sm font-semibold text-ink">
             {t('chat.agents.title')}
@@ -44,6 +53,18 @@ export function AgentRail({ items, selectedSessionId, error, onSelect }: AgentRa
               unit: t('chat.agents.tokenUnit'),
             })}
           </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 rounded-lg"
+            aria-label={t('chat.agents.collapse')}
+            aria-expanded="true"
+            title={t('chat.agents.collapse')}
+            onClick={onCollapse}
+          >
+            <PanelRightClose size={17} />
+          </Button>
         </div>
         <p className="mt-1 truncate text-xs text-ink-faint">
           {[
@@ -54,12 +75,12 @@ export function AgentRail({ items, selectedSessionId, error, onSelect }: AgentRa
       </div>
 
       {error ? (
-        <p className="px-4 py-2 text-xs text-status-danger-ink" role="alert">
+        <p className="w-[300px] px-4 py-2 text-xs text-status-danger-ink" role="alert">
           {t('chat.subAgents.listFailed', { reason: error })}
         </p>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <div className="min-h-0 w-[300px] flex-1 overflow-y-auto px-2 pb-3">
         {orchestrator ? (
           <div data-agent-orchestrator="true">
             <AgentRailCard
@@ -85,6 +106,6 @@ export function AgentRail({ items, selectedSessionId, error, onSelect }: AgentRa
           ))}
         </div>
       </div>
-    </aside>
+    </motion.aside>
   )
 }

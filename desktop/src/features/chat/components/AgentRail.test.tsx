@@ -36,7 +36,7 @@ const items: AgentRailItem[] = [
 describe('AgentRail', () => {
   it('lists every agent with its status, duration, and token total', () => {
     const markup = renderToStaticMarkup(
-      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} />,
+      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} onCollapse={vi.fn()} />,
     )
 
     expect(markup).toContain('data-agent-rail="true"')
@@ -52,7 +52,7 @@ describe('AgentRail', () => {
 
   it('summarises how many agents are running and standing by', () => {
     const markup = renderToStaticMarkup(
-      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} />,
+      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} onCollapse={vi.fn()} />,
     )
 
     expect(markup).toContain('1 运行中')
@@ -61,7 +61,7 @@ describe('AgentRail', () => {
 
   it('separates the orchestrator from a compact child-agent section', () => {
     const markup = renderToStaticMarkup(
-      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} />,
+      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} onCollapse={vi.fn()} />,
     )
 
     expect(markup).toContain('data-agent-orchestrator="true"')
@@ -74,7 +74,7 @@ describe('AgentRail', () => {
 
   it('totals tokens across the tree in its header and never shows a price', () => {
     const markup = renderToStaticMarkup(
-      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} />,
+      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} onCollapse={vi.fn()} />,
     )
 
     expect(markup).toContain('data-agent-rail-total="true"')
@@ -86,7 +86,7 @@ describe('AgentRail', () => {
 
   it('marks the agent that is open in the centre column', () => {
     const markup = renderToStaticMarkup(
-      <AgentRail items={items} selectedSessionId="child-1" error={null} onSelect={vi.fn()} />,
+      <AgentRail items={items} selectedSessionId="child-1" error={null} onSelect={vi.fn()} onCollapse={vi.fn()} />,
     )
 
     expect(markup).toContain('aria-current="true"')
@@ -95,12 +95,22 @@ describe('AgentRail', () => {
 
   it('surfaces a list failure without hiding the agents it already knows about', () => {
     const markup = renderToStaticMarkup(
-      <AgentRail items={items} selectedSessionId={null} error="bridge down" onSelect={vi.fn()} />,
+      <AgentRail items={items} selectedSessionId={null} error="bridge down" onSelect={vi.fn()} onCollapse={vi.fn()} />,
     )
 
     expect(markup).toContain('role="alert"')
     expect(markup).toContain('bridge down')
     expect(markup).toContain('Researcher')
+  })
+
+  it('offers a control to collapse the right rail', () => {
+    const markup = renderToStaticMarkup(
+      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} onCollapse={vi.fn()} />,
+    )
+
+    expect(markup).toContain('aria-label="收起智能体面板"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('lucide-panel-right-close')
   })
 })
 

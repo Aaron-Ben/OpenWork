@@ -1,6 +1,7 @@
-import { Activity, Settings } from 'lucide-react'
+import { Activity, PanelRightOpen, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { headerInsetClass, SidebarReveal } from './SidebarReveal'
 
 interface MainHeaderProps {
@@ -12,11 +13,12 @@ interface MainHeaderProps {
   subtitle?: string | null
   sidebarExpanded: boolean
   onToggleSidebar: () => void
+  onRevealAgentRail?: () => void
 }
 
 /**
  * 顶栏只负责"这是哪个会话、跑成什么样"。
- * 刻意不放任何动作按钮：导出与暂停都不在本产品的顶栏里。
+ * 右栏收起后把恢复入口留在这里，否则用户无法主动找回智能体面板。
  */
 export function MainHeader({
   title,
@@ -25,6 +27,7 @@ export function MainHeader({
   subtitle,
   sidebarExpanded,
   onToggleSidebar,
+  onRevealAgentRail,
 }: MainHeaderProps) {
   const { t } = useTranslation()
   const resolvedTitle = title?.trim() || t('sidebar.untitledSession')
@@ -53,6 +56,20 @@ export function MainHeader({
           </p>
         ) : null}
       </div>
+      {onRevealAgentRail ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-9 shrink-0 rounded-xl"
+          aria-label={t('chat.agents.expand')}
+          aria-expanded="false"
+          title={t('chat.agents.expand')}
+          onClick={onRevealAgentRail}
+        >
+          <PanelRightOpen size={19} />
+        </Button>
+      ) : null}
     </header>
   )
 }

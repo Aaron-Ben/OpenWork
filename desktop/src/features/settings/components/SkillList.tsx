@@ -102,15 +102,12 @@ export function SkillListView({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-paper">
-      <header className="flex items-start gap-3 border-b border-line px-5 py-4">
+      <header className="flex items-center gap-3 border-b border-line px-5 py-4">
         <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-clay-soft text-clay">
           <Puzzle size={18} />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-sans text-sm font-semibold text-ink">{t('settings.skills.title')}</h3>
-          <p className="mt-1 font-sans text-xs leading-5 text-ink-faint">
-            {t('settings.skills.description')}
-          </p>
         </div>
         {onRefresh ? (
           <button

@@ -144,6 +144,8 @@ export const enUS = {
       title: 'Agents',
       orchestrator: 'Orchestrator',
       panel: 'Agent panel',
+      expand: 'Expand agent panel',
+      collapse: 'Collapse agent panel',
       runningCount: '{{count}} running',
       standbyCount: '{{count}} standby',
       childCount: '{{count}} sub-agents',
@@ -227,7 +229,6 @@ export const enUS = {
     },
     skills: {
       title: 'Skills',
-      description: 'View skills discovered in ~/.agents/skills.',
       refresh: 'Refresh', loading: 'Loading skills…', empty: 'No skills were found.',
       loadFailed: 'Failed to read skill directories: {{reason}}', notLoaded: 'Not loaded: {{reason}}',
       enabled: 'Enabled', disabled: 'Disabled',

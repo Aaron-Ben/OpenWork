@@ -88,4 +88,19 @@ describe('MainHeader', () => {
       expect(markup).not.toContain('aria-label="会话操作"')
     }
   })
+
+  it('offers a right-rail reveal control when the agent panel is collapsed', () => {
+    const markup = renderToStaticMarkup(
+      <MainHeader
+        title="多智能体任务"
+        sidebarExpanded
+        onToggleSidebar={vi.fn()}
+        onRevealAgentRail={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('aria-label="展开智能体面板"')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('lucide-panel-right-open')
+  })
 })

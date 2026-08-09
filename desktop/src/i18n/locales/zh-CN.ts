@@ -168,6 +168,8 @@ export const zhCN = {
       title: '智能体',
       orchestrator: '主控',
       panel: '智能体面板',
+      expand: '展开智能体面板',
+      collapse: '收起智能体面板',
       runningCount: '{{count}} 运行中',
       standbyCount: '{{count}} 待命',
       childCount: '子智能体 {{count}}',
@@ -277,7 +279,6 @@ export const zhCN = {
     },
     skills: {
       title: 'Skills',
-      description: '查看 ~/.agents/skills 中发现的 Skill。',
       refresh: '刷新', loading: '正在读取 Skill……', empty: '没有发现可用 Skill。',
       loadFailed: '读取 Skill 目录失败：{{reason}}', notLoaded: '未加载：{{reason}}',
       enabled: '已启用', disabled: '已禁用',

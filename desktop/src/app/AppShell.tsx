@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react'
+import { AnimatePresence } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { GeneralSettings } from '@/features/settings/components/GeneralSettings'
@@ -172,6 +173,9 @@ export function AppShell() {
               subtitle={subtitle}
               sidebarExpanded={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen(true)}
+              onRevealAgentRail={view === 'chat' && hasSubAgents && !agentRailOpen
+                ? () => setAgentRailOpen(true)
+                : undefined}
             />
             <div className="min-h-0 flex-1 overflow-hidden">
               {view === 'chat' ? (
@@ -197,18 +201,22 @@ export function AppShell() {
           </>
         )}
       </section>
-      {railVisible ? (
-        <AgentRail
-          items={railItems}
-          selectedSessionId={agentFocus?.childSessionId ?? null}
-          error={subAgents.error}
-          onSelect={(sessionId) => {
-            if (!activeSessionId) return
-            if (agentFocus?.childSessionId === sessionId) clearAgentFocus()
-            else focusAgent(activeSessionId, sessionId)
-          }}
-        />
-      ) : null}
+      <AnimatePresence initial={false}>
+        {railVisible ? (
+          <AgentRail
+            key="agent-rail"
+            items={railItems}
+            selectedSessionId={agentFocus?.childSessionId ?? null}
+            error={subAgents.error}
+            onCollapse={() => setAgentRailOpen(false)}
+            onSelect={(sessionId) => {
+              if (!activeSessionId) return
+              if (agentFocus?.childSessionId === sessionId) clearAgentFocus()
+              else focusAgent(activeSessionId, sessionId)
+            }}
+          />
+        ) : null}
+      </AnimatePresence>
     </main>
   )
 }

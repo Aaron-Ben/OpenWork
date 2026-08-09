@@ -140,6 +140,8 @@ export const zhTW = {
       title: '智能體',
       orchestrator: '主控',
       panel: '智能體面板',
+      expand: '展開智能體面板',
+      collapse: '收合智能體面板',
       runningCount: '{{count}} 執行中',
       standbyCount: '{{count}} 待命',
       childCount: '子智能體 {{count}}',
@@ -222,7 +224,6 @@ export const zhTW = {
     },
     skills: {
       title: 'Skills',
-      description: '查看 ~/.agents/skills 中發現的 Skill。',
       refresh: '重新整理', loading: '正在讀取 Skill……', empty: '沒有發現可用 Skill。',
       loadFailed: '讀取 Skill 目錄失敗：{{reason}}', notLoaded: '未載入：{{reason}}',
       enabled: '已啟用', disabled: '已停用',
