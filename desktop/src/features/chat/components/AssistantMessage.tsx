@@ -14,6 +14,7 @@ import { ToolActivityList } from './ToolActivityList'
 interface AssistantMessageProps {
   parts: ContentBlock[]
   isStreaming?: boolean
+  turnActive?: boolean
   isCompacting?: boolean
   model?: string
   onOpenTrace?: (providerToolCallId?: string) => void
@@ -27,6 +28,7 @@ interface AssistantMessageProps {
 export const AssistantMessage = memo(function AssistantMessage({
   parts,
   isStreaming = false,
+  turnActive = isStreaming,
   isCompacting = false,
   model,
   onOpenTrace,
@@ -91,6 +93,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       {toolParts.length > 0 ? (
         <ToolActivityList
           parts={parts}
+          turnActive={turnActive}
           onOpenTrace={onOpenTrace ? (providerToolCallId) => onOpenTrace(providerToolCallId) : undefined}
           onUndoFileChanges={onUndoFileChanges}
           onReapplyFileChanges={onReapplyFileChanges}

@@ -17,6 +17,8 @@ export interface ChatItem {
   parts: ContentBlock[]
   model?: string
   isStreaming?: boolean
+  /// 该消息所属 Turn 仍在执行；文件变更只有在 Turn 结束后才能撤销。
+  turnActive?: boolean
   isCompacting?: boolean
   requestId?: string
   fileChangePresentation?: 'activity' | 'summary'

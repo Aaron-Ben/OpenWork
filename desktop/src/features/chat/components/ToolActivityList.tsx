@@ -34,6 +34,15 @@ import {
   isReadonlyDisplayTool,
   ReadonlyToolActivityRow,
 } from './ReadonlyToolActivity'
+import {
+  FileChangeActivityRow,
+  isFileChangeDisplayTool,
+} from './FileDiffPanel'
+import {
+  bashActivityFailed,
+  BashToolActivityRow,
+  isBashDisplayTool,
+} from './BashToolActivity'
 
 type ActivityState = ToolResultState | 'pending' | 'submitted' | 'finished'
 
@@ -52,6 +61,7 @@ export interface ToolActivity {
 
 interface ToolActivityListProps {
   parts: ContentBlock[]
+  turnActive?: boolean
   onOpenTrace?: (providerToolCallId: string) => void
   onUndoFileChanges?: (changeIds: string[]) => Promise<void>
   onReapplyFileChanges?: (changeIds: string[]) => Promise<void>
@@ -134,13 +144,14 @@ export function collectFileChanges(activities: ToolActivity[]): FileChangeView[]
 
 export const ToolActivityList = memo(function ToolActivityList({
   parts,
+  turnActive = false,
   onOpenTrace,
   onUndoFileChanges,
   onReapplyFileChanges,
   onReviewFileChanges,
   fileChangePresentation = 'activity',
 }: ToolActivityListProps) {
-  const [readonlyExpansion, setReadonlyExpansion] = useState<Record<string, boolean>>({})
+  const [toolExpansion, setToolExpansion] = useState<Record<string, boolean>>({})
   const allActivities = useMemo(() => collectToolActivities(parts), [parts])
   const fileChanges = useMemo(() => collectFileChanges(allActivities), [allActivities])
   const fileActivityIds = useMemo(
@@ -176,20 +187,44 @@ export const ToolActivityList = memo(function ToolActivityList({
         <div className="space-y-0.5">
           {activityGroups.map((group) => {
             const rememberedExpansion = group.activities
-              .map((activity) => readonlyExpansion[activity.id])
+              .map((activity) => toolExpansion[activity.id])
               .find((value) => value != null)
-            return isReadonlyDisplayTool(group.activities[0].name) ? (
+            const rememberExpansion = (expanded: boolean) => setToolExpansion((current) => ({
+              ...current,
+              ...Object.fromEntries(group.activities.map((activity) => [activity.id, expanded])),
+            }))
+            if (isReadonlyDisplayTool(group.activities[0].name)) return (
               <ReadonlyToolActivityRow
                 key={group.id}
                 activities={group.activities}
                 expanded={rememberedExpansion}
-                onExpandedChange={(expanded) => setReadonlyExpansion((current) => ({
-                  ...current,
-                  ...Object.fromEntries(group.activities.map((activity) => [activity.id, expanded])),
-                }))}
+                onExpandedChange={rememberExpansion}
                 onOpenTrace={onOpenTrace}
               />
-            ) : (
+            )
+            if (isFileChangeDisplayTool(group.activities[0].name)) return (
+              <FileChangeActivityRow
+                key={group.id}
+                activities={group.activities}
+                activityChanges={group.activities.map((activity) => collectFileChanges([activity]))}
+                turnActive={turnActive}
+                expanded={rememberedExpansion}
+                onExpandedChange={rememberExpansion}
+                onOpenTrace={onOpenTrace}
+                onUndoFileChanges={onUndoFileChanges}
+                onReapplyFileChanges={onReapplyFileChanges}
+              />
+            )
+            if (isBashDisplayTool(group.activities[0].name)) return (
+              <BashToolActivityRow
+                key={group.id}
+                activities={group.activities}
+                expanded={rememberedExpansion}
+                onExpandedChange={rememberExpansion}
+                onOpenTrace={onOpenTrace}
+              />
+            )
+            return (
               <ToolActivityRow
                 key={group.id}
                 activity={group.activities[0]}
@@ -215,10 +250,10 @@ function groupActivities(activities: ToolActivity[]): ToolActivityGroup[] {
     const previous = previousGroup?.activities[previousGroup.activities.length - 1]
     const canGroup = previousGroup
       && previous
-      && isReadonlyDisplayTool(activity.name)
+      && isGroupedDisplayTool(activity.name)
       && activity.name === previous.name
-      && !isFailedActivity(activity)
-      && !isFailedActivity(previous)
+      && !isDisplayFailure(activity)
+      && !isDisplayFailure(previous)
       && !activity.separatedBefore
       && activity.sequence === previous.sequence + 1
     if (canGroup) {
@@ -228,6 +263,15 @@ function groupActivities(activities: ToolActivity[]): ToolActivityGroup[] {
     }
   }
   return groups
+}
+
+function isGroupedDisplayTool(name: string): boolean {
+  return isReadonlyDisplayTool(name) || isFileChangeDisplayTool(name) || isBashDisplayTool(name)
+}
+
+function isDisplayFailure(activity: ToolActivity): boolean {
+  return isFailedActivity(activity)
+    || activity.name === 'bash' && bashActivityFailed(activity)
 }
 
 function isFailedActivity(activity: ToolActivity): boolean {

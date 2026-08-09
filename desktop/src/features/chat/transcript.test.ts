@@ -258,6 +258,7 @@ describe('buildTranscript', () => {
       'tool_call',
       'tool_result',
     ])
+    expect(result[1].turnActive).toBe(true)
   })
 
   it('does not duplicate a persisted file result in the active runtime item', () => {

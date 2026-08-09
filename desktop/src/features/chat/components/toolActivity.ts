@@ -44,8 +44,8 @@ export function mergeToolMessages(messages: ChatItem[]): ChatItem[] {
     if (
       previous
       && previous.turnId === message.turnId
-      && isReadonlyActivityMessage(previous)
-      && isReadonlyActivityMessage(message)
+      && isDisplayActivityMessage(previous)
+      && isDisplayActivityMessage(message)
     ) {
       coalesced[coalesced.length - 1] = {
         ...previous,
@@ -72,6 +72,8 @@ export function appendCompletedFileChangeSummaries(
   const arranged = messages.map((message) => ({
     ...message,
     parts: [...message.parts],
+    // Core 会拒绝活跃 Turn 上的 undo；显式投影 Turn 状态，避免把必失败的动作呈现为可用。
+    turnActive: message.turnId != null && message.turnId === activeTurnId,
     fileChangePresentation: message.fileChangePresentation ?? ('activity' as const),
   }))
   const summariesAfter = new Map<number, ChatItem>()
@@ -152,10 +154,18 @@ function findMatchingAssistant(messages: ChatItem[], toolCallId: string): number
   return -1
 }
 
-function isReadonlyActivityMessage(message: ChatItem): boolean {
+function isDisplayActivityMessage(message: ChatItem): boolean {
   if (message.role !== 'assistant' || message.parts.length === 0) return false
   return message.parts.every((part) =>
     (part.type === 'tool_call' || part.type === 'tool_result')
-    && (part.name === 'read' || part.name === 'list' || part.name === 'glob' || part.name === 'grep')
+    && (
+      part.name === 'read'
+      || part.name === 'list'
+      || part.name === 'glob'
+      || part.name === 'grep'
+      || part.name === 'edit'
+      || part.name === 'write'
+      || part.name === 'bash'
+    )
   )
 }

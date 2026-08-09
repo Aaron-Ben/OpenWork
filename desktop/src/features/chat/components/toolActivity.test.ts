@@ -113,4 +113,38 @@ describe('mergeToolMessages', () => {
 
     expect(mergeToolMessages([before, text, after])).toHaveLength(3)
   })
+
+  it('coalesces adjacent persisted bash activity messages for transcript grouping', () => {
+    const messages: ChatItem[] = Array.from({ length: 3 }, (_, index) => [{
+      id: `assistant-bash-${index}`,
+      turnId: 'turn-bash',
+      role: 'assistant' as const,
+      parts: [{
+        type: 'tool_call' as const,
+        id: `bash-${index}`,
+        name: 'bash',
+        input: JSON.stringify({ command: `printf ${index}` }),
+        state: 'finished' as const,
+      }],
+    }, {
+      id: `tool-bash-${index}`,
+      turnId: 'turn-bash',
+      role: 'tool' as const,
+      parts: [{
+        type: 'tool_result' as const,
+        id: `bash-${index}`,
+        name: 'bash',
+        output: [{ type: 'text' as const, text: `${index}\n[exit 0; duration 10 ms]` }],
+        state: 'success' as const,
+      }],
+    }]).flat()
+
+    const merged = mergeToolMessages(messages)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].parts.filter((part) => part.type === 'tool_call')).toHaveLength(3)
+    expect(merged[0].sourceMessageIds).toEqual([
+      'assistant-bash-0', 'assistant-bash-1', 'assistant-bash-2',
+    ])
+  })
 })

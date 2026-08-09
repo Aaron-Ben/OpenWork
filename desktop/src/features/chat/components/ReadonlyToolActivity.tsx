@@ -1,18 +1,20 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { AnimatePresence, motion } from 'motion/react'
 import {
   Activity,
-  Check,
-  ChevronRight,
   CircleAlert,
   CircleX,
   Copy,
   File,
+  FileText,
+  Files,
   Folder,
+  ListTree,
   Loader2,
+  Search,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { ToolActivityFrame } from './ToolActivityFrame'
 import type { ToolActivity } from './ToolActivityList'
 
 export type ReadonlyToolName = 'read' | 'list' | 'glob' | 'grep'
@@ -64,6 +66,20 @@ const DETAIL_LIMITS = {
   grep: 50,
 } as const
 
+const READONLY_TOOL_ICONS: Record<ReadonlyToolName, typeof FileText> = {
+  read: FileText,
+  list: ListTree,
+  glob: Files,
+  grep: Search,
+}
+
+const READONLY_ICON_LABELS = {
+  read: 'tool.readonly.readAction',
+  list: 'tool.readonly.listAction',
+  glob: 'tool.readonly.globAction',
+  grep: 'tool.readonly.grepAction',
+} as const
+
 export function isReadonlyDisplayTool(name: string): name is ReadonlyToolName {
   return name === 'read' || name === 'list' || name === 'glob' || name === 'grep'
 }
@@ -80,6 +96,7 @@ export function ReadonlyToolActivityRow({
     [activities, t],
   )
   const primary = views[0]
+  if (!primary) return null
   const failed = activities.some((activity) => isFailure(activity))
   const statusActivity = activities.find((activity) => isInProgress(activity)) ?? primary.activity
   const defaultExpanded = failed || primary.tool === 'grep'
@@ -89,11 +106,8 @@ export function ReadonlyToolActivityRow({
   const range = sharedValue(views.map((view) => view.range))
   const quantity = failed ? '' : groupQuantity(views, (key, options) => t(key, options))
 
-  if (!primary) return null
-
   const summary = (
     <>
-      <ReadonlyStatusIcon activity={statusActivity} />
       <span className="shrink-0 font-sans text-xs font-medium text-ink-soft" title={primary.tool}>
         {primary.action}
       </span>
@@ -111,14 +125,6 @@ export function ReadonlyToolActivityRow({
       ) : null}
       {quantity ? <Separator /> : null}
       {quantity ? <span className="shrink-0 text-xs text-ink-faint">{quantity}</span> : null}
-      {!failed ? (
-        <ChevronRight
-          size={13}
-          className={`ml-auto shrink-0 text-ink-faint transition-transform duration-200 ${
-            expanded ? 'rotate-90' : ''
-          }`}
-        />
-      ) : null}
     </>
   )
 
@@ -132,89 +138,48 @@ export function ReadonlyToolActivityRow({
   }
 
   return (
-    <div
-      data-tool-activity-row={groupId}
-      data-tool-tier={failed ? 'failure' : 'readonly'}
-      className={`group/row min-w-0 overflow-hidden rounded-lg border ${
-        failed
-          ? 'border-status-danger-border bg-status-danger-soft'
-          : 'border-line bg-surface/40'
-      }`}
+    <ToolActivityFrame
+      toolCallId={groupId}
+      tier={failed ? 'failure' : 'readonly'}
+      expanded={expanded}
+      onExpandedChange={failed ? undefined : onExpandedChange}
+      statusIcon={<ReadonlyStatusIcon activity={statusActivity} />}
+      summary={summary}
+      onOpenTrace={onOpenTrace}
+      detailsMaxHeightClass="max-h-[240px]"
     >
-      <div className="flex min-w-0 items-center">
+      <div className="bg-paper/60">
+        {views.map((view) => (
+          <ReadonlyActivityDetails
+            key={view.activity.id}
+            view={view}
+            grouped={views.length > 1}
+            onOpenTrace={onOpenTrace}
+          />
+        ))}
         {failed ? (
-          <div className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 px-2 text-left">
-            {summary}
+          <div className="flex items-center gap-2 border-t border-status-danger-border px-3 py-2">
+            <button
+              type="button"
+              onClick={() => void copyFailure()}
+              className="inline-flex items-center gap-1.5 rounded-md border border-status-danger-border bg-paper px-2.5 py-1 text-xs text-status-danger-ink hover:bg-status-danger-soft"
+            >
+              <Copy size={11} />
+              {t('tool.readonly.copyError')}
+            </button>
+            {onOpenTrace ? (
+              <button
+                type="button"
+                onClick={() => onOpenTrace(primary.activity.id)}
+                className="rounded-md border border-status-danger-border bg-paper px-2.5 py-1 text-xs text-status-danger-ink hover:bg-status-danger-soft"
+              >
+                {t('tool.readonly.inspectFailure')}
+              </button>
+            ) : null}
           </div>
-        ) : (
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() => onExpandedChange(!expanded)}
-            className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 px-2 text-left"
-          >
-            {summary}
-          </button>
-        )}
-        {onOpenTrace ? (
-          <button
-            type="button"
-            data-open-tool-trace={primary.activity.id}
-            aria-label={t('activity.openToolSpan')}
-            title={t('activity.openToolSpan')}
-            onClick={() => onOpenTrace(primary.activity.id)}
-            className="mr-1 grid size-6 shrink-0 place-items-center rounded-md text-ink-faint opacity-0 transition-opacity hover:bg-paper hover:text-clay focus-visible:opacity-100 group-hover/row:opacity-100"
-          >
-            <Activity size={12} />
-          </button>
         ) : null}
       </div>
-
-      <AnimatePresence initial={false}>
-        {expanded ? (
-          <motion.div
-            key="details"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="overflow-hidden border-t border-line/70"
-          >
-            <div className="max-h-[240px] overflow-auto bg-paper/60">
-              {views.map((view) => (
-                <ReadonlyActivityDetails
-                  key={view.activity.id}
-                  view={view}
-                  grouped={views.length > 1}
-                  onOpenTrace={onOpenTrace}
-                />
-              ))}
-              {failed ? (
-                <div className="flex items-center gap-2 border-t border-status-danger-border px-3 py-2">
-                  <button
-                    type="button"
-                    onClick={() => void copyFailure()}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-status-danger-border bg-paper px-2.5 py-1 text-xs text-status-danger-ink hover:bg-status-danger-soft"
-                  >
-                    <Copy size={11} />
-                    {t('tool.readonly.copyError')}
-                  </button>
-                  {onOpenTrace ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenTrace(primary.activity.id)}
-                    className="rounded-md border border-status-danger-border bg-paper px-2.5 py-1 text-xs text-status-danger-ink hover:bg-status-danger-soft"
-                  >
-                    {t('tool.readonly.inspectFailure')}
-                  </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </div>
+    </ToolActivityFrame>
   )
 }
 
@@ -237,7 +202,9 @@ function ReadonlyStatusIcon({
   if (activity.state === 'denied' || activity.state === 'interrupted') {
     return <CircleX size={14} className="shrink-0 text-status-danger" aria-label={t('tool.stopped')} />
   }
-  return <Check size={14} className="shrink-0 text-ink-faint" aria-label={t('tool.done')} />
+  const tool = isReadonlyDisplayTool(activity.name) ? activity.name : 'read'
+  const Icon = READONLY_TOOL_ICONS[tool]
+  return <Icon size={14} className="shrink-0 text-ink-faint" aria-label={t(READONLY_ICON_LABELS[tool])} />
 }
 
 function ReadonlyActivityDetails({

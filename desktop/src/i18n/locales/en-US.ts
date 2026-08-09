@@ -265,6 +265,20 @@ export const enUS = {
     },
   },
   tool: {
+    mutation: {
+      createAction: 'Create', editAction: 'Edit', writeAction: 'Write',
+      changeCount: '{{count}} change', addedLines: '+{{count}} lines',
+      expandFullContent: 'Expand full content ({{count}} more lines)', collapseFullContent: 'Collapse content',
+      emptyFile: 'Empty file', availableAfterTurn: 'Undo is available after the turn finishes',
+      hunkStart: 'starting at line {{line}}',
+    },
+    bash: {
+      action: 'Run', exitCode: 'exit {{code}}',
+      stdoutLines: 'stdout · {{count}} lines', stderrLines: 'stderr · {{count}} lines',
+      copyError: 'Copy error', inspectTrace: 'Inspect trace',
+      hiddenLines: '{{count}} middle lines hidden', collapseOutput: 'Collapse output',
+      timedOut: 'Timed out', cancelled: 'Cancelled',
+    },
     thinking: 'Thinking', thought: 'Thought', running: 'Running', done: 'Done', result: 'Result', error: 'Error', input: 'Input', content: 'Content',
     noInput: 'No input', waitingApproval: 'Waiting for approval', processing: 'Processing…', allow: 'Allow', reject: 'Deny',
     permission: {

@@ -348,6 +348,20 @@ export const zhCN = {
     },
   },
   tool: {
+    mutation: {
+      createAction: '新建', editAction: '修改', writeAction: '写入',
+      changeCount: '{{count}} 处改动', addedLines: '+{{count}} 行',
+      expandFullContent: '展开全文（还有 {{count}} 行）', collapseFullContent: '收起全文',
+      emptyFile: '空文件', availableAfterTurn: 'Turn 结束后可撤销',
+      hunkStart: '第 {{line}} 行起',
+    },
+    bash: {
+      action: '运行', exitCode: '退出码 {{code}}',
+      stdoutLines: 'stdout · {{count}} 行', stderrLines: 'stderr · {{count}} 行',
+      copyError: '复制错误', inspectTrace: '检查 Trace',
+      hiddenLines: '中间 {{count}} 行已隐藏', collapseOutput: '收起完整输出',
+      timedOut: '已超时', cancelled: '已取消',
+    },
     thinking: '思考中', thought: '思考过程', running: '运行中', done: '已完成', result: '结果', error: '错误',
     input: '输入', content: '内容', noInput: '无输入', waitingApproval: '等待审批',
     processing: '处理中……', allow: '允许', reject: '拒绝',

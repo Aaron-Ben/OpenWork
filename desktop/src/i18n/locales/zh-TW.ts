@@ -260,6 +260,20 @@ export const zhTW = {
     },
   },
   tool: {
+    mutation: {
+      createAction: '新增', editAction: '修改', writeAction: '寫入',
+      changeCount: '{{count}} 處變更', addedLines: '+{{count}} 行',
+      expandFullContent: '展開全文（還有 {{count}} 行）', collapseFullContent: '收起全文',
+      emptyFile: '空檔案', availableAfterTurn: 'Turn 結束後可復原',
+      hunkStart: '第 {{line}} 行起',
+    },
+    bash: {
+      action: '執行', exitCode: '結束碼 {{code}}',
+      stdoutLines: 'stdout · {{count}} 行', stderrLines: 'stderr · {{count}} 行',
+      copyError: '複製錯誤', inspectTrace: '檢查 Trace',
+      hiddenLines: '中間 {{count}} 行已隱藏', collapseOutput: '收起完整輸出',
+      timedOut: '已逾時', cancelled: '已取消',
+    },
     thinking: '思考中', thought: '思考過程', running: '執行中', done: '已完成', result: '結果', error: '錯誤', input: '輸入',
     content: '內容', noInput: '無輸入', waitingApproval: '等待審批', processing: '處理中……', allow: '允許', reject: '拒絕',
     permission: {

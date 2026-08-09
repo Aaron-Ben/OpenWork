@@ -74,6 +74,105 @@ const fileChangeParts: ContentBlock[] = [
   },
 ]
 
+const createdFileParts: ContentBlock[] = [
+  {
+    type: 'tool_call',
+    id: 'call-write-created',
+    name: 'write',
+    input: JSON.stringify({
+      path: 'src/config.ts',
+      content: [
+        'export const config = {',
+        "  mode: 'test',",
+        '  retries: 3,',
+        '  verbose: true,',
+        '  timeout: 5000,',
+        '  cache: false,',
+        '  color: true,',
+        '}',
+      ].join('\n'),
+    }),
+    state: 'finished',
+  },
+  {
+    type: 'tool_result',
+    id: 'call-write-created',
+    name: 'write',
+    output: [{ type: 'text', text: 'created 139 bytes to src/config.ts' }],
+    state: 'success',
+    artifacts: [{
+      kind: 'file_change',
+      payload: {
+        changeId: 'change-write-created',
+        path: 'src/config.ts',
+        kind: 'created',
+        additions: 8,
+        deletions: 0,
+        beforeHash: null,
+        afterHash: 'after-write',
+        undone: false,
+        hunks: [{
+          oldStart: 0,
+          oldLines: 0,
+          newStart: 1,
+          newLines: 8,
+          lines: [
+            { kind: 'addition', oldLine: null, newLine: 1, content: 'export const config = {' },
+            { kind: 'addition', oldLine: null, newLine: 2, content: "  mode: 'test'," },
+            { kind: 'addition', oldLine: null, newLine: 3, content: '  retries: 3,' },
+            { kind: 'addition', oldLine: null, newLine: 4, content: '  verbose: true,' },
+            { kind: 'addition', oldLine: null, newLine: 5, content: '  timeout: 5000,' },
+            { kind: 'addition', oldLine: null, newLine: 6, content: '  cache: false,' },
+            { kind: 'addition', oldLine: null, newLine: 7, content: '  color: true,' },
+            { kind: 'addition', oldLine: null, newLine: 8, content: '}' },
+          ],
+        }],
+      },
+    }],
+  },
+]
+
+const successfulBashParts: ContentBlock[] = [
+  {
+    type: 'tool_call',
+    id: 'call-bash-success',
+    name: 'bash',
+    input: JSON.stringify({ command: 'node --test src/**tests**' }),
+    state: 'finished',
+  },
+  {
+    type: 'tool_result',
+    id: 'call-bash-success',
+    name: 'bash',
+    output: [{
+      type: 'text',
+      text: 'TAP version 13\nok 1 - timer\n[exit 0; duration 1400 ms]',
+    }],
+    state: 'success',
+  },
+]
+
+const failedBashParts: ContentBlock[] = [
+  {
+    type: 'tool_call',
+    id: 'call-bash-failed',
+    name: 'bash',
+    input: JSON.stringify({ command: 'node --test src/timer.test.ts' }),
+    state: 'finished',
+  },
+  {
+    type: 'tool_result',
+    id: 'call-bash-failed',
+    name: 'bash',
+    output: [{
+      type: 'text',
+      text: 'TAP version 13\n[stderr]\nsrc/timer.test.ts:18: expected 2, received 1\n[exit 1; duration 120 ms]',
+    }],
+    // bash 的非零退出仍是完成的工具结果，展示层必须读取 footer 才能识别失败。
+    state: 'success',
+  },
+]
+
 const readonlyParts: ContentBlock[] = [
   {
     type: 'tool_call',
@@ -171,7 +270,8 @@ describe('ToolActivityList', () => {
     )
 
     expect(markup).toContain('data-tool-activity-row="call-write"')
-    expect(markup).toContain('写入 main.rs')
+    expect(markup).toContain('写入')
+    expect(markup).toContain('/workspace/src/main.rs')
     expect(markup).not.toContain('data-file-change-summary="true"')
   })
 
@@ -220,12 +320,402 @@ describe('ToolActivityList', () => {
 
     expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(2)
     expect(markup).toContain('data-file-change-activity="change-edit"')
-    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('main.rs')
     expect(markup).toContain('+2')
     expect(markup).toContain('-1')
     expect(markup).not.toContain('data-file-change-summary="true"')
-    expect(markup).not.toContain('data-file-change="change-edit"')
+    expect(markup).toContain('data-file-change="change-edit"')
+  })
+
+  it('shows an edit as an expanded write-tier diff with an inline undo action', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList
+        parts={fileChangeParts}
+        onUndoFileChanges={async () => undefined}
+      />,
+    )
+
+    expect(markup).toContain('data-tool-tier="write"')
+    expect(markup).toContain('lucide-pencil')
+    expect(markup).toContain('修改')
+    expect(markup).toContain('src/main.rs')
+    expect(markup).toContain('1 处改动')
+    expect(markup).toContain('+2')
+    expect(markup).toContain('-1')
+    expect(markup).toContain('data-file-change-code="true"')
+    expect(markup).toContain('@@ 第 1 行起')
+    expect(markup).toContain('data-tool-undo="change-edit"')
+  })
+
+  it('shows a single edit as one integrated code card without a nested file header', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList
+        parts={fileChangeParts}
+        onUndoFileChanges={async () => undefined}
+      />,
+    )
+
+    expect(markup.match(/aria-expanded="true"/g)).toHaveLength(1)
+    expect(markup.match(/>src\/main\.rs</g)).toHaveLength(1)
+    expect(markup).toContain('data-file-change-code="true"')
+    expect(markup).toContain('@@ 第 1 行起')
+  })
+
+  it('shows a created write as a line-numbered addition diff', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList
+        parts={createdFileParts}
+        onUndoFileChanges={async () => undefined}
+      />,
+    )
+
+    expect(markup).toContain('data-tool-tier="write"')
+    expect(markup).toContain('lucide-file-plus-corner')
+    expect(markup).not.toContain('lucide-pencil')
+    expect(markup).toContain('新建')
+    expect(markup).toContain('src/config.ts')
+    expect(markup).toContain('+8 行')
+    expect(markup).toContain('data-file-change-code="true"')
+    expect(markup).toContain('@@ 第 1 行起')
+    expect(markup).toContain('data-diff-line-number="1"')
+    expect(markup).toContain('data-diff-line-number="8"')
+    expect(markup).toContain('bg-status-success-soft text-status-success-ink')
+    expect(markup).toContain('export const config')
+    expect(markup).toContain('color: true')
+    expect(markup).not.toContain('data-write-preview="call-write-created"')
+    expect(markup).toContain('data-tool-undo="change-write-created"')
+  })
+
+  it('disables undo while the owning turn is still active', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList
+        parts={fileChangeParts}
+        turnActive
+        onUndoFileChanges={async () => undefined}
+      />,
+    )
+
+    expect(markup).toContain('data-tool-undo="change-edit"')
+    expect(markup).toMatch(/data-tool-undo="change-edit"[^>]*disabled=""/)
+    expect(markup).toContain('Turn 结束后可撤销')
+  })
+
+  it('shows an explicit empty-file preview for a created empty write', () => {
+    const emptyWrite: ContentBlock[] = [{
+      type: 'tool_call', id: 'write-empty', name: 'write', state: 'finished',
+      input: '{"path":"src/empty.ts","content":""}',
+    }, {
+      type: 'tool_result', id: 'write-empty', name: 'write', state: 'success',
+      output: [{ type: 'text', text: 'created 0 bytes to src/empty.ts' }],
+      artifacts: [{
+        kind: 'file_change',
+        payload: {
+          changeId: 'change-write-empty', path: 'src/empty.ts', kind: 'created',
+          additions: 0, deletions: 0, beforeHash: null, afterHash: 'after', undone: false,
+          hunks: [],
+        },
+      }],
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={emptyWrite} />)
+
+    expect(markup).toContain('data-write-preview="write-empty"')
+    expect(markup).toContain('data-write-empty="true"')
+    expect(markup).toContain('空文件')
+  })
+
+  it('shows the deletion diff when write clears an existing file', () => {
+    const clearedWrite: ContentBlock[] = [{
+      type: 'tool_call', id: 'write-clear', name: 'write', state: 'finished',
+      input: '{"path":"src/old.ts","content":""}',
+    }, {
+      type: 'tool_result', id: 'write-clear', name: 'write', state: 'success',
+      output: [{ type: 'text', text: 'wrote 0 bytes to src/old.ts' }],
+      artifacts: [{
+        kind: 'file_change',
+        payload: {
+          changeId: 'change-write-clear', path: 'src/old.ts', kind: 'modified',
+          additions: 0, deletions: 2, beforeHash: 'before', afterHash: 'after', undone: false,
+          hunks: [{
+            oldStart: 1, oldLines: 2, newStart: 1, newLines: 0,
+            lines: [
+              { kind: 'deletion', oldLine: 1, newLine: null, content: 'export const old = true' },
+              { kind: 'deletion', oldLine: 2, newLine: null, content: 'export default old' },
+            ],
+          }],
+        },
+      }],
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={clearedWrite} />)
+
+    expect(markup).toContain('data-file-change="change-write-clear"')
+    expect(markup.match(/aria-expanded="true"/g)).toHaveLength(1)
+    expect(markup.match(/>src\/old\.ts</g)).toHaveLength(1)
+    expect(markup).toContain('@@ 第 1 行起')
+    expect(markup).toContain('export const old = true')
+  })
+
+  it('shows a successful bash result expanded with exit code, duration, and output size', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={successfulBashParts} />,
+    )
+
+    expect(markup).toContain('data-tool-tier="readonly"')
+    expect(markup).toContain('lucide-square-terminal')
+    expect(markup).not.toContain('lucide-check')
+    expect(markup).toContain('运行')
+    expect(markup).toContain('node --test src/**tests**')
+    expect(markup).toContain('退出码 0')
+    expect(markup).toContain('1.4s')
+    expect(markup).toContain('data-bash-output="call-bash-success"')
+    expect(markup).toContain('stdout · 2 行')
+    expect(markup).toContain('TAP version 13')
+    expect(markup).toContain('ok 1 - timer')
+  })
+
+  it('shows a non-zero bash exit as an expanded failure with real follow-up actions', () => {
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={failedBashParts} onOpenTrace={() => undefined} />,
+    )
+
+    expect(markup).toContain('data-tool-tier="failure"')
+    expect(markup).toContain('退出码 1')
+    expect(markup).not.toContain('120ms')
+    expect(markup).not.toContain('aria-expanded')
+    expect(markup).toContain('bg-status-danger-soft text-status-danger-ink')
+    expect(markup).toContain('data-first-error-line="true"')
+    expect(markup).toContain('src/timer.test.ts:18: expected 2, received 1')
+    expect(markup).toContain('复制错误')
+    expect(markup).toContain('检查 Trace')
+  })
+
+  it('groups adjacent successful bash calls but keeps a failed call standalone', () => {
+    const successful = Array.from({ length: 5 }, (_, index): ContentBlock[] => [{
+      type: 'tool_call',
+      id: `bash-group-${index}`,
+      name: 'bash',
+      input: JSON.stringify({ command: `printf ${index}` }),
+      state: 'finished',
+    }, {
+      type: 'tool_result',
+      id: `bash-group-${index}`,
+      name: 'bash',
+      output: [{ type: 'text', text: `${index}\n[exit 0; duration 10 ms]` }],
+      state: 'success',
+    }]).flat()
+    const failed = failedBashParts.map((part) => ({ ...part, id: 'bash-group-failed' }))
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={[...successful, ...failed]} />,
+    )
+
+    expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(2)
+    expect(markup).toContain('×5')
+    expect(markup.match(/data-bash-output="bash-group-/g)).toHaveLength(6)
+  })
+
+  it('bounds a bash output over two thousand lines until the user loads it', () => {
+    const output = Array.from(
+      { length: 2_005 },
+      (_, index) => `output-line-${String(index + 1).padStart(4, '0')}`,
+    ).join('\n')
+    const call: ContentBlock[] = [{
+      type: 'tool_call', id: 'bash-long', name: 'bash',
+      input: '{"command":"generate-output"}', state: 'finished',
+    }, {
+      type: 'tool_result', id: 'bash-long', name: 'bash', state: 'success',
+      output: [{ type: 'text', text: `${output}\n[exit 0; duration 600 ms]` }],
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={call} />)
+
+    expect(markup).toContain('output-line-0001')
+    expect(markup).toContain('output-line-0200')
+    expect(markup).not.toContain('output-line-0201')
+    expect(markup).not.toContain('output-line-1805')
+    expect(markup).toContain('output-line-1806')
+    expect(markup).toContain('output-line-2005')
+    expect(markup).toContain('中间 1605 行已隐藏')
+    expect(markup).toContain('加载完整输出')
+  })
+
+  it('shows a failed edit as a static expanded failure with next-step actions', () => {
+    const failedEdit: ContentBlock[] = [{
+      type: 'tool_call', id: 'edit-failed', name: 'edit', state: 'finished',
+      input: '{"filePath":"src/main.rs","oldString":"missing","newString":"new"}',
+    }, {
+      type: 'tool_result', id: 'edit-failed', name: 'edit', state: 'error',
+      output: [{ type: 'text', text: 'oldString not found in src/main.rs' }],
+    }]
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={failedEdit} onOpenTrace={() => undefined} />,
+    )
+
+    expect(markup).toContain('data-tool-tier="failure"')
+    expect(markup).not.toContain('aria-expanded')
+    expect(markup).toContain('oldString not found in src/main.rs')
+    expect(markup).toContain('复制错误')
+    expect(markup).toContain('检查 Trace')
+  })
+
+  it('groups adjacent writes while preserving every diff and mixed create-overwrite semantics', () => {
+    const write = (
+      id: string,
+      path: string,
+      kind: 'created' | 'modified',
+      content: string,
+    ): ContentBlock[] => [{
+      type: 'tool_call', id, name: 'write', state: 'finished',
+      input: JSON.stringify({ path, content }),
+    }, {
+      type: 'tool_result', id, name: 'write', state: 'success',
+      output: [{ type: 'text', text: `${kind} ${path}` }],
+      artifacts: [{
+        kind: 'file_change',
+        payload: {
+          changeId: `change-${id}`, path, kind,
+          additions: 1, deletions: kind === 'created' ? 0 : 1,
+          beforeHash: kind === 'created' ? null : 'before', afterHash: 'after', undone: false,
+          hunks: [{
+            oldStart: 1, oldLines: kind === 'created' ? 0 : 1,
+            newStart: 1, newLines: 1,
+            lines: [{ kind: 'addition', oldLine: null, newLine: 1, content }],
+          }],
+        },
+      }],
+    }]
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={[
+        ...write('write-created', 'src/a.ts', 'created', 'export const a = 1'),
+        ...write('write-overwritten', 'src/b.ts', 'modified', 'export const b = 2'),
+      ]} />,
+    )
+
+    expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(1)
+    expect(markup).toContain('×2')
+    expect(markup).toContain('写入')
+    expect(markup).not.toContain('>新建<')
+    expect(markup.match(/data-write-diff=/g)).toHaveLength(2)
+    expect(markup.match(/data-file-change-code="true"/g)).toHaveLength(2)
+    expect(markup).toContain('export const a = 1')
+    expect(markup).toContain('export const b = 2')
+  })
+
+  it('shows one file heading per cleared write inside a grouped card', () => {
+    const clearedWrite = (id: string, path: string, oldLine: string): ContentBlock[] => [{
+      type: 'tool_call', id, name: 'write', state: 'finished',
+      input: JSON.stringify({ path, content: '' }),
+    }, {
+      type: 'tool_result', id, name: 'write', state: 'success',
+      output: [{ type: 'text', text: `wrote 0 bytes to ${path}` }],
+      artifacts: [{
+        kind: 'file_change',
+        payload: {
+          changeId: `change-${id}`, path, kind: 'modified',
+          additions: 0, deletions: 1, beforeHash: 'before', afterHash: 'after', undone: false,
+          hunks: [{
+            oldStart: 1, oldLines: 1, newStart: 1, newLines: 0,
+            lines: [{ kind: 'deletion', oldLine: 1, newLine: null, content: oldLine }],
+          }],
+        },
+      }],
+    }]
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={[
+        ...clearedWrite('clear-a', 'src/a.ts', 'export const a = 1'),
+        ...clearedWrite('clear-b', 'src/b.ts', 'export const b = 2'),
+      ]} />,
+    )
+
+    expect(markup).toContain('×2')
+    expect(markup.match(/>src\/a\.ts</g)).toHaveLength(1)
+    expect(markup.match(/>src\/b\.ts</g)).toHaveLength(1)
+  })
+
+  it('keeps both the executable and trailing arguments visible for a long bash command', () => {
+    const command = 'node scripts/run-tests-with-a-very-long-coverage-configuration.ts --reporter junit --output reports/results.xml'
+    const call: ContentBlock[] = [{
+      type: 'tool_call', id: 'bash-long-command', name: 'bash', state: 'finished',
+      input: JSON.stringify({ command }),
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={call} />)
+
+    expect(markup).toContain('data-command-prefix="true"')
+    expect(markup).toContain('node scripts/run-tests')
+    expect(markup).toContain('data-command-suffix="true"')
+    expect(markup).toContain('reports/results.xml')
+  })
+
+  it('recognizes stderr when bash produced no stdout before the stderr marker', () => {
+    const call: ContentBlock[] = [{
+      type: 'tool_call', id: 'bash-stderr-only', name: 'bash', state: 'finished',
+      input: '{"command":"failing-command"}',
+    }, {
+      type: 'tool_result', id: 'bash-stderr-only', name: 'bash', state: 'success',
+      output: [{ type: 'text', text: '[stderr]\ncommand not found\n[exit 127; duration 15 ms]' }],
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={call} />)
+
+    expect(markup).toContain('stdout · 0 行')
+    expect(markup).toContain('stderr · 1 行')
+    expect(markup).toContain('data-bash-output-line="stderr"')
+    expect(markup).toContain('command not found')
+  })
+
+  it('keeps exit-zero stderr successful while visually distinguishing the stream', () => {
+    const call: ContentBlock[] = [{
+      type: 'tool_call', id: 'bash-warning', name: 'bash', state: 'finished',
+      input: '{"command":"cargo check"}',
+    }, {
+      type: 'tool_result', id: 'bash-warning', name: 'bash', state: 'success',
+      output: [{ type: 'text', text: '[stderr]\nwarning: unused import\n[exit 0; duration 50 ms]' }],
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={call} />)
+
+    expect(markup).toContain('data-tool-tier="readonly"')
+    expect(markup).toContain('data-bash-output-line="stderr"')
+    expect(markup).toContain('bg-status-warning-soft text-status-warning-ink')
+    expect(markup).not.toContain('复制错误')
+  })
+
+  it('keeps a grouped edit row running until every edit has finished', () => {
+    const runningEdit: ContentBlock = {
+      type: 'tool_call', id: 'edit-running', name: 'edit', state: 'submitted',
+      input: '{"filePath":"src/next.rs","oldString":"old","newString":"new"}',
+    }
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={[...fileChangeParts, runningEdit]} />,
+    )
+
+    expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(1)
+    expect(markup).toContain('×2')
+    expect(markup).toContain('animate-spin')
+  })
+
+  it('labels a timed-out bash call without inventing an exit code', () => {
+    const call: ContentBlock[] = [{
+      type: 'tool_call', id: 'bash-timeout', name: 'bash', state: 'finished',
+      input: '{"command":"slow-command","timeoutMs":1000}',
+    }, {
+      type: 'tool_result', id: 'bash-timeout', name: 'bash', state: 'error',
+      output: [{ type: 'text', text: 'partial output\n[timed out after 1000 ms; duration 1010 ms]' }],
+    }]
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={call} />)
+
+    expect(markup).toContain('data-tool-tier="failure"')
+    expect(markup).toContain('已超时')
+    expect(markup).toContain('1.0s')
+    expect(markup).not.toContain('退出码')
   })
 
   it('shows useful collapsed summaries for read, list, glob, and grep without backend metadata', () => {
@@ -244,6 +734,16 @@ describe('ToolActivityList', () => {
     expect(markup).toContain('setInterval')
     expect(markup).toContain('于 src/**/*.mjs')
     expect(markup).toContain('2 处 / 2 个文件')
+  })
+
+  it('uses distinct success icons for read, list, glob, and grep', () => {
+    const markup = renderToStaticMarkup(<ToolActivityList parts={readonlyParts} />)
+
+    expect(markup).toContain('lucide-file-text')
+    expect(markup).toContain('lucide-list-tree')
+    expect(markup).toContain('lucide-files')
+    expect(markup).toContain('lucide-search')
+    expect(markup).not.toContain('lucide-check')
   })
 
   it('keeps read, list, and glob collapsed while grep opens its grouped matches by default', () => {

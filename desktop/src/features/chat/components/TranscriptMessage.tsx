@@ -64,6 +64,7 @@ export function areTranscriptMessagePropsEqual(
     && sameMessageIds(previous.message.sourceMessageIds, next.message.sourceMessageIds)
     && previous.message.model === next.message.model
     && previous.message.isStreaming === next.message.isStreaming
+    && previous.message.turnActive === next.message.turnActive
     && previous.message.isCompacting === next.message.isCompacting
     && previous.message.fileChangePresentation === next.message.fileChangePresentation
     && samePlan(previous.message.plan, next.message.plan)
@@ -100,6 +101,7 @@ export const TranscriptMessage = memo(function TranscriptMessage({
       ) : message.role === 'tool' ? (
         <ToolActivityList
           parts={message.parts}
+          turnActive={message.turnActive ?? message.isStreaming === true}
           onOpenTrace={openTrace}
           onUndoFileChanges={onUndoFileChanges}
           onReapplyFileChanges={onReapplyFileChanges}
@@ -111,6 +113,7 @@ export const TranscriptMessage = memo(function TranscriptMessage({
           parts={message.parts}
           model={message.model}
           isStreaming={message.isStreaming}
+          turnActive={message.turnActive ?? message.isStreaming === true}
           isCompacting={message.isCompacting}
           onOpenTrace={openTrace}
           onUndoFileChanges={onUndoFileChanges}
