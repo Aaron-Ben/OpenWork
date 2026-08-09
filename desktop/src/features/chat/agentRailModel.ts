@@ -17,6 +17,7 @@ export interface AgentRailItem {
   task: string
   status: AgentStatus
   toolActivity: AgentToolActivity | null
+  /** 累计执行时间，不含轮次之间的空档。从没跑过时为 null。 */
   elapsedMs: number | null
   tokens: number
   /** 模型调用 + 工具调用次数。 */
@@ -54,22 +55,25 @@ export function buildAgentRailItems(input: AgentRailInput): AgentRailItem[] {
       orchestratorTotals.latestTurnStatus,
     ),
     toolActivity: agentToolActivity(runtimeBySession[input.parentSessionId]),
-    elapsedMs: agentElapsedMs(runtimeBySession[input.parentSessionId], nowMs),
+    elapsedMs: agentElapsedMs(runtimeBySession[input.parentSessionId], orchestratorTotals, nowMs),
     tokens: orchestratorTotals.tokens,
     steps: orchestratorTotals.steps,
     orchestrator: true,
   }
-  const children = input.children.map((child): AgentRailItem => ({
-    sessionId: child.id,
-    role: child.agentRole,
-    task: child.taskName,
-    status: agentStatus(runtimeBySession[child.id]),
-    toolActivity: agentToolActivity(runtimeBySession[child.id]),
-    elapsedMs: agentElapsedMs(runtimeBySession[child.id], nowMs),
-    tokens: totalsFor(child.id).tokens,
-    steps: totalsFor(child.id).steps,
-    orchestrator: false,
-  }))
+  const children = input.children.map((child): AgentRailItem => {
+    const totals = totalsFor(child.id)
+    return {
+      sessionId: child.id,
+      role: child.agentRole,
+      task: child.taskName,
+      status: agentStatus(runtimeBySession[child.id]),
+      toolActivity: agentToolActivity(runtimeBySession[child.id]),
+      elapsedMs: agentElapsedMs(runtimeBySession[child.id], totals, nowMs),
+      tokens: totals.tokens,
+      steps: totals.steps,
+      orchestrator: false,
+    }
+  })
   return [orchestrator, ...children]
 }
 
@@ -100,7 +104,7 @@ export function agentRailTotalSteps(items: readonly AgentRailItem[]): number {
   return items.reduce((total, item) => total + item.steps, 0)
 }
 
-/** 整棵树跑了多久：以最早开始的智能体为准。 */
+/** 整棵树跑了多久：取干得最久的那个智能体。子 Agent 并行，累加会重复计时。 */
 export function agentRailElapsedMs(items: readonly AgentRailItem[]): number | null {
   const durations = items.flatMap((item) => item.elapsedMs == null ? [] : [item.elapsedMs])
   return durations.length === 0 ? null : Math.max(...durations)

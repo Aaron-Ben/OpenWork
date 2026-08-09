@@ -117,8 +117,14 @@ describe('useSubAgentStore.refreshTotals', () => {
     await useSubAgentStore.getState().refreshTotals('parent-1')
 
     expect(useSubAgentStore.getState().byParent['parent-1'].totalsBySession).toEqual({
-      'parent-1': { tokens: 1_500, steps: 6, latestTurnStatus: 'completed' },
-      a: { tokens: 96_400, steps: 3, latestTurnStatus: 'completed' },
+      'parent-1': {
+        tokens: 1_500, steps: 6, latestTurnStatus: 'completed',
+        runtimeMs: 10_000, latestTurnId: 'turn-1', latestTurnMs: 10_000,
+      },
+      a: {
+        tokens: 96_400, steps: 3, latestTurnStatus: 'completed',
+        runtimeMs: 5_000, latestTurnId: 'turn-1', latestTurnMs: 5_000,
+      },
     })
   })
 
@@ -131,7 +137,10 @@ describe('useSubAgentStore.refreshTotals', () => {
     await useSubAgentStore.getState().refreshTotals('parent-1')
 
     expect(useSubAgentStore.getState().byParent['parent-1'].totalsBySession)
-      .toEqual({ 'parent-1': { tokens: 400, steps: 3, latestTurnStatus: 'completed' } })
+      .toEqual({ 'parent-1': {
+        tokens: 400, steps: 3, latestTurnStatus: 'completed',
+        runtimeMs: 5_000, latestTurnId: 'turn-1', latestTurnMs: 5_000,
+      } })
   })
 })
 
@@ -142,6 +151,9 @@ describe('sessionTraceTotals', () => {
       tokens: 0,
       steps: 0,
       latestTurnStatus: null,
+      runtimeMs: 0,
+      latestTurnId: null,
+      latestTurnMs: 0,
     })
   })
 
@@ -156,7 +168,82 @@ describe('sessionTraceTotals', () => {
       tokens: 60,
       steps: 9,
       latestTurnStatus: 'failed',
+      runtimeMs: 15_000,
+      latestTurnId: 'turn-2',
+      latestTurnMs: 5_000,
     })
+  })
+
+  it('accumulates execution time rather than spanning the idle gaps between turns', async () => {
+    vi.spyOn(coreCommands, 'listTraces').mockResolvedValue([
+      trace(10, {
+        traceId: 'first',
+        turnId: 'turn-1',
+        turnSequence: 1,
+        startedAt: '2026-08-08T12:00:00+08:00',
+        endedAt: '2026-08-08T12:00:04+08:00',
+      }),
+      // 用户在这中间想了一分钟：墙钟跨度是 64s，实际执行只有 6s。
+      trace(20, {
+        traceId: 'second',
+        turnId: 'turn-2',
+        turnSequence: 2,
+        startedAt: '2026-08-08T12:01:02+08:00',
+        endedAt: '2026-08-08T12:01:04+08:00',
+      }),
+    ])
+
+    const totals = await sessionTraceTotals('session-1')
+    expect(totals.runtimeMs).toBe(6_000)
+    expect(totals.latestTurnId).toBe('turn-2')
+    expect(totals.latestTurnMs).toBe(2_000)
+  })
+
+  it('counts a running trace as zero so the live view can own the in-flight turn', async () => {
+    vi.spyOn(coreCommands, 'listTraces').mockResolvedValue([
+      trace(10, { traceId: 'done', turnId: 'turn-1', turnSequence: 1 }),
+      trace(20, { traceId: 'live', turnId: 'turn-2', turnSequence: 2, status: 'running', endedAt: null }),
+    ])
+
+    const totals = await sessionTraceTotals('session-1')
+    expect(totals.runtimeMs).toBe(5_000)
+    expect(totals.latestTurnMs).toBe(0)
+  })
+
+  it('sums every trace belonging to the same turn', async () => {
+    vi.spyOn(coreCommands, 'listTraces').mockResolvedValue([
+      trace(10, {
+        traceId: 'turn-2-a',
+        turnId: 'turn-2',
+        turnSequence: 2,
+        startedAt: '2026-08-08T12:00:00+08:00',
+        endedAt: '2026-08-08T12:00:03+08:00',
+      }),
+      trace(20, {
+        traceId: 'turn-2-b',
+        turnId: 'turn-2',
+        turnSequence: 2,
+        startedAt: '2026-08-08T12:00:03+08:00',
+        endedAt: '2026-08-08T12:00:07+08:00',
+      }),
+    ])
+
+    const totals = await sessionTraceTotals('session-1')
+    expect(totals.latestTurnMs).toBe(7_000)
+    expect(totals.runtimeMs).toBe(7_000)
+  })
+
+  it('ignores traces with no turn when attributing the newest turn duration', async () => {
+    vi.spyOn(coreCommands, 'listTraces').mockResolvedValue([
+      trace(10, { traceId: 'manual-compaction', turnId: null, turnSequence: null }),
+      trace(20, { traceId: 'turn', turnId: 'turn-1', turnSequence: 1 }),
+    ])
+
+    const totals = await sessionTraceTotals('session-1')
+    // 无归属的操作仍然占用了机器时间，计入总量；只是不能归给某个 Turn。
+    expect(totals.runtimeMs).toBe(10_000)
+    expect(totals.latestTurnId).toBe('turn-1')
+    expect(totals.latestTurnMs).toBe(5_000)
   })
 })
 

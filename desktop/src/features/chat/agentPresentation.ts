@@ -1,4 +1,5 @@
 import type { SessionRuntimeView } from './runtimeReducer'
+import type { SessionTraceTotals } from './subAgentStore'
 
 export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -35,16 +36,35 @@ export function agentSummary(runtime: SessionRuntimeView | undefined): string | 
 }
 
 /**
- * 智能体已经跑了多久。运行中按当前时刻算，因此调用方要提供 nowMs 而不是让这里读时钟 ——
+ * 智能体累计执行了多久：已落库的轮次时长之和，加上当前在飞那一轮。
+ *
+ * 两个来源缺一不可。落库汇总每 3 秒才刷一次，且不含在飞的轮次，单用它秒表不会走；
+ * 实时视图只有当前这一轮，且是纯内存的，重启或换会话后就没了，单用它历史耗时会退回 --:--。
+ *
+ * 运行中按当前时刻算，因此调用方要提供 nowMs 而不是让这里读时钟 ——
  * 否则同一次渲染里不同卡片会取到不同的"现在"。
  */
 export function agentElapsedMs(
   runtime: SessionRuntimeView | undefined,
+  totals: SessionTraceTotals,
   nowMs: number,
 ): number | null {
-  if (!runtime?.startedAtMs) return null
-  const end = runtime.endedAtMs ?? nowMs
-  return Math.max(0, end - runtime.startedAtMs)
+  const live = runtime?.startedAtMs == null
+    ? null
+    : Math.max(0, (runtime.endedAtMs ?? nowMs) - runtime.startedAtMs)
+
+  /*
+    两边都覆盖当前 Turn 时以实时值为准，把汇总里同一个 Turn 的部分扣掉。
+    少了这一步，轮询追上后会把刚结束的那一轮算两遍；而如果反过来一律信汇总，
+    轮次刚结束、轮询还没到的那几秒里秒表会掉回去。
+  */
+  const overlap = live != null && runtime?.turnId != null && runtime.turnId === totals.latestTurnId
+    ? totals.latestTurnMs
+    : 0
+  const recorded = Math.max(0, totals.runtimeMs - overlap)
+
+  if (live == null) return recorded > 0 ? recorded : null
+  return recorded + live
 }
 
 export interface AgentToolActivity {

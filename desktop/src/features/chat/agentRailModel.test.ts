@@ -11,6 +11,7 @@ import {
   type AgentRailInput,
 } from './agentRailModel'
 import { createSessionRuntimeView, type SessionRuntimeView } from './runtimeReducer'
+import { EMPTY_TRACE_TOTALS, type SessionTraceTotals } from './subAgentStore'
 
 function child(id: string, role: string, task: string): RuntimeSubAgentSessionRecord {
   return {
@@ -27,6 +28,10 @@ function child(id: string, role: string, task: string): RuntimeSubAgentSessionRe
     agentRole: role,
     spawnSpanId: null,
   }
+}
+
+function totals(overrides: Partial<SessionTraceTotals> = {}): SessionTraceTotals {
+  return { ...EMPTY_TRACE_TOTALS, ...overrides }
 }
 
 function view(overrides: Partial<SessionRuntimeView>): SessionRuntimeView {
@@ -67,13 +72,27 @@ describe('buildAgentRailItems', () => {
         a: view({ terminal: { status: 'completed', finalText: 'done' }, startedAtMs: 2_000, endedAtMs: 5_000 }),
       },
       totalsBySession: {
-        'parent-1': { tokens: 42_100, steps: 12, latestTurnStatus: null },
-        a: { tokens: 31_600, steps: 2, latestTurnStatus: null },
+        'parent-1': totals({ tokens: 42_100, steps: 12, latestTurnStatus: null }),
+        a: totals({ tokens: 31_600, steps: 2, latestTurnStatus: null }),
       },
     }))
 
     expect(items[0]).toMatchObject({ status: 'running', tokens: 42_100, steps: 12, elapsedMs: 9_000 })
     expect(items[1]).toMatchObject({ status: 'completed', tokens: 31_600, steps: 2, elapsedMs: 3_000 })
+  })
+
+  it('keeps the duration after a restart drops the live runtime views', () => {
+    const items = buildAgentRailItems(input({
+      runtimeBySession: {},
+      totalsBySession: {
+        'parent-1': totals({ runtimeMs: 47_000, latestTurnId: 'turn-3', latestTurnMs: 9_000 }),
+        a: totals(),
+      },
+    }))
+
+    expect(items[0].elapsedMs).toBe(47_000)
+    // 从没跑过的智能体是 --:--，不是 00:00。
+    expect(items[1].elapsedMs).toBeNull()
   })
 
   it('treats a session with no traces yet as zero rather than blank', () => {
@@ -85,7 +104,7 @@ describe('buildAgentRailItems', () => {
     const items = buildAgentRailItems(input({
       runtimeBySession: { 'parent-1': view({ phase: 'idle', terminal: null }) },
       totalsBySession: {
-        'parent-1': { tokens: 42, steps: 3, latestTurnStatus: 'failed' },
+        'parent-1': totals({ tokens: 42, steps: 3, latestTurnStatus: 'failed' }),
       },
     }))
 
@@ -96,7 +115,7 @@ describe('buildAgentRailItems', () => {
     const items = buildAgentRailItems(input({
       runtimeBySession: {},
       totalsBySession: {
-        'parent-1': { tokens: 42, steps: 3, latestTurnStatus: 'failed' },
+        'parent-1': totals({ tokens: 42, steps: 3, latestTurnStatus: 'failed' }),
       },
     }))
 
@@ -107,7 +126,7 @@ describe('buildAgentRailItems', () => {
     const items = buildAgentRailItems(input({
       runtimeBySession: {},
       totalsBySession: {
-        a: { tokens: 42, steps: 3, latestTurnStatus: 'failed' },
+        a: totals({ tokens: 42, steps: 3, latestTurnStatus: 'failed' }),
       },
     }))
 
@@ -128,9 +147,9 @@ describe('agent rail aggregates', () => {
       b: view({ phase: 'running_tools', startedAtMs: 3_000 }),
     },
     totalsBySession: {
-      'parent-1': { tokens: 42_100, steps: 12, latestTurnStatus: null },
-      a: { tokens: 31_600, steps: 2, latestTurnStatus: null },
-      b: { tokens: 96_400, steps: 8, latestTurnStatus: null },
+      'parent-1': totals({ tokens: 42_100, steps: 12, latestTurnStatus: null }),
+      a: totals({ tokens: 31_600, steps: 2, latestTurnStatus: null }),
+      b: totals({ tokens: 96_400, steps: 8, latestTurnStatus: null }),
     },
   }))
 

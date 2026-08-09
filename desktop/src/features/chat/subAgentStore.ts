@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 import { coreCommands } from '@/bridge/commands'
-import type { RuntimeSubAgentSessionRecord } from '@/bridge/compat'
+import type { RuntimeSubAgentSessionRecord, RuntimeTraceSummary } from '@/bridge/compat'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useRuntimeStore } from './runtimeStore'
 
@@ -19,12 +19,25 @@ export interface SessionTraceTotals {
   steps: number
   /** 最新一条有归属 Turn 的 Trace 所对应的规范 Turn 状态。 */
   latestTurnStatus: string | null
+  /**
+   * 累计执行时间：各已结束 Trace 的时长之和，不含轮次之间的空档。
+   * 主控的墙钟跨度大部分是用户在打字，那个数字说明不了智能体干了多久。
+   * 未结束的 Trace 记 0，在飞的那一段由实时视图接管（见 agentElapsedMs）。
+   */
+  runtimeMs: number
+  /** 最新一个有归属 Turn 的 id，与 runtime.turnId 比对以避免重复计时。 */
+  latestTurnId: string | null
+  /** 该 Turn 已落库的执行时长，是 runtimeMs 中属于它的那一部分。 */
+  latestTurnMs: number
 }
 
 export const EMPTY_TRACE_TOTALS: SessionTraceTotals = {
   tokens: 0,
   steps: 0,
   latestTurnStatus: null,
+  runtimeMs: 0,
+  latestTurnId: null,
+  latestTurnMs: 0,
 }
 
 export interface SubAgentEntry {
@@ -65,25 +78,52 @@ function entryFor(state: SubAgentStoreState, parentSessionId: string): SubAgentE
   return state.byParent[parentSessionId] ?? EMPTY_SUB_AGENT_ENTRY
 }
 
+/**
+ * 一条 Trace 的执行时长。未结束的记 0 —— 它在飞，时长还没有确定的值，
+ * 由实时视图按当前时刻算，落库汇总不猜。
+ */
+function traceRuntimeMs(summary: RuntimeTraceSummary): number {
+  if (summary.endedAt === null) return 0
+  const started = Date.parse(summary.startedAt)
+  const ended = Date.parse(summary.endedAt)
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return 0
+  return Math.max(0, ended - started)
+}
+
 /** 一个会话已记录的 Trace 汇总。没有 Trace 的会话是全零，不是缺失。 */
 export async function sessionTraceTotals(sessionId: string): Promise<SessionTraceTotals> {
   const summaries = await coreCommands.listTraces(sessionId, TOKEN_TRACE_LIMIT)
   let tokens = 0
   let steps = 0
+  let runtimeMs = 0
   let latestTurnSequence: number | null = null
   let latestTurnStatus: string | null = null
+  let latestTurnId: string | null = null
+  // 一个 Turn 可以有多条 Trace（例如轮内自动压缩），归属时要全部算上。
+  const msByTurn = new Map<string, number>()
 
   for (const summary of summaries) {
     tokens += summary.totalTokens ?? 0
     steps += summary.modelCallCount + summary.toolCallCount
+    const elapsed = traceRuntimeMs(summary)
+    runtimeMs += elapsed
     // 手动压缩与 rewind 没有 Turn，不能让它们覆盖真正的会话终态。
     if (summary.turnId === null || summary.turnSequence === null) continue
+    msByTurn.set(summary.turnId, (msByTurn.get(summary.turnId) ?? 0) + elapsed)
     if (latestTurnSequence !== null && summary.turnSequence <= latestTurnSequence) continue
     latestTurnSequence = summary.turnSequence
     latestTurnStatus = summary.status
+    latestTurnId = summary.turnId
   }
 
-  return { tokens, steps, latestTurnStatus }
+  return {
+    tokens,
+    steps,
+    latestTurnStatus,
+    runtimeMs,
+    latestTurnId,
+    latestTurnMs: latestTurnId === null ? 0 : msByTurn.get(latestTurnId) ?? 0,
+  }
 }
 
 export const useSubAgentStore = create<SubAgentStoreState>((set, get) => ({
