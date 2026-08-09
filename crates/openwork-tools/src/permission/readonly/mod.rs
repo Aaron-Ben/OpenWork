@@ -121,6 +121,12 @@ fn parse_operands<'a>(command: &ReadonlyCommand, args: &'a [String]) -> Option<V
             continue;
         }
         if !options_ended && argument.starts_with('-') && argument != "-" {
+            // head/tail 仍接受 POSIX 已标为 obsolescent 的 `-N` 计数写法。必须先于短参数
+            // 聚簇判定，否则 `-60` 会被拆成未注册的 `-6` 与 `-0`，误拒绝纯读取调用。
+            if is_head_tail_bare_numeric_count(command, argument) {
+                index += 1;
+                continue;
+            }
             let exact_arity = command
                 .flags
                 .iter()
@@ -166,6 +172,13 @@ fn parse_operands<'a>(command: &ReadonlyCommand, args: &'a [String]) -> Option<V
         return None;
     }
     Some(operands)
+}
+
+fn is_head_tail_bare_numeric_count(command: &ReadonlyCommand, argument: &str) -> bool {
+    matches!(command.key, "head" | "tail")
+        && argument.strip_prefix('-').is_some_and(|digits| {
+            !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit())
+        })
 }
 
 /// A bundle of short flags such as `-la` — one dash, two or more characters.
@@ -268,6 +281,39 @@ mod tests {
         assert_eq!(proof("ls", &["-laz", "src"]), None);
         // `-S` takes a value, so it must never be swallowed inside a cluster.
         assert_eq!(proof("git", &["diff", "-Sx"]), None);
+    }
+
+    #[test]
+    fn head_and_tail_accept_obsolescent_bare_numeric_counts() {
+        assert_eq!(proof("head", &["-5", "app.log"]), Some("head".to_string()));
+        assert_eq!(proof("head", &["-60", "app.log"]), Some("head".to_string()));
+        assert_eq!(proof("tail", &["-20", "app.log"]), Some("tail".to_string()));
+    }
+
+    #[test]
+    fn bare_numeric_flags_remain_unprovable_for_other_commands() {
+        assert_eq!(proof("ls", &["-5", "src"]), None);
+        assert_eq!(proof("cat", &["-3", "src/main.rs"]), None);
+    }
+
+    #[test]
+    fn grep_and_rg_count_flags_are_provably_readonly() {
+        assert_eq!(
+            proof("grep", &["-c", "needle", "src"]),
+            Some("grep".to_string())
+        );
+        assert_eq!(
+            proof("grep", &["--count", "needle", "src"]),
+            Some("grep".to_string())
+        );
+        assert_eq!(
+            proof("rg", &["-c", "needle", "src"]),
+            Some("rg".to_string())
+        );
+        assert_eq!(
+            proof("rg", &["--count", "needle", "src"]),
+            Some("rg".to_string())
+        );
     }
 
     #[test]

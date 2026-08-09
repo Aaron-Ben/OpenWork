@@ -131,15 +131,18 @@ const TAC_FLAGS: &[(&str, Arity)] = &[
 ];
 
 const RG_FLAGS: &[(&str, Arity)] = &[
+    ("-c", Arity::None),
     ("-F", Arity::None),
     ("-i", Arity::None),
     ("-n", Arity::None),
+    ("--count", Arity::None),
     ("--fixed-strings", Arity::None),
     ("--ignore-case", Arity::None),
     ("--line-number", Arity::None),
 ];
 
 const GREP_FLAGS: &[(&str, Arity)] = &[
+    ("-c", Arity::None),
     ("-E", Arity::None),
     ("-F", Arity::None),
     ("-G", Arity::None),
@@ -155,6 +158,7 @@ const GREP_FLAGS: &[(&str, Arity)] = &[
     ("-v", Arity::None),
     ("-w", Arity::None),
     ("-x", Arity::None),
+    ("--count", Arity::None),
     ("--extended-regexp", Arity::None),
     ("--fixed-strings", Arity::None),
     ("--ignore-case", Arity::None),
