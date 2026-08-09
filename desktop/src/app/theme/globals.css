@@ -49,15 +49,10 @@
 
   /* 代码 */
   --code-bg: #3d3d3a0d;      /* 行内代码底 */
-  --code-ink: #8a2424;       /* 行内代码字色(暗红) */
-
-  /* 引用 */
-  --quote-ink: #3d3d3a;
 
   /* 其它 */
   --selection: color-mix(in srgb, #d97757 50%, transparent);
   --content-weight: 400;
-  --strong-weight: 700;
   --scrollbar: #1f1e1d59;
   --scrollbar-hover: #5a5959;
 }
@@ -96,13 +91,9 @@
   --status-danger-border: #b46d6952;
 
   --code-bg: #c2c0b60d;
-  --code-ink: #f4a9a9;
-
-  --quote-ink: #c2c0b6;
 
   --selection: color-mix(in srgb, #d97757 50%, transparent);
   --content-weight: 360;
-  --strong-weight: 530;
   --scrollbar: #dedcd159;
   --scrollbar-hover: #a5a49d;
 }
@@ -145,8 +136,6 @@
   --color-status-danger-ink: var(--status-danger-ink);
   --color-status-danger-border: var(--status-danger-border);
   --color-code-bg: var(--code-bg);
-  --color-code-ink: var(--code-ink);
-  --color-quote-ink: var(--quote-ink);
 }
 
 @keyframes plan-step-flash {

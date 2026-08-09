@@ -189,7 +189,3 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
 
   clearSelection: () => set({ activeSessionId: null }),
 }))
-
-export function selectSessions(state: SessionStoreState): RuntimeSessionRecord[] {
-  return state.orderedSessionIds.flatMap((id) => state.summaries[id] ? [state.summaries[id]] : [])
-}

@@ -9,8 +9,6 @@ import {
 } from '../agentRailModel'
 import { AgentRailCard } from './AgentRailCard'
 
-export const AGENT_RAIL_WIDTH_PX = 300
-
 interface AgentRailProps {
   items: readonly AgentRailItem[]
   /** 当前在中栏展开的子智能体；主控视图下为 null。 */
