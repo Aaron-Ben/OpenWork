@@ -1,16 +1,22 @@
 import {
+  BotMessageSquare,
+  CircleStop,
   FilePen,
   FilePlus,
   FileText,
   FolderSearch,
   List,
+  ListTodo,
+  MessageSquarePlus,
   Search,
   SquareTerminal,
+  Timer,
+  UsersRound,
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
 
-/** 工具图标按效果区分：读 / 写 / 改 / 内容搜索 / 模式找文件 / 列目录 / 进程执行。 */
+/** 工具图标按效果区分；控制类工具保持独立语义，避免全部退化成扳手。 */
 export type ToolIconEffect =
   | 'read'
   | 'write'
@@ -19,6 +25,12 @@ export type ToolIconEffect =
   | 'glob'
   | 'list'
   | 'bash'
+  | 'update_plan'
+  | 'spawn_agent'
+  | 'wait_agent'
+  | 'list_agents'
+  | 'followup_task'
+  | 'interrupt_agent'
   | 'unknown'
 
 const EXACT_EFFECT: Record<string, ToolIconEffect> = {
@@ -29,6 +41,12 @@ const EXACT_EFFECT: Record<string, ToolIconEffect> = {
   glob: 'glob',
   list: 'list',
   bash: 'bash',
+  update_plan: 'update_plan',
+  spawn_agent: 'spawn_agent',
+  wait_agent: 'wait_agent',
+  list_agents: 'list_agents',
+  followup_task: 'followup_task',
+  interrupt_agent: 'interrupt_agent',
 }
 
 export function traceToolIconEffect(toolName: string | null | undefined): ToolIconEffect {
@@ -55,6 +73,12 @@ const TRACE_TOOL_ICONS: Record<ToolIconEffect, LucideIcon> = {
   glob: FolderSearch,
   list: List,
   bash: SquareTerminal,
+  update_plan: ListTodo,
+  spawn_agent: BotMessageSquare,
+  wait_agent: Timer,
+  list_agents: UsersRound,
+  followup_task: MessageSquarePlus,
+  interrupt_agent: CircleStop,
   unknown: Wrench,
 }
 

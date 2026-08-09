@@ -55,7 +55,15 @@ describe('i18n', () => {
         const path = `activity.traceValues.${value}`
         expect(translate(path)).not.toBe(path)
       }
-      expect(translate('activity.traceDetails')).not.toBe('activity.traceDetails')
+      for (const path of [
+        'activity.totalDuration',
+        'activity.completenessLabel',
+        'activity.tokenComposition',
+        'activity.expandAllProperties',
+        'activity.completenessState.partial',
+      ] as const) {
+        expect(translate(path)).not.toBe(path)
+      }
       for (const slot of ['request', 'system_context', 'tool_definitions', 'response'] as const) {
         const path = `activity.payloads.slots.${slot}`
         expect(translate(path)).not.toBe(path)

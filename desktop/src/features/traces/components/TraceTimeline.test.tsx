@@ -82,6 +82,25 @@ describe('TraceTimeline', () => {
     expect(markup).toContain('data-span-id="tool-1"')
   })
 
+  it('groups each model call with its child tools in a numbered timeline card', () => {
+    const secondModel = {
+      ...model,
+      id: 'model-2',
+      startedAt: '2026-07-18T00:00:02.500Z',
+      endedAt: '2026-07-18T00:00:03.000Z',
+    }
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={[model, tool, secondModel]} selectedSpanId="model-1" onSelect={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-trace-group="model-1"')
+    expect(markup).toContain('data-trace-group="model-2"')
+    expect(markup).toContain('data-trace-sequence="01"')
+    expect(markup).toContain('data-trace-sequence="02"')
+    expect(markup).toContain('模型')
+    expect(markup).toContain('工具')
+  })
+
   it('picks the tool icon by effect and falls back to the wrench for unknown tools', () => {
     const bash = { ...tool, id: 'tool-bash', resolvedToolName: 'bash', requestedToolName: 'bash' }
     const grep = { ...tool, id: 'tool-grep', resolvedToolName: 'grep', requestedToolName: 'grep' }
@@ -101,6 +120,41 @@ describe('TraceTimeline', () => {
     // write_file 这类带后缀的 resolved 名也按写效果归类
     expect(markup).toContain('data-tool-icon="write"')
     expect(markup).toContain('data-tool-icon="unknown"')
+    expect(markup).toMatch(/class="[^"]*lucide-wrench[^"]*"[^>]*data-tool-icon="unknown"/)
+  })
+
+  it('renders distinct plan and multi-agent control icons', () => {
+    const controlTools = [
+      'update_plan',
+      'spawn_agent',
+      'wait_agent',
+      'list_agents',
+      'followup_task',
+      'interrupt_agent',
+    ].map((name, index) => ({
+      ...tool,
+      id: `control-${index}`,
+      providerCallId: `control-${index}`,
+      requestedToolName: name,
+      resolvedToolName: name,
+    }))
+    const markup = renderToStaticMarkup(
+      <TraceTimeline spans={[model, ...controlTools]} selectedSpanId={null} onSelect={vi.fn()} />,
+    )
+
+    const expectedIcons = {
+      update_plan: 'lucide-list-todo',
+      spawn_agent: 'lucide-bot-message-square',
+      wait_agent: 'lucide-timer',
+      list_agents: 'lucide-users-round',
+      followup_task: 'lucide-message-square-plus',
+      interrupt_agent: 'lucide-circle-stop',
+    } as const
+    for (const [name, iconClass] of Object.entries(expectedIcons)) {
+      expect(markup).toMatch(new RegExp(
+        `class="[^"]*${iconClass}[^"]*"[^>]*data-tool-icon="${name}"`,
+      ))
+    }
   })
 
   it('renders compaction as a first-class timeline operation', () => {

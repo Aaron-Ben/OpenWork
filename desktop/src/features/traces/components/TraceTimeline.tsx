@@ -16,7 +16,7 @@ import { formatDuration } from './TraceList'
 import { TraceToolIcon } from './traceToolIcons'
 
 // 名称列 / 耗时列 / 瀑布轨道列共享同一栅格模板，刻度尺与所有数据行因此严格对齐。
-const TIMELINE_GRID = 'grid-cols-[minmax(0,1fr)_56px_minmax(96px,40%)]'
+const TIMELINE_GRID = 'grid-cols-[32px_minmax(0,1fr)_56px_minmax(96px,42%)]'
 const RULER_FRACTIONS = [0, 0.25, 0.5, 0.75, 1] as const
 
 interface TraceTimelineProps {
@@ -52,12 +52,20 @@ export function TraceTimeline({ spans, selectedSpanId, onSelect }: TraceTimeline
 
   return (
     <div data-trace-waterfall="true" role="list" aria-label={t('activity.timeline')}>
+      <div className="mb-3 flex items-center justify-between gap-3 px-1">
+        <h3 className="text-xs font-semibold text-ink-soft">{t('activity.timeline')}</h3>
+        <div className="flex items-center gap-3 text-[10px] text-ink-faint" aria-label={t('activity.timelineLegend')}>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-trace-bar-model" />{t('activity.modelLegend')}</span>
+          <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-trace-bar-tool" />{t('activity.toolLegend')}</span>
+        </div>
+      </div>
       {range ? <TimeRuler range={range} /> : null}
-      <div className="grid gap-px">
-        {tree.roots.map((node) => (
+      <div className="grid gap-3">
+        {tree.roots.map((node, index) => (
           <TimelineNode
             key={node.span.id}
             node={node}
+            sequence={index + 1}
             collapsed={collapsedIds.has(node.span.id)}
             onToggleCollapse={toggleCollapse}
             rowById={rowById}
@@ -99,6 +107,7 @@ function TimeRuler({ range }: { range: WaterfallRange }) {
     >
       <span aria-hidden="true" />
       <span aria-hidden="true" />
+      <span aria-hidden="true" />
       <span className="relative block h-4 select-none text-[10px] tabular-nums text-ink-faint">
         {RULER_FRACTIONS.map((fraction) => (
           <span
@@ -123,6 +132,7 @@ function TimeRuler({ range }: { range: WaterfallRange }) {
 
 function TimelineNode({
   node,
+  sequence,
   collapsed,
   onToggleCollapse,
   rowById,
@@ -130,6 +140,7 @@ function TimelineNode({
   onSelect,
 }: {
   node: TraceModelNode
+  sequence: number
   collapsed: boolean
   onToggleCollapse: (spanId: string) => void
   rowById: Map<string, WaterfallRow>
@@ -137,10 +148,16 @@ function TimelineNode({
   onSelect: (span: RuntimeTraceSpan) => void
 }) {
   const hasChildren = node.children.length > 0
+  const sequenceLabel = String(sequence).padStart(2, '0')
   return (
-    <div>
+    <div
+      data-trace-group={node.span.id}
+      data-trace-sequence={sequenceLabel}
+      className="overflow-hidden rounded-xl border border-line bg-paper"
+    >
       <TimelineRow
         span={node.span}
+        sequence={sequenceLabel}
         depth={0}
         row={rowById.get(node.span.id)}
         selected={selectedSpanId === node.span.id}
@@ -180,6 +197,7 @@ function TimelineNode({
 
 function TimelineRow({
   span,
+  sequence,
   depth,
   row,
   selected,
@@ -189,6 +207,7 @@ function TimelineRow({
   onSelect,
 }: {
   span: RuntimeTraceSpan
+  sequence?: string
   depth: number
   row: WaterfallRow | undefined
   selected: boolean
@@ -203,13 +222,14 @@ function TimelineRow({
       role="listitem"
       data-span-id={span.id}
       onClick={() => onSelect(span)}
-      className={`grid ${TIMELINE_GRID} cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors ${
+      className={`grid ${TIMELINE_GRID} cursor-pointer items-center gap-2 px-3 py-2 transition-colors ${
         selected ? 'bg-clay-soft' : 'hover:bg-paper-hover'
-      }`}
+      } ${depth > 0 ? 'border-t border-line/70' : ''}`}
     >
+      <span className="font-mono text-[10px] tabular-nums text-ink-faint">{sequence}</span>
       <div
         className="flex min-w-0 items-center gap-1"
-        style={depth > 0 ? { paddingLeft: depth * 18 } : undefined}
+        style={depth > 0 ? { paddingLeft: (depth - 1) * 18 } : undefined}
       >
         {hasChildren && onToggleCollapse ? (
           <button

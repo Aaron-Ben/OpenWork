@@ -10,7 +10,7 @@ import {
   loadTracePayloadWhenExpanded,
   MissingTracePayload,
   SpanDetail,
-  TraceCompletenessSummary,
+  TraceSummaryHeader,
   TRACE_PAYLOAD_RENDER_LIMIT_CHARS,
   TracePayloadBody,
 } from './TurnTraceDrawer'
@@ -43,24 +43,59 @@ const modelSpan: RuntimeTraceSpan = {
 describe('SpanDetail', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('shows model quality fields before the collapsed detail section', () => {
+  it('shows model quality and diagnostic fields in the record-property grid', () => {
     const markup = renderToStaticMarkup(<SpanDetail span={modelSpan} />)
-    const detailsIndex = markup.indexOf('<details')
 
     expect(markup).toContain('完成原因')
     expect(markup).toContain('工具调用')
     expect(markup).toContain('温度')
-    expect(detailsIndex).toBeGreaterThan(0)
-    expect(markup.indexOf('温度')).toBeLessThan(detailsIndex)
-    expect(markup.indexOf('请求构建耗时')).toBeGreaterThan(detailsIndex)
-    expect(markup.indexOf('Top P')).toBeGreaterThan(detailsIndex)
-    expect(markup.indexOf('Provider Request ID')).toBeGreaterThan(detailsIndex)
+    expect(markup).toContain('请求构建耗时')
+    expect(markup).toContain('Top P')
+    expect(markup).toContain('Provider Request ID')
+    expect(markup).toContain('data-trace-properties="true"')
+    expect(markup).not.toContain('<details')
     expect(markup).not.toContain('requestBuildMs')
     expect(markup).not.toContain('tool_use')
     expect(markup).not.toContain('Transport 尝试')
   })
 
-  it('keeps the compaction attempt count in the primary section', () => {
+  it('renders token composition, payload actions, and record attributes as scan-friendly sections', () => {
+    const markup = renderToStaticMarkup(<SpanDetail span={modelSpan} />)
+
+    expect(markup).toContain('data-token-composition="true"')
+    expect(markup).toContain('Token 构成')
+    expect(markup).toContain('data-trace-payload-grid="true"')
+    expect(markup).toContain('data-trace-properties="true"')
+    expect(markup).toContain('记录属性')
+    expect(markup.match(/data-token-segment=/g)).toHaveLength(4)
+  })
+
+  it('does not paint token segments for zero-valued categories', () => {
+    const markup = renderToStaticMarkup(<SpanDetail span={{
+      ...modelSpan,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }} />)
+
+    expect(markup).toContain('data-token-composition="true"')
+    expect(markup).not.toContain('data-token-segment=')
+  })
+
+  it('keeps complete diagnostic values readable without relying on hover titles', () => {
+    const markup = renderToStaticMarkup(<SpanDetail span={{
+      ...modelSpan,
+      providerRequestId: 'request-with-a-very-long-provider-identifier',
+    }} />)
+
+    expect(markup).toContain('data-trace-property-value="true"')
+    expect(markup).toContain('break-all')
+    expect(markup).not.toContain('data-trace-property-value="true" class="mt-1 truncate')
+  })
+
+  it('keeps compaction diagnostics in the record-property grid', () => {
     const markup = renderToStaticMarkup(<SpanDetail span={{
       ...modelSpan,
       id: 'compaction-1',
@@ -82,11 +117,11 @@ describe('SpanDetail', () => {
         prepareMs: 3,
       },
     }} />)
-    const detailsIndex = markup.indexOf('<details')
-
-    expect(markup.indexOf('尝试次数')).toBeLessThan(detailsIndex)
-    expect(markup.indexOf('压缩触发原因')).toBeLessThan(detailsIndex)
-    expect(markup.indexOf('准备耗时')).toBeGreaterThan(detailsIndex)
+    expect(markup).toContain('data-trace-properties="true"')
+    expect(markup).toContain('尝试次数')
+    expect(markup).toContain('压缩触发原因')
+    expect(markup).toContain('准备耗时')
+    expect(markup).not.toContain('<details')
   })
 
   it('renders a successful model response as a conversation link', () => {
@@ -190,39 +225,103 @@ describe('SpanDetail', () => {
   })
 })
 
-describe('TraceCompletenessSummary', () => {
-  it('acc_73e makes partial and missing traces visibly different from complete traces', () => {
-    const complete = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
-      expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
-      capturedToolCalls: 3, orphanToolSpans: 0, runningSpans: 0,
-      outcomeUnknownSpans: 0, state: 'complete',
-    }} />)
-    const partial = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
-      expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
-      capturedToolCalls: 1, orphanToolSpans: 0, runningSpans: 0,
-      outcomeUnknownSpans: 0, state: 'partial',
-    }} />)
-    const none = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
-      expectedModelCalls: 2, capturedModelCalls: 0, expectedToolCalls: 3,
-      capturedToolCalls: 0, orphanToolSpans: 0, runningSpans: 0,
-      outcomeUnknownSpans: 0, state: 'none',
-    }} />)
-    const structurallyPartial = renderToStaticMarkup(<TraceCompletenessSummary completeness={{
-      expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
-      capturedToolCalls: 3, orphanToolSpans: 1, runningSpans: 0,
-      outcomeUnknownSpans: 0, state: 'partial',
-    }} />)
+describe('TraceSummaryHeader', () => {
+  it('renders the title status and five-column trace overview', () => {
+    const markup = renderToStaticMarkup(<TraceSummaryHeader
+      title="新会话"
+      sourceId="turn-1"
+      summary={{
+        traceId: 'trace-1', turnId: 'turn-1', sessionId: 'session-1', turnSequence: 1,
+        status: 'completed', resolvedModelName: 'deepseek-v4-flash', modelCallCount: 6,
+        modelSubmissionCount: 6, toolCallCount: 6, spanCount: 12, totalTokens: 141_635,
+        startedAt: '2026-07-20T00:00:00.000Z', endedAt: '2026-07-20T00:00:45.120Z',
+      }}
+      completeness={{
+        expectedModelCalls: 6, capturedModelCalls: 6, expectedToolCalls: 6,
+        capturedToolCalls: 6, orphanToolSpans: 0, runningSpans: 0,
+        outcomeUnknownSpans: 0, state: 'complete',
+      }}
+      onClose={vi.fn()}
+    />)
 
-    expect(complete).toContain('data-trace-completeness="complete"')
-    expect(complete).not.toContain('role="alert"')
-    expect(partial).toContain('data-trace-completeness="partial"')
-    expect(partial).toContain('role="alert"')
-    expect(partial).toContain('缺少 2 条')
-    expect(partial).toContain('bg-status-warning-soft')
-    expect(none).toContain('data-trace-completeness="none"')
-    expect(none).toContain('role="alert"')
-    expect(none).toContain('缺少 5 条')
-    expect(none).toContain('bg-status-danger-soft')
-    expect(structurallyPartial).not.toContain('缺少 0 条')
+    expect(markup).toContain('新会话')
+    expect(markup).toContain('已完成')
+    expect(markup).toContain('data-trace-overview="true"')
+    expect(markup).toContain('总耗时')
+    expect(markup).toContain('45.12 s')
+    expect(markup).toContain('模型调用')
+    expect(markup).toContain('工具调用')
+    expect(markup).toContain('141,635')
+    expect(markup).toContain('12 / 12')
+  })
+
+  it('keeps an incomplete trace visibly marked as an alert in the overview', () => {
+    const markup = renderToStaticMarkup(<TraceSummaryHeader
+      title="新会话"
+      sourceId="turn-1"
+      summary={{
+        traceId: 'trace-1', turnId: 'turn-1', sessionId: 'session-1', turnSequence: 1,
+        status: 'failed', resolvedModelName: 'deepseek-v4-flash', modelCallCount: 2,
+        modelSubmissionCount: 2, toolCallCount: 3, spanCount: 3, totalTokens: 100,
+        startedAt: '2026-07-20T00:00:00.000Z', endedAt: '2026-07-20T00:00:01.000Z',
+      }}
+      completeness={{
+        expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
+        capturedToolCalls: 1, orphanToolSpans: 0, runningSpans: 0,
+        outcomeUnknownSpans: 0, state: 'partial',
+      }}
+      onClose={vi.fn()}
+    />)
+
+    expect(markup).toContain('data-trace-completeness="partial"')
+    expect(markup).toContain('role="alert"')
+    expect(markup).toContain('缺少 2 条')
+    expect(markup).toContain('3 / 5')
+    expect(markup).toContain('部分缺失')
+  })
+
+  it('explains structural incompleteness even when captured equals expected', () => {
+    const markup = renderToStaticMarkup(<TraceSummaryHeader
+      title="新会话"
+      sourceId="turn-1"
+      summary={{
+        traceId: 'trace-1', turnId: 'turn-1', sessionId: 'session-1', turnSequence: 1,
+        status: 'completed', resolvedModelName: 'deepseek-v4-flash', modelCallCount: 2,
+        modelSubmissionCount: 2, toolCallCount: 3, spanCount: 5, totalTokens: 100,
+        startedAt: '2026-07-20T00:00:00.000Z', endedAt: '2026-07-20T00:00:01.000Z',
+      }}
+      completeness={{
+        expectedModelCalls: 2, capturedModelCalls: 2, expectedToolCalls: 3,
+        capturedToolCalls: 3, orphanToolSpans: 1, runningSpans: 0,
+        outcomeUnknownSpans: 1, state: 'partial',
+      }}
+      onClose={vi.fn()}
+    />)
+
+    expect(markup).toContain('5 / 5')
+    expect(markup).toContain('1 个孤立工具调用')
+    expect(markup).toContain('1 个结果未知节点')
+    expect(markup).toContain('bg-status-warning-soft')
+    expect(markup).toContain('data-trace-completeness-note="true"')
+    expect(markup).toContain('max-[640px]:col-span-2')
+    expect(markup).not.toContain('data-trace-completeness-note="true" class="mt-0.5 truncate')
+  })
+
+  it('uses the danger tier when trace capture is entirely absent', () => {
+    const markup = renderToStaticMarkup(<TraceSummaryHeader
+      title="新会话"
+      sourceId="turn-1"
+      summary={null}
+      completeness={{
+        expectedModelCalls: 2, capturedModelCalls: 0, expectedToolCalls: 3,
+        capturedToolCalls: 0, orphanToolSpans: 0, runningSpans: 0,
+        outcomeUnknownSpans: 0, state: 'none',
+      }}
+      onClose={vi.fn()}
+    />)
+
+    expect(markup).toContain('data-trace-completeness="none"')
+    expect(markup).toContain('未采集')
+    expect(markup).toContain('bg-status-danger-soft')
   })
 })

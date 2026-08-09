@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
-import { Bot, CircleAlert, Clock3, Loader2, Maximize2, MessageSquareText, Minimize2, Wrench, X } from 'lucide-react'
+import { Bot, Loader2, Maximize2, MessageSquareText, Minimize2, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -11,6 +11,7 @@ import type {
   RuntimeTracePayloadSlot,
   RuntimeTraceSpan,
   RuntimeTraceSpanPayload,
+  RuntimeTraceSummary,
   RuntimeTurnTrace,
 } from '@/bridge/compat'
 import { formatBeijingDateTime } from '@/lib/dateTime'
@@ -169,32 +170,20 @@ export function TurnTraceDrawer({
           initial={{ opacity: 0, x: 32 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 32 }}
-          className="absolute inset-y-0 right-0 flex w-[min(1120px,96vw)] flex-col border-l border-line bg-paper shadow-[-18px_0_45px_rgba(20,20,19,0.12)] outline-none max-[640px]:w-full"
+          className="absolute inset-y-0 right-0 flex w-[min(1180px,98vw)] flex-col border-l border-line bg-paper shadow-[-18px_0_45px_rgba(20,20,19,0.12)] outline-none max-[640px]:w-full"
           onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}
         >
-          <header className="border-b border-line px-5 py-4">
-            <div className="flex items-start gap-4">
-              <div className="min-w-0 flex-1">
-                <h2 className="truncate text-base font-semibold text-ink">
-                  {summary?.title ?? t('activity.traceDetail')}
-                </h2>
-                <p className="mt-1 truncate font-mono text-[11px] text-ink-faint">{sourceId}</p>
-              </div>
-              <button type="button" onClick={onClose} className="rounded-lg p-2 hover:bg-paper-hover" aria-label={t('activity.close')}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs text-ink-soft">
-              {summary ? <SummaryPill icon={<Clock3 size={12} />} label={formatDuration(summary.durationMs)} /> : null}
-              <SummaryPill icon={<Bot size={12} />} label={t('activity.modelCalls', { count: spans?.filter((span) => span.kind === 'model_call').length ?? summary?.modelCallCount ?? 0 })} />
-              <SummaryPill icon={<Wrench size={12} />} label={t('activity.toolCalls', { count: spans?.filter((span) => span.kind === 'tool_call').length ?? summary?.toolCallCount ?? 0 })} />
-              <SummaryPill label={t('activity.tokens', { count: tokenTotal })} />
-              {trace ? <TraceCompletenessSummary completeness={trace.completeness} /> : null}
-            </div>
-          </header>
+          <TraceSummaryHeader
+            title={summary?.title ?? t('activity.traceDetail')}
+            sourceId={sourceId}
+            summary={trace?.summary ?? summary ?? null}
+            completeness={trace?.completeness ?? null}
+            tokenTotal={trace ? tokenTotal : undefined}
+            onClose={onClose}
+          />
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)] max-[760px]:grid-cols-1 max-[760px]:overflow-auto">
-            <section className="min-h-0 overflow-auto border-r border-line p-4 max-[760px]:border-b max-[760px]:border-r-0" aria-label={t('activity.timeline')}>
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.4fr)_minmax(340px,0.7fr)] max-[760px]:grid-cols-1 max-[760px]:overflow-auto">
+            <section className="min-h-0 overflow-auto border-r border-line bg-surface/55 p-4 max-[760px]:border-b max-[760px]:border-r-0" aria-label={t('activity.timeline')}>
               {!spans && !error ? <TraceLoading /> : null}
               {error ? <p className="rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
               {spans?.length === 0 ? <p className="text-sm text-ink-faint">{t('activity.noSpans')}</p> : null}
@@ -221,40 +210,104 @@ function TraceLoading() {
   return <div className="grid gap-2" aria-label={t('activity.loadingTrace')}>{[0, 1, 2].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-surface" />)}</div>
 }
 
-function SummaryPill({ icon, label }: { icon?: React.ReactNode; label: string }) {
-  return <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1">{icon}{label}</span>
-}
-
-export function TraceCompletenessSummary({
+export function TraceSummaryHeader({
+  title,
+  sourceId,
+  summary,
   completeness,
+  tokenTotal,
+  onClose,
 }: {
-  completeness: RuntimeTraceCompleteness
+  title: string
+  sourceId: string
+  summary: RuntimeTraceSummary | null
+  completeness: RuntimeTraceCompleteness | null
+  tokenTotal?: number
+  onClose: () => void
 }) {
   const { t } = useTranslation()
-  const captured = completeness.capturedModelCalls + completeness.capturedToolCalls
-  const expected = completeness.expectedModelCalls + completeness.expectedToolCalls
-  const missing = Math.max(0, expected - captured)
-  const incomplete = completeness.state !== 'complete'
-  const classes = completeness.state === 'complete'
-    ? 'bg-surface text-ink-soft'
-    : completeness.state === 'partial'
-      ? 'border border-status-warning-border bg-status-warning-soft font-semibold text-status-warning-ink'
-      : 'border border-status-danger-border bg-status-danger-soft font-semibold text-status-danger-ink'
+  const durationMs = summary
+    ? Math.max(0, Date.parse(summary.endedAt ?? new Date().toISOString()) - Date.parse(summary.startedAt))
+    : null
+  const captured = completeness
+    ? completeness.capturedModelCalls + completeness.capturedToolCalls
+    : null
+  const expected = completeness
+    ? completeness.expectedModelCalls + completeness.expectedToolCalls
+    : null
+  const incomplete = completeness != null && completeness.state !== 'complete'
+  const missing = captured == null || expected == null ? 0 : Math.max(0, expected - captured)
+  const completenessIssues = completeness
+    ? [
+        missing > 0 ? t('activity.traceMissing', { count: missing }) : null,
+        completeness.orphanToolSpans > 0
+          ? t('activity.traceOrphanSpans', { count: completeness.orphanToolSpans })
+          : null,
+        completeness.runningSpans > 0
+          ? t('activity.traceRunningSpans', { count: completeness.runningSpans })
+          : null,
+        completeness.outcomeUnknownSpans > 0
+          ? t('activity.traceUnknownSpans', { count: completeness.outcomeUnknownSpans })
+          : null,
+      ].filter((value): value is string => value != null)
+    : []
+  const completenessNote = completeness && incomplete
+    ? [t(`activity.completenessState.${completeness.state}`), ...completenessIssues].join(' · ')
+    : null
+  const overview = [
+    [t('activity.totalDuration'), formatDuration(durationMs)],
+    [t('activity.modelCallsLabel'), summary?.modelSubmissionCount ?? '—'],
+    [t('activity.toolCallsLabel'), summary?.toolCallCount ?? '—'],
+    [t('activity.tokensLabel'), (tokenTotal ?? summary?.totalTokens)?.toLocaleString() ?? '—'],
+    [t('activity.completenessLabel'), captured == null || expected == null ? '—' : `${captured} / ${expected}`],
+  ] as const
 
   return (
-    <span
-      data-trace-completeness={completeness.state}
-      role={incomplete ? 'alert' : undefined}
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 ${classes}`}
-    >
-      {incomplete ? <CircleAlert size={12} aria-hidden="true" /> : null}
-      {t('activity.traceCompleteness', {
-        state: t(`activity.completeness.${completeness.state}`),
-        captured,
-        expected,
-      })}
-      {missing > 0 ? ` · ${t('activity.traceMissing', { count: missing })}` : null}
-    </span>
+    <header className="border-b border-line px-5 py-4">
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-lg font-semibold text-ink">{title}</h2>
+            {summary ? <SpanStatusChip status={summary.status} /> : null}
+          </div>
+          <p className="mt-1 truncate font-mono text-[10px] text-ink-faint">{sourceId}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="grid size-9 shrink-0 place-items-center rounded-full bg-surface text-ink-soft transition-colors hover:bg-paper-hover hover:text-ink"
+          aria-label={t('activity.close')}
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <div
+        data-trace-overview="true"
+        className="mt-4 grid grid-cols-5 overflow-hidden rounded-2xl bg-surface max-[640px]:grid-cols-2"
+      >
+        {overview.map(([label, value], index) => (
+          <div
+            key={label}
+            data-trace-completeness={index === 4 && completeness ? completeness.state : undefined}
+            role={index === 4 && incomplete ? 'alert' : undefined}
+            title={index === 4 ? completenessNote ?? undefined : undefined}
+            className={`min-w-0 px-5 py-3 ${index > 0 ? 'border-l border-line/60 max-[640px]:border-l-0' : ''} ${
+              index === 4 && completeness?.state === 'none'
+                ? 'bg-status-danger-soft text-status-danger-ink'
+                : index === 4 && incomplete
+                  ? 'bg-status-warning-soft text-status-warning-ink'
+                  : ''
+            } ${index === 4 ? 'max-[640px]:col-span-2' : ''}`}
+          >
+            <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{label}</div>
+            <div className="mt-1 truncate font-mono text-sm font-semibold tabular-nums text-ink">{value}</div>
+            {index === 4 && completenessNote ? (
+              <div data-trace-completeness-note="true" className="mt-0.5 whitespace-normal break-words text-[9px] font-medium leading-tight">{completenessNote}</div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </header>
   )
 }
 
@@ -269,24 +322,30 @@ export function SpanDetail({
   const duration = span.endedAt
     ? Math.max(0, Date.parse(span.endedAt) - Date.parse(span.startedAt))
     : Math.max(0, Date.now() - Date.parse(span.startedAt))
-  const tokenStats: Array<[string, number | null]> = [
-    [t('activity.inputTokens'), span.inputTokens],
-    [t('activity.outputTokens'), span.outputTokens],
-    [t('activity.cachedTokens'), span.cachedInputTokens],
-    [t('activity.reasoningTokens'), span.reasoningTokens],
-    [t('activity.totalTokens'), span.totalTokens],
-  ]
-  const visibleTokenStats = tokenStats.filter(([, value]) => value != null)
   const detailFields: Array<[string, string | number]> = [
     [t('activity.startedAt'), formatBeijingDateTime(span.startedAt)],
     [t('activity.endedAt'), span.endedAt ? formatBeijingDateTime(span.endedAt) : '—'],
     [t('activity.permissionWait'), span.permissionWaitMs == null ? '—' : formatDuration(span.permissionWaitMs)],
     [t('activity.providerRequestId'), span.providerRequestId ?? '—'],
   ]
-  if (span.kind !== 'compaction') {
-    detailFields.splice(2, 0, [t('activity.attempts'), span.attemptCount ?? '—'])
-  }
+  detailFields.splice(2, 0, [t('activity.attempts'), span.attemptCount ?? '—'])
   const attributeSections = buildTraceAttributeSections(span)
+  const properties = [
+    ...attributeSections.p0.map((row) => ({
+      key: row.key,
+      label: t(`activity.traceFields.${row.key}`, { defaultValue: row.key }),
+      value: localizeTraceAttributeValue(row, t),
+    })),
+    ...detailFields.map(([label, value], index) => ({ key: `detail-${index}`, label, value: String(value) })),
+    ...attributeSections.p1.map((row) => ({
+      key: row.key,
+      label: t(`activity.traceFields.${row.key}`, { defaultValue: row.key }),
+      value: localizeTraceAttributeValue(row, t),
+    })),
+  ].sort((left, right) => tracePropertyRank(left.key) - tracePropertyRank(right.key))
+  const callIndex = typeof span.attributes.modelCallIndex === 'number'
+    ? span.attributes.modelCallIndex
+    : null
   return (
     <div>
       <div className="flex items-center gap-3">
@@ -305,52 +364,18 @@ export function SpanDetail({
                 ? t('activity.compaction')
                 : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
           </h3>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-faint">
             <SpanStatusChip status={span.status} />
-            <span className="font-mono text-[11px] tabular-nums text-ink-faint">
-              {formatDuration(duration)}
-            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono tabular-nums">{formatDuration(duration)}</span>
+            {callIndex == null ? null : <><span aria-hidden="true">·</span><span>{t('activity.callOrdinal', { count: callIndex })}</span></>}
           </div>
         </div>
       </div>
 
-      {visibleTokenStats.length > 0 ? (
-        <div className="mt-4 grid grid-cols-2 gap-1.5 min-[480px]:grid-cols-3">
-          {visibleTokenStats.map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-line px-2.5 py-1.5">
-              <div className="text-[10px] text-ink-faint">{label}</div>
-              <div className="mt-0.5 font-mono text-xs tabular-nums text-ink">{value}</div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {span.kind === 'compaction' ? (
-        <div className="mt-4 rounded-lg border border-line px-2.5 py-1.5">
-          <div className="text-[10px] text-ink-faint">{t('activity.attempts')}</div>
-          <div className="mt-0.5 font-mono text-xs tabular-nums text-ink">{span.attemptCount ?? '—'}</div>
-        </div>
-      ) : null}
-
-      {attributeSections.p0.length > 0 ? (
-        <div className="mt-4">
-          <h4 className="text-xs font-semibold text-ink">{t('activity.traceAttributes')}</h4>
-          <TraceAttributeList rows={attributeSections.p0} />
-        </div>
-      ) : null}
+      <TokenComposition span={span} />
       <TracePayloadSection span={span} onOpenMessage={onOpenMessage} />
-      <details className="mt-4 rounded-xl border border-line px-3 py-2.5">
-        <summary className="cursor-pointer text-xs font-semibold text-ink">{t('activity.traceDetails')}</summary>
-        <dl className="mt-2 divide-y divide-line/70 rounded-xl border border-line px-3">
-          {detailFields.map(([label, value]) => (
-            <div key={String(label)} className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 py-1.5 text-xs">
-              <dt className="text-ink-faint">{label}</dt>
-              <dd className="min-w-0 break-all font-mono text-ink-soft">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        {attributeSections.p1.length > 0 ? <TraceAttributeList rows={attributeSections.p1} /> : null}
-      </details>
+      <TraceProperties rows={properties} />
       {span.errorMessage ? (
         <div className="mt-4 rounded-xl bg-status-danger-soft p-3 text-xs text-status-danger-ink">
           <div className="font-semibold">{span.errorCode ?? t('activity.error')}</div>
@@ -358,6 +383,102 @@ export function SpanDetail({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function TokenComposition({ span }: { span: RuntimeTraceSpan }) {
+  const { t } = useTranslation()
+  const rows = [
+    { key: 'input', label: t('activity.inputTokens'), value: span.inputTokens, color: 'bg-clay' },
+    { key: 'output', label: t('activity.outputTokens'), value: span.outputTokens, color: 'bg-trace-bar-tool' },
+    { key: 'reasoning', label: t('activity.reasoningTokens'), value: span.reasoningTokens, color: 'bg-ink-faint' },
+    { key: 'cached', label: t('activity.cachedTokens'), value: span.cachedInputTokens, color: 'bg-line-strong' },
+  ].filter((row): row is typeof row & { value: number } => row.value != null)
+  if (rows.length === 0) return null
+
+  // cache 是 input 的子集，reasoning 是 output 的子集；条形图只画互斥部分，避免合计被重复放大。
+  const exclusiveValues = new Map<string, number>([
+    ['input', Math.max(0, (span.inputTokens ?? 0) - (span.cachedInputTokens ?? 0))],
+    ['output', Math.max(0, (span.outputTokens ?? 0) - (span.reasoningTokens ?? 0))],
+    ['reasoning', span.reasoningTokens ?? 0],
+    ['cached', span.cachedInputTokens ?? 0],
+  ])
+  const segments = rows
+    .map((row) => ({ ...row, exclusiveValue: exclusiveValues.get(row.key) ?? 0 }))
+    .filter((row) => row.exclusiveValue > 0)
+  const barTotal = Math.max(1, segments.reduce((sum, row) => sum + row.exclusiveValue, 0))
+  const total = span.totalTokens ?? (span.inputTokens ?? 0) + (span.outputTokens ?? 0)
+
+  return (
+    <section data-token-composition="true" className="mt-5">
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="text-xs font-semibold text-ink-soft">{t('activity.tokenComposition')}</h4>
+        <span className="font-mono text-xs font-semibold tabular-nums text-ink">{total.toLocaleString()}</span>
+      </div>
+      <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-surface" aria-hidden="true">
+        {segments.map((row) => (
+          <span
+            key={row.key}
+            data-token-segment={row.key}
+            className={row.color}
+            style={{ width: `${(row.exclusiveValue / barTotal) * 100}%` }}
+          />
+        ))}
+      </div>
+      <dl className="mt-3 divide-y divide-line/70">
+        {rows.map((row) => (
+          <div key={row.key} className="flex items-center gap-2 py-2 text-xs">
+            <span className={`size-2 rounded-sm ${row.color}`} aria-hidden="true" />
+            <dt className="flex-1 text-ink-soft">{row.label}</dt>
+            <dd className="font-mono tabular-nums text-ink">{row.value.toLocaleString()}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
+interface TraceProperty {
+  key: string
+  label: string
+  value: string
+}
+
+const TRACE_PROPERTY_PRIORITY = [
+  'finishReason', 'permissionDecision', 'trigger',
+  'detail-2', 'detail-0', 'detail-1',
+  'ttftMs', 'streamMs', 'requestBuildMs', 'executionMs',
+  'toolChoice', 'requestMessageCount', 'toolDefinitionCount',
+  'prepareMs', 'summaryMs', 'persistenceMs', 'installMs',
+] as const
+
+function tracePropertyRank(key: string): number {
+  const index = TRACE_PROPERTY_PRIORITY.indexOf(key as typeof TRACE_PROPERTY_PRIORITY[number])
+  return index === -1 ? TRACE_PROPERTY_PRIORITY.length : index
+}
+
+function TraceProperties({ rows }: { rows: TraceProperty[] }) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <section data-trace-properties="true" className="mt-5">
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="text-xs font-semibold text-ink-soft">{t('activity.traceAttributes')}</h4>
+        {rows.length > 8 ? (
+          <button type="button" onClick={() => setExpanded((value) => !value)} className="text-[11px] font-medium text-clay hover:underline">
+            {expanded ? t('activity.collapse') : t('activity.expandAllProperties', { count: rows.length })}
+          </button>
+        ) : null}
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-2 max-[460px]:grid-cols-1">
+        {rows.map((row, index) => (
+          <div key={row.key} hidden={!expanded && index >= 8} className="min-w-0 rounded-xl bg-surface px-3 py-2.5">
+            <dt className="truncate text-[10px] text-ink-faint" title={row.label}>{row.label}</dt>
+            <dd data-trace-property-value="true" className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-ink">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   )
 }
 
@@ -422,12 +543,9 @@ function TracePayloadSection({
 }) {
   const { t } = useTranslation()
   return (
-    <section className="mt-4" aria-label={t('activity.payloads.title')}>
-      <h4 className="text-xs font-semibold text-ink">{t('activity.payloads.title')}</h4>
-      <p className="mt-1 text-[11px] leading-5 text-ink-faint">
-        {t('activity.payloads.loadHint')}
-      </p>
-      <div className="mt-2 grid gap-2">
+    <section className="mt-5" aria-label={t('activity.payloads.title')}>
+      <h4 className="text-xs font-semibold text-ink-soft">{t('activity.payloads.title')}</h4>
+      <div data-trace-payload-grid="true" className="mt-3 grid grid-cols-2 gap-2">
         {TRACE_PAYLOAD_SLOTS.map((slot) => (
           <TracePayloadSlotDisclosure
             key={`${span.id}:${slot}`}
@@ -477,7 +595,7 @@ function TracePayloadSlotDisclosure({
       <button
         type="button"
         data-payload-slot={slot}
-        className="flex w-full items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2 text-xs font-medium text-clay transition-colors hover:bg-clay-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
+        className="flex min-h-12 w-full items-center gap-2 rounded-xl border border-clay/35 bg-surface px-3 py-2 text-left text-xs font-medium text-clay transition-colors hover:bg-clay-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
         onClick={() => onOpenMessage?.(span.sessionId, responseMessageId)}
       >
         <MessageSquareText size={13} className="shrink-0" />
@@ -489,7 +607,7 @@ function TracePayloadSlotDisclosure({
   // 正文不在 Trace 里的槽位（工具调用、压缩）：陈述事实，不可交互。
   if (storedElsewhere) {
     return (
-      <div data-payload-slot={slot} className="rounded-xl border border-line bg-paper px-3 py-2">
+      <div data-payload-slot={slot} className="min-h-12 rounded-xl border border-line bg-surface px-3 py-2">
         <span className="text-xs font-medium text-ink">{t(`activity.payloads.slots.${slot}`)}</span>
         <p className="mt-0.5 text-[11px] leading-5 text-ink-faint">{t(storedElsewhere)}</p>
       </div>
@@ -522,7 +640,7 @@ function TracePayloadSlotDisclosure({
         type="button"
         data-payload-slot={slot}
         onClick={() => void handleOpen()}
-        className="flex w-full items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2 text-xs font-medium text-ink transition-colors hover:bg-paper-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
+        className="flex min-h-12 w-full items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-left text-xs font-medium text-ink transition-colors hover:border-clay/40 hover:bg-clay-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35"
       >
         <Maximize2 size={12} className="shrink-0 text-ink-faint" />
         <span>{t(`activity.payloads.slots.${slot}`)}</span>
@@ -763,22 +881,8 @@ function SpanStatusChip({ status }: { status: string }) {
         : 'bg-status-danger-soft text-status-danger-ink'
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${classes}`}>
-      {localizeTraceValue(status, t)}
+      {t(`activity.status.${status}`, { defaultValue: localizeTraceValue(status, t) })}
     </span>
-  )
-}
-
-function TraceAttributeList({ rows }: { rows: TraceAttributeRow[] }) {
-  const { t } = useTranslation()
-  return (
-    <dl className="mt-2 divide-y divide-line/60 rounded-xl border border-line px-3">
-      {rows.map((row) => (
-        <div key={row.key} className="grid grid-cols-[150px_minmax(0,1fr)] gap-3 py-1.5 text-xs">
-          <dt className="break-all text-ink-faint">{t(`activity.traceFields.${row.key}`, { defaultValue: row.key })}</dt>
-          <dd className="min-w-0 break-all font-mono text-ink-soft">{localizeTraceAttributeValue(row, t)}</dd>
-        </div>
-      ))}
-    </dl>
   )
 }
 
