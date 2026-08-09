@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { Activity, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import type { ToolActivity } from './ToolActivityList'
+
 export type ToolActivityTier = 'readonly' | 'write' | 'failure'
 
 interface ToolActivityFrameProps {
@@ -19,6 +21,22 @@ interface ToolActivityFrameProps {
   detailsMaxHeightClass: string
   dataFileChangeActivity?: string
   children: ReactNode
+}
+
+export function isFailure(activity: ToolActivity): boolean {
+  return activity.state === 'error'
+    || activity.state === 'denied'
+    || activity.state === 'interrupted'
+}
+
+export function isInProgress(activity: ToolActivity): boolean {
+  return activity.state === 'pending'
+    || activity.state === 'submitted'
+    || activity.state === 'running'
+}
+
+export function Separator() {
+  return <span aria-hidden="true" className="shrink-0 text-[10px] text-ink-faint/70">·</span>
 }
 
 /**

@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CircleAlert, CircleX, Copy, Loader2, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { ToolActivityFrame } from './ToolActivityFrame'
+import {
+  isFailure,
+  isInProgress,
+  Separator,
+  ToolActivityFrame,
+} from './ToolActivityFrame'
 import type { ToolActivity } from './ToolActivityList'
 
 interface BashResultView {
@@ -26,9 +31,7 @@ export function isBashDisplayTool(name: string): name is 'bash' {
 
 export function bashActivityFailed(activity: ToolActivity): boolean {
   const result = parseBashOutput(activity.output)
-  return activity.state === 'error'
-    || activity.state === 'denied'
-    || activity.state === 'interrupted'
+  return isFailure(activity)
     || result.status === 'timed_out'
     || result.status === 'cancelled'
     || result.exitCode != null && result.exitCode !== 0
@@ -311,10 +314,10 @@ function BashStatusIcon({
 }) {
   const { t } = useTranslation()
   if (running) return <Loader2 size={14} aria-label={t('tool.running')} className="shrink-0 animate-spin text-ink-faint" />
-  if (failed) return <CircleAlert size={14} aria-label={t('tool.error')} className="shrink-0 text-status-danger" />
   if (activity.state === 'denied' || activity.state === 'interrupted') {
     return <CircleX size={14} aria-label={t('tool.stopped')} className="shrink-0 text-status-danger" />
   }
+  if (failed) return <CircleAlert size={14} aria-label={t('tool.error')} className="shrink-0 text-status-danger" />
   // 成功态图标是装饰：动作名就在紧邻的摘要里，读屏再念一遍只是噪音。
   return <SquareTerminal size={14} aria-hidden="true" className="shrink-0 text-ink-faint" />
 }
@@ -369,12 +372,4 @@ function formatDuration(durationMs: number): string {
 function stringInput(activity: ToolActivity, key: string): string {
   const value = activity.input?.[key]
   return typeof value === 'string' ? value : ''
-}
-
-function isInProgress(activity: ToolActivity): boolean {
-  return activity.state === 'pending' || activity.state === 'submitted' || activity.state === 'running'
-}
-
-function Separator(): ReactNode {
-  return <span aria-hidden="true" className="shrink-0 text-[10px] text-ink-faint/70">·</span>
 }

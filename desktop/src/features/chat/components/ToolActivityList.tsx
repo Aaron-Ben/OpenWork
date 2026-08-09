@@ -33,6 +33,7 @@ import {
   BashToolActivityRow,
   isBashDisplayTool,
 } from './BashToolActivity'
+import { isFailure } from './ToolActivityFrame'
 
 type ActivityState = ToolResultState | 'pending' | 'submitted' | 'finished'
 
@@ -249,14 +250,8 @@ function isGroupedDisplayTool(name: string): boolean {
 }
 
 function isDisplayFailure(activity: ToolActivity): boolean {
-  return isFailedActivity(activity)
+  return isFailure(activity)
     || activity.name === 'bash' && bashActivityFailed(activity)
-}
-
-function isFailedActivity(activity: ToolActivity): boolean {
-  return activity.state === 'error'
-    || activity.state === 'denied'
-    || activity.state === 'interrupted'
 }
 
 function ToolActivityRow({

@@ -14,7 +14,12 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { resolveErrorMessage } from '@/lib/commandError'
-import { ToolActivityFrame } from './ToolActivityFrame'
+import {
+  isFailure,
+  isInProgress,
+  Separator,
+  ToolActivityFrame,
+} from './ToolActivityFrame'
 import type { ToolActivity } from './ToolActivityList'
 
 export type FileChangeKind = 'created' | 'modified'
@@ -524,16 +529,4 @@ function FileChangeStatusIcon({ activity }: { activity: ToolActivity }) {
 function activityPath(activity: ToolActivity): string {
   const path = activity.input?.path ?? activity.input?.filePath
   return typeof path === 'string' ? path : ''
-}
-
-function isFailure(activity: ToolActivity): boolean {
-  return activity.state === 'error' || activity.state === 'denied' || activity.state === 'interrupted'
-}
-
-function isInProgress(activity: ToolActivity): boolean {
-  return activity.state === 'pending' || activity.state === 'submitted' || activity.state === 'running'
-}
-
-function Separator() {
-  return <span aria-hidden="true" className="shrink-0 text-[10px] text-ink-faint/70">·</span>
 }

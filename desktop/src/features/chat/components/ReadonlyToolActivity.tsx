@@ -14,7 +14,12 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { ToolActivityFrame } from './ToolActivityFrame'
+import {
+  isFailure,
+  isInProgress,
+  Separator,
+  ToolActivityFrame,
+} from './ToolActivityFrame'
 import type { ToolActivity } from './ToolActivityList'
 
 export type ReadonlyToolName = 'read' | 'list' | 'glob' | 'grep'
@@ -49,7 +54,6 @@ interface ReadonlyActivityView {
   grepMatches: GrepMatch[]
   grepFiles: string[]
   grepHitCount: number | null
-  grepScope: string
   outputTruncated: boolean
 }
 
@@ -174,10 +178,6 @@ export function ReadonlyToolActivityRow({
       </div>
     </ToolActivityFrame>
   )
-}
-
-function Separator() {
-  return <span aria-hidden="true" className="shrink-0 text-ink-faint/70">·</span>
 }
 
 function ReadonlyStatusIcon({
@@ -518,7 +518,6 @@ function buildView(
     grepMatches: grep.matches,
     grepFiles: grep.files,
     grepHitCount: grep.hitCount,
-    grepScope,
     outputTruncated: tool === 'glob' ? glob.truncated : tool === 'grep' ? grep.truncated : false,
   }
 }
@@ -669,7 +668,7 @@ function grepScopeFromInput(input: Record<string, unknown> | null): string {
   const glob = stringInput(input, 'glob')
   if (!glob) return path
   if (path === '.') return glob
-  return `${trimSlash(path)}/${glob.startsWith('**/') ? glob : glob}`
+  return `${trimSlash(path)}/${glob}`
 }
 
 function completeOutputLines(output: string): { lines: string[]; truncated: boolean } {
@@ -789,18 +788,6 @@ function safeLiteralPattern(pattern: string): { literal: string; caseInsensitive
 function sharedValue(values: string[]): string {
   if (values.length === 0 || !values[0]) return ''
   return values.every((value) => value === values[0]) ? values[0] : ''
-}
-
-function isFailure(activity: ToolActivity): boolean {
-  return activity.state === 'error'
-    || activity.state === 'denied'
-    || activity.state === 'interrupted'
-}
-
-function isInProgress(activity: ToolActivity): boolean {
-  return activity.state === 'pending'
-    || activity.state === 'submitted'
-    || activity.state === 'running'
 }
 
 function stringInput(input: Record<string, unknown> | null, key: string): string {

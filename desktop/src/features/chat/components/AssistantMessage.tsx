@@ -40,7 +40,6 @@ export const AssistantMessage = memo(function AssistantMessage({
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const messageParts = parts.filter((part) => part.type !== 'tool_call' && part.type !== 'tool_result')
-  const toolParts = parts.filter((part) => part.type === 'tool_call' || part.type === 'tool_result')
   const hasContent = messageParts.some(
     (part) => part.type === 'text' && part.text.trim().length > 0,
   )
@@ -90,7 +89,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           ) : null}
         </div>
       ) : null}
-      {toolParts.length > 0 ? (
+      {parts.some((part) => part.type === 'tool_call' || part.type === 'tool_result') ? (
         <ToolActivityList
           parts={parts}
           turnActive={turnActive}
