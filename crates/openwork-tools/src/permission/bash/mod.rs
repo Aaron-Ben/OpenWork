@@ -240,13 +240,48 @@ fn static_token(node: Node<'_>, source: &[u8]) -> Result<String, ()> {
         "word" | "number" => decode_word(node_text(node, source)?),
         "raw_string" => strip_quotes(node_text(node, source)?, '\''),
         "string" => {
-            if node.named_child_count() != 0 {
-                return Err(());
+            if node.named_child_count() == 0 {
+                return strip_quotes(node_text(node, source)?, '"');
             }
-            strip_quotes(node_text(node, source)?, '"')
+            let mut decoded = String::new();
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() != "string_content" {
+                    return Err(());
+                }
+                decoded.push_str(&decode_double_quoted_content(node_text(child, source)?)?);
+            }
+            Ok(decoded)
         }
         _ => Err(()),
     }
+}
+
+/// 双引号里的反斜杠规则比无引号 word 更窄。若把其余反斜杠也剥掉，权限分析得到的
+/// 路径就会与 shell 实际访问的路径分叉，因此这里不能复用 `decode_word`。
+fn decode_double_quoted_content(raw: &str) -> Result<String, ()> {
+    let mut decoded = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+
+        let escaped = chars.next().ok_or(())?;
+        match escaped {
+            '$' | '`' | '"' | '\\' => decoded.push(escaped),
+            '\n' => {}
+            '\r' if chars.peek() == Some(&'\n') => {
+                chars.next();
+            }
+            other => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+        }
+    }
+    Ok(decoded)
 }
 
 fn strip_quotes(raw: &str, quote: char) -> Result<String, ()> {
@@ -378,6 +413,66 @@ mod tests {
             analysis.units[0]
                 .effects
                 .contains(&Effect::write("/repo/b.txt"))
+        );
+    }
+
+    #[test]
+    fn quoted_literal_paths_are_provably_readonly() {
+        for raw in ["ls -la \"packages/tui/src\"", "ls -la 'packages/tui/src'"] {
+            let analysis = analyze(raw, Path::new("/repo"), Some("/usr/bin:/bin"));
+
+            assert!(!analysis.unparsed, "input unexpectedly unparsed: {raw}");
+            assert_eq!(
+                analysis.units[0]
+                    .readonly_proof
+                    .as_ref()
+                    .map(|proof| proof.key.as_str()),
+                Some("ls"),
+                "input should have a readonly proof: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn double_quoted_literal_paths_follow_bash_escape_rules() {
+        let cases = [
+            (r#"cat "a b.txt""#, "/repo/a b.txt"),
+            (r#"cat "a\"b.txt""#, r#"/repo/a"b.txt"#),
+            (r#"cat "a\b.txt""#, r"/repo/a\b.txt"),
+        ];
+
+        for (raw, expected_path) in cases {
+            let analysis = analyze(raw, Path::new("/repo"), Some("/usr/bin:/bin"));
+
+            assert!(!analysis.unparsed, "input unexpectedly unparsed: {raw}");
+            assert!(
+                analysis.units[0]
+                    .effects
+                    .contains(&Effect::read(expected_path)),
+                "input resolved to the wrong read effect: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn double_quoted_expansions_remain_unparsed() {
+        for raw in [r#"echo "$HOME""#, r#"cat "$(ls)""#, r#"echo "${x}""#] {
+            let analysis = analyze(raw, Path::new("/repo"), Some("/usr/bin:/bin"));
+            assert!(analysis.unparsed, "input should remain unparsed: {raw}");
+        }
+    }
+
+    #[test]
+    fn empty_double_quoted_argument_keeps_its_existing_behavior() {
+        let analysis = analyze(r#"cat """#, Path::new("/repo"), Some("/usr/bin:/bin"));
+
+        assert!(!analysis.unparsed);
+        assert_eq!(
+            analysis.units[0]
+                .readonly_proof
+                .as_ref()
+                .map(|proof| proof.key.as_str()),
+            Some("cat")
         );
     }
 }
