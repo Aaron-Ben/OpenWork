@@ -193,23 +193,13 @@ SELECT sum(input_tokens) FROM trace_spans WHERE kind = 'model_call'
 
 判别法：这个引用指向的行，有没有可能在被引用时还不存在或已经丢了？
 
-### 内容记录是可关的
+### 内容始终完整记录
 
-`TraceContentPolicy` 的初始值挂在 `OpenWorkCoreConfig` 上，三档：
+Recorder 没有正文记录档位，始终处理全部四个支持的正文槽位。Desktop 不在本地持久化或启动时同步正文策略。
 
-| 档位 | 行为 |
-|---|---|
-| `full` | 记录全部四个槽位（默认） |
-| `compaction_only` | 只记录 Compaction 及其摘要采样子 Span 的槽位 |
-| `off` | 不写 `trace_payloads` / `trace_span_payloads`，其余 Trace 不变 |
+始终完整记录的理由是**内容不出本机**——Postgres 在用户自己的机器上，这正是云端 observability 厂商必须默认关闭而我们可以直接记录的原因。
 
-默认 `full` 的理由是**内容不出本机**——Postgres 在用户自己的机器上，这正是云端 observability 厂商必须默认关闭而我们可以默认开启的原因。但它记录的是用户的私有代码，因此必须有关闭入口，且界面上要说明"开启后 Trace 含源码内容"。
-
-**切换只发生在 Recorder 注入处，不得在 Agent Loop 里加 Trace 分支。**
-
-运行中由 Recorder 持有一个原子策略值；每次接收写入信号时读取当下值，再决定是否保留正文。Desktop 在本地持久化用户选择，并在启动时、允许发起第一个 Turn 之前把选择推给 Core；之后切换立即作用于后续写入，不需要重启，也不追溯改写历史正文。
-
-无论哪一档，以下永远不记录：API Key、解密后的凭证、HTTP Header、未脱敏的 Provider 错误 Body。
+以下永远不记录：API Key、解密后的凭证、HTTP Header、未脱敏的 Provider 错误 Body。
 
 ## 7. Token 口径
 
@@ -421,16 +411,7 @@ struct TraceCompleteness {
 
 ### 为什么不统计"缺失的正文"
 
-早先的设计里有一个 `spans_missing_payload`，统计"策略为 `full` 却没有 `request` 槽位"的 Model Span。**这一项已删除，因为它不可能被正确计算。**
-
-`TraceContentPolicy` 是进程级配置，**不随 Span 持久化**。读一条三个月前的 Span 发现它没有正文，无法区分两种原因：
-
-- 当时策略不是 `full`（**设计如此**）；
-- 当时正文写入失败（**采集缺口**）。
-
-拿**当前**进程的配置去解释**历史** Span 是猜测，会把"用户那阵子关了内容记录"报成数据丢失。
-
-考虑过给每条 Span 记录当时的有效策略，否决了：它在 99% 的行上都是同一个值 `full`，过不了 §15 的第 3 问。为一个边缘诊断指标给每一行加一个近乎常量的字段，代价高于收益。
+早先的设计里有一个 `spans_missing_payload`，统计没有 `request` 槽位的 Model Span。**这一项已删除，因为缺失原因无法从读取结果可靠派生。**历史记录可能来自旧版本，正文写入也可能独立失败；部分槽位还会按 §5 的指针规则有意不写。
 
 **后果要接受**：界面上"这里没有正文"只能陈述事实，不能声称原因。前端的处理方式见 [desktop.md](desktop.md)。
 
@@ -709,7 +690,7 @@ appVersion    三个属性类型各带一份，每行存一次进程级常量。
 
 ## 19. 尚未实施
 
-- **正文的 Core 写入、Desktop 按需读取、截断、运行时内容策略、按天保留与孤儿清扫已经实施。** 标注仍只有 schema 和设计。**成本已从设计中移除**，理由见 §18；
+- **正文的 Core 写入、Desktop 按需读取、截断、按天保留与孤儿清扫已经实施。** 标注仍只有 schema 和设计。**成本已从设计中移除**，理由见 §18；
 - Kimi 的 `cached_input_tokens` 集合关系仍未从官方资料验证，§7 表中标为未验证；
 - **§15 的移除项已经实施**：逐次 Transport 明细、父级 attempt 聚合、低价值 Tool 耗时/计数、重复 `appVersion` 与 13 个内容影子均已删除，三个压缩准备耗时已合并为 `prepareMs`；
 - **主字段/折叠区分层已经实施。** 属性白名单的每个 key 都有编译期穷尽归类；
@@ -717,7 +698,7 @@ appVersion    三个属性类型各带一份，每行存一次进程级常量。
 - `flush_turn/flush_session` 的 dropped/write-failure 计数尚未暴露到界面或运维出口。这一条优先级会随并发上升；
 - Attempt 分类尚未用于重试决策；
 - 自动压缩失败后没有抑制状态；
-- `TraceContentPolicy` 已由 Desktop 在启动门控阶段推给 Core，并可在运行时原子切换；`NoopTraceRecorder` 只用于测试装配；
+- Recorder 始终记录全部支持的正文槽位；`TraceContentPolicy` 及其运行时切换路径已经删除；`NoopTraceRecorder` 只用于测试装配；
 - `trace_span_payloads.redacted_count` 恒为 `0`，是应当删除的列，见 [data-model.md](data-model.md)；
 - 未直接声明 `tracing` 或 OpenTelemetry 依赖。以后接入时由同一生命周期 Guard 同时更新领域 Trace 与 `tracing::Span`，OTLP 默认关闭且失败不影响 Turn。
 
@@ -732,11 +713,9 @@ appVersion    三个属性类型各带一份，每行存一次进程级常量。
 5. Tool Call 默认没有任何正文槽位；被拒绝的 Tool Call 才写 `response`；
 6. 同一 Session 内多次调用的相同 `tool_definitions` 在 `trace_payloads` 中只有一行；
 7. 超过上限的正文被截断，`truncated = TRUE` 且 `original_byte_size` 非空——**数据库拒绝只置 `truncated` 不给原始大小的行**；
-8. `TraceContentPolicy = off` 时不产生任何 `trace_payloads` 行，Span 与 token 不受影响；
-9. `compaction_only` 时只有 Compaction 及其子 Span 有正文；
-10. 正文写入失败时 Span 本身仍落库；
-11. 任何档位下，正文中都不出现 API Key、凭证、HTTP Header；
-12. `get_trace` **不**返回正文；正文只经 `get_span_payload` 按需加载。
+8. 正文写入失败时 Span 本身仍落库；
+9. 正文中不出现 API Key、凭证、HTTP Header；
+10. `get_trace` **不**返回正文；正文只经 `get_span_payload` 按需加载。
 
 ### 标注
 

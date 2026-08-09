@@ -70,7 +70,6 @@ describe('i18n', () => {
       }
       expect(translate('activity.payloads.truncated')).not.toBe('activity.payloads.truncated')
       expect(translate('activity.payloads.missing')).not.toBe('activity.payloads.missing')
-      expect(translate('settings.traceContent.sourceWarning')).not.toBe('settings.traceContent.sourceWarning')
     }
 
     expect(i18n.getFixedT('zh-CN')('activity.traceFields.requestBuildMs')).toBe('请求构建耗时')

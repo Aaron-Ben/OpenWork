@@ -59,7 +59,6 @@ pub fn run() {
             commands::runtime::runtime_trace_get,
             commands::runtime::runtime_trace_get_by_id,
             commands::runtime::runtime_trace_payload_get,
-            commands::runtime::runtime_trace_content_policy_set,
             commands::runtime::runtime_trace_compactions,
         ])
         .run(tauri::generate_context!())

@@ -39,8 +39,7 @@ pub use trace::{
     DEFAULT_TRACE_PAYLOAD_SLOT_MAX_BYTES, ModelCallFinished, ModelCallStarted, ModelCallTraceGuard,
     ModelTraceAttributesV1, NoopTraceRecorder, ToolCallFinished, ToolCallStarted,
     ToolCallTraceGuard, ToolTraceAttributesV1, TraceContentConfig, TraceContentConfigError,
-    TraceContentPolicy, TraceFlushResult, TracePayloadSlot, TracePayloads, TraceRecorder,
-    TraceSignal, TraceStatus,
+    TraceFlushResult, TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TraceStatus,
 };
 pub use updates::{
     LiveToolCall, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionUpdate,

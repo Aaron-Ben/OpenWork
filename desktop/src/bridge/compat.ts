@@ -468,8 +468,6 @@ export type RuntimeTracePayloadSlot =
   | 'tool_definitions'
   | 'response'
 
-export type RuntimeTraceContentPolicy = 'full' | 'compaction_only' | 'off'
-
 export interface RuntimeTraceSpanPayload {
   spanId: string
   slot: RuntimeTracePayloadSlot

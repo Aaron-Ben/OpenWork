@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, useContextWindowStore } from '@/features/settings/contextWindowStore'
-import { useTraceContentStore } from '@/features/settings/traceContentStore'
 import { GeneralSettings } from './GeneralSettings'
 
 describe('GeneralSettings', () => {
@@ -12,7 +11,7 @@ describe('GeneralSettings', () => {
     expect(markup).toContain('通用')
     expect(markup).toContain('外观')
     expect(markup).toContain('上下文窗口')
-    expect(markup).toContain('Trace 内容')
+    expect(markup).not.toContain('Trace 内容')
     expect(markup).not.toContain('Skills')
   })
 
@@ -40,15 +39,11 @@ describe('GeneralSettings', () => {
     expect(markup).toContain('/compact')
   })
 
-  it('offers all trace content policies and warns about private source code', () => {
-    useTraceContentStore.setState({ policy: 'full', syncState: 'ready', updating: false, error: null })
-
+  it('does not expose trace content recording tiers', () => {
     const markup = renderToStaticMarkup(<GeneralSettings />)
 
-    expect(markup).toContain('完整')
-    expect(markup).toContain('仅压缩')
-    expect(markup).toContain('关闭')
-    expect(markup).toContain('私有源码内容')
-    expect(markup).toContain('无需重启')
+    expect(markup).not.toContain('内容记录档位')
+    expect(markup).not.toContain('仅压缩')
+    expect(markup).not.toContain('不写正文')
   })
 })

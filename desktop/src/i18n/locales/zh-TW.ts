@@ -47,7 +47,7 @@ export const zhTW = {
     payloads: {
       title: '正文', loading: '正在載入正文……',
       close: '關閉正文檢視窗',
-      missing: '無正文記錄。', currentPolicyLimited: '目前內容記錄不是「完整」層級。',
+      missing: '無正文記錄。',
       openMessage: '在聊天記錄中查看回應', toolStoredInChat: 'Tool Call 不建立模型請求正文欄位；參數與正常結果儲存在聊天記錄中。',
       compactionHasNoPayload: 'Compaction 節點本身沒有正文；請選擇其摘要取樣子節點。',
       storedSize: '已儲存 {{size}}', truncated: '已截斷，原始 {{size}}', showAll: '展開全部', showPreview: '只顯示預覽',
@@ -213,25 +213,13 @@ export const zhTW = {
     title: '設定',
     general: {
       title: '一般',
-      description: '外觀、上下文視窗與 Trace 內容偏好。',
+      description: '外觀與上下文視窗偏好。',
     },
     contextWindow: {
       title: '上下文視窗', description: '獨立於模型選擇，設定 OpenWork 使用的上下文預算。',
       sizeLabel: '上下文視窗大小', sizeDescription: '用於上下文用量顯示與 Core 取樣前預算判斷的 Token 容量，不屬於特定模型。',
       observationOnly: '每次提交 Provider 前，Core 會在達到此預算的 85% 時自動壓縮。每個邏輯 Model Call 最多執行一次門檻壓縮或溢位恢復；仍可明確使用 /compact。',
       save: '儲存', saved: '已儲存', invalid: '請輸入大於 0 的整數 Token 數。',
-    },
-    traceContent: {
-      title: 'Trace 內容', description: '控制品質追蹤是否儲存模型實際看到的正文。',
-      policyLabel: '內容記錄層級', sourceWarning: '開啟後 Trace 會包含使用者輸入、System Context、工具定義，以及可能的私有原始碼內容。',
-      policies: {
-        full: { label: '完整', description: '記錄所有支援的正文欄位。' },
-        compaction_only: { label: '僅壓縮', description: '只記錄壓縮摘要取樣子節點的正文。' },
-        off: { label: '關閉', description: '不寫入正文；Span、狀態與 Token 仍會記錄。' },
-      },
-      save: '儲存', saving: '正在套用……', saved: '已儲存並立即生效。',
-      runtimeNote: '切換會原子更新執行中的 Recorder，只影響後續寫入，無需重新啟動，也不會改寫歷史記錄。',
-      startupSync: '正在套用 Trace 內容隱私設定……', startupError: 'Trace 內容隱私設定未能套用，已阻止開始新的 Turn。', retry: '重試',
     },
     skills: {
       title: 'Skills',

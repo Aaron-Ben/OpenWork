@@ -33,13 +33,6 @@ describe('trace command bridge', () => {
     })
   })
 
-  it('maps runtime content-policy updates without a restart command', async () => {
-    vi.mocked(invoke).mockResolvedValue('off')
-
-    await expect(coreCommands.setTraceContentPolicy('off')).resolves.toBe('off')
-    expect(invoke).toHaveBeenCalledWith('runtime_trace_content_policy_set', { policy: 'off' })
-  })
-
   it('maps skill listing to the user-level Tauri command without a project argument', async () => {
     vi.mocked(invoke).mockResolvedValue({ skills: [], warnings: [] })
 

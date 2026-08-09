@@ -34,8 +34,8 @@ use crate::session::{
     CompactionStateCollector, ControlToolSurface, ConversationCompaction,
     ConversationTranscriptTool, ParentLink, PermissionDecision, PreparedTurnInput, ResolvedModel,
     SessionApproval, SessionError, SessionHandle, SessionId, SessionRuntimeConfig, SessionSnapshot,
-    SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TraceContentPolicy,
-    TracePayloadSlot, TurnAccepted, TurnId, TurnToolset,
+    SessionStorage, SessionUpdateEnvelope, ToolCallId, TraceContentConfig, TracePayloadSlot,
+    TurnAccepted, TurnId, TurnToolset,
 };
 use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::storage::{
@@ -956,15 +956,6 @@ impl OpenWorkCore {
         slot: TracePayloadSlot,
     ) -> Result<Option<TraceSpanPayloadRecord>, OpenWorkCoreError> {
         Ok(self.storage.get_span_payload(span_id, slot).await?)
-    }
-
-    pub fn trace_content_policy(&self) -> TraceContentPolicy {
-        self.trace.content_policy()
-    }
-
-    pub fn set_trace_content_policy(&self, policy: TraceContentPolicy) -> TraceContentPolicy {
-        self.trace.set_content_policy(policy);
-        self.trace.content_policy()
     }
 
     /// Compaction Spans for a Session, newest first. Manual compactions have no

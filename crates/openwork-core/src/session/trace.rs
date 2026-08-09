@@ -23,25 +23,14 @@ const MAX_ARTIFACT_TYPES: usize = 16;
 pub const DEFAULT_TRACE_PAYLOAD_SLOT_MAX_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_TRACE_PAYLOAD_RETENTION_DAYS: u32 = 30;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TraceContentPolicy {
-    #[default]
-    Full,
-    CompactionOnly,
-    Off,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraceContentConfig {
-    policy: TraceContentPolicy,
     slot_max_bytes: usize,
     retention_days: u32,
 }
 
 impl TraceContentConfig {
     pub fn new(
-        policy: TraceContentPolicy,
         slot_max_bytes: usize,
         retention_days: u32,
     ) -> Result<Self, TraceContentConfigError> {
@@ -52,14 +41,9 @@ impl TraceContentConfig {
             return Err(TraceContentConfigError::RetentionDaysOutOfRange);
         }
         Ok(Self {
-            policy,
             slot_max_bytes,
             retention_days,
         })
-    }
-
-    pub fn policy(self) -> TraceContentPolicy {
-        self.policy
     }
 
     pub fn slot_max_bytes(self) -> usize {
@@ -74,7 +58,6 @@ impl TraceContentConfig {
 impl Default for TraceContentConfig {
     fn default() -> Self {
         Self {
-            policy: TraceContentPolicy::Full,
             slot_max_bytes: DEFAULT_TRACE_PAYLOAD_SLOT_MAX_BYTES,
             retention_days: DEFAULT_TRACE_PAYLOAD_RETENTION_DAYS,
         }
@@ -132,12 +115,6 @@ impl TracePayloads {
         let mut payloads = Self::for_model_request(request);
         payloads.system_context = serde_json::to_value(system_context.parts()).ok();
         payloads
-    }
-
-    fn clear(&mut self) {
-        self.request = None;
-        self.system_context = None;
-        self.tool_definitions = None;
     }
 }
 
@@ -1351,36 +1328,6 @@ pub enum TraceSignal {
     CompactionFinished(Box<CompactionFinished>),
 }
 
-impl TraceSignal {
-    pub(crate) fn apply_content_policy(&mut self, policy: TraceContentPolicy) {
-        let keep_model_payloads = |started: &ModelCallStarted| match policy {
-            TraceContentPolicy::Full => true,
-            TraceContentPolicy::CompactionOnly => started.parent_span_id.is_some(),
-            TraceContentPolicy::Off => false,
-        };
-        match self {
-            Self::ModelCallStarted(started) => {
-                if !keep_model_payloads(started) {
-                    started.payloads.clear();
-                }
-            }
-            Self::ModelCallFinished(finished) => {
-                if !keep_model_payloads(&finished.started) {
-                    finished.started.payloads.clear();
-                    finished.response_payload = None;
-                }
-            }
-            Self::ToolCallFinished(finished) => {
-                if policy != TraceContentPolicy::Full {
-                    finished.response_payload = None;
-                }
-            }
-            Self::ToolCallStarted(_) | Self::CompactionStarted(_) | Self::CompactionFinished(_) => {
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceFlushResult {
     pub flushed: bool,
@@ -1564,10 +1511,9 @@ mod tests {
     }
 
     #[test]
-    fn trace_content_defaults_to_full_with_a_one_megabyte_slot_limit_and_thirty_day_retention() {
+    fn trace_content_defaults_to_a_one_megabyte_slot_limit_and_thirty_day_retention() {
         let config = TraceContentConfig::default();
 
-        assert_eq!(config.policy(), TraceContentPolicy::Full);
         assert_eq!(config.slot_max_bytes(), 1024 * 1024);
         assert_eq!(config.retention_days(), 30);
     }
@@ -1575,7 +1521,7 @@ mod tests {
     #[test]
     fn trace_content_rejects_zero_day_retention() {
         assert_eq!(
-            TraceContentConfig::new(TraceContentPolicy::Full, 1024, 0),
+            TraceContentConfig::new(1024, 0),
             Err(TraceContentConfigError::RetentionDaysOutOfRange)
         );
     }

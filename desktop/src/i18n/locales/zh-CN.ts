@@ -65,7 +65,7 @@ export const zhCN = {
     payloads: {
       title: '正文', loading: '正在加载正文……',
       close: '关闭正文查看窗',
-      missing: '无正文记录。', currentPolicyLimited: '当前内容记录不是“完整”档位。',
+      missing: '无正文记录。',
       openMessage: '在聊天记录中查看响应', toolStoredInChat: 'Tool Call 不创建模型请求正文槽位；参数与正常结果保存在聊天记录中。',
       compactionHasNoPayload: 'Compaction 节点本身没有正文；请选择它的摘要采样子节点。',
       storedSize: '已存 {{size}}', truncated: '已截断，原始 {{size}}', showAll: '展开全部', showPreview: '只显示预览',
@@ -264,7 +264,7 @@ export const zhCN = {
     title: '设置',
     general: {
       title: '通用',
-      description: '外观、上下文窗口与 Trace 内容偏好。',
+      description: '外观与上下文窗口偏好。',
     },
     contextWindow: {
       title: '上下文窗口',
@@ -275,18 +275,6 @@ export const zhCN = {
       save: '保存',
       saved: '已保存',
       invalid: '请输入大于 0 的整数 Token 数。',
-    },
-    traceContent: {
-      title: 'Trace 内容', description: '控制质量追踪是否保存模型实际看到的正文。',
-      policyLabel: '内容记录档位', sourceWarning: '开启后 Trace 会包含用户输入、System Context、工具定义以及可能的私有源码内容。',
-      policies: {
-        full: { label: '完整', description: '记录所有支持的正文槽位。' },
-        compaction_only: { label: '仅压缩', description: '只记录压缩摘要采样子节点的正文。' },
-        off: { label: '关闭', description: '不写正文；Span、状态与 Token 仍会记录。' },
-      },
-      save: '保存', saving: '正在应用……', saved: '已保存并立即生效。',
-      runtimeNote: '切换会原子地更新运行中的 Recorder，只影响后续写入，无需重启，也不会改写历史记录。',
-      startupSync: '正在应用 Trace 内容隐私设置……', startupError: 'Trace 内容隐私设置未能应用，已阻止开始新的 Turn。', retry: '重试',
     },
     skills: {
       title: 'Skills',

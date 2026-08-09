@@ -43,9 +43,8 @@ pub use session::{
     SessionHandle, SessionId, SessionPhase, SessionRuntimeConfig, SessionRuntimeSnapshot,
     SessionSnapshot, SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallFinished,
     ToolCallId, ToolCallStarted, ToolCallTraceGuard, ToolProgressUpdate, ToolTraceAttributesV1,
-    TraceContentConfig, TraceContentConfigError, TraceContentPolicy, TraceFlushResult,
-    TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TraceStatus, TurnAccepted,
-    TurnId as RuntimeTurnId, TurnOutcome,
+    TraceContentConfig, TraceContentConfigError, TraceFlushResult, TracePayloadSlot, TracePayloads,
+    TraceRecorder, TraceSignal, TraceStatus, TurnAccepted, TurnId as RuntimeTurnId, TurnOutcome,
 };
 pub use storage::{
     API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError, ConversationProjectionRecord,

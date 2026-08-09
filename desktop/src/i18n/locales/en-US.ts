@@ -48,7 +48,7 @@ export const enUS = {
     payloads: {
       title: 'Payloads', loading: 'Loading payload…',
       close: 'Close payload viewer',
-      missing: 'No payload record.', currentPolicyLimited: 'Content recording is currently not set to Full.',
+      missing: 'No payload record.',
       openMessage: 'View response in conversation', toolStoredInChat: 'A Tool Call has no model-request payload slots; its arguments and normal results are stored in the conversation.',
       compactionHasNoPayload: 'The Compaction span has no payload; select its summary-sampling child span.',
       storedSize: '{{size}} stored', truncated: 'Truncated; original size {{size}}', showAll: 'Show all', showPreview: 'Show preview only',
@@ -218,25 +218,13 @@ export const enUS = {
     title: 'Settings',
     general: {
       title: 'General',
-      description: 'Appearance, context window, and trace content preferences.',
+      description: 'Appearance and context window preferences.',
     },
     contextWindow: {
       title: 'Context window', description: 'Configure the OpenWork context budget independently from model selection.',
       sizeLabel: 'Context window size', sizeDescription: 'The token capacity used by context usage displays and Core preflight budgeting.',
       observationOnly: 'Before each provider submission, Core automatically compacts at 85% of this budget. Each logical model call permits at most one threshold or overflow compaction; /compact remains available explicitly.',
       save: 'Save', saved: 'Saved', invalid: 'Enter a positive whole number of tokens.',
-    },
-    traceContent: {
-      title: 'Trace content', description: 'Control whether quality traces store the content the model actually saw.',
-      policyLabel: 'Content recording level', sourceWarning: 'When enabled, Trace can contain user input, System Context, tool definitions, and private source code.',
-      policies: {
-        full: { label: 'Full', description: 'Record every supported payload slot.' },
-        compaction_only: { label: 'Compaction only', description: 'Record payloads only for summary-sampling child spans.' },
-        off: { label: 'Off', description: 'Do not write payloads; spans, status, and tokens are still recorded.' },
-      },
-      save: 'Save', saving: 'Applying…', saved: 'Saved and applied immediately.',
-      runtimeNote: 'Changes atomically update the running Recorder and affect subsequent writes only. No restart is required and history is not rewritten.',
-      startupSync: 'Applying the Trace content privacy setting…', startupError: 'The Trace content privacy setting could not be applied, so new turns are blocked.', retry: 'Retry',
     },
     skills: {
       title: 'Skills',

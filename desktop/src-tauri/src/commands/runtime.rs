@@ -5,9 +5,9 @@ use openwork_core::{
     ConversationProjectionRecord, ConversationProjectionSelector, ConversationTranscriptPage,
     ConversationTranscriptQuery, LoadedSession, OpenWorkCore as OpenWorkCoreService,
     PermissionDecision, PermissionMode, ReapplyFileChangesResult, SessionId, SessionInput,
-    SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TraceContentPolicy,
-    TracePayloadSlot, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted,
-    TurnTrace, UndoFileChangesResult,
+    SessionRecord, SessionSnapshot, SessionUpdateEnvelope, ToolCallId, TracePayloadSlot,
+    TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnAccepted, TurnTrace,
+    UndoFileChangesResult,
 };
 
 type OpenWorkCore = Arc<OpenWorkCoreService>;
@@ -274,14 +274,6 @@ pub async fn runtime_trace_payload_get(
     core.get_span_payload(&span_id, slot)
         .await
         .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub fn runtime_trace_content_policy_set(
-    core: tauri::State<'_, OpenWorkCore>,
-    policy: TraceContentPolicy,
-) -> TraceContentPolicy {
-    core.set_trace_content_policy(policy)
 }
 
 /// Compaction Spans for one Session, newest first. Manual compactions have no

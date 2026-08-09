@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 
 import { coreCommands } from '@/bridge/commands'
 import type {
-  RuntimeTraceContentPolicy,
   RuntimeTraceCompleteness,
   RuntimeTracePayloadSlot,
   RuntimeTraceSpan,
@@ -15,7 +14,6 @@ import type {
   RuntimeTurnTrace,
 } from '@/bridge/compat'
 import { formatBeijingDateTime } from '@/lib/dateTime'
-import { useTraceContentStore } from '@/features/settings/traceContentStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import {
   buildTraceAttributeSections,
@@ -679,7 +677,6 @@ export function TracePayloadModal({
   onClose: () => void
 }) {
   const { t } = useTranslation()
-  const policy = useTraceContentStore((store) => store.policy)
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -736,7 +733,7 @@ export function TracePayloadModal({
             state.payload ? (
               <TracePayloadBody payload={state.payload} relaxed />
             ) : (
-              <MissingTracePayload policy={policy} />
+              <MissingTracePayload />
             )
           ) : (
             <p className="text-xs text-ink-faint">{t('activity.payloads.loading')}</p>
@@ -764,14 +761,9 @@ function payloadStoredElsewhere(
   return null
 }
 
-export function MissingTracePayload({ policy }: { policy: RuntimeTraceContentPolicy }) {
+export function MissingTracePayload() {
   const { t } = useTranslation()
-  return (
-    <div className="text-xs leading-5 text-ink-faint">
-      <p>{t('activity.payloads.missing')}</p>
-      {policy === 'full' ? null : <p>{t('activity.payloads.currentPolicyLimited')}</p>}
-    </div>
-  )
+  return <p className="text-xs leading-5 text-ink-faint">{t('activity.payloads.missing')}</p>
 }
 
 export function TracePayloadBody({

@@ -110,7 +110,7 @@ Once running, configure a provider and API key in Settings, create a session wit
 | `bash` | Syntax analysis informs the permission decision but is not runtime isolation; approving `bash` means trusting the command and the programs it starts |
 | Network | Not enforced; host processes retain the network capabilities of the operating-system account |
 | Credentials | API keys are encrypted in PostgreSQL; the master key is injected from the environment and is never stored in the database |
-| Trace payloads | May contain private code and model requests by default. Desktop can select `full`, `compaction_only`, or `off`; the default retention period is 30 days |
+| Trace payloads | Always record every supported payload slot and may contain private code and model requests; the default retention period is 30 days |
 
 OpenWork **deliberately does not provide OS-level sandboxing, network control, unattended execution, or a “run any command without asking” mode**. See the [permission design](docs/permissions.md) for the complete rationale and semantics.
 

@@ -156,12 +156,11 @@ describe('SpanDetail', () => {
     expect(markup.length).toBeLessThan(TRACE_PAYLOAD_RENDER_LIMIT_CHARS + 5_000)
   })
 
-  it('states payload absence as a fact and only describes the current policy', () => {
-    const markup = renderToStaticMarkup(<MissingTracePayload policy="off" />)
+  it('states payload absence without guessing why it is missing', () => {
+    const markup = renderToStaticMarkup(<MissingTracePayload />)
 
     expect(markup).toContain('无正文记录')
-    expect(markup).toContain('当前内容记录不是')
-    expect(markup).not.toContain('当时')
+    expect(markup).not.toContain('档位')
   })
 
   it('does not request a payload until its slot is expanded', async () => {

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, oneshot};
 use super::{TRACE_PAYLOAD_ADVISORY_LOCK, time::to_china};
 use crate::session::{
     CompactionFinished, CompactionStarted, ModelCallFinished, ModelCallStarted, SessionId,
-    ToolCallFinished, ToolCallStarted, TraceContentConfig, TraceContentPolicy, TraceFlushResult,
-    TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TurnId,
+    ToolCallFinished, ToolCallStarted, TraceContentConfig, TraceFlushResult, TracePayloadSlot,
+    TracePayloads, TraceRecorder, TraceSignal, TurnId,
 };
 
 const DEFAULT_TRACE_QUEUE_CAPACITY: usize = 1_024;
@@ -34,7 +34,6 @@ struct TraceMetrics {
 pub struct PostgresTraceRecorder {
     sender: mpsc::Sender<TraceCommand>,
     metrics: Arc<TraceMetrics>,
-    content_policy: Arc<AtomicU8>,
 }
 
 impl PostgresTraceRecorder {
@@ -57,27 +56,13 @@ impl PostgresTraceRecorder {
     ) -> Self {
         let (sender, receiver) = mpsc::channel(capacity.max(1));
         let metrics = Arc::new(TraceMetrics::default());
-        let content_policy = Arc::new(AtomicU8::new(encode_content_policy(content.policy())));
         tokio::spawn(run_writer(
             pool,
             receiver,
             Arc::clone(&metrics),
             content.slot_max_bytes(),
         ));
-        Self {
-            sender,
-            metrics,
-            content_policy,
-        }
-    }
-
-    pub fn content_policy(&self) -> TraceContentPolicy {
-        decode_content_policy(self.content_policy.load(Ordering::Acquire))
-    }
-
-    pub fn set_content_policy(&self, policy: TraceContentPolicy) {
-        self.content_policy
-            .store(encode_content_policy(policy), Ordering::Release);
+        Self { sender, metrics }
     }
 
     pub fn metrics(&self) -> TraceFlushResult {
@@ -91,8 +76,7 @@ impl PostgresTraceRecorder {
 
 #[async_trait]
 impl TraceRecorder for PostgresTraceRecorder {
-    fn record(&self, mut signal: TraceSignal) {
-        signal.apply_content_policy(self.content_policy());
+    fn record(&self, signal: TraceSignal) {
         if self
             .sender
             .try_send(TraceCommand::Signal(Box::new(signal)))
@@ -512,22 +496,6 @@ async fn write_signal_payloads(
         .await?;
     }
     Ok(())
-}
-
-fn encode_content_policy(policy: TraceContentPolicy) -> u8 {
-    match policy {
-        TraceContentPolicy::Full => 0,
-        TraceContentPolicy::CompactionOnly => 1,
-        TraceContentPolicy::Off => 2,
-    }
-}
-
-fn decode_content_policy(value: u8) -> TraceContentPolicy {
-    match value {
-        1 => TraceContentPolicy::CompactionOnly,
-        2 => TraceContentPolicy::Off,
-        _ => TraceContentPolicy::Full,
-    }
 }
 
 async fn write_payload(

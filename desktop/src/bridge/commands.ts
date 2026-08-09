@@ -19,7 +19,6 @@ import type {
   RuntimeSkillDetail,
   RuntimeSkillDiscovery,
   RuntimeUserInput,
-  RuntimeTraceContentPolicy,
   RuntimeTracePayloadSlot,
   RuntimeTraceSpan,
   RuntimeTraceSpanPayload,
@@ -115,10 +114,6 @@ export const coreCommands = {
     slot: RuntimeTracePayloadSlot,
   ): Promise<RuntimeTraceSpanPayload | null> =>
     invoke('runtime_trace_payload_get', { spanId, slot }),
-  setTraceContentPolicy: (
-    policy: RuntimeTraceContentPolicy,
-  ): Promise<RuntimeTraceContentPolicy> =>
-    invoke('runtime_trace_content_policy_set', { policy }),
   listCompactionSpans: (sessionId: string, limit = 50): Promise<RuntimeTraceSpan[]> =>
     invoke('runtime_trace_compactions', { sessionId, limit }),
 }
