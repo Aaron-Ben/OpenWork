@@ -12,9 +12,9 @@
 
 :root {
   /* 面 */
-  --paper: #faf9f5;          /* 主背景:暖纸色(非纯白) */
-  --paper-hover: #f0eee6;    /* 悬停/次级面 */
-  --surface: #ffffff80;      /* 卡片/代码块半透明面 */
+  --paper: #f7f4ec;          /* 主背景:暖米色。刻意不是近白 —— 近白会让 clay 显得刺眼 */
+  --paper-hover: #efeade;    /* 侧栏/右栏/悬停:比主背景再暖一档 */
+  --surface: #fffdf880;      /* 卡片/代码块半透明面。是暖白不是纯白,叠在米底上才不发灰 */
 
   /* 文字 */
   --ink: #141413;            /* 主文字:暖近黑 */
@@ -63,9 +63,10 @@
 }
 
 :root.dark {
-  --paper: #262624;
-  --paper-hover: #141413;
-  --surface: #30302e80;
+  /* 暗色也是暖的:三个面都偏黄褐,不是中性灰。中性灰配 clay 会脏 */
+  --paper: #1c1a16;
+  --paper-hover: #151310;
+  --surface: #2b272080;
 
   --ink: #faf9f5;
   --ink-soft: #c2c0b6;
