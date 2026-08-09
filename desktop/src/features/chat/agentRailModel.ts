@@ -75,7 +75,7 @@ export function buildAgentRailItems(input: AgentRailInput): AgentRailItem[] {
 
 export interface AgentRailCounts {
   running: number
-  /** 还没开始或已经结束但没被清理的智能体。终态的不算在里面。 */
+  /** 当前没有执行 Turn，且最近一次没有失败或取消的智能体。 */
   standby: number
 }
 
@@ -83,7 +83,9 @@ export function agentRailCounts(items: readonly AgentRailItem[]): AgentRailCount
   return items.reduce<AgentRailCounts>(
     (counts, item) => ({
       running: counts.running + (item.status === 'running' ? 1 : 0),
-      standby: counts.standby + (item.status === 'idle' ? 1 : 0),
+      standby: counts.standby + (
+        item.status === 'idle' || item.status === 'completed' ? 1 : 0
+      ),
     }),
     { running: 0, standby: 0 },
   )

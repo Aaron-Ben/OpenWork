@@ -7,7 +7,6 @@ import { headerInsetClass, SidebarReveal } from '@/app/SidebarReveal'
 import { coreCommands } from '@/bridge/commands'
 import type { RuntimeLoadedSession, RuntimeStoredMessage } from '@/bridge/compat'
 import { resolveErrorMessage } from '@/lib/commandError'
-import { agentInitial, formatElapsedClock, formatTokenCount } from './agentPresentation'
 import type { AgentRailItem } from './agentRailModel'
 import { AssistantMessage } from './components/AssistantMessage'
 import { ToolActivityList } from './components/ToolActivityList'
@@ -70,36 +69,7 @@ export function SubAgentDetailPage({
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-4xl px-6 py-6 pb-10 max-[560px]:px-4">
-          <div className="flex items-start gap-3 border-b border-line pb-5">
-            <span
-              aria-hidden="true"
-              className={`grid size-10 shrink-0 place-items-center rounded-full text-sm font-semibold ${
-                item.orchestrator ? 'bg-clay text-paper' : 'bg-clay-soft text-clay'
-              }`}
-            >
-              {agentInitial(item.role)}
-            </span>
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate font-sans text-lg font-semibold text-ink">{item.role}</h1>
-              <p className="mt-0.5 truncate font-mono text-xs text-ink-faint">{item.task}</p>
-            </div>
-            <dl className="flex shrink-0 gap-6 text-right">
-              <div>
-                <dt className="text-[11px] text-ink-faint">{t('chat.agents.statusLabel')}</dt>
-                <dd className="mt-0.5 text-sm text-ink-soft">
-                  {t(`chat.subAgents.status.${item.status}`)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[11px] text-ink-faint">{t('chat.agents.durationLabel')}</dt>
-                <dd className="mt-0.5 font-mono text-sm tabular-nums text-ink-soft">
-                  {`${formatElapsedClock(item.elapsedMs)} · ${formatTokenCount(item.tokens)}`}
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          <div className="pt-6">
+          <div>
             {detail.state === 'loaded' ? (
               <ReadonlySubAgentTranscript
                 messages={detail.session.messages}

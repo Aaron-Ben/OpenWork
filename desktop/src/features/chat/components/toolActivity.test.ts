@@ -147,4 +147,35 @@ describe('mergeToolMessages', () => {
       'assistant-bash-0', 'assistant-bash-1', 'assistant-bash-2',
     ])
   })
+
+  it('coalesces adjacent persisted spawn_agent messages for one delegation card', () => {
+    const messages: ChatItem[] = Array.from({ length: 3 }, (_, index) => [{
+      id: `assistant-spawn-${index}`,
+      turnId: 'turn-spawn',
+      role: 'assistant' as const,
+      parts: [{
+        type: 'tool_call' as const,
+        id: `spawn-${index}`,
+        name: 'spawn_agent',
+        input: JSON.stringify({ task_name: `explore_${index}`, message: `调查 ${index}` }),
+        state: 'finished' as const,
+      }],
+    }, {
+      id: `tool-spawn-${index}`,
+      turnId: 'turn-spawn',
+      role: 'tool' as const,
+      parts: [{
+        type: 'tool_result' as const,
+        id: `spawn-${index}`,
+        name: 'spawn_agent',
+        output: [{ type: 'text' as const, text: JSON.stringify({ task_name: `explore_${index}` }) }],
+        state: 'success' as const,
+      }],
+    }]).flat()
+
+    const merged = mergeToolMessages(messages)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].parts.filter((part) => part.type === 'tool_call')).toHaveLength(3)
+  })
 })

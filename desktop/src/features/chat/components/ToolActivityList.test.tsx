@@ -254,6 +254,94 @@ describe('ToolActivityList', () => {
     expect(renderToStaticMarkup(<ToolActivityList parts={planParts} />)).toBe('')
   })
 
+  it('groups successful spawn_agent calls into one expanded delegation card', () => {
+    const spawnParts: ContentBlock[] = ['explore_ai_pkg', 'explore_coding_agent', 'explore_agent_tui_orch']
+      .flatMap((taskName, index): ContentBlock[] => [{
+        type: 'tool_call',
+        id: `spawn-${index}`,
+        name: 'spawn_agent',
+        input: JSON.stringify({ task_name: taskName, message: `调查 ${taskName}` }),
+        state: 'finished',
+      }, {
+        type: 'tool_result',
+        id: `spawn-${index}`,
+        name: 'spawn_agent',
+        output: [{ type: 'text', text: JSON.stringify({ task_name: taskName }) }],
+        state: 'success',
+      }])
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={spawnParts} />)
+
+    expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(1)
+    expect(markup).toContain('data-agent-tool-activity="spawn_agent"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('spawn_agent')
+    expect(markup).toContain('×3')
+    expect(markup).toContain('派出 explorer')
+    expect(markup).toContain('explore_ai_pkg')
+    expect(markup).toContain('explore_coding_agent')
+    expect(markup).toContain('explore_agent_tui_orch')
+    expect(markup).not.toContain('调用 spawn_agent')
+    expect(markup).not.toContain('调查 explore_ai_pkg')
+  })
+
+  it('groups successful wait_agent calls into one collapsed waiting card', () => {
+    const waitParts: ContentBlock[] = Array.from({ length: 5 }, (_, index): ContentBlock[] => [{
+      type: 'tool_call',
+      id: `wait-${index}`,
+      name: 'wait_agent',
+      input: JSON.stringify({ timeout_ms: 60_000 }),
+      state: 'finished',
+    }, {
+      type: 'tool_result',
+      id: `wait-${index}`,
+      name: 'wait_agent',
+      output: [{
+        type: 'text',
+        text: JSON.stringify({ delivered: index < 3, timed_out: index >= 3 }),
+      }],
+      state: 'success',
+    }]).flat()
+
+    const markup = renderToStaticMarkup(<ToolActivityList parts={waitParts} />)
+
+    expect(markup.match(/data-tool-activity-row=/g)).toHaveLength(1)
+    expect(markup).toContain('data-agent-tool-activity="wait_agent"')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('wait_agent')
+    expect(markup).toContain('×5')
+    expect(markup).toContain('等待子智能体')
+    expect(markup).not.toContain('调用 wait_agent')
+    expect(markup).not.toContain('&quot;delivered&quot;')
+  })
+
+  it('keeps a failed wait_agent standalone with a human failure summary', () => {
+    const failedWait: ContentBlock[] = [{
+      type: 'tool_call',
+      id: 'wait-failed',
+      name: 'wait_agent',
+      input: JSON.stringify({ timeout_ms: 60_000 }),
+      state: 'finished',
+    }, {
+      type: 'tool_result',
+      id: 'wait-failed',
+      name: 'wait_agent',
+      output: [{ type: 'text', text: "doom loop detected for tool 'wait_agent'" }],
+      state: 'error',
+    }]
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={failedWait} onOpenTrace={() => undefined} />,
+    )
+
+    expect(markup).toContain('data-agent-tool-activity="wait_agent"')
+    expect(markup).toContain('data-tool-tier="failure"')
+    expect(markup).toContain('连续等待超限')
+    expect(markup).toContain("doom loop detected for tool &#x27;wait_agent&#x27;")
+    expect(markup).toContain('查看失败详情')
+    expect(markup).not.toContain('aria-expanded')
+  })
+
   it('pairs a tool result with its call instead of rendering a duplicate row', () => {
     const activities = collectToolActivities(parts)
 

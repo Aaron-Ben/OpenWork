@@ -1,6 +1,8 @@
+import type { TFunction } from 'i18next'
+import { SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { agentInitial, formatElapsedClock, formatTokenCount } from '../agentPresentation'
+import { agentInitial, formatTokenCount } from '../agentPresentation'
 import type { AgentRailItem } from '../agentRailModel'
 
 /*
@@ -18,64 +20,140 @@ export function AgentRailCard({
   item,
   selected,
   onSelect,
+  tokenScale,
 }: {
   item: AgentRailItem
   selected: boolean
   onSelect: (sessionId: string) => void
+  tokenScale?: number
 }) {
   const { t } = useTranslation()
-  const activity = item.toolActivity
+  const statusLabel = item.status === 'idle' || item.status === 'completed'
+    ? t('chat.agents.standby')
+    : t(`chat.subAgents.status.${item.status}`)
+  const duration = formatAgentDuration(item.elapsedMs, t)
+  const durationLabel = duration
+    ? t(item.status === 'running' ? 'chat.agents.runningFor' : 'chat.agents.lastRun', { duration })
+    : '--:--'
+  const accessibleDetails = [item.role, statusLabel, durationLabel].filter(Boolean).join(' · ')
+
+  if (!item.orchestrator) {
+    const width = `${Math.min(100, Math.max(0, (tokenScale ?? (item.tokens > 0 ? 1 : 0)) * 100))}%`
+    return (
+      <button
+        type="button"
+        data-agent-card={item.sessionId}
+        data-agent-status={item.status}
+        aria-current={selected ? 'true' : undefined}
+        aria-label={`${t('chat.agents.open', { name: item.task })} · ${accessibleDetails}`}
+        className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
+          selected
+            ? 'border-clay bg-clay-soft'
+            : 'border-transparent bg-paper hover:border-line-strong'
+        }`}
+        onClick={() => onSelect(item.sessionId)}
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            title={item.role}
+            className="grid size-6 shrink-0 place-items-center rounded-full bg-status-success-soft text-[11px] font-semibold text-status-success-ink"
+          >
+            {agentInitial(item.role)}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink" title={item.task}>
+            {item.task}
+          </span>
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
+            {formatTokenCount(item.tokens)}
+          </span>
+        </span>
+        <span
+          data-agent-card-meta="true"
+          className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px]"
+        >
+          <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${statusDotClass(item)}`} />
+          <span className={`shrink-0 ${statusToneClass(item)}`}>{statusLabel}</span>
+          <span className="truncate text-ink-faint">· {durationLabel}</span>
+        </span>
+        <span aria-hidden="true" className="mt-1.5 block h-1 overflow-hidden rounded-full bg-line">
+          <span
+            data-agent-token-scale={item.sessionId}
+            className={`block h-full rounded-full ${tokenToneClass(item)}`}
+            style={{ width }}
+          />
+        </span>
+      </button>
+    )
+  }
+
   return (
     <button
       type="button"
       data-agent-card={item.sessionId}
       data-agent-status={item.status}
+      data-agent-orchestrator-card="true"
       aria-current={selected ? 'true' : undefined}
-      aria-label={t('chat.agents.open', { name: item.role })}
-      className={`w-full rounded-xl border p-3 text-left transition ${
+      aria-label={`${t('chat.agents.open', { name: item.role })} · ${accessibleDetails}`}
+      className={`w-full rounded-xl border p-3 text-left shadow-sm transition ${
         selected
           ? 'border-clay bg-clay-soft'
-          : 'border-line bg-paper hover:border-line-strong'
+          : 'border-clay/55 bg-paper hover:border-clay'
       }`}
       onClick={() => onSelect(item.sessionId)}
     >
       <div className="flex items-start gap-2.5">
         <span
           aria-hidden="true"
-          className={`grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold ${
-            item.orchestrator ? 'bg-clay text-paper' : 'bg-clay-soft text-clay'
-          }`}
+          className="grid size-7 shrink-0 place-items-center rounded-full bg-clay text-paper"
         >
-          {agentInitial(item.role)}
+          <SlidersHorizontal size={14} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex items-baseline gap-2">
+          <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate font-sans text-sm font-medium text-ink">
               {item.role}
             </span>
-            <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
-              {formatTokenCount(item.tokens)} {t('chat.agents.tokenUnit')}
+            <span className="shrink-0 rounded-full bg-clay-soft px-2 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-clay">
+              {formatTokenCount(item.tokens)}
             </span>
           </span>
-          <span className="mt-0.5 flex items-center gap-1.5">
-            {item.status === 'running' ? (
-              <span aria-hidden="true" className="size-1.5 shrink-0 animate-pulse rounded-full bg-clay" />
-            ) : null}
-            <span className={`min-w-0 truncate text-xs ${statusToneClass(item)}`}>
-              {t(`chat.subAgents.status.${item.status}`)}
-            </span>
-            <span className="shrink-0 font-mono text-[11px] tabular-nums text-ink-faint">
-              {formatElapsedClock(item.elapsedMs)}
-            </span>
+          <span className="mt-1.5 block truncate text-xs text-ink-soft" title={item.task}>{item.task}</span>
+          <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px]">
+            <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${statusDotClass(item)}`} />
+            <span className={`shrink-0 ${statusToneClass(item)}`}>{statusLabel}</span>
+            <span className="truncate text-ink-faint">· {durationLabel}</span>
           </span>
-          <span className="mt-1 block truncate text-xs text-ink-faint">{item.task}</span>
-          {activity ? (
-            <span className="mt-1 block truncate font-mono text-[11px] text-ink-faint">
-              {t('chat.agents.toolAttempt', { name: activity.name, count: activity.attempt })}
-            </span>
-          ) : null}
         </span>
       </div>
     </button>
   )
+}
+
+function statusDotClass(item: AgentRailItem): string {
+  if (item.status === 'running') return 'animate-pulse bg-clay'
+  if (item.status === 'failed' || item.status === 'cancelled') return 'bg-status-danger'
+  return 'bg-status-success'
+}
+
+function tokenToneClass(item: AgentRailItem): string {
+  if (item.status === 'running') return 'bg-clay'
+  if (item.status === 'failed' || item.status === 'cancelled') return 'bg-status-danger'
+  return 'bg-status-success/60'
+}
+
+function formatAgentDuration(durationMs: number | null, t: TFunction): string | null {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) return null
+  const totalSeconds = Math.floor(durationMs / 1000)
+  const seconds = totalSeconds % 60
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  if (totalMinutes < 60) {
+    return totalMinutes > 0
+      ? t('chat.agents.durationMinutesSeconds', { minutes: totalMinutes, seconds })
+      : t('chat.agents.durationSeconds', { seconds })
+  }
+  return t('chat.agents.durationHoursMinutes', {
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
+  })
 }

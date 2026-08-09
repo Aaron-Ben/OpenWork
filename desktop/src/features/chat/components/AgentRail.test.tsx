@@ -43,11 +43,11 @@ describe('AgentRail', () => {
     expect(markup).toContain('主控')
     expect(markup).toContain('Researcher')
     expect(markup).toContain('Reviewer')
-    expect(markup).toContain('01:48')
+    expect(markup).toContain('1 分 48 秒')
     expect(markup).toContain('42.1k')
     expect(markup).toContain('31.6k')
     expect(markup).toContain('运行中')
-    expect(markup).toContain('已完成')
+    expect(markup).not.toContain('已完成')
   })
 
   it('summarises how many agents are running and standing by', () => {
@@ -56,15 +56,29 @@ describe('AgentRail', () => {
     )
 
     expect(markup).toContain('1 运行中')
-    expect(markup).toContain('1 待命')
+    expect(markup).toContain('2 待命')
   })
 
-  it('totals tokens across the tree in its footer and never shows a price', () => {
+  it('separates the orchestrator from a compact child-agent section', () => {
     const markup = renderToStaticMarkup(
       <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} />,
     )
 
-    expect(markup).toContain('data-agent-rail-footer="true"')
+    expect(markup).toContain('data-agent-orchestrator="true"')
+    expect(markup).toContain('data-agent-children="true"')
+    expect(markup).toContain('子智能体 2')
+    expect(markup).toContain('fetch_channel_spend')
+    expect(markup).toContain('data-agent-token-scale="child-1"')
+    expect(markup).toContain('data-agent-token-scale="child-2"')
+  })
+
+  it('totals tokens across the tree in its header and never shows a price', () => {
+    const markup = renderToStaticMarkup(
+      <AgentRail items={items} selectedSessionId={null} error={null} onSelect={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-agent-rail-total="true"')
+    expect(markup).not.toContain('data-agent-rail-footer="true"')
     // 42.1k + 31.6k + 0
     expect(markup).toContain('73.7k')
     expect(markup).not.toContain('¥')
@@ -91,18 +105,23 @@ describe('AgentRail', () => {
 })
 
 describe('AgentRailCard', () => {
-  it('shows the current tool call and a pulse instead of a progress bar', () => {
+  it('shows the child task and token scale without presenting task progress', () => {
     const markup = renderToStaticMarkup(
       <AgentRailCard item={item()} selected={false} onSelect={vi.fn()} />,
     )
 
-    expect(markup).toContain('python · 第 3 次调用')
-    expect(markup).toContain('animate-pulse')
+    expect(markup).toContain('compute_roi')
+    expect(markup).toContain('data-agent-card-meta="true"')
+    expect(markup).toContain('运行中')
+    expect(markup).toContain('已运行 1 分 48 秒')
+    expect(markup).toContain('data-agent-token-scale="child-1"')
+    expect(markup).toContain('style="width:100%"')
+    expect(markup).not.toContain('python · 第 3 次调用')
     expect(markup).not.toContain('role="progressbar"')
-    expect(markup).not.toContain('%')
+    expect(markup).not.toContain('sr-only')
   })
 
-  it('gives the orchestrator a filled badge and the sub-agents a soft one', () => {
+  it('gives the orchestrator a control icon and the sub-agents a soft initial badge', () => {
     const orchestrator = renderToStaticMarkup(
       <AgentRailCard item={item({ role: '主控', orchestrator: true })} selected={false} onSelect={vi.fn()} />,
     )
@@ -110,11 +129,13 @@ describe('AgentRailCard', () => {
       <AgentRailCard item={item()} selected={false} onSelect={vi.fn()} />,
     )
 
+    expect(orchestrator).toContain('lucide-sliders-horizontal')
     expect(orchestrator).toContain('bg-clay text-paper')
-    expect(subAgent).toContain('bg-clay-soft text-clay')
+    expect(subAgent).toContain('bg-status-success-soft')
+    expect(subAgent).toContain('>A<')
   })
 
-  it('drops the tool line and the pulse when the agent has not started', () => {
+  it('keeps an unknown duration visible on the child card as a placeholder', () => {
     const markup = renderToStaticMarkup(
       <AgentRailCard
         item={item({ status: 'idle', toolActivity: null, elapsedMs: null })}
@@ -125,6 +146,22 @@ describe('AgentRailCard', () => {
 
     expect(markup).not.toContain('animate-pulse')
     expect(markup).toContain('--:--')
-    expect(markup).toContain('空闲')
+    expect(markup).toContain('待命')
+    expect(markup).toContain('data-agent-card-meta="true"')
+    expect(markup).toContain('data-agent-token-scale="child-1"')
+  })
+
+  it('labels a completed child as standby because it can receive a follow-up turn', () => {
+    const markup = renderToStaticMarkup(
+      <AgentRailCard
+        item={item({ status: 'completed' })}
+        selected={false}
+        onSelect={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('待命')
+    expect(markup).not.toContain('已完成')
+    expect(markup).toContain('上次运行 1 分 48 秒')
   })
 })

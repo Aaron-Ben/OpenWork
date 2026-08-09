@@ -134,8 +134,13 @@ describe('agent rail aggregates', () => {
     },
   }))
 
-  it('counts running and standby agents, leaving terminal ones out of both', () => {
-    expect(agentRailCounts(items)).toEqual({ running: 2, standby: 1 })
+  it('counts idle and completed agents as standby without hiding failed ones in that total', () => {
+    const terminalItems = [
+      { ...items[0], sessionId: 'failed', status: 'failed' as const },
+      { ...items[0], sessionId: 'cancelled', status: 'cancelled' as const },
+    ]
+
+    expect(agentRailCounts([...items, ...terminalItems])).toEqual({ running: 2, standby: 2 })
   })
 
   it('sums tokens and steps across the whole tree', () => {

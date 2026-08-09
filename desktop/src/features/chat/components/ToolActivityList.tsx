@@ -33,6 +33,7 @@ import {
   BashToolActivityRow,
   isBashDisplayTool,
 } from './BashToolActivity'
+import { AgentToolActivityRow, isAgentDisplayTool } from './AgentToolActivity'
 
 interface ToolActivityListProps {
   parts: ContentBlock[]
@@ -196,6 +197,15 @@ export const ToolActivityList = memo(function ToolActivityList({
                 onOpenTrace={onOpenTrace}
               />
             )
+            if (isAgentDisplayTool(group.activities[0].name)) return (
+              <AgentToolActivityRow
+                key={group.id}
+                activities={group.activities}
+                expanded={rememberedExpansion}
+                onExpandedChange={rememberExpansion}
+                onOpenTrace={onOpenTrace}
+              />
+            )
             return (
               <ToolActivityRow
                 key={group.id}
@@ -238,7 +248,10 @@ function groupActivities(activities: ToolActivity[]): ToolActivityGroup[] {
 }
 
 function isGroupedDisplayTool(name: string): boolean {
-  return isReadonlyDisplayTool(name) || isFileChangeDisplayTool(name) || isBashDisplayTool(name)
+  return isReadonlyDisplayTool(name)
+    || isFileChangeDisplayTool(name)
+    || isBashDisplayTool(name)
+    || isAgentDisplayTool(name)
 }
 
 function isDisplayFailure(activity: ToolActivity): boolean {

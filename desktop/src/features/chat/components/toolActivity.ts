@@ -166,6 +166,8 @@ function isDisplayActivityMessage(message: ChatItem): boolean {
       || part.name === 'edit'
       || part.name === 'write'
       || part.name === 'bash'
+      || part.name === 'spawn_agent'
+      || part.name === 'wait_agent'
     )
   )
 }

@@ -74,16 +74,16 @@ function render(overrides: Partial<Parameters<typeof SubAgentDetailPage>[0]> = {
 afterEach(() => vi.restoreAllMocks())
 
 describe('SubAgentDetailPage', () => {
-  it('heads the page with the agent, its task, status, duration, and tokens', () => {
+  it('keeps the detail header focused on navigation instead of repeating the rail summary', () => {
     const markup = render()
 
     expect(markup).toContain('data-sub-agent-header="true"')
     expect(markup).toContain('返回主控对话')
     expect(markup).toContain('Q3 渠道 ROI 异常复盘 / 子智能体')
-    expect(markup).toContain('explorer')
-    expect(markup).toContain('inspect_auth')
-    expect(markup).toContain('已完成')
-    expect(markup).toContain('00:02 · 31.6k')
+    expect(markup).not.toContain('explorer')
+    expect(markup).not.toContain('inspect_auth')
+    expect(markup).not.toContain('已完成')
+    expect(markup).not.toContain('00:02 · 31.6k')
   })
 
   it('is read only: no composer, no re-run, no direct dispatch', () => {
