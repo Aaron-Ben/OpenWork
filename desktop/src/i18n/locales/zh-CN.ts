@@ -271,7 +271,6 @@ export const zhCN = {
       description: '独立于模型选择，配置 OpenWork 使用的上下文预算。',
       sizeLabel: '上下文窗口大小',
       sizeDescription: '用于上下文用量显示和 Core 采样前预算判断的 Token 容量，不属于某个模型。',
-      observationOnly: '每次提交 Provider 前，Core 会在达到该预算的 85% 时自动压缩。每个逻辑 Model Call 最多执行一次阈值压缩或溢出补救；仍可显式使用 /compact。',
       save: '保存',
       saved: '已保存',
       invalid: '请输入大于 0 的整数 Token 数。',

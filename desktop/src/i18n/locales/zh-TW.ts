@@ -218,7 +218,6 @@ export const zhTW = {
     contextWindow: {
       title: '上下文視窗', description: '獨立於模型選擇，設定 OpenWork 使用的上下文預算。',
       sizeLabel: '上下文視窗大小', sizeDescription: '用於上下文用量顯示與 Core 取樣前預算判斷的 Token 容量，不屬於特定模型。',
-      observationOnly: '每次提交 Provider 前，Core 會在達到此預算的 85% 時自動壓縮。每個邏輯 Model Call 最多執行一次門檻壓縮或溢位恢復；仍可明確使用 /compact。',
       save: '儲存', saved: '已儲存', invalid: '請輸入大於 0 的整數 Token 數。',
     },
     skills: {

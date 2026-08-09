@@ -34,9 +34,8 @@ describe('GeneralSettings', () => {
     expect(markup).toContain('value="258000"')
     expect(markup).toContain('Tokens')
     expect(markup).toContain('不属于某个模型')
-    expect(markup).toContain('85%')
-    expect(markup).toContain('最多执行一次')
-    expect(markup).toContain('/compact')
+    expect(markup).not.toContain('每次提交 Provider 前')
+    expect(markup).not.toContain('/compact')
   })
 
   it('does not expose trace content recording tiers', () => {

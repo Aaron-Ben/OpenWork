@@ -223,7 +223,6 @@ export const enUS = {
     contextWindow: {
       title: 'Context window', description: 'Configure the OpenWork context budget independently from model selection.',
       sizeLabel: 'Context window size', sizeDescription: 'The token capacity used by context usage displays and Core preflight budgeting.',
-      observationOnly: 'Before each provider submission, Core automatically compacts at 85% of this budget. Each logical model call permits at most one threshold or overflow compaction; /compact remains available explicitly.',
       save: 'Save', saved: 'Saved', invalid: 'Enter a positive whole number of tokens.',
     },
     skills: {

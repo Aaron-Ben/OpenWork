@@ -196,9 +196,6 @@ function ContextWindowSection() {
           </p>
         ) : null}
       </form>
-      <p className="mt-4 rounded-xl bg-paper-hover px-4 py-3 font-sans text-xs leading-5 text-ink-faint">
-        {t('settings.contextWindow.observationOnly')}
-      </p>
     </SettingsSection>
   )
 }
