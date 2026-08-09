@@ -622,6 +622,42 @@ describe('ToolActivityList', () => {
     expect(markup).toContain('export const b = 2')
   })
 
+  it('keeps every grouped file diff collapsed and without its own copy action', () => {
+    const write = (id: string, path: string, content: string): ContentBlock[] => [{
+      type: 'tool_call', id, name: 'write', state: 'finished',
+      input: JSON.stringify({ path, content }),
+    }, {
+      type: 'tool_result', id, name: 'write', state: 'success',
+      output: [{ type: 'text', text: `modified ${path}` }],
+      artifacts: [{
+        kind: 'file_change',
+        payload: {
+          changeId: `change-${id}`, path, kind: 'modified',
+          additions: 1, deletions: 1,
+          beforeHash: 'before', afterHash: 'after', undone: false,
+          hunks: [{
+            oldStart: 1, oldLines: 1, newStart: 1, newLines: 1,
+            lines: [{ kind: 'addition', oldLine: null, newLine: 1, content }],
+          }],
+        },
+      }],
+    }]
+
+    const markup = renderToStaticMarkup(
+      <ToolActivityList parts={[
+        ...write('write-a', 'src/a.ts', 'export const a = 1'),
+        ...write('write-b', 'src/b.ts', 'export const b = 2'),
+      ]} />,
+    )
+
+    // 折叠只体现在 aria-expanded 与 hidden 上：SSR 仍会输出被折叠的 diff 正文，
+    // 所以断言内容存在并不能证明它是展开的，必须直接盯住这两个属性。
+    expect(markup.match(/aria-expanded="false"/g)).toHaveLength(2)
+    expect(markup.match(/data-file-change-code="true" hidden=""/g)).toHaveLength(2)
+    expect(markup).toContain('export const a = 1')
+    expect(markup).not.toContain('aria-label="复制 Diff"')
+  })
+
   it('shows one file heading per cleared write inside a grouped card', () => {
     const clearedWrite = (id: string, path: string, oldLine: string): ContentBlock[] => [{
       type: 'tool_call', id, name: 'write', state: 'finished',
