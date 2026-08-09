@@ -3861,6 +3861,290 @@ async fn wait_agent_can_timeout_then_wait_again_for_a_delivery() {
 }
 
 #[tokio::test]
+async fn p2_acceptance_12_three_explorer_deliveries_do_not_trigger_wait_doom_loop() {
+    let host = Arc::new(SessionHandleHost::default());
+    let control = AgentControl::new(
+        SessionId::new("session-three-explorer-parent"),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut fixture = runtime_with_options(
+        vec![
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-first-explorer",
+                    "wait_agent",
+                    r#"{"timeout_ms":240000}"#,
+                )],
+            )),
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-second-explorer",
+                    "wait_agent",
+                    r#"{"timeout_ms":240000}"#,
+                )],
+            )),
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-third-explorer",
+                    "wait_agent",
+                    r#"{"timeout_ms":240000}"#,
+                )],
+            )),
+            Ok(response("three explorer reports handled", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-three-explorer-parent"),
+            agent_control: Some(control),
+            ..RuntimeOptions::default()
+        },
+    );
+    start(&fixture).await;
+
+    let mut wait_starts = 0;
+    let mut delivered_results = 0;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = fixture.updates.recv().await.expect("session update");
+            match event.update {
+                SessionUpdate::ToolCallStarted { tool_call } if tool_call.name == "wait_agent" => {
+                    wait_starts += 1;
+                    fixture
+                        .handle
+                        .deliver_agent_message(
+                            SessionId::new(format!("session-explorer-{wait_starts}")),
+                            TurnId::new(format!("turn-explorer-{wait_starts}")),
+                            format!("explorer_{wait_starts}"),
+                            AgentMessageKind::FinalAnswer,
+                            format!("report {wait_starts}"),
+                        )
+                        .await
+                        .expect("deliver explorer result while waiting");
+                }
+                SessionUpdate::ToolCallFinished {
+                    tool_name, output, ..
+                } if tool_name == "wait_agent" && output.contains("\"delivered\":true") => {
+                    delivered_results += 1;
+                }
+                SessionUpdate::TurnFinished { outcome } => break outcome,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("three delivered waits should finish within the bounded timeout");
+
+    assert_eq!(wait_starts, 3);
+    assert_eq!(delivered_results, 3);
+    assert_eq!(
+        outcome,
+        TurnOutcome::Completed {
+            final_text: "three explorer reports handled".to_string(),
+        }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn three_consecutive_wait_timeouts_end_the_turn_as_doom_loop() {
+    let host = Arc::new(SessionHandleHost::default());
+    let control = AgentControl::new(
+        SessionId::new("session-three-timeout-parent"),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let mut fixture = runtime_with_options(
+        vec![
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-timeout-one",
+                    "wait_agent",
+                    r#"{"timeout_ms":10000}"#,
+                )],
+            )),
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-timeout-two",
+                    "wait_agent",
+                    r#"{"timeout_ms":10000}"#,
+                )],
+            )),
+            Ok(response(
+                "",
+                vec![tool_call(
+                    "wait-timeout-three",
+                    "wait_agent",
+                    r#"{"timeout_ms":10000}"#,
+                )],
+            )),
+            Ok(response(
+                "the third timeout should stop the turn",
+                Vec::new(),
+            )),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-three-timeout-parent"),
+            agent_control: Some(control),
+            ..RuntimeOptions::default()
+        },
+    );
+    start(&fixture).await;
+
+    let mut timed_out_results = 0;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let event = fixture.updates.recv().await.expect("session update");
+            match event.update {
+                SessionUpdate::ToolCallFinished {
+                    tool_name, output, ..
+                } if tool_name == "wait_agent" && output.contains("\"timed_out\":true") => {
+                    timed_out_results += 1;
+                }
+                SessionUpdate::TurnFinished { outcome } => break outcome,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("three paused-time waits should reach a terminal outcome");
+
+    assert_eq!(timed_out_results, 3);
+    assert!(matches!(
+        outcome,
+        TurnOutcome::Failed { ref code, .. } if code == "doom_loop"
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn delivered_wait_resets_timeout_streak_before_two_more_timeouts() {
+    let host = Arc::new(SessionHandleHost::default());
+    let control = AgentControl::new(
+        SessionId::new("session-reset-wait-timeouts-parent"),
+        Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
+    );
+    let waits = (1..=5)
+        .map(|attempt| {
+            Ok(response(
+                "",
+                vec![tool_call(
+                    &format!("wait-reset-{attempt}"),
+                    "wait_agent",
+                    r#"{"timeout_ms":10000}"#,
+                )],
+            ))
+        })
+        .chain(std::iter::once(Ok(response(
+            "wait timeout streak reset",
+            Vec::new(),
+        ))))
+        .collect();
+    let mut fixture = runtime_with_options(
+        waits,
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            session_id: SessionId::new("session-reset-wait-timeouts-parent"),
+            agent_control: Some(control),
+            ..RuntimeOptions::default()
+        },
+    );
+    start(&fixture).await;
+
+    let mut wait_starts = 0;
+    let mut timed_out_results = 0;
+    let mut delivered_results = 0;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let event = fixture.updates.recv().await.expect("session update");
+            match event.update {
+                SessionUpdate::ToolCallStarted { tool_call } if tool_call.name == "wait_agent" => {
+                    wait_starts += 1;
+                    if wait_starts == 3 {
+                        fixture
+                            .handle
+                            .deliver_agent_message(
+                                SessionId::new("session-resetting-explorer"),
+                                TurnId::new("turn-resetting-explorer"),
+                                "resetting_explorer",
+                                AgentMessageKind::FinalAnswer,
+                                "delivery resets the timeout streak",
+                            )
+                            .await
+                            .expect("deliver the timeout-resetting result");
+                    }
+                }
+                SessionUpdate::ToolCallFinished {
+                    tool_name, output, ..
+                } if tool_name == "wait_agent" && output.contains("\"timed_out\":true") => {
+                    timed_out_results += 1;
+                }
+                SessionUpdate::ToolCallFinished {
+                    tool_name, output, ..
+                } if tool_name == "wait_agent" && output.contains("\"delivered\":true") => {
+                    delivered_results += 1;
+                }
+                SessionUpdate::TurnFinished { outcome } => break outcome,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("paused-time waits should reach a terminal outcome");
+
+    assert_eq!(wait_starts, 5);
+    assert_eq!(timed_out_results, 4);
+    assert_eq!(delivered_results, 1);
+    assert_eq!(
+        outcome,
+        TurnOutcome::Completed {
+            final_text: "wait timeout streak reset".to_string(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn three_identical_read_calls_still_end_the_turn_as_doom_loop() {
+    let mut fixture = runtime(
+        vec![
+            response("", vec![tool_call("read-one", "read", r#"{"path":"src"}"#)]),
+            response("", vec![tool_call("read-two", "read", r#"{"path":"src"}"#)]),
+            response(
+                "",
+                vec![tool_call("read-three", "read", r#"{"path":"src"}"#)],
+            ),
+            response("the third read should stop the turn", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::Default,
+        false,
+    );
+    start(&fixture).await;
+
+    let outcome = wait_for_terminal(&mut fixture.updates).await;
+
+    assert!(matches!(
+        outcome,
+        TurnOutcome::Failed { ref code, .. } if code == "doom_loop"
+    ));
+    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn cancelling_parent_interrupts_wait_agent_immediately() {
     let host = Arc::new(SessionHandleHost::default());
     let control = AgentControl::new(

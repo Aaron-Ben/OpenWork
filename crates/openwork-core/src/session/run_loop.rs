@@ -100,6 +100,7 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
     let mut runner = TurnRunner {
         request,
         repeated_tool: None,
+        consecutive_wait_timeouts: 0,
         last_model_call: None,
         // 新 Turn 从无计划开始，不继承上一个 Turn 的计划。
         current_plan: None,
@@ -139,6 +140,8 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
 struct TurnRunner {
     request: TurnRunRequest,
     repeated_tool: Option<(String, String, usize)>,
+    /// wait_agent 的同参重复本身合法，只有连续超时才说明父 Turn 没有取得进展。
+    consecutive_wait_timeouts: usize,
     /// The most recent Model Call submission. An overflow compaction is caused
     /// by a Model Call that already failed, so its Span and input estimate are
     /// no longer reachable through the call's return value.
@@ -639,15 +642,23 @@ impl TurnRunner {
         }
 
         let canonical_input = serde_json::to_string(&input).unwrap_or_else(|_| call.input.clone());
-        if self.is_doom_loop(&call.name, &canonical_input) {
-            let result = ToolResult::failed(
-                ToolErrorCode::ExecutionFailed,
-                format!("doom loop detected for tool '{}'", call.name),
-                false,
-            );
-            self.append_tool_result(call, tool_call_id, result, tool_trace)
-                .await?;
-            return Err(TurnRunError::DoomLoop(call.name.clone()));
+        let is_wait_agent = matches!(&resolved, Some(ResolvedTurnTool::Agent(AgentTool::Wait)));
+        // wait_agent 的同参重复由外部子 Agent 的完成节奏驱动，入参相同不代表没有进展。
+        // 它仍要打断其他工具的连续计数，避免 read → wait → read 被误算成连续 read。
+        if is_wait_agent {
+            self.repeated_tool = None;
+        } else {
+            self.consecutive_wait_timeouts = 0;
+            if self.is_doom_loop(&call.name, &canonical_input) {
+                let result = ToolResult::failed(
+                    ToolErrorCode::ExecutionFailed,
+                    format!("doom loop detected for tool '{}'", call.name),
+                    false,
+                );
+                self.append_tool_result(call, tool_call_id, result, tool_trace)
+                    .await?;
+                return Err(TurnRunError::DoomLoop(call.name.clone()));
+            }
         }
 
         let permission_state = self.request.permission_state.borrow().clone();
@@ -984,15 +995,31 @@ impl TurnRunner {
                             std::time::Duration::from_millis(timeout_ms)
                         ) => delivered,
                     };
-                    ToolResult::succeeded(
+                    let result = ToolResult::succeeded(
                         serde_json::json!({
                             "delivered": delivered,
                             "timed_out": !delivered,
                         })
                         .to_string(),
-                    )
+                    );
+                    self.append_tool_result(call, tool_call_id, result, tool_trace)
+                        .await?;
+                    if delivered {
+                        self.consecutive_wait_timeouts = 0;
+                    } else {
+                        self.consecutive_wait_timeouts += 1;
+                        if self.consecutive_wait_timeouts
+                            >= self.request.agent.policy().doom_loop_threshold
+                        {
+                            return Err(TurnRunError::DoomLoop(call.name.clone()));
+                        }
+                    }
+                    return Ok(());
                 }
-                Err(message) => invalid_agent_args(message),
+                Err(message) => {
+                    self.consecutive_wait_timeouts = 0;
+                    invalid_agent_args(message)
+                }
             },
             AgentTool::List => match parse_agent_args::<NoArgs>(tool, input) {
                 Ok(_) => match control.list_statuses().await {
