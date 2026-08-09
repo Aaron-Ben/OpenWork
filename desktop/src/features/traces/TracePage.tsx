@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { coreCommands } from '@/bridge/commands'
@@ -16,6 +16,7 @@ import {
   shouldPollTrace,
   type TraceStatusFilter,
 } from './traceViewModel'
+import { TraceDashboardSummary } from './components/TraceDashboardSummary'
 import { TraceList } from './components/TraceList'
 import { TurnTraceDrawer } from './components/TurnTraceDrawer'
 
@@ -56,13 +57,18 @@ export function TracePage() {
     [summaries],
   )
   useEffect(() => {
-    if (!hasRunningTrace) return
-    const durationTimer = window.setInterval(() => setNow(Date.now()), 1_000)
-    const refreshTimer = window.setInterval(() => void load(limit, true), 3_000)
-    return () => {
-      window.clearInterval(durationTimer)
-      window.clearInterval(refreshTimer)
-    }
+    const durationTimer = window.setInterval(
+      () => setNow(Date.now()),
+      hasRunningTrace ? 1_000 : 60_000,
+    )
+    return () => window.clearInterval(durationTimer)
+  }, [hasRunningTrace])
+  useEffect(() => {
+    const refreshTimer = window.setInterval(
+      () => void load(limit, true),
+      hasRunningTrace ? 3_000 : 30_000,
+    )
+    return () => window.clearInterval(refreshTimer)
   }, [hasRunningTrace, limit, load])
 
   const context = useMemo(
@@ -89,16 +95,9 @@ export function TracePage() {
 
   return (
     <div className="relative h-full overflow-auto bg-paper">
-      <div className="mx-auto w-full max-w-6xl p-8 max-[640px]:p-5">
-        <div className="flex items-start justify-between gap-4">
-          <p className="max-w-2xl text-sm leading-6 text-ink-faint">{t('activity.description')}</p>
-          <Button type="button" variant="ghost" size="sm" disabled={isLoading} onClick={() => void load()}>
-            <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
-            {t('activity.refresh')}
-          </Button>
-        </div>
-        <div className="mt-6 flex gap-3 max-[640px]:flex-col">
-          <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-surface px-3 focus-within:border-clay">
+      <div className="mx-auto w-full max-w-7xl px-10 py-8 max-[640px]:p-5">
+        <div className="flex gap-3 max-[640px]:flex-col">
+          <label className="flex h-12 min-w-0 flex-1 items-center gap-3 rounded-full border border-line bg-surface px-5 focus-within:border-clay">
             <Search size={16} className="text-ink-faint" />
             <input
               value={query}
@@ -109,7 +108,12 @@ export function TracePage() {
             />
           </label>
           <Select value={status} onValueChange={(value) => setStatus(value as TraceStatusFilter)}>
-            <SelectTrigger className="h-10 min-w-40 border border-line px-3" aria-label={t('activity.statusLabel')}><SelectValue /></SelectTrigger>
+            <SelectTrigger
+              className="h-12 min-w-44 rounded-full border border-line bg-surface px-4"
+              aria-label={t('activity.statusLabel')}
+            >
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {STATUS_OPTIONS.map((value) => (
                 <SelectItem key={value} value={value}>{t(`activity.status.${value}`)}</SelectItem>
@@ -117,11 +121,15 @@ export function TracePage() {
             </SelectContent>
           </Select>
         </div>
+        <div className="mt-7">
+          <TraceDashboardSummary items={items} now={now} />
+        </div>
         {error ? <p role="alert" className="mt-5 rounded-xl bg-status-danger-soft p-3 text-sm text-status-danger-ink">{error}</p> : null}
         <div className="mt-5">
           <TraceList
             items={visible}
             loading={isLoading}
+            now={now}
             onOpen={(item) => setSelectedTraceId(item.traceId)}
           />
         </div>

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
+import i18n from '@/i18n'
 import type { TraceListItem } from '../traceViewModel'
 import { TraceList } from './TraceList'
 
@@ -24,24 +25,32 @@ const item: TraceListItem = {
 }
 
 describe('TraceList', () => {
-  it('renders a sortable table with recognizable session context', () => {
+  it('renders date-grouped run cards with context, scale bars, and relative time', () => {
     const markup = renderToStaticMarkup(
-      <TraceList items={[item]} loading={false} onOpen={vi.fn()} />,
+      <TraceList
+        items={[item]}
+        loading={false}
+        now={Date.parse('2026-07-18T02:00:00.000Z')}
+        onOpen={vi.fn()}
+      />,
     )
 
+    expect(markup).toContain('data-trace-date-group="2026-07-18"')
+    expect(markup).toContain('今天 · 7月18日')
+    expect(markup).toContain('data-trace-run-card="turn-1"')
     expect(markup).toContain('修复登录流程')
     expect(markup).toContain('/repo/openwork')
     expect(markup).toContain('已完成')
     expect(markup).toContain('deepseek-v4-flash')
     expect(markup).toContain('2.00 s')
-    expect(markup).toContain('2026-07-18 08:00:00 (Asia/Shanghai)')
-    // 表格列头与可排序控件
-    for (const header of ['状态', '运行', '模型', '模型调用', '工具调用', 'Token', '耗时', '开始时间']) {
-      expect(markup).toContain(header)
-    }
-    for (const key of ['resolvedModelName', 'modelSubmissionCount', 'toolCallCount', 'totalTokens', 'durationMs', 'startedAt']) {
-      expect(markup).toContain(`data-sort-key="${key}"`)
-    }
+    expect(markup).toContain('2 模型')
+    expect(markup).toContain('3 工具')
+    expect(markup).toContain('2 小时前')
+    expect(markup).toContain('08:00:00')
+    expect(markup).toContain('data-duration-percent="100"')
+    expect(markup).toContain('data-token-percent="100"')
+    expect(markup).toContain('max-[820px]:grid-cols-[minmax(0,1fr)_96px]')
+    expect(markup).not.toContain('data-sort-key=')
     expect(markup).toContain('data-model-calls="2"')
     expect(markup).toContain('data-tool-calls="3"')
     expect(markup).toContain('data-total-tokens="1234"')
@@ -66,6 +75,7 @@ describe('TraceList', () => {
     )
 
     expect(markup).toContain('data-trace-row="trace-manual"')
+    expect(markup).toContain('data-trace-run-card="trace-manual"')
     expect(markup).toContain('Conversation 压缩')
     // 没有 Turn 就没有调用计数可言，不能以 0 充数
     expect(markup).not.toContain('data-model-calls')
@@ -87,5 +97,23 @@ describe('TraceList', () => {
     expect(loading).toContain('data-trace-loading="true"')
     expect(loading).not.toContain('没有符合条件的运行记录')
     expect(empty).toContain('没有符合条件的运行记录')
+  })
+
+  it('uses singular English relative-time labels', async () => {
+    await i18n.changeLanguage('en-US')
+    try {
+      const markup = renderToStaticMarkup(
+        <TraceList
+          items={[item]}
+          loading={false}
+          now={Date.parse('2026-07-19T00:00:00.000Z')}
+          onOpen={vi.fn()}
+        />,
+      )
+      expect(markup).toContain('1 day ago')
+      expect(markup).not.toContain('1 days ago')
+    } finally {
+      await i18n.changeLanguage('zh-CN')
+    }
   })
 })

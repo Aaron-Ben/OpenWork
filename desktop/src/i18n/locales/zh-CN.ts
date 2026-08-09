@@ -35,9 +35,16 @@ export const zhCN = {
   },
   activity: {
     navigation: '运行记录', title: '运行记录',
-    description: '按会话查看 Trace 的模型调用、工具调用、耗时和错误；正文仅在展开对应槽位时加载。',
-    refresh: '刷新', search: '搜索运行记录', searchPlaceholder: '搜索会话、目录、模型、Trace 或 Turn ID',
+    search: '搜索运行记录', searchPlaceholder: '搜索会话、目录、模型、Trace 或 Turn ID',
     statusLabel: '运行状态', loading: '正在加载运行记录……', empty: '没有符合条件的运行记录。', loadMore: '加载更多',
+    dashboard: { summary: '今日运行摘要', todayRuns: '今日运行', successRate: '成功率', failedRuns: '{{count}} 次失败', medianDuration: '中位耗时', totalTokens: 'Token 合计' },
+    runCard: {
+      modelCount: '{{count}} 模型', toolCount: '{{count}} 工具', duration: '耗时', token: 'Token',
+      today: '今天', yesterday: '昨天', justNow: '刚刚',
+      minutesAgo_one: '{{count}} 分钟前', minutesAgo_other: '{{count}} 分钟前',
+      hoursAgo_one: '{{count}} 小时前', hoursAgo_other: '{{count}} 小时前',
+      daysAgo_one: '{{count}} 天前', daysAgo_other: '{{count}} 天前',
+    },
     modelCalls: '{{count}} 次模型调用', toolCalls: '{{count}} 次工具调用', tokens: '{{count}} Tokens',
     timeline: '运行时间线', orphanTools: '{{count}} 个工具调用缺少父模型节点', modelCall: '模型调用', toolCall: '工具调用', compaction: 'Conversation 压缩',
     traceDetail: 'Trace 运行详情', openToolSpan: '查看此工具调用的运行详情', close: '关闭运行详情', noSpans: '这条 Trace 没有记录节点。',

@@ -19,6 +19,55 @@ export interface TraceListItem extends RuntimeTraceSummary {
   durationMs: number | null
 }
 
+export interface TraceDashboardMetrics {
+  runCount: number
+  successRate: number | null
+  failedCount: number
+  medianDurationMs: number | null
+  totalTokens: number
+}
+
+export function traceDayKey(value: string | number): string | null {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return null
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value
+  const year = part('year')
+  const month = part('month')
+  const day = part('day')
+  return year && month && day ? `${year}-${month}-${day}` : null
+}
+
+export function buildTraceDashboardMetrics(
+  items: TraceListItem[],
+  now = Date.now(),
+): TraceDashboardMetrics {
+  const today = traceDayKey(now)
+  const todayRuns = items.filter((item) => item.turnId != null && traceDayKey(item.startedAt) === today)
+  const completed = todayRuns.filter((item) => item.status === 'completed').length
+  const failed = todayRuns.filter((item) => item.status === 'failed').length
+  const finished = completed + failed
+  const durations = todayRuns
+    .filter((item) => item.status !== 'running' && item.endedAt != null)
+    .flatMap((item) => item.durationMs == null ? [] : [item.durationMs])
+    .sort((left, right) => left - right)
+  const middle = Math.floor(durations.length / 2)
+  const medianDurationMs = durations.length === 0
+    ? null
+    : durations.length % 2 === 1
+      ? durations[middle]
+      : (durations[middle - 1] + durations[middle]) / 2
+  return {
+    runCount: todayRuns.length,
+    successRate: finished === 0 ? null : Math.round((completed / finished) * 100),
+    failedCount: failed,
+    medianDurationMs,
+    totalTokens: todayRuns.reduce((sum, item) => sum + item.totalTokens, 0),
+  }
+}
+
 export interface TraceModelNode {
   span: RuntimeTraceSpan
   children: RuntimeTraceSpan[]
@@ -372,52 +421,4 @@ export function shouldPollTrace(
 ): boolean {
   return summaryStatus === 'running'
     || spans.some((span) => span.status === 'running' || span.endedAt === null)
-}
-
-export type TraceSortKey =
-  | 'startedAt'
-  | 'durationMs'
-  | 'modelSubmissionCount'
-  | 'toolCallCount'
-  | 'totalTokens'
-  | 'resolvedModelName'
-
-export type TraceSortDirection = 'asc' | 'desc'
-
-export interface TraceSort {
-  key: TraceSortKey
-  direction: TraceSortDirection
-}
-
-/** 默认与后端 `ORDER BY started_at DESC` 一致，首次渲染不改变既有顺序。 */
-export const DEFAULT_TRACE_SORT: TraceSort = { key: 'startedAt', direction: 'desc' }
-
-function traceSortValue(item: TraceListItem, key: TraceSortKey): number | string | null {
-  switch (key) {
-    case 'startedAt': return item.startedAt
-    case 'durationMs': return item.durationMs
-    case 'modelSubmissionCount': return item.modelSubmissionCount
-    case 'toolCallCount': return item.toolCallCount
-    case 'totalTokens': return item.totalTokens
-    case 'resolvedModelName': return item.resolvedModelName || null
-  }
-}
-
-/** 客户端排序；空值（运行中的耗时、无模型名）无论方向都沉底，traceId 兜底保证稳定。 */
-export function sortTraceListItems(
-  items: TraceListItem[],
-  sort: TraceSort,
-): TraceListItem[] {
-  const factor = sort.direction === 'asc' ? 1 : -1
-  return [...items].sort((left, right) => {
-    const a = traceSortValue(left, sort.key)
-    const b = traceSortValue(right, sort.key)
-    if (a == null && b == null) return left.traceId.localeCompare(right.traceId)
-    if (a == null) return 1
-    if (b == null) return -1
-    const compared = typeof a === 'string' || typeof b === 'string'
-      ? String(a).localeCompare(String(b))
-      : a - b
-    return compared !== 0 ? compared * factor : left.traceId.localeCompare(right.traceId)
-  })
 }

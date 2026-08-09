@@ -17,9 +17,16 @@ export const zhTW = {
   },
   activity: {
     navigation: '執行記錄', title: '執行記錄',
-    description: '依對話查看 Trace 的模型呼叫、工具呼叫、耗時與錯誤；正文只在展開對應欄位時載入。',
-    refresh: '重新整理', search: '搜尋執行記錄', searchPlaceholder: '搜尋對話、目錄、模型、Trace 或 Turn ID',
+    search: '搜尋執行記錄', searchPlaceholder: '搜尋對話、目錄、模型、Trace 或 Turn ID',
     statusLabel: '執行狀態', loading: '正在載入執行記錄……', empty: '沒有符合條件的執行記錄。', loadMore: '載入更多',
+    dashboard: { summary: '今日執行摘要', todayRuns: '今日執行', successRate: '成功率', failedRuns: '{{count}} 次失敗', medianDuration: '中位耗時', totalTokens: 'Token 合計' },
+    runCard: {
+      modelCount: '{{count}} 模型', toolCount: '{{count}} 工具', duration: '耗時', token: 'Token',
+      today: '今天', yesterday: '昨天', justNow: '剛剛',
+      minutesAgo_one: '{{count}} 分鐘前', minutesAgo_other: '{{count}} 分鐘前',
+      hoursAgo_one: '{{count}} 小時前', hoursAgo_other: '{{count}} 小時前',
+      daysAgo_one: '{{count}} 天前', daysAgo_other: '{{count}} 天前',
+    },
     modelCalls: '{{count}} 次模型呼叫', toolCalls: '{{count}} 次工具呼叫', tokens: '{{count}} Tokens',
     timeline: '執行時間線', orphanTools: '{{count}} 個工具呼叫缺少父模型節點', modelCall: '模型呼叫', toolCall: '工具呼叫', compaction: 'Conversation 壓縮',
     traceDetail: 'Trace 執行詳情', openToolSpan: '查看此工具呼叫的執行詳情', close: '關閉執行詳情', noSpans: '這條 Trace 沒有記錄節點。',

@@ -1,50 +1,44 @@
-import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Minimize2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Activity, Bot, ChevronRight, Minimize2, Wrench } from 'lucide-react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { formatBeijingDateTime } from '@/lib/dateTime'
 import {
-  DEFAULT_TRACE_SORT,
-  sortTraceListItems,
+  traceDayKey,
   type TraceListItem,
-  type TraceSort,
-  type TraceSortKey,
 } from '../traceViewModel'
 
-// 表头与数据行共享同一栅格模板；容器允许横向滚动，窄屏不压列。
-const TABLE_GRID =
-  'grid-cols-[100px_minmax(0,1.4fr)_minmax(96px,0.7fr)_68px_68px_76px_76px_168px]'
+const DISPLAY_TIME_ZONE = 'Asia/Shanghai'
 
 interface TraceListProps {
   items: TraceListItem[]
   loading: boolean
   onOpen: (item: TraceListItem) => void
+  now?: number
 }
 
-export function TraceList({ items, loading, onOpen }: TraceListProps) {
-  const { t } = useTranslation()
-  const [sort, setSort] = useState<TraceSort>(DEFAULT_TRACE_SORT)
-  const sorted = useMemo(() => sortTraceListItems(items, sort), [items, sort])
+interface TraceDateGroup {
+  key: string
+  items: TraceListItem[]
+}
 
-  const handleSort = (key: TraceSortKey) => {
-    setSort((current) => current.key === key
-      ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
-      // 文本列先升序，数值/时间列先降序（最新、最慢、最贵优先）。
-      : { key, direction: key === 'resolvedModelName' ? 'asc' : 'desc' })
-  }
+export function TraceList({ items, loading, onOpen, now = Date.now() }: TraceListProps) {
+  const { t, i18n } = useTranslation()
+  const groups = useMemo(() => groupTraceItems(items), [items])
+  const maxDurationMs = Math.max(0, ...items.map((item) => item.durationMs ?? 0))
+  const maxTokens = Math.max(0, ...items.map((item) => item.totalTokens))
 
   if (loading) {
     return (
-      <div data-trace-loading="true" className="grid gap-2" aria-label={t('activity.loading')}>
+      <div data-trace-loading="true" className="grid gap-3" aria-label={t('activity.loading')}>
         {[0, 1, 2].map((index) => (
-          <div key={index} className="h-11 animate-pulse rounded-xl border border-line bg-surface" />
+          <div key={index} className="h-24 animate-pulse rounded-2xl border border-line bg-surface" />
         ))}
       </div>
     )
   }
   if (items.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-line py-12 text-center">
+      <div className="rounded-2xl border border-dashed border-line py-12 text-center">
         <Activity size={22} className="mx-auto text-ink-faint" />
         <p className="mt-2.5 text-sm text-ink-faint">{t('activity.empty')}</p>
       </div>
@@ -52,146 +46,238 @@ export function TraceList({ items, loading, onOpen }: TraceListProps) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-paper">
-      <div role="table" aria-label={t('activity.title')} className="min-w-[900px]">
-        <div role="rowgroup">
-          <div role="row" className={`grid ${TABLE_GRID} items-center gap-3 border-b border-line px-4 py-2`}>
-            <span role="columnheader" className="text-[11px] font-medium text-ink-faint">
-              {t('activity.table.status')}
-            </span>
-            <span role="columnheader" className="text-[11px] font-medium text-ink-faint">
-              {t('activity.table.run')}
-            </span>
-            <SortHeader column="resolvedModelName" sort={sort} onSort={handleSort} label={t('activity.table.model')} />
-            <SortHeader column="modelSubmissionCount" align="right" sort={sort} onSort={handleSort} label={t('activity.table.modelCalls')} />
-            <SortHeader column="toolCallCount" align="right" sort={sort} onSort={handleSort} label={t('activity.table.toolCalls')} />
-            <SortHeader column="totalTokens" align="right" sort={sort} onSort={handleSort} label={t('activity.table.tokens')} />
-            <SortHeader column="durationMs" align="right" sort={sort} onSort={handleSort} label={t('activity.table.duration')} />
-            <SortHeader column="startedAt" align="right" sort={sort} onSort={handleSort} label={t('activity.table.startedAt')} />
+    <div className="grid gap-7" aria-label={t('activity.title')}>
+      {groups.map((group) => (
+        <section key={group.key} data-trace-date-group={group.key}>
+          <div className="mb-3 flex items-center gap-3 px-1">
+            <h2 className="shrink-0 text-xs font-semibold text-ink-soft">
+              {formatDateGroupLabel(group.key, now, i18n.language, t)}
+            </h2>
+            <span className="h-px flex-1 bg-line" aria-hidden="true" />
           </div>
-        </div>
-        <div role="rowgroup">
-          {sorted.map((item) => (
-            <TraceTableRow key={item.traceId} item={item} onOpen={onOpen} />
-          ))}
-        </div>
-      </div>
+          <div className="grid gap-2.5">
+            {group.items.map((item) => (
+              <TraceRunCard
+                key={item.traceId}
+                item={item}
+                maxDurationMs={maxDurationMs}
+                maxTokens={maxTokens}
+                now={now}
+                language={i18n.language}
+                onOpen={onOpen}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   )
 }
 
-function SortHeader({
-  column,
-  sort,
-  onSort,
-  label,
-  align = 'left',
-}: {
-  column: TraceSortKey
-  sort: TraceSort
-  onSort: (key: TraceSortKey) => void
-  label: string
-  align?: 'left' | 'right'
-}) {
-  const { t } = useTranslation()
-  const active = sort.key === column
-  const Icon = !active ? ArrowUpDown : sort.direction === 'asc' ? ArrowUp : ArrowDown
-  return (
-    <span
-      role="columnheader"
-      aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
-      className={align === 'right' ? 'text-right' : undefined}
-    >
-      <button
-        type="button"
-        data-sort-key={column}
-        aria-label={t('activity.table.sortBy', { column: label })}
-        onClick={() => onSort(column)}
-        className={`inline-flex items-center gap-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35 ${
-          active ? 'text-ink' : 'text-ink-faint hover:text-ink-soft'
-        }`}
-      >
-        {label}
-        <Icon size={11} aria-hidden="true" className={active ? '' : 'opacity-50'} />
-      </button>
-    </span>
-  )
-}
-
-function TraceTableRow({
+function TraceRunCard({
   item,
+  maxDurationMs,
+  maxTokens,
+  now,
+  language,
   onOpen,
 }: {
   item: TraceListItem
+  maxDurationMs: number
+  maxTokens: number
+  now: number
+  language: string
   onOpen: (item: TraceListItem) => void
 }) {
   const { t } = useTranslation()
   // 没有 Turn 的 Trace 是一次独立压缩：不显示并不存在的调用计数，
-  // 但 token 是 span 实测合计，照常显示；行仍可通过 trace_id 打开同一个详情抽屉。
+  // 但 token 是 span 实测合计，照常显示；卡片仍可通过 trace_id 打开同一个详情抽屉。
   const isTurnless = item.turnId == null
+  const durationPercent = scalePercent(item.durationMs ?? 0, maxDurationMs)
+  const tokenPercent = scalePercent(item.totalTokens, maxTokens)
+
   return (
     <button
       type="button"
-      role="row"
       data-trace-row={item.traceId}
+      data-trace-run-card={item.traceId}
       data-model-calls={isTurnless ? undefined : item.modelSubmissionCount}
       data-tool-calls={isTurnless ? undefined : item.toolCallCount}
       data-total-tokens={item.totalTokens}
+      data-duration-percent={durationPercent}
+      data-token-percent={tokenPercent}
       onClick={() => onOpen(item)}
-      className={`grid ${TABLE_GRID} w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-paper-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-clay/35 [&+&]:border-t [&+&]:border-line`}
+      className={`relative grid w-full grid-cols-[minmax(0,1fr)_minmax(190px,0.42fr)_130px_18px] items-center gap-6 overflow-hidden rounded-2xl border px-8 py-3 text-left transition-colors hover:bg-paper-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/35 max-[820px]:grid-cols-[minmax(0,1fr)_96px] max-[820px]:gap-3 max-[820px]:px-6 ${runCardClass(item.status)}`}
     >
-      <span role="cell"><StatusBadge status={item.status} /></span>
-      <span role="cell" className="min-w-0">
+      <span className={`absolute inset-y-0 left-0 w-2 ${runAccentClass(item.status)}`} aria-hidden="true" />
+
+      <span className="min-w-0">
         <span className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-ink">{item.title}</span>
+          <span className="truncate text-sm font-semibold text-ink">{item.title}</span>
+          <StatusBadge status={item.status} />
           {isTurnless ? (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-paper-hover px-2 py-0.5 text-[10px] text-ink-soft">
-              <Minimize2 size={10} />
+              <Minimize2 size={10} aria-hidden="true" />
               {t('activity.compaction')}
             </span>
           ) : null}
         </span>
-        <span className="mt-0.5 block truncate font-mono text-[11px] text-ink-faint">
+        <span className="mt-1 block truncate font-mono text-[11px] text-ink-faint" title={item.workingDirectory || item.sessionId}>
           {item.workingDirectory || item.sessionId}
         </span>
+        <span className="mt-1.5 flex min-w-0 items-center gap-2 font-mono text-[10px] text-ink-soft">
+          {!isTurnless ? (
+            <>
+              <span className="inline-flex shrink-0 items-center gap-1">
+                <Bot size={11} className="text-clay" aria-hidden="true" />
+                {t('activity.runCard.modelCount', { count: item.modelSubmissionCount })}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="inline-flex shrink-0 items-center gap-1">
+                <Wrench size={11} className="text-status-success" aria-hidden="true" />
+                {t('activity.runCard.toolCount', { count: item.toolCallCount })}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          ) : null}
+          <span className="truncate">{item.resolvedModelName || '—'}</span>
+        </span>
       </span>
-      <span role="cell" className="truncate text-xs text-ink-soft">
-        {item.resolvedModelName || '—'}
+
+      <span className="grid gap-2 max-[820px]:col-span-1 max-[820px]:row-start-2">
+        <MetricBar
+          label={t('activity.runCard.duration')}
+          value={formatDuration(item.durationMs)}
+          percent={durationPercent}
+          color="bg-clay"
+        />
+        <MetricBar
+          label={t('activity.runCard.token')}
+          value={item.totalTokens.toLocaleString(language)}
+          percent={tokenPercent}
+          color="bg-status-success"
+        />
       </span>
-      <NumericCell value={isTurnless ? null : item.modelSubmissionCount} />
-      <NumericCell value={isTurnless ? null : item.toolCallCount} />
-      <NumericCell value={item.totalTokens} />
-      <span role="cell" className="text-right font-mono text-xs tabular-nums text-ink-soft">
-        {formatDuration(item.durationMs)}
+
+      <span className="text-right max-[820px]:col-start-2 max-[820px]:row-span-2 max-[820px]:row-start-1">
+        <span className="block text-xs font-semibold text-ink">
+          {formatRelativeTime(item.startedAt, now, t)}
+        </span>
+        <span className="mt-0.5 block font-mono text-[10px] tabular-nums text-ink-faint">
+          {formatClockTime(item.startedAt, language)}
+        </span>
       </span>
-      <span role="cell" className="text-right text-[11px] text-ink-faint">
-        {formatBeijingDateTime(item.startedAt)}
-      </span>
+
+      <ChevronRight size={16} className="text-ink-faint max-[820px]:hidden" aria-hidden="true" />
     </button>
   )
 }
 
-function NumericCell({ value }: { value: number | null }) {
+function MetricBar({
+  label,
+  value,
+  percent,
+  color,
+}: {
+  label: string
+  value: string
+  percent: number
+  color: string
+}) {
   return (
-    <span role="cell" className="text-right font-mono text-xs tabular-nums text-ink-soft">
-      {value == null ? '—' : value}
+    <span className="block">
+      <span className="flex items-center justify-between gap-3 text-[10px] text-ink-faint">
+        <span>{label}</span>
+        <span className="font-mono text-xs font-semibold tabular-nums text-ink">{value}</span>
+      </span>
+      <span className="mt-1 block h-1 overflow-hidden rounded-full bg-line/70">
+        <span className={`block h-full rounded-full ${color}`} style={{ width: `${percent}%` }} />
+      </span>
     </span>
   )
+}
+
+function groupTraceItems(items: TraceListItem[]): TraceDateGroup[] {
+  return items.reduce<TraceDateGroup[]>((groups, item) => {
+    const key = traceDayKey(item.startedAt) ?? item.startedAt
+    const current = groups[groups.length - 1]
+    if (current?.key === key) {
+      current.items.push(item)
+      return groups
+    }
+    groups.push({ key, items: [item] })
+    return groups
+  }, [])
+}
+
+function formatDateGroupLabel(
+  key: string,
+  now: number,
+  language: string,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  const todayKey = traceDayKey(now)
+  const yesterdayKey = traceDayKey(now - 24 * 60 * 60 * 1000)
+  const relative = key === todayKey
+    ? t('activity.runCard.today')
+    : key === yesterdayKey
+      ? t('activity.runCard.yesterday')
+      : null
+  const date = new Intl.DateTimeFormat(language, {
+    month: 'long',
+    day: 'numeric',
+    timeZone: DISPLAY_TIME_ZONE,
+  }).format(new Date(`${key}T00:00:00+08:00`))
+  return relative ? `${relative} · ${date}` : date
+}
+
+function formatRelativeTime(
+  startedAt: string,
+  now: number,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  const elapsedMs = Math.max(0, now - Date.parse(startedAt))
+  const minutes = Math.floor(elapsedMs / 60_000)
+  if (minutes < 1) return t('activity.runCard.justNow')
+  if (minutes < 60) return t('activity.runCard.minutesAgo', { count: minutes })
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('activity.runCard.hoursAgo', { count: hours })
+  return t('activity.runCard.daysAgo', { count: Math.floor(hours / 24) })
+}
+
+function formatClockTime(startedAt: string, language: string): string {
+  return new Intl.DateTimeFormat(language, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZone: DISPLAY_TIME_ZONE,
+  }).format(new Date(startedAt))
+}
+
+function scalePercent(value: number, max: number): number {
+  if (value <= 0 || max <= 0) return 0
+  return Math.round((value / max) * 100)
 }
 
 function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation()
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadge(status)}`}>
-      <span className={`size-1.5 rounded-full ${statusDot(status)}`} />
+    <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadge(status)}`}>
       {t(`activity.status.${status}` as 'activity.status.completed', { defaultValue: status })}
     </span>
   )
 }
 
-function statusDot(status: string): string {
+function runCardClass(status: string): string {
+  if (status === 'failed') return 'border-status-danger-border/45 bg-status-danger-soft/30'
+  if (status === 'running') return 'border-clay/30 bg-clay-soft/25'
+  return 'border-line bg-paper'
+}
+
+function runAccentClass(status: string): string {
   if (status === 'completed') return 'bg-status-success'
-  if (status === 'running') return 'bg-status-warning'
+  if (status === 'running') return 'bg-clay'
   if (status === 'cancelled' || status === 'interrupted') return 'bg-ink-faint'
   return 'bg-status-danger'
 }

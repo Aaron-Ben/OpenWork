@@ -18,9 +18,16 @@ export const enUS = {
   },
   activity: {
     navigation: 'Runs', title: 'Runs',
-    description: 'Inspect model calls, tool calls, timing, and errors for each trace; payloads load only when their slot is expanded.',
-    refresh: 'Refresh', search: 'Search runs', searchPlaceholder: 'Search conversation, directory, model, Trace, or Turn ID',
+    search: 'Search runs', searchPlaceholder: 'Search conversation, directory, model, Trace, or Turn ID',
     statusLabel: 'Run status', loading: 'Loading runs…', empty: 'No matching run records.', loadMore: 'Load more',
+    dashboard: { summary: 'Today run summary', todayRuns: 'Runs today', successRate: 'Success rate', failedRuns: '{{count}} failed', medianDuration: 'Median duration', totalTokens: 'Total tokens' },
+    runCard: {
+      modelCount: '{{count}} models', toolCount: '{{count}} tools', duration: 'Duration', token: 'Token',
+      today: 'Today', yesterday: 'Yesterday', justNow: 'Just now',
+      minutesAgo_one: '{{count}} min ago', minutesAgo_other: '{{count}} min ago',
+      hoursAgo_one: '{{count}} hr ago', hoursAgo_other: '{{count}} hr ago',
+      daysAgo_one: '{{count}} day ago', daysAgo_other: '{{count}} days ago',
+    },
     modelCalls: '{{count}} model calls', toolCalls: '{{count}} tool calls', tokens: '{{count}} tokens',
     timeline: 'Run timeline', orphanTools: '{{count}} tool calls have no parent model span', modelCall: 'Model call', toolCall: 'Tool call', compaction: 'Conversation compaction',
     traceDetail: 'Trace details', openToolSpan: 'View run details for this tool call', close: 'Close run details', noSpans: 'No spans were recorded for this trace.',
