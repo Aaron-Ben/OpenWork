@@ -37,9 +37,12 @@ The application runtime, sessions, messages, and traces stay on your machine; mo
 ## Current capabilities
 
 - **Explicit model selection**: built-in presets for OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM. The user selects the concrete model for each session; there is no silent cross-model fallback;
-- **Seven built-in tools**: `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash`. The first six resolve real paths and verify authorization through one shared boundary; `bash` starts the host POSIX shell in the working directory;
+- **Seven capability tools**: `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash`. The first six resolve real paths and verify authorization through one shared boundary; `bash` starts the host POSIX shell in the working directory. Root sessions also get six Core-owned control tools (see the next two entries); sub-agents get only five of the read-only tools;
 - **Two permission modes**: `default` auto-allows workspace reads and commands proven to be read-only; `acceptEdits` additionally allows non-sensitive workspace file changes. Commands that cannot be proven safe still require confirmation;
 - **Reviewable file changes**: `write` and `edit` produce structured diffs with conflict-aware Undo / Reapply. File changes made through `bash` do not yet have equally reliable reconciliation;
+- **Task list**: the `update_plan` control tool lets the model maintain steps and their status inside a complex turn, persisted per turn and projected to Desktop. It answers “which step are we on”, not “let us agree on a plan first”;
+- **Read-only sub-agents**: the main agent can spawn read-only sub-agents to answer codebase questions, with results delivered asynchronously, so the intermediate material from reading twenty files stays out of the main conversation. There is exactly one level: sub-agents cannot spawn further agents and cannot write files. The five control tools are offered to root sessions only;
+- **Skills**: reusable workflow packages under `.agents`—one directory, one `SKILL.md`. Users pick an exact path with `$`, and the body enters the context through three levels of progressive disclosure;
 - **Inspectable context**: `AGENTS.md` at the working-directory root enters the system context, and Desktop can show the composition and budget of the next model request;
 - **Context compaction**: compact automatically near the context limit or explicitly run `/compact` while a session is idle. Summaries, checkpoints, read-only replay, and durable rewind are persisted;
 - **Quality traces**: inspect the request actually sent to the model, system context, tool definitions, response references, tokens, permission decisions, and failure phases;
@@ -116,10 +119,13 @@ OpenWork **deliberately does not provide OS-level sandboxing, network control, u
 
 ## Not yet implemented
 
-The development build targeting `0.1.0` does not yet implement MCP, memory, planning, skills, subagents, an independent artifact subsystem, Git or repository-level diffs, worktrees, cross-process recovery of unfinished turns, an event journal, lossy compaction, or background-task recovery. This describes the current state; it does not commit every capability to a future release. After a process restart, unfinished turns are marked `interrupted`; tools are never replayed automatically.
+The development build targeting `0.1.0` does not yet implement MCP, memory, plan mode, an independent artifact subsystem, Git or repository-level diffs, worktrees, cross-process recovery of unfinished turns, an event journal, lossy compaction, or background-task recovery. This describes the current state; it does not commit every capability to a future release. After a process restart, unfinished turns are marked `interrupted`; tools are never replayed automatically.
+
+Plan mode here means the collaboration mode where a plan is agreed with the user before execution. It is not the same thing as the implemented `update_plan` task list; the two share no state machine.
 
 The following are known engineering gaps, not commitments that every item is in the current iteration:
 
+- the sub-agent tree has no token budget: concurrency 3, 15 model calls per sub-agent, and 20 per parent turn all count occurrences, and none of them counts spend. A parent can loop “spawn 3 → wait → spawn 3 again”, which caps out around 450 sub-agent model calls behind a single sentence;
 - the Rust → TypeScript host contract is still mirrored by hand, with no generation or drift check;
 - trace annotations still have schema only, while full queue/database/flush degradation verification and an outlet for dropped-write counters remain incomplete;
 - file side effects caused by `bash` cannot yet be reconciled reliably;
@@ -174,7 +180,7 @@ TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
   cargo test -p openwork-core
 ```
 
-Documentation: [index](docs/README.md) · [architecture](docs/architecture.md) · [session runtime](docs/session-runtime.md) · [context window](docs/context-window.md) · [compaction](docs/compaction.md) · [Trace](docs/trace.md) · [tools](docs/tools.md) · [permissions](docs/permissions.md) · [data model](docs/data-model.md) · [Desktop](docs/desktop.md) · [local PostgreSQL](docs/local-postgres.md)
+Documentation: [index](docs/README.md) · [architecture](docs/architecture.md) · [session runtime](docs/session-runtime.md) · [context window](docs/context-window.md) · [compaction](docs/compaction.md) · [Trace](docs/trace.md) · [tools](docs/tools.md) · [task list](docs/update-plan.md) · [skills](docs/skills.md) · [multi-agent](docs/multi-agent.md) · [permissions](docs/permissions.md) · [data model](docs/data-model.md) · [Desktop](docs/desktop.md) · [local PostgreSQL](docs/local-postgres.md)
 
 ## License
 

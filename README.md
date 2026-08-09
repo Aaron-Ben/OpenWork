@@ -37,9 +37,12 @@ OpenWork 是一个本地桌面 Agent 工作台。你选择模型和工作目录�
 ## 当前能力
 
 - **显式模型选择**：内置 OpenAI、Anthropic、DeepSeek、Kimi、Qwen 和 GLM Provider 预设；每个 Session 由用户选择具体模型，不做跨模型静默 fallback；
-- **七个内置工具**：`read`、`write`、`edit`、`grep`、`glob`、`list`、`bash`。前六个文件工具通过统一入口解析真实路径并核对授权；`bash` 在工作目录中启动宿主 POSIX Shell；
+- **七个能力工具**：`read`、`write`、`edit`、`grep`、`glob`、`list`、`bash`。前六个文件工具通过统一入口解析真实路径并核对授权；`bash` 在工作目录中启动宿主 POSIX Shell。根会话在此之上还有六个 Core 控制工具（见下面两条），子 Agent 只拿到其中五个只读工具；
 - **两种权限模式**：`default` 自动放行工作区读取和可证明只读的命令；`acceptEdits` 额外放行非敏感的工作区文件改动。无法证明的命令仍要用户确认；
 - **可审阅文件改动**：`write` 和 `edit` 产生结构化 Diff，支持冲突检查下的 Undo / Reapply；通过 `bash` 发生的文件变化目前不具备同等级别的可靠对账；
+- **任务清单**：控制工具 `update_plan` 让模型在复杂 Turn 内维护步骤与状态，按 Turn 持久化并投影到 Desktop。它回答“现在做到哪一步”，不是“先讨论出一份方案”；
+- **只读子 Agent**：主 Agent 可以派生只读子 Agent 去回答代码库问题，结果异步回传，目的是把翻二十个文件的中间材料挡在主对话之外。只有一层，子 Agent 不能再派生，也不能写文件；五个控制工具只对根会话开放；
+- **Skill**：`.agents` 下的可复用工作流包，一个目录一个 `SKILL.md`，用户用 `$` 选择精确路径，正文按三层渐进披露进入上下文；
 - **可检查上下文**：工作目录根部的 `AGENTS.md` 会进入 System Context，Desktop 可以查看下一次模型调用的上下文构成与预算；
 - **上下文压缩**：接近窗口上限时自动压缩，也可在空闲 Session 中显式执行 `/compact`；摘要、checkpoint、只读 replay 和 durable rewind 均持久化；
 - **质量 Trace**：查看模型实际收到的请求、System Context、工具定义、响应引用、Token、权限决定和失败阶段；
@@ -116,10 +119,13 @@ OpenWork **有意不提供 OS 级沙箱、网络管控、无人值守运行或�
 
 ## 暂未实现
 
-当前面向 `0.1.0` 的开发版本暂未实现 MCP、Memory、Plan、Skill、Subagent、独立 Artifact 系统、Git / 仓库级 Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩或后台任务恢复。这描述的是当前状态，不代表这些能力都已承诺进入后续版本。进程重启后，未完成 Turn 会标记为 `interrupted`，不会自动重放工具。
+当前面向 `0.1.0` 的开发版本暂未实现 MCP、Memory、Plan mode、独立 Artifact 系统、Git / 仓库级 Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩或后台任务恢复。这描述的是当前状态，不代表这些能力都已承诺进入后续版本。进程重启后，未完成 Turn 会标记为 `interrupted`，不会自动重放工具。
+
+这里的 Plan mode 指“先与用户讨论出一份方案再执行”的协作模式，与已实现的 `update_plan` 任务清单不是一回事：两者不共享状态机。
 
 以下是已知工程缺口，不代表已经承诺进入当前迭代：
 
+- 子 Agent 树没有 token 预算上限：并发 3、子 Agent 15 步、父 20 步，三道限额都在数次数，没有一道在数花费。父可以“派 3 个 → 等 → 再派 3 个”循环，理论上限约 450 次子 Agent 模型调用，全挂在一句话下面；
 - Rust → TypeScript Host Contract 仍由手写镜像维护，尚无自动生成和 Drift Check；
 - Trace 标注仍只有 schema，Queue / 数据库 / Flush 的完整降级验收和丢弃计数出口尚未收口；
 - `bash` 造成的文件副作用尚不能可靠对账；
@@ -174,7 +180,7 @@ TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
   cargo test -p openwork-core
 ```
 
-文档入口：[索引](docs/README.md) · [架构](docs/architecture.md) · [Session 运行时](docs/session-runtime.md) · [上下文窗口](docs/context-window.md) · [压缩](docs/compaction.md) · [Trace](docs/trace.md) · [工具](docs/tools.md) · [权限](docs/permissions.md) · [数据模型](docs/data-model.md) · [Desktop](docs/desktop.md) · [本地 PostgreSQL](docs/local-postgres.md)
+文档入口：[索引](docs/README.md) · [架构](docs/architecture.md) · [Session 运行时](docs/session-runtime.md) · [上下文窗口](docs/context-window.md) · [压缩](docs/compaction.md) · [Trace](docs/trace.md) · [工具](docs/tools.md) · [任务清单](docs/update-plan.md) · [Skill](docs/skills.md) · [多智能体](docs/multi-agent.md) · [权限](docs/permissions.md) · [数据模型](docs/data-model.md) · [Desktop](docs/desktop.md) · [本地 PostgreSQL](docs/local-postgres.md)
 
 ## 许可证
 
