@@ -54,6 +54,15 @@ fn assert_asks_in_both_modes(toolset: &FinalizedToolset, command: &str) {
     }
 }
 
+fn permit_effects(authorization: &Authorization) -> &[Effect] {
+    match authorization {
+        Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit.effects(),
+        Authorization::Deny { .. } | Authorization::Unavailable { .. } => {
+            panic!("authorization has no inspectable permit")
+        }
+    }
+}
+
 #[test]
 fn acc_11_and_14_readonly_commands_auto_allow_in_both_modes() {
     let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
@@ -116,6 +125,53 @@ fn acc_18_and_20_dynamic_tokens_and_unknown_flags_are_not_readonly() {
         "ls ~/",
     ] {
         assert_asks_in_both_modes(&toolset, command);
+    }
+}
+
+#[test]
+fn double_quoted_dollar_literals_are_preserved_before_dynamic_token_checks() {
+    let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
+
+    for (command, expected_argument) in [
+        (r#"cat "a$.txt""#, "a$.txt"),
+        (r#"cat "a[$]b.txt""#, "a[$]b.txt"),
+        (r#"cat "a\$b.txt""#, "a$b.txt"),
+    ] {
+        let authorization = authorize(&toolset, command, PermissionMode::Default);
+        assert!(
+            matches!(&authorization, Authorization::Ask { .. }),
+            "dynamic token should ask: {command}"
+        );
+        assert!(
+            permit_effects(&authorization).contains(&Effect::Exec {
+                program: "cat".to_string(),
+                args: vec![expected_argument.to_string()],
+            }),
+            "decoded argument diverged from bash: {command}"
+        );
+    }
+
+    assert_asks_in_both_modes(&toolset, r#"cat "a$b.txt""#);
+}
+
+#[test]
+fn static_double_quoted_literals_keep_their_existing_authorization_and_paths() {
+    let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
+
+    for command in [r#"ls -la "src""#, r#"cat """#] {
+        assert_allows_in_both_modes(&toolset, command);
+    }
+
+    for (command, expected_path) in [
+        (r#"cat "a\"b.txt""#, r#"/repo/a"b.txt"#),
+        (r#"cat "a\b.txt""#, r"/repo/a\b.txt"),
+    ] {
+        let authorization = authorize(&toolset, command, PermissionMode::Default);
+        assert!(matches!(&authorization, Authorization::Allow { .. }));
+        assert!(
+            permit_effects(&authorization).contains(&Effect::read(expected_path)),
+            "decoded path diverged from bash: {command}"
+        );
     }
 }
 

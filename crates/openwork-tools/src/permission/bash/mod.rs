@@ -240,18 +240,18 @@ fn static_token(node: Node<'_>, source: &[u8]) -> Result<String, ()> {
         "word" | "number" => decode_word(node_text(node, source)?),
         "raw_string" => strip_quotes(node_text(node, source)?, '\''),
         "string" => {
-            if node.named_child_count() == 0 {
-                return strip_quotes(node_text(node, source)?, '"');
-            }
-            let mut decoded = String::new();
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if child.kind() != "string_content" {
                     return Err(());
                 }
-                decoded.push_str(&decode_double_quoted_content(node_text(child, source)?)?);
             }
-            Ok(decoded)
+            let raw = node_text(node, source)?;
+            let inner = raw
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .ok_or(())?;
+            decode_double_quoted_content(inner)
         }
         _ => Err(()),
     }
