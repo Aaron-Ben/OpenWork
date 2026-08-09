@@ -286,5 +286,16 @@ export const zhTW = {
     fileChangeCount: '共 {{count}} 個檔案', copyDiff: '複製 Diff',
     collapseDiff: '收起 {{name}} 的程式碼差異', expandDiff: '展開 {{name}} 的程式碼差異',
     showMoreFiles: '再顯示 {{count}} 個檔案', showFewerFiles: '收起檔案列表',
+    readonly: {
+      readAction: '讀取', listAction: '列出', globAction: '匹配', grepAction: '搜尋',
+      wholeFile: '全文', lineRange: '第 {{start}}–{{end}} 行', fromLine: '從第 {{line}} 行起',
+      lineCount: '{{count}} 行', totalLineCount: '共 {{count}} 行',
+      directoryCount: '{{count}} 個目錄', fileCount: '{{count}} 個檔案', hitCount: '{{count}} 處',
+      hitsAndFiles: '{{hits}} 處 / {{files}} 個檔案', inScope: '於 {{scope}}',
+      atLeastFileCount: '至少 {{count}} 個檔案', atLeastHitsAndFiles: '至少 {{hits}} 處 / {{files}} 個檔案',
+      moreItems: '還有 {{count}} 項', moreHits: '還有 {{count}} 處命中',
+      moreLinesAvailable: '後續仍有內容', noOutput: '暫無輸出',
+      hiddenLines: '已隱藏 {{count}} 行', loadFullOutput: '載入完整輸出', inspectFailure: '查看失敗詳情', copyError: '複製錯誤',
+    },
   },
 } as const

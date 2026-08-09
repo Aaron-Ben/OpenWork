@@ -291,5 +291,16 @@ export const enUS = {
     fileChangeCount: '{{count}} files', copyDiff: 'Copy diff',
     collapseDiff: 'Collapse code diff for {{name}}', expandDiff: 'Expand code diff for {{name}}',
     showMoreFiles: 'Show {{count}} more files', showFewerFiles: 'Show fewer files',
+    readonly: {
+      readAction: 'Read', listAction: 'List', globAction: 'Match', grepAction: 'Search',
+      wholeFile: 'full file', lineRange: 'lines {{start}}–{{end}}', fromLine: 'from line {{line}}',
+      lineCount: '{{count}} lines', totalLineCount: '{{count}} lines total',
+      directoryCount: '{{count}} folders', fileCount: '{{count}} files', hitCount: '{{count}} matches',
+      hitsAndFiles: '{{hits}} matches / {{files}} files', inScope: 'in {{scope}}',
+      atLeastFileCount: 'at least {{count}} files', atLeastHitsAndFiles: 'at least {{hits}} matches / {{files}} files',
+      moreItems: '{{count}} more items', moreHits: '{{count}} more matches',
+      moreLinesAvailable: 'More lines are available', noOutput: 'No output',
+      hiddenLines: '{{count}} lines hidden', loadFullOutput: 'Load full output', inspectFailure: 'Inspect failure', copyError: 'Copy error',
+    },
   },
 } as const

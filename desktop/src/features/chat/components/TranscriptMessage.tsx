@@ -25,6 +25,12 @@ function sameParts(left: ChatItem['parts'], right: ChatItem['parts']): boolean {
   )
 }
 
+function sameMessageIds(left?: string[], right?: string[]): boolean {
+  if (left === right) return true
+  if (!left || !right || left.length !== right.length) return false
+  return left.every((id, index) => id === right[index])
+}
+
 /**
  * 计划的比较必须逐字段做。
  *
@@ -55,6 +61,7 @@ export function areTranscriptMessagePropsEqual(
     && previous.message.id === next.message.id
     && previous.message.turnId === next.message.turnId
     && previous.message.role === next.message.role
+    && sameMessageIds(previous.message.sourceMessageIds, next.message.sourceMessageIds)
     && previous.message.model === next.message.model
     && previous.message.isStreaming === next.message.isStreaming
     && previous.message.isCompacting === next.message.isCompacting
@@ -81,6 +88,7 @@ export const TranscriptMessage = memo(function TranscriptMessage({
   return (
     <div
       data-message-id={message.id}
+      data-source-message-ids={message.sourceMessageIds?.join(' ')}
       data-transcript-gap={gap}
       data-turn-id={message.role === 'user' ? message.turnId ?? message.id : undefined}
       className={`rounded-xl transition-colors${spacing ? ` ${spacing}` : ''}${

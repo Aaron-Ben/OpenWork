@@ -55,4 +55,16 @@ describe('areTranscriptMessagePropsEqual', () => {
 
     expect(areTranscriptMessagePropsEqual(previous, next)).toBe(false)
   })
+
+  it('rerenders when coalesced source message anchors change', () => {
+    const previous = props({
+      id: 'message-1', role: 'assistant', parts: [], sourceMessageIds: ['message-1'],
+    })
+    const next: TranscriptMessageProps = {
+      ...previous,
+      message: { ...previous.message, sourceMessageIds: ['message-1', 'message-2'] },
+    }
+
+    expect(areTranscriptMessagePropsEqual(previous, next)).toBe(false)
+  })
 })

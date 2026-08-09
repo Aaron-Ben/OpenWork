@@ -10,6 +10,8 @@ export interface TurnPlanView {
 /// 前端渲染单元:一条消息(user/assistant/tool)。`parts` 为有序 ContentBlock。
 export interface ChatItem {
   id: string
+  /// 相邻只读工具消息合并展示时保留的全部源消息 ID，供 Trace 跳转与高亮定位。
+  sourceMessageIds?: string[]
   turnId?: string
   role: 'user' | 'assistant' | 'tool'
   parts: ContentBlock[]

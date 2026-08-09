@@ -62,4 +62,55 @@ describe('mergeToolMessages', () => {
 
     expect(mergeToolMessages([orphan])).toEqual([orphan])
   })
+
+  it('coalesces adjacent readonly activity messages so five reads can render as one group', () => {
+    const messages: ChatItem[] = Array.from({ length: 5 }, (_, index) => [{
+      id: `assistant-${index}`,
+      turnId: 'turn-reads',
+      role: 'assistant' as const,
+      parts: [{
+        type: 'tool_call' as const,
+        id: `read-${index}`,
+        name: 'read',
+        input: JSON.stringify({ path: `src/${index}.ts` }),
+        state: 'finished' as const,
+      }],
+    }, {
+      id: `tool-${index}`,
+      turnId: 'turn-reads',
+      role: 'tool' as const,
+      parts: [{
+        type: 'tool_result' as const,
+        id: `read-${index}`,
+        name: 'read',
+        output: [{ type: 'text' as const, text: '     1\tcontent' }],
+        state: 'success' as const,
+      }],
+    }]).flat()
+
+    const merged = mergeToolMessages(messages)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].parts.filter((part) => part.type === 'tool_call')).toHaveLength(5)
+    expect(merged[0].sourceMessageIds).toEqual([
+      'assistant-0', 'assistant-1', 'assistant-2', 'assistant-3', 'assistant-4',
+    ])
+  })
+
+  it('does not coalesce readonly activity across model text', () => {
+    const before: ChatItem = {
+      id: 'assistant-before', turnId: 'turn-reads', role: 'assistant',
+      parts: [{ type: 'tool_call', id: 'read-before', name: 'read', input: '{"path":"a.ts"}', state: 'finished' }],
+    }
+    const text: ChatItem = {
+      id: 'assistant-text', turnId: 'turn-reads', role: 'assistant',
+      parts: [{ type: 'text', text: '继续检查' }],
+    }
+    const after: ChatItem = {
+      id: 'assistant-after', turnId: 'turn-reads', role: 'assistant',
+      parts: [{ type: 'tool_call', id: 'read-after', name: 'read', input: '{"path":"b.ts"}', state: 'finished' }],
+    }
+
+    expect(mergeToolMessages([before, text, after])).toHaveLength(3)
+  })
 })

@@ -90,7 +90,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) : null}
       {toolParts.length > 0 ? (
         <ToolActivityList
-          parts={toolParts}
+          parts={parts}
           onOpenTrace={onOpenTrace ? (providerToolCallId) => onOpenTrace(providerToolCallId) : undefined}
           onUndoFileChanges={onUndoFileChanges}
           onReapplyFileChanges={onReapplyFileChanges}

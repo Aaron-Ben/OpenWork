@@ -181,8 +181,9 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
   useEffect(() => {
     if (!messageFocus || messageFocus.sessionId !== sessionId) return
+    const escapedMessageId = CSS.escape(messageFocus.messageId)
     const message = scrollContainerRef.current?.querySelector<HTMLElement>(
-      `[data-message-id="${CSS.escape(messageFocus.messageId)}"]`,
+      `[data-message-id="${escapedMessageId}"], [data-source-message-ids~="${escapedMessageId}"]`,
     )
     if (!message) return
     message.scrollIntoView({ block: 'center' })
@@ -385,7 +386,8 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
                 <TranscriptMessage
                   key={message.id}
                   message={message}
-                  highlighted={highlightedMessageId === message.id}
+                  highlighted={highlightedMessageId === message.id
+                    || message.sourceMessageIds?.includes(highlightedMessageId ?? '') === true}
                   gap={transcriptGap(messages[index - 1], message)}
                   onOpenTrace={openTrace}
                   onUndoFileChanges={undoFileChanges}

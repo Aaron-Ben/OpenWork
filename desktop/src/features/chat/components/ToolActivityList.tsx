@@ -30,6 +30,10 @@ import {
   type FileDiffHunk,
   type FileDiffLine,
 } from './FileChangeCard'
+import {
+  isReadonlyDisplayTool,
+  ReadonlyToolActivityRow,
+} from './ReadonlyToolActivity'
 
 type ActivityState = ToolResultState | 'pending' | 'submitted' | 'finished'
 
@@ -42,6 +46,8 @@ export interface ToolActivity {
   output: string
   state: ActivityState
   artifacts: ToolResultArtifact[]
+  sequence: number
+  separatedBefore: boolean
 }
 
 interface ToolActivityListProps {
@@ -64,6 +70,8 @@ const TOOL_ICONS: Record<string, typeof SquareTerminal> = {
 export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
   const order: string[] = []
   const activities = new Map<string, ToolActivity>()
+  let sequence = 0
+  let separatedBefore = false
 
   for (const part of parts) {
     if (part.type === 'tool_call') {
@@ -79,7 +87,10 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
         output: existing?.output ?? '',
         state: existing?.state ?? part.state,
         artifacts: existing?.artifacts ?? [],
+        sequence: existing?.sequence ?? sequence++,
+        separatedBefore: existing?.separatedBefore ?? separatedBefore,
       })
+      separatedBefore = false
       continue
     }
 
@@ -95,8 +106,15 @@ export function collectToolActivities(parts: ContentBlock[]): ToolActivity[] {
         output: extractText(part.output),
         state: part.state,
         artifacts: part.artifacts ?? [],
+        sequence: existing?.sequence ?? sequence++,
+        separatedBefore: existing?.separatedBefore ?? separatedBefore,
       })
+      if (!existing) separatedBefore = false
+      continue
     }
+
+    // 模型文本或 thinking 位于两次工具调用之间时，下一次调用必须开启新组。
+    separatedBefore = true
   }
 
   return order.flatMap((id) => {
@@ -122,6 +140,7 @@ export const ToolActivityList = memo(function ToolActivityList({
   onReviewFileChanges,
   fileChangePresentation = 'activity',
 }: ToolActivityListProps) {
+  const [readonlyExpansion, setReadonlyExpansion] = useState<Record<string, boolean>>({})
   const allActivities = useMemo(() => collectToolActivities(parts), [parts])
   const fileChanges = useMemo(() => collectFileChanges(allActivities), [allActivities])
   const fileActivityIds = useMemo(
@@ -138,6 +157,7 @@ export const ToolActivityList = memo(function ToolActivityList({
       : allActivities,
     [allActivities, fileActivityIds, fileChangePresentation],
   )
+  const activityGroups = useMemo(() => groupActivities(activities), [activities])
 
   if (allActivities.length === 0) return null
 
@@ -154,18 +174,67 @@ export const ToolActivityList = memo(function ToolActivityList({
       ) : null}
       {activities.length > 0 ? (
         <div className="space-y-0.5">
-          {activities.map((activity) => (
-            <ToolActivityRow
-              key={activity.id}
-              activity={activity}
-              onOpenTrace={onOpenTrace}
-            />
-          ))}
+          {activityGroups.map((group) => {
+            const rememberedExpansion = group.activities
+              .map((activity) => readonlyExpansion[activity.id])
+              .find((value) => value != null)
+            return isReadonlyDisplayTool(group.activities[0].name) ? (
+              <ReadonlyToolActivityRow
+                key={group.id}
+                activities={group.activities}
+                expanded={rememberedExpansion}
+                onExpandedChange={(expanded) => setReadonlyExpansion((current) => ({
+                  ...current,
+                  ...Object.fromEntries(group.activities.map((activity) => [activity.id, expanded])),
+                }))}
+                onOpenTrace={onOpenTrace}
+              />
+            ) : (
+              <ToolActivityRow
+                key={group.id}
+                activity={group.activities[0]}
+                onOpenTrace={onOpenTrace}
+              />
+            )
+          })}
         </div>
       ) : null}
     </div>
   )
 })
+
+interface ToolActivityGroup {
+  id: string
+  activities: ToolActivity[]
+}
+
+function groupActivities(activities: ToolActivity[]): ToolActivityGroup[] {
+  const groups: ToolActivityGroup[] = []
+  for (const activity of activities) {
+    const previousGroup = groups[groups.length - 1]
+    const previous = previousGroup?.activities[previousGroup.activities.length - 1]
+    const canGroup = previousGroup
+      && previous
+      && isReadonlyDisplayTool(activity.name)
+      && activity.name === previous.name
+      && !isFailedActivity(activity)
+      && !isFailedActivity(previous)
+      && !activity.separatedBefore
+      && activity.sequence === previous.sequence + 1
+    if (canGroup) {
+      previousGroup.activities.push(activity)
+    } else {
+      groups.push({ id: activity.id, activities: [activity] })
+    }
+  }
+  return groups
+}
+
+function isFailedActivity(activity: ToolActivity): boolean {
+  return activity.state === 'error'
+    || activity.state === 'denied'
+    || activity.state === 'interrupted'
+}
 
 function ToolActivityRow({
   activity,

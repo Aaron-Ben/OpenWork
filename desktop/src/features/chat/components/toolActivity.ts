@@ -38,7 +38,29 @@ export function mergeToolMessages(messages: ChatItem[]): ChatItem[] {
     }
   }
 
-  return merged
+  const coalesced: ChatItem[] = []
+  for (const message of merged) {
+    const previous = coalesced[coalesced.length - 1]
+    if (
+      previous
+      && previous.turnId === message.turnId
+      && isReadonlyActivityMessage(previous)
+      && isReadonlyActivityMessage(message)
+    ) {
+      coalesced[coalesced.length - 1] = {
+        ...previous,
+        parts: [...previous.parts, ...message.parts],
+        sourceMessageIds: [
+          ...(previous.sourceMessageIds ?? [previous.id]),
+          ...(message.sourceMessageIds ?? [message.id]),
+        ],
+      }
+    } else {
+      coalesced.push(message)
+    }
+  }
+
+  return coalesced
 }
 
 /// 文件工具始终保留在执行时间线上；Turn 完成后，再在最后一条文本回答后
@@ -128,4 +150,12 @@ function findMatchingAssistant(messages: ChatItem[], toolCallId: string): number
     }
   }
   return -1
+}
+
+function isReadonlyActivityMessage(message: ChatItem): boolean {
+  if (message.role !== 'assistant' || message.parts.length === 0) return false
+  return message.parts.every((part) =>
+    (part.type === 'tool_call' || part.type === 'tool_result')
+    && (part.name === 'read' || part.name === 'list' || part.name === 'glob' || part.name === 'grep')
+  )
 }

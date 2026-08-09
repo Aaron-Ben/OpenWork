@@ -375,5 +375,16 @@ export const zhCN = {
     fileChangeCount: '共 {{count}} 个文件', copyDiff: '复制 Diff',
     collapseDiff: '收起 {{name}} 的代码差异', expandDiff: '展开 {{name}} 的代码差异',
     showMoreFiles: '再显示 {{count}} 个文件', showFewerFiles: '收起文件列表',
+    readonly: {
+      readAction: '读取', listAction: '列出', globAction: '匹配', grepAction: '搜索',
+      wholeFile: '全文', lineRange: '第 {{start}}–{{end}} 行', fromLine: '从第 {{line}} 行起',
+      lineCount: '{{count}} 行', totalLineCount: '共 {{count}} 行',
+      directoryCount: '{{count}} 个目录', fileCount: '{{count}} 个文件', hitCount: '{{count}} 处',
+      hitsAndFiles: '{{hits}} 处 / {{files}} 个文件', inScope: '于 {{scope}}',
+      atLeastFileCount: '至少 {{count}} 个文件', atLeastHitsAndFiles: '至少 {{hits}} 处 / {{files}} 个文件',
+      moreItems: '还有 {{count}} 项', moreHits: '还有 {{count}} 处命中',
+      moreLinesAvailable: '后续仍有内容', noOutput: '暂无输出',
+      hiddenLines: '已隐藏 {{count}} 行', loadFullOutput: '加载完整输出', inspectFailure: '查看失败详情', copyError: '复制错误',
+    },
   },
 } as const
