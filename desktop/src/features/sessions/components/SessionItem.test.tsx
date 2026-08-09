@@ -60,6 +60,9 @@ describe('SessionItem', () => {
 
     expect(markup).toContain('aria-current="page"')
     expect(markup).toContain('bg-clay-soft')
+    expect(markup).toContain('h-10')
+    expect(markup).toContain('rounded-full')
+    expect(markup).toContain('bg-clay')
     expect(markup).toContain('font-medium text-ink')
     expect(markup).not.toContain('text-clay')
   })

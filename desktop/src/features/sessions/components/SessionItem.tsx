@@ -11,7 +11,7 @@ type ItemMode = 'view' | 'edit' | 'confirm-delete'
 /*
   会话行只有标题一行。
   时间与终态都拿掉了：侧栏是"找到那个会话"的地方，标题就是唯一的线索；
-  运行状态由标题前的圆点表达，静止的会话不挂任何装饰。
+  当前会话与运行状态都由标题前的圆点表达，静止且未选中的会话不挂装饰。
 */
 function dotToneClass(activity: SessionRuntimePhase): string {
   return activity === 'waiting_permission' ? 'bg-status-warning' : 'bg-clay'
@@ -108,11 +108,11 @@ export function SessionItem({
         data-session-row={session.id}
         onClick={onSelect}
         aria-current={active ? 'page' : undefined}
-        className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 pr-14 text-left font-sans transition ${
+        className={`flex h-10 w-full items-center gap-2 rounded-full px-3 pr-14 text-left font-sans transition ${
           active ? 'bg-clay-soft' : 'hover:bg-paper'
         }`}
       >
-        {activity !== 'idle' ? (
+        {active || activity !== 'idle' ? (
           <span
             className={`size-1.5 shrink-0 rounded-full ${dotToneClass(activity)}`}
             title={activity === 'waiting_permission' ? t('activity.needsInput') : t('sidebar.sessionRunning')}

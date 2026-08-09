@@ -121,7 +121,7 @@ function SidebarHeader({ title, onCollapse }: { title?: string; onCollapse: () =
           <PanelLeftClose size={19} />
         </Button>
       </div>
-      {title ? <div className="truncate px-4 pb-3 font-sans text-lg font-semibold text-ink">{title}</div> : null}
+      {title ? <div className="truncate px-4 pb-3 font-serif text-xl font-bold text-ink">{title}</div> : null}
     </div>
   )
 }

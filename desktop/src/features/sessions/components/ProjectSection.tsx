@@ -90,8 +90,8 @@ export function ProjectSection({
       <div data-new-conversation-row="true" className="shrink-0 pb-4 pt-1">
         <Button
           type="button"
-          variant="ghost"
-          className="h-10 w-full justify-center gap-2 rounded-full border border-line px-3 text-sm text-ink hover:bg-paper"
+          variant="accent"
+          className="h-10 w-full justify-center gap-2 rounded-full px-3 text-sm font-semibold"
           disabled={!activeProject}
           title={activeProject ? t('sidebar.newSessionInProject', { name: activeProject.name }) : t('sidebar.newConversationHint')}
           onClick={() => {
@@ -104,7 +104,10 @@ export function ProjectSection({
       </div>
 
       <div data-project-section="true" className="min-h-0 flex-1 overflow-y-auto pb-3">
-        <div className="grid gap-3">
+        <div className="px-2 pb-1 font-sans text-[11px] font-medium text-ink-faint">
+          {t('sidebar.projects')}
+        </div>
+        <div className="grid gap-2">
           {projects.map((project) => {
             const projectSessions = sessions.filter(
               (session) => normalizeDirectoryPath(session.workingDirectory) === project.path,
@@ -143,7 +146,7 @@ export function ProjectSection({
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: reduceMotion ? 0 : 0.16, ease: 'easeOut' }}
                     >
-                      <div className="mt-0.5 grid gap-0.5">
+                      <div className="ml-4 mt-0.5 grid gap-0.5">
                         {projectSessions.map((session) => (
                           <SessionItem
                             key={session.id}
@@ -207,11 +210,6 @@ interface ProjectItemProps {
   onCreateSession: () => void
 }
 
-function projectDotClass(running: boolean, sessionCount: number): string {
-  if (running) return 'bg-clay'
-  return sessionCount > 0 ? 'bg-status-success' : 'bg-ink-faint/45'
-}
-
 export function ProjectItem({
   project,
   active,
@@ -231,7 +229,7 @@ export function ProjectItem({
           右内边距只留给计数本身。悬停时计数淡出、操作按钮浮在同一块地方，
           所以不需要为按钮预留一段常驻的空白 —— 那会把计数顶到行中间去。
         */
-        className="flex h-9 w-full items-center gap-2 rounded-xl pl-1 pr-2.5 text-left text-sm font-semibold text-ink transition"
+        className="flex h-8 w-full items-center gap-3 rounded-lg pl-2 pr-2.5 text-left text-sm font-semibold text-ink transition"
         title={project.path}
         aria-expanded={expanded}
         onClick={onSelect}
@@ -239,15 +237,18 @@ export function ProjectItem({
         {expanded
           ? <ChevronDown size={11} className="shrink-0 text-ink-faint" />
           : <ChevronRight size={11} className="shrink-0 text-ink-faint" />}
-        <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${projectDotClass(running, sessionCount)}`} />
         <span className={`min-w-0 flex-1 truncate ${active ? 'text-ink' : 'text-ink-soft group-hover:text-ink'}`}>
           {project.name}
         </span>
         <span
-          className="shrink-0 text-xs font-normal tabular-nums text-ink-faint transition group-hover:opacity-0"
+          className={`shrink-0 tabular-nums transition group-hover:opacity-0 ${
+            running
+              ? 'rounded-full bg-clay-soft px-2 py-0.5 text-[11px] font-semibold text-clay'
+              : 'text-[11px] font-normal text-ink-faint'
+          }`}
           title={t('sidebar.projectSessionCount', { count: sessionCount })}
         >
-          {sessionCount > 0 ? sessionCount : ''}
+          {sessionCount > 0 ? t('sidebar.projectSessionCount', { count: sessionCount }) : ''}
         </span>
       </button>
       {/*

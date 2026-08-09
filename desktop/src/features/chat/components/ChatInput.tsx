@@ -466,8 +466,6 @@ export function ChatInput({
           />
         </div>
 
-        <div className="mx-5 border-t border-line" />
-
         <div className="flex min-h-12 items-center gap-2 px-4 py-1 sm:px-5">
           <Select
             value={permissionMode}
@@ -505,9 +503,9 @@ export function ChatInput({
             disabled={disabled || modelSelectionLocked || isSending || isCompacting || modelOptions.length === 0}
           >
             <SelectTrigger
-              className="w-[clamp(104px,20vw,200px)] overflow-hidden rounded-full border border-line text-ink-soft"
+              /* 宽度随内容自适应、设上限，短模型名完整显示，超长才截断 —— 悬停要能看到全名。 */
+              className="w-auto min-w-[104px] max-w-[min(320px,34vw)] overflow-hidden rounded-full border border-line text-ink-soft"
               aria-label={t('chat.selectModel')}
-              /* 触发器定宽，长模型名会被截断 —— 悬停要能看到全名。 */
               title={selectedModel ? formatModelLabel(selectedModel) : undefined}
             >
               <SelectValue placeholder={t('chat.noModel')}>

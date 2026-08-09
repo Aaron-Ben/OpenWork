@@ -16,6 +16,8 @@ describe('ContextUsageIndicator', () => {
     expect(markup).toContain('data-context-usage-progress="60"')
     expect(markup).toContain('aria-haspopup="dialog"')
     expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('class="text-clay transition-[stroke-dashoffset] duration-300"')
+    expect(markup).toContain('font-mono text-[11px] tabular-nums leading-none text-ink-faint')
     expect(markup).not.toContain('data-context-usage-panel')
   })
 })

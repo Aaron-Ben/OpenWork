@@ -16,9 +16,9 @@ describe('Sidebar', () => {
 
     expect(markup).toContain('OpenWork')
     expect(markup).not.toContain('>OW<')
+    expect(markup).toContain('font-serif text-xl font-bold')
     expect(markup).toContain('data-tauri-drag-region="deep"')
-    // 稿件的侧栏直接从项目分组开始，没有"项目"这一行标题。
-    expect(markup).not.toContain('>项目<')
+    expect(markup).toContain('>项目<')
     expect(markup).toContain('OpenWork')
     expect(markup).toContain('aria-label="打开文件夹"')
     expect(markup).not.toContain('aria-label="项目菜单"')
@@ -46,6 +46,8 @@ describe('Sidebar', () => {
 
     expect(markup).toContain('data-new-conversation-row="true"')
     expect(markup).toContain('新建对话')
+    expect(markup).toContain('bg-clay')
+    expect(markup).toContain('text-paper')
     expect(markup).toContain('title="先打开一个文件夹"')
     // 没有打开的项目就没有地方放新会话，按钮必须是禁用的而不是点了没反应。
     expect(markup).toContain('disabled=""')
@@ -82,12 +84,12 @@ describe('Sidebar', () => {
     expect(markup).toContain('aria-expanded="true"')
     expect(markup).toContain('aria-label="OpenWork 项目操作"')
     expect(markup).toContain('aria-label="在 OpenWork 中创建会话"')
-    expect(markup).toContain('>3<')
+    expect(markup).toContain('>3 个会话<')
     expect(markup).not.toContain('disabled=""')
     expect(markup).not.toContain('删除电脑上的项目')
   })
 
-  it('tints the project dot by whether anything under it is running', () => {
+  it('moves project activity into the conversation-count badge instead of a leading dot', () => {
     const empty = renderToStaticMarkup(
       <ProjectItem
         project={{ name: 'OpenWork', path: '/Volumes/Code/OpenWork' }}
@@ -122,9 +124,12 @@ describe('Sidebar', () => {
       />,
     )
 
-    expect(empty).toContain('bg-ink-faint/45')
-    expect(idle).toContain('bg-status-success')
-    expect(running).toContain('bg-clay')
+    expect(empty).not.toContain('size-1.5 shrink-0 rounded-full')
+    expect(idle).toContain('>3 个会话<')
+    expect(idle).not.toContain('bg-clay-soft')
+    expect(running).toContain('bg-clay-soft')
+    expect(running).toContain('text-clay')
+    expect(running).not.toContain('size-1.5 shrink-0 rounded-full')
   })
 
   it('keeps the project actions hidden until hover so the count stays readable', () => {

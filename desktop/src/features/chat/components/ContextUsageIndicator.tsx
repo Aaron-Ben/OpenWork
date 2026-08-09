@@ -42,13 +42,6 @@ export function ContextUsageIndicator({
   }, [panelVisible])
 
   const usedPercent = usage ? usagePercent(usage) : 0
-  const tone = !usage
-    ? 'text-ink-faint'
-    : usedPercent >= 90
-      ? 'text-status-danger'
-      : usedPercent >= 75
-        ? 'text-status-warning-ink'
-        : 'text-ink-faint'
   const label = usage
     ? t('chat.contextUsageAria', {
         usedPercent,
@@ -70,7 +63,7 @@ export function ContextUsageIndicator({
         <svg
           aria-hidden="true"
           viewBox="0 0 24 24"
-          className={`size-[18px] -rotate-90 ${tone}`}
+          className="size-[18px] -rotate-90 text-ink-faint"
           data-context-usage-ring="true"
         >
           <circle
@@ -92,12 +85,12 @@ export function ContextUsageIndicator({
             strokeLinecap="round"
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={CIRCUMFERENCE * (1 - usedPercent / 100)}
-            className="transition-[stroke-dashoffset] duration-300"
+            className="text-clay transition-[stroke-dashoffset] duration-300"
             data-context-usage-progress={usedPercent}
           />
         </svg>
         {usage ? (
-          <span className={`font-mono text-[11px] tabular-nums leading-none ${tone}`}>
+          <span className="font-mono text-[11px] tabular-nums leading-none text-ink-faint">
             {usedPercent}%
           </span>
         ) : null}
