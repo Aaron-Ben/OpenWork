@@ -12,7 +12,15 @@ pub(crate) struct Proof {
     pub(crate) effects: Vec<Effect>,
 }
 
-pub(crate) fn prove(program: &str, args: &[String], workspace: &Path) -> Option<Proof> {
+pub(crate) fn prove(
+    program: &str,
+    args: &[String],
+    quoted_args: &[bool],
+    workspace: &Path,
+) -> Option<Proof> {
+    if args.len() != quoted_args.len() {
+        return None;
+    }
     let basename = Path::new(program)
         .file_name()
         .and_then(|name| name.to_str())
@@ -20,9 +28,11 @@ pub(crate) fn prove(program: &str, args: &[String], workspace: &Path) -> Option<
     if basename == "sed" {
         return prove_sed(args, workspace);
     }
-    if std::iter::once(program)
-        .chain(args.iter().map(String::as_str))
-        .any(dynamic_token)
+    if dynamic_token(program, false)
+        || args
+            .iter()
+            .zip(quoted_args)
+            .any(|(token, quoted)| dynamic_token(token, *quoted))
     {
         return None;
     }
@@ -215,11 +225,11 @@ fn split_long_flag(argument: &str) -> (&str, Option<&str>) {
 /// prevent. Glob metacharacters are deliberately *not* here: `*` and `?` never
 /// cross a path separator, so the lexical prefix still bounds where they can
 /// expand to.
-fn dynamic_token(token: &str) -> bool {
+fn dynamic_token(token: &str, quoted: bool) -> bool {
     token.starts_with('~')
         || token.contains('$')
         || token.contains('`')
-        || (token.contains('{') && (token.contains(',') || token.contains("..")))
+        || (!quoted && token.contains('{') && (token.contains(',') || token.contains("..")))
 }
 
 fn resolve_effect_path(workspace: &Path, input: &str) -> PathBuf {
@@ -239,15 +249,12 @@ mod tests {
     use super::prove;
 
     fn proof(command: &str, args: &[&str]) -> Option<String> {
-        prove(
-            command,
-            &args
-                .iter()
-                .map(|argument| (*argument).to_string())
-                .collect::<Vec<_>>(),
-            Path::new("/repo"),
-        )
-        .map(|proof| proof.marker.key)
+        let args = args
+            .iter()
+            .map(|argument| (*argument).to_string())
+            .collect::<Vec<_>>();
+        let quoted_args = vec![false; args.len()];
+        prove(command, &args, &quoted_args, Path::new("/repo")).map(|proof| proof.marker.key)
     }
 
     #[test]

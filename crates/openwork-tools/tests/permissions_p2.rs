@@ -129,6 +129,16 @@ fn acc_18_and_20_dynamic_tokens_and_unknown_flags_are_not_readonly() {
 }
 
 #[test]
+fn only_quoted_brace_patterns_bypass_the_brace_expansion_guard() {
+    let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
+
+    assert_allows_in_both_modes(&toolset, r#"rg -n "a{1,3}b" x"#);
+    for command in ["rg -n a{1,3}b x", r#"cat "~/x""#, r#"cat "a$.txt""#] {
+        assert_asks_in_both_modes(&toolset, command);
+    }
+}
+
+#[test]
 fn double_quoted_dollar_literals_are_preserved_before_dynamic_token_checks() {
     let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
 

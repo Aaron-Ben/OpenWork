@@ -221,16 +221,24 @@ fn analyze_command(
     }
 
     let mut cursor = node.walk();
-    let args = node
+    let parsed_args = node
         .children_by_field_name("argument", &mut cursor)
-        .map(|argument| static_token(argument, source))
+        .map(|argument| static_token_with_context(argument, source))
         .collect::<Result<Vec<_>, _>>()?;
+    let args = parsed_args
+        .iter()
+        .map(|argument| argument.value.clone())
+        .collect::<Vec<_>>();
+    let quoted_args = parsed_args
+        .iter()
+        .map(|argument| argument.quoted)
+        .collect::<Vec<_>>();
 
     let mut effects = vec![Effect::Exec {
         program: program.clone(),
         args: args.clone(),
     }];
-    let proof = readonly::prove(&program, &args, effect_base);
+    let proof = readonly::prove(&program, &args, &quoted_args, effect_base);
     if let Some(proof) = &proof {
         effects.extend(proof.effects.iter().cloned());
     }
@@ -364,6 +372,15 @@ fn collect_heredoc_units(
 }
 
 fn static_token(node: Node<'_>, source: &[u8]) -> Result<String, ()> {
+    static_token_with_context(node, source).map(|token| token.value)
+}
+
+struct StaticToken {
+    value: String,
+    quoted: bool,
+}
+
+fn static_token_with_context(node: Node<'_>, source: &[u8]) -> Result<StaticToken, ()> {
     match node.kind() {
         "command_name" => {
             let mut cursor = node.walk();
@@ -372,10 +389,16 @@ fn static_token(node: Node<'_>, source: &[u8]) -> Result<String, ()> {
             if children.next().is_some() {
                 return Err(());
             }
-            static_token(child, source)
+            static_token_with_context(child, source)
         }
-        "word" | "number" => decode_word(node_text(node, source)?),
-        "raw_string" => strip_quotes(node_text(node, source)?, '\''),
+        "word" | "number" => Ok(StaticToken {
+            value: decode_word(node_text(node, source)?)?,
+            quoted: false,
+        }),
+        "raw_string" => Ok(StaticToken {
+            value: strip_quotes(node_text(node, source)?, '\'')?,
+            quoted: true,
+        }),
         "string" => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
@@ -388,7 +411,10 @@ fn static_token(node: Node<'_>, source: &[u8]) -> Result<String, ()> {
                 .strip_prefix('"')
                 .and_then(|value| value.strip_suffix('"'))
                 .ok_or(())?;
-            decode_double_quoted_content(inner)
+            Ok(StaticToken {
+                value: decode_double_quoted_content(inner)?,
+                quoted: true,
+            })
         }
         _ => Err(()),
     }
