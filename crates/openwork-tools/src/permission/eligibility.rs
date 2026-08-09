@@ -19,7 +19,7 @@ pub(crate) fn is_allow_eligible(input: EligibilityInput<'_>) -> bool {
 
 pub(crate) fn changes_working_directory(program: &str, args: &[String]) -> bool {
     let program = basename(program);
-    matches!(program, "cd" | "pushd")
+    matches!(program, "cd" | "pushd" | "popd")
         || (program == "env"
             && args
                 .iter()
@@ -220,6 +220,7 @@ mod tests {
     fn acc_35_cwd_changes_are_detected_for_the_whole_script_gate() {
         assert!(changes_working_directory("cd", &["/tmp".to_string()]));
         assert!(changes_working_directory("pushd", &["/tmp".to_string()]));
+        assert!(changes_working_directory("popd", &[]));
         assert!(changes_working_directory(
             "env",
             &["-C".to_string(), "/tmp".to_string(), "ls".to_string()]

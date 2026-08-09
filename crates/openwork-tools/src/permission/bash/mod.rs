@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use tree_sitter::{Node, Parser};
 
-use crate::policy::lexical_normalize;
+use crate::policy::{lexical_normalize, path_is_within};
 
-use super::super::{AnalysisUnit, Effect, InvocationAnalysis};
+use super::super::{AnalysisUnit, Effect, InvocationAnalysis, ReadonlyProof};
 use super::eligibility::{EligibilityInput, changes_working_directory, is_allow_eligible};
 use super::readonly;
 
@@ -27,11 +27,49 @@ pub(crate) fn analyze(raw: &str, workspace: &Path, path: Option<&str>) -> Invoca
     }
 
     let mut units = Vec::new();
-    if collect_units(root, raw.as_bytes(), workspace, path, &mut units).is_err() || units.is_empty()
+    if collect_units(root, raw.as_bytes(), workspace, workspace, path, &mut units).is_err()
+        || units.is_empty()
     {
         return InvocationAnalysis::unparsed(raw);
     }
-    if units.iter().any(|unit| {
+
+    let rebased = flat_top_level_units(root).and_then(|nodes| {
+        let cd_target = safe_cd_prefix_target(&nodes, &units, workspace)?;
+        let mut rebased = Vec::new();
+        for (index, node) in nodes.into_iter().enumerate() {
+            let before = rebased.len();
+            let effect_base = if index == 0 {
+                workspace
+            } else {
+                cd_target.as_path()
+            };
+            collect_units(
+                node,
+                raw.as_bytes(),
+                workspace,
+                effect_base,
+                path,
+                &mut rebased,
+            )
+            .ok()?;
+            if rebased.len() != before + 1 {
+                return None;
+            }
+        }
+
+        // `cd` 不进入通用只读表。只有顶层结构、唯一性和目标边界都已证明后，才把
+        // 这个 shell 内建命令标成结构性只读，并显式保留目标目录的 read 效果。
+        let cd = rebased.first_mut()?;
+        cd.effects.push(Effect::read(cd_target));
+        cd.readonly_proof = Some(ReadonlyProof {
+            key: "cd".to_string(),
+        });
+        Some(rebased)
+    });
+
+    if let Some(rebased) = rebased {
+        units = rebased;
+    } else if units.iter().any(|unit| {
         unit.effects.iter().any(|effect| match effect {
             Effect::Exec { program, args } => changes_working_directory(program, args),
             _ => false,
@@ -44,10 +82,97 @@ pub(crate) fn analyze(raw: &str, workspace: &Path, path: Option<&str>) -> Invoca
     InvocationAnalysis::new(raw, units)
 }
 
+fn flat_top_level_units<'tree>(root: Node<'tree>) -> Option<Vec<Node<'tree>>> {
+    if root.kind() != "program" {
+        return None;
+    }
+    let mut units = Vec::new();
+    collect_flat_program(root, &mut units).ok()?;
+    Some(units)
+}
+
+fn collect_flat_program<'tree>(node: Node<'tree>, units: &mut Vec<Node<'tree>>) -> Result<(), ()> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.is_named() {
+            collect_flat_statement(child, units)?;
+        } else if child.kind() != ";" {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+fn collect_flat_statement<'tree>(
+    node: Node<'tree>,
+    units: &mut Vec<Node<'tree>>,
+) -> Result<(), ()> {
+    match node.kind() {
+        "command" => {
+            units.push(node);
+            Ok(())
+        }
+        "redirected_statement"
+            if node
+                .child_by_field_name("body")
+                .is_some_and(|body| body.kind() == "command") =>
+        {
+            units.push(node);
+            Ok(())
+        }
+        "list" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.is_named() {
+                    collect_flat_statement(child, units)?;
+                } else if child.kind() != "&&" {
+                    return Err(());
+                }
+            }
+            Ok(())
+        }
+        _ => Err(()),
+    }
+}
+
+fn safe_cd_prefix_target(
+    nodes: &[Node<'_>],
+    units: &[AnalysisUnit],
+    workspace: &Path,
+) -> Option<PathBuf> {
+    if nodes.len() < 2 || nodes.len() != units.len() || nodes.first()?.kind() != "command" {
+        return None;
+    }
+    let cwd_changes = units
+        .iter()
+        .flat_map(|unit| unit.effects.iter())
+        .filter(|effect| match effect {
+            Effect::Exec { program, args } => changes_working_directory(program, args),
+            Effect::Read { .. } | Effect::Write { .. } => false,
+        })
+        .count();
+    if cwd_changes != 1 {
+        return None;
+    }
+    let [Effect::Exec { program, args }] = units.first()?.effects.as_slice() else {
+        return None;
+    };
+    let [target] = args.as_slice() else {
+        return None;
+    };
+    if program != "cd" || target == "-" || target.starts_with('~') {
+        return None;
+    }
+
+    let target = resolve_effect_path(workspace, target);
+    path_is_within(&target, workspace).then_some(target)
+}
+
 fn collect_units(
     node: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    effect_base: &Path,
     path: Option<&str>,
     units: &mut Vec<AnalysisUnit>,
 ) -> Result<(), ()> {
@@ -55,22 +180,23 @@ fn collect_units(
         "program" | "list" | "pipeline" | "subshell" => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                collect_units(child, source, workspace, path, units)?;
+                collect_units(child, source, workspace, effect_base, path, units)?;
             }
             Ok(())
         }
         "command" => {
-            units.push(analyze_command(node, source, workspace, path)?);
+            units.push(analyze_command(node, source, workspace, effect_base, path)?);
             Ok(())
         }
         "redirected_statement" => {
             let body = node.child_by_field_name("body").ok_or(())?;
             let before = units.len();
-            collect_units(body, source, workspace, path, units)?;
+            collect_units(body, source, workspace, effect_base, path, units)?;
             if units.len() != before + 1 {
                 return Err(());
             }
-            let (effects, heredoc_units) = analyze_redirects(node, source, workspace, path)?;
+            let (effects, heredoc_units) =
+                analyze_redirects(node, source, workspace, effect_base, path)?;
             units[before].effects.extend(effects);
             units[before].display = node_text(node, source)?.to_string();
             units.extend(heredoc_units);
@@ -85,6 +211,7 @@ fn analyze_command(
     node: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    effect_base: &Path,
     path: Option<&str>,
 ) -> Result<AnalysisUnit, ()> {
     let name = node.child_by_field_name("name").ok_or(())?;
@@ -103,15 +230,16 @@ fn analyze_command(
         program: program.clone(),
         args: args.clone(),
     }];
-    let proof = readonly::prove(&program, &args, workspace);
+    let proof = readonly::prove(&program, &args, effect_base);
     if let Some(proof) = &proof {
         effects.extend(proof.effects.iter().cloned());
     }
-    let filesystem_proof = filesystem::prove(&program, &args, workspace);
+    let filesystem_proof = filesystem::prove(&program, &args, effect_base);
     if let Some(proof) = &filesystem_proof {
         effects.extend(proof.effects.iter().cloned());
     }
-    let (redirection_effects, heredoc_units) = analyze_redirects(node, source, workspace, path)?;
+    let (redirection_effects, heredoc_units) =
+        analyze_redirects(node, source, workspace, effect_base, path)?;
     if !heredoc_units.is_empty() {
         return Err(());
     }
@@ -144,6 +272,7 @@ fn analyze_redirects(
     node: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    effect_base: &Path,
     path: Option<&str>,
 ) -> Result<(Vec<Effect>, Vec<AnalysisUnit>), ()> {
     let mut effects = Vec::new();
@@ -152,10 +281,17 @@ fn analyze_redirects(
     for redirect in node.children_by_field_name("redirect", &mut cursor) {
         match redirect.kind() {
             "file_redirect" => {
-                effects.extend(file_redirect_effects(redirect, source, workspace)?);
+                effects.extend(file_redirect_effects(redirect, source, effect_base)?);
             }
             "heredoc_redirect" => {
-                collect_heredoc_units(redirect, source, workspace, path, &mut heredoc_units)?;
+                collect_heredoc_units(
+                    redirect,
+                    source,
+                    workspace,
+                    effect_base,
+                    path,
+                    &mut heredoc_units,
+                )?;
             }
             _ => return Err(()),
         }
@@ -200,6 +336,7 @@ fn collect_heredoc_units(
     redirect: Node<'_>,
     source: &[u8],
     workspace: &Path,
+    effect_base: &Path,
     path: Option<&str>,
     units: &mut Vec<AnalysisUnit>,
 ) -> Result<(), ()> {
@@ -214,7 +351,7 @@ fn collect_heredoc_units(
                         "heredoc_content" => {}
                         "command_substitution" => {
                             let command = body_child.named_child(0).ok_or(())?;
-                            collect_units(command, source, workspace, path, units)?;
+                            collect_units(command, source, workspace, effect_base, path, units)?;
                         }
                         _ => return Err(()),
                     }

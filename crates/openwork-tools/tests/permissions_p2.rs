@@ -228,6 +228,58 @@ fn acc_32_34_and_35_assignments_wrappers_and_cwd_changes_are_ineligible() {
 }
 
 #[test]
+fn a_static_workspace_cd_prefix_rebases_following_read_effects() {
+    let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
+
+    for command in [
+        r#"cd "/repo" && cat AGENTS.md"#,
+        r#"cd "/repo"; cat AGENTS.md"#,
+    ] {
+        assert_allows_in_both_modes(&toolset, command);
+    }
+
+    let authorization = authorize(
+        &toolset,
+        r#"cd "/repo/packages" && ls ai"#,
+        PermissionMode::Default,
+    );
+    assert!(matches!(&authorization, Authorization::Allow { .. }));
+    assert!(
+        permit_effects(&authorization).contains(&Effect::read("/repo/packages/ai")),
+        "relative read should resolve from the static cd target"
+    );
+    assert!(!permit_effects(&authorization).contains(&Effect::read("/repo/ai")));
+}
+
+#[test]
+fn cwd_changes_outside_the_narrow_static_workspace_prefix_remain_unprovable() {
+    let toolset = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
+
+    for command in [
+        "cd /etc && cat passwd",
+        r#"cd "/repo" && cd /etc && cat passwd"#,
+        r#"cd "/repo" && pushd packages && cat AGENTS.md"#,
+        r#"cd "/repo" && popd && cat AGENTS.md"#,
+        r#"cd "/repo" && env -C packages cat AGENTS.md"#,
+        r#"cd "/repo" && cat ../../etc/passwd"#,
+        "cd $HOME && ls",
+        "cd - && ls",
+        "cd && ls",
+        r#"(cd "/repo" && ls)"#,
+        r#"cd "/repo" && rm -rf x"#,
+        r#"cd "/repo" && git -C packages status"#,
+    ] {
+        assert!(
+            matches!(
+                authorize(&toolset, command, PermissionMode::Default),
+                Authorization::Ask { .. }
+            ),
+            "cwd-changing command should remain fail-closed: {command}"
+        );
+    }
+}
+
+#[test]
 fn acc_36_workspace_resident_executables_are_ineligible() {
     let safe_path = bash_toolset(Path::new("/repo"), "/usr/bin:/bin");
     let workspace_path = bash_toolset(Path::new("/repo"), "/usr/bin:/repo/bin");
