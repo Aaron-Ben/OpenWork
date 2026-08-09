@@ -17,9 +17,15 @@ export interface SessionTraceTotals {
   tokens: number
   /** 模型调用 + 工具调用的次数，也就是顶栏说的"N 步"。 */
   steps: number
+  /** 最新一条有归属 Turn 的 Trace 所对应的规范 Turn 状态。 */
+  latestTurnStatus: string | null
 }
 
-export const EMPTY_TRACE_TOTALS: SessionTraceTotals = { tokens: 0, steps: 0 }
+export const EMPTY_TRACE_TOTALS: SessionTraceTotals = {
+  tokens: 0,
+  steps: 0,
+  latestTurnStatus: null,
+}
 
 export interface SubAgentEntry {
   children: RuntimeSubAgentSessionRecord[]
@@ -62,13 +68,22 @@ function entryFor(state: SubAgentStoreState, parentSessionId: string): SubAgentE
 /** 一个会话已记录的 Trace 汇总。没有 Trace 的会话是全零，不是缺失。 */
 export async function sessionTraceTotals(sessionId: string): Promise<SessionTraceTotals> {
   const summaries = await coreCommands.listTraces(sessionId, TOKEN_TRACE_LIMIT)
-  return summaries.reduce<SessionTraceTotals>(
-    (totals, summary) => ({
-      tokens: totals.tokens + (summary.totalTokens ?? 0),
-      steps: totals.steps + summary.modelCallCount + summary.toolCallCount,
-    }),
-    EMPTY_TRACE_TOTALS,
-  )
+  let tokens = 0
+  let steps = 0
+  let latestTurnSequence: number | null = null
+  let latestTurnStatus: string | null = null
+
+  for (const summary of summaries) {
+    tokens += summary.totalTokens ?? 0
+    steps += summary.modelCallCount + summary.toolCallCount
+    // 手动压缩与 rewind 没有 Turn，不能让它们覆盖真正的会话终态。
+    if (summary.turnId === null || summary.turnSequence === null) continue
+    if (latestTurnSequence !== null && summary.turnSequence <= latestTurnSequence) continue
+    latestTurnSequence = summary.turnSequence
+    latestTurnStatus = summary.status
+  }
+
+  return { tokens, steps, latestTurnStatus }
 }
 
 export const useSubAgentStore = create<SubAgentStoreState>((set, get) => ({

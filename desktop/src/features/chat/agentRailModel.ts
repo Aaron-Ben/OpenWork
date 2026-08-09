@@ -44,15 +44,19 @@ export interface AgentRailInput {
 export function buildAgentRailItems(input: AgentRailInput): AgentRailItem[] {
   const { runtimeBySession, totalsBySession, nowMs } = input
   const totalsFor = (sessionId: string) => totalsBySession[sessionId] ?? EMPTY_TRACE_TOTALS
+  const orchestratorTotals = totalsFor(input.parentSessionId)
   const orchestrator: AgentRailItem = {
     sessionId: input.parentSessionId,
     role: input.orchestratorRole,
     task: input.orchestratorTask,
-    status: agentStatus(runtimeBySession[input.parentSessionId]),
+    status: agentStatus(
+      runtimeBySession[input.parentSessionId],
+      orchestratorTotals.latestTurnStatus,
+    ),
     toolActivity: agentToolActivity(runtimeBySession[input.parentSessionId]),
     elapsedMs: agentElapsedMs(runtimeBySession[input.parentSessionId], nowMs),
-    tokens: totalsFor(input.parentSessionId).tokens,
-    steps: totalsFor(input.parentSessionId).steps,
+    tokens: orchestratorTotals.tokens,
+    steps: orchestratorTotals.steps,
     orchestrator: true,
   }
   const children = input.children.map((child): AgentRailItem => ({

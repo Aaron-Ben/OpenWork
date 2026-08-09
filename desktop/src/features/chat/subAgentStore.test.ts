@@ -31,13 +31,16 @@ function child(id: string, overrides: Partial<RuntimeSubAgentSessionRecord> = {}
   }
 }
 
-function trace(totalTokens: number): RuntimeTraceSummary {
+function trace(
+  totalTokens: number,
+  overrides: Partial<RuntimeTraceSummary> = {},
+): RuntimeTraceSummary {
   return {
     traceId: `trace-${totalTokens}`,
     turnId: 'turn-1',
     sessionId: 'session-1',
     turnSequence: 1,
-    status: 'succeeded',
+    status: 'completed',
     resolvedModelName: 'model-1',
     modelCallCount: 1,
     modelSubmissionCount: 1,
@@ -46,6 +49,7 @@ function trace(totalTokens: number): RuntimeTraceSummary {
     totalTokens,
     startedAt: '2026-08-08T12:00:00+08:00',
     endedAt: '2026-08-08T12:00:05+08:00',
+    ...overrides,
   }
 }
 
@@ -113,8 +117,8 @@ describe('useSubAgentStore.refreshTotals', () => {
     await useSubAgentStore.getState().refreshTotals('parent-1')
 
     expect(useSubAgentStore.getState().byParent['parent-1'].totalsBySession).toEqual({
-      'parent-1': { tokens: 1_500, steps: 6 },
-      a: { tokens: 96_400, steps: 3 },
+      'parent-1': { tokens: 1_500, steps: 6, latestTurnStatus: 'completed' },
+      a: { tokens: 96_400, steps: 3, latestTurnStatus: 'completed' },
     })
   })
 
@@ -127,14 +131,32 @@ describe('useSubAgentStore.refreshTotals', () => {
     await useSubAgentStore.getState().refreshTotals('parent-1')
 
     expect(useSubAgentStore.getState().byParent['parent-1'].totalsBySession)
-      .toEqual({ 'parent-1': { tokens: 400, steps: 3 } })
+      .toEqual({ 'parent-1': { tokens: 400, steps: 3, latestTurnStatus: 'completed' } })
   })
 })
 
 describe('sessionTraceTotals', () => {
   it('treats a session without traces as zero rather than missing', async () => {
     vi.spyOn(coreCommands, 'listTraces').mockResolvedValue([])
-    await expect(sessionTraceTotals('empty')).resolves.toEqual({ tokens: 0, steps: 0 })
+    await expect(sessionTraceTotals('empty')).resolves.toEqual({
+      tokens: 0,
+      steps: 0,
+      latestTurnStatus: null,
+    })
+  })
+
+  it('uses the newest turn trace status and ignores traces without a turn', async () => {
+    vi.spyOn(coreCommands, 'listTraces').mockResolvedValue([
+      trace(10, { traceId: 'manual', turnId: null, turnSequence: 99, status: 'failed' }),
+      trace(20, { traceId: 'newer', turnId: 'turn-2', turnSequence: 2, status: 'failed' }),
+      trace(30, { traceId: 'older', turnId: 'turn-1', turnSequence: 1, status: 'completed' }),
+    ])
+
+    await expect(sessionTraceTotals('session-1')).resolves.toEqual({
+      tokens: 60,
+      steps: 9,
+      latestTurnStatus: 'failed',
+    })
   })
 })
 

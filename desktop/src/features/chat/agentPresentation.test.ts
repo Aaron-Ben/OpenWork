@@ -30,6 +30,12 @@ describe('agentStatus', () => {
     expect(agentStatus(view({}))).toBe('idle')
     expect(agentStatus(undefined)).toBe('idle')
   })
+
+  it('uses only supported canonical Turn states as a fallback', () => {
+    expect(agentStatus(view({}), 'failed')).toBe('failed')
+    expect(agentStatus(undefined, 'completed')).toBe('completed')
+    expect(agentStatus(undefined, 'interrupted')).toBe('idle')
+  })
 })
 
 describe('agentSummary', () => {

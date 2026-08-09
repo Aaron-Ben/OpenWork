@@ -67,8 +67,8 @@ describe('buildAgentRailItems', () => {
         a: view({ terminal: { status: 'completed', finalText: 'done' }, startedAtMs: 2_000, endedAtMs: 5_000 }),
       },
       totalsBySession: {
-        'parent-1': { tokens: 42_100, steps: 12 },
-        a: { tokens: 31_600, steps: 2 },
+        'parent-1': { tokens: 42_100, steps: 12, latestTurnStatus: null },
+        a: { tokens: 31_600, steps: 2, latestTurnStatus: null },
       },
     }))
 
@@ -79,6 +79,39 @@ describe('buildAgentRailItems', () => {
   it('treats a session with no traces yet as zero rather than blank', () => {
     const items = buildAgentRailItems(input({ totalsBySession: {} }))
     expect(items.every((item) => item.tokens === 0 && item.steps === 0)).toBe(true)
+  })
+
+  it('falls back to the canonical failed status after runtime reconciliation', () => {
+    const items = buildAgentRailItems(input({
+      runtimeBySession: { 'parent-1': view({ phase: 'idle', terminal: null }) },
+      totalsBySession: {
+        'parent-1': { tokens: 42, steps: 3, latestTurnStatus: 'failed' },
+      },
+    }))
+
+    expect(items[0].status).toBe('failed')
+  })
+
+  it('uses the canonical failed status when no runtime view exists after restart', () => {
+    const items = buildAgentRailItems(input({
+      runtimeBySession: {},
+      totalsBySession: {
+        'parent-1': { tokens: 42, steps: 3, latestTurnStatus: 'failed' },
+      },
+    }))
+
+    expect(items[0].status).toBe('failed')
+  })
+
+  it('does not apply the parent canonical fallback to child cards', () => {
+    const items = buildAgentRailItems(input({
+      runtimeBySession: {},
+      totalsBySession: {
+        a: { tokens: 42, steps: 3, latestTurnStatus: 'failed' },
+      },
+    }))
+
+    expect(items[1].status).toBe('idle')
   })
 })
 
@@ -95,9 +128,9 @@ describe('agent rail aggregates', () => {
       b: view({ phase: 'running_tools', startedAtMs: 3_000 }),
     },
     totalsBySession: {
-      'parent-1': { tokens: 42_100, steps: 12 },
-      a: { tokens: 31_600, steps: 2 },
-      b: { tokens: 96_400, steps: 8 },
+      'parent-1': { tokens: 42_100, steps: 12, latestTurnStatus: null },
+      a: { tokens: 31_600, steps: 2, latestTurnStatus: null },
+      b: { tokens: 96_400, steps: 8, latestTurnStatus: null },
     },
   }))
 

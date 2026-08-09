@@ -6,10 +6,23 @@ export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancell
  * 一个智能体当前处于什么状态。
  * 运行时视图里没有"完成度"这种量，所以这里只有离散状态，界面上不要画进度条。
  */
-export function agentStatus(runtime: SessionRuntimeView | undefined): AgentStatus {
-  if (!runtime) return 'idle'
-  if (runtime.phase !== 'idle') return 'running'
-  return runtime.terminal?.status ?? 'idle'
+export function agentStatus(
+  runtime: SessionRuntimeView | undefined,
+  canonicalTurnStatus: string | null = null,
+): AgentStatus {
+  if (runtime && runtime.phase !== 'idle') return 'running'
+  if (runtime?.terminal) return runtime.terminal.status
+
+  // 根会话的实时终态会在正文对账后被回收，卡片需要用已落库的 Turn 状态补回结果。
+  switch (canonicalTurnStatus) {
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return canonicalTurnStatus
+    default:
+      return 'idle'
+  }
 }
 
 /** 终态摘要。cancelled 没有文本，由调用方补 i18n 文案。 */

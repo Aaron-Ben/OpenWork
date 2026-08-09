@@ -138,6 +138,36 @@ describe('runtimeStore', () => {
     })
   })
 
+  it('drops a failed root terminal after canonical messages are reconciled', () => {
+    const store = useRuntimeStore.getState()
+    store.apply({
+      version: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sequence: 1,
+      occurredAtMs: 1,
+      update: { type: 'turn_started', clientRequestId: 'request-1' },
+    })
+    store.apply({
+      version: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      sequence: 2,
+      occurredAtMs: 2,
+      update: {
+        type: 'turn_finished',
+        outcome: { status: 'failed', code: 'doom_loop', message: 'loop detected' },
+      },
+    })
+
+    store.reconcileCanonical('session-1')
+
+    expect(useRuntimeStore.getState().bySession['session-1']).toMatchObject({
+      phase: 'idle',
+      terminal: null,
+    })
+  })
+
   it('does not publish every tool progress chunk as a separate UI update', () => {
     const store = useRuntimeStore.getState()
     store.apply({
