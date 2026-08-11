@@ -6,7 +6,7 @@ use crate::session::SessionId;
 
 use super::AgentControlError;
 
-/// One live sub-agent under a root Session.
+/// 根 Session 下一个可通过 `task_name` 寻址的子 Agent。
 ///
 /// Deliberately holds no `SessionHandle`. The handle already lives in the Core
 /// session registry; keeping a second copy here would give the same runtime
@@ -18,11 +18,11 @@ pub struct SubAgent {
     pub task_name: String,
     pub session_id: SessionId,
     pub agent_role: String,
-    /// 注册进当前进程控制面的时间，使用带偏移的 RFC 3339 文本。
+    /// 子 Agent 首次创建/注册的时间；重启恢复时取持久化的 Session 创建时间。
     pub started_at: String,
 }
 
-/// `task_name` → live sub-agent, scoped to one root Session tree.
+/// 根 Session 树内的 `task_name` → 子 Agent 寻址索引。
 #[derive(Default)]
 pub(super) struct SubAgentRegistry {
     entries: Mutex<HashMap<String, Slot>>,
@@ -31,7 +31,7 @@ pub(super) struct SubAgentRegistry {
 enum Slot {
     /// A name claimed by an in-flight spawn that has not completed yet.
     Reserved,
-    Live(SubAgent),
+    Registered(SubAgent),
 }
 
 impl SubAgentRegistry {
@@ -60,24 +60,49 @@ impl SubAgentRegistry {
 
     pub(super) fn get(&self, task_name: &str) -> Option<SubAgent> {
         match self.lock().get(task_name) {
-            Some(Slot::Live(agent)) => Some(agent.clone()),
+            Some(Slot::Registered(agent)) => Some(agent.clone()),
             Some(Slot::Reserved) | None => None,
         }
     }
 
-    /// Live sub-agents ordered by `task_name`, so callers and tests observe a
-    /// stable sequence instead of `HashMap` iteration order.
+    /// 按 `task_name` 返回可寻址的子 Agent，避免调用者观察到 `HashMap` 的随机顺序。
     pub(super) fn list(&self) -> Vec<SubAgent> {
         let mut agents: Vec<SubAgent> = self
             .lock()
             .values()
             .filter_map(|slot| match slot {
-                Slot::Live(agent) => Some(agent.clone()),
+                Slot::Registered(agent) => Some(agent.clone()),
                 Slot::Reserved => None,
             })
             .collect();
         agents.sort_by(|left, right| left.task_name.cmp(&right.task_name));
         agents
+    }
+
+    /// 把持久化身份恢复进新进程的寻址索引，不代表对应 Session Actor 已经驻留。
+    pub(super) fn restore(&self, agent: SubAgent) -> Result<(), AgentControlError> {
+        let mut entries = self.lock();
+        match entries.entry(agent.task_name.clone()) {
+            Entry::Vacant(vacant) => {
+                vacant.insert(Slot::Registered(agent));
+                Ok(())
+            }
+            Entry::Occupied(occupied) if matches!(occupied.get(), Slot::Registered(existing) if existing == &agent) => {
+                Ok(())
+            }
+            Entry::Occupied(_) => Err(AgentControlError::DuplicateTaskName(agent.task_name)),
+        }
+    }
+
+    pub(super) fn remove_registered(&self, task_name: &str, session_id: &SessionId) {
+        let mut entries = self.lock();
+        let matches_session = matches!(
+            entries.get(task_name),
+            Some(Slot::Registered(agent)) if &agent.session_id == session_id
+        );
+        if matches_session {
+            entries.remove(task_name);
+        }
     }
 
     fn release(&self, task_name: &str) {
@@ -86,7 +111,7 @@ impl SubAgentRegistry {
 
     fn commit(&self, agent: SubAgent) {
         self.lock()
-            .insert(agent.task_name.clone(), Slot::Live(agent));
+            .insert(agent.task_name.clone(), Slot::Registered(agent));
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {

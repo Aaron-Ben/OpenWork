@@ -48,7 +48,7 @@ pub trait SubAgentHost: Send + Sync {
         turn_slot: TurnSlot,
     ) -> Result<(), String>;
 
-    /// Returns the Core-owned handle for a live Session.
+    /// 返回 Core 拥有的 handle；持久化但未驻留的子 Session 会按需加载。
     async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String>;
 }
 
@@ -166,6 +166,21 @@ impl AgentControl {
         self.inner.slots.active()
     }
 
+    /// 恢复数据库里已有的子 Agent 身份，不启动 Session 或 Turn，也不占并发名额。
+    pub(crate) fn restore_agents(
+        &self,
+        agents: impl IntoIterator<Item = SubAgent>,
+    ) -> Result<(), AgentControlError> {
+        for agent in agents {
+            self.inner.registry.restore(agent)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn forget_agent(&self, task_name: &str, session_id: &SessionId) {
+        self.inner.registry.remove_registered(task_name, session_id);
+    }
+
     /// Takes a concurrency slot for a sub-agent Turn that is about to start.
     ///
     /// The caller holds it for the life of the Turn and drops it afterwards, so
@@ -234,7 +249,7 @@ impl AgentControl {
             .ok_or_else(|| AgentControlError::UnknownTaskName(task_name.to_string()))
     }
 
-    /// Live sub-agents ordered by `task_name`.
+    /// 按 `task_name` 返回可寻址的子 Agent。
     pub fn list(&self) -> Vec<SubAgent> {
         self.inner.registry.list()
     }

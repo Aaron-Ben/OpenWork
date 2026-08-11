@@ -469,7 +469,7 @@ impl OpenWorkCore {
                 build_explorer_agent_and_tools(&working_directory, &self.skill_permission_roots)?;
             (agent, tools, ControlToolSurface::SubAgent)
         } else {
-            let control = self.agent_control_for_root(session_id).await;
+            let control = self.agent_control_for_root(session_id).await?;
             let (agent, tools) = build_default_agent_and_tools(
                 session_id,
                 &working_directory,
@@ -679,6 +679,12 @@ impl OpenWorkCore {
             .await?;
 
         let mut orphan_session_ids = Vec::with_capacity(reconciliation.deleted_orphans.len());
+        let agent_control = self
+            .agent_controls
+            .read()
+            .await
+            .get(parent_session_id)
+            .cloned();
         for orphan in reconciliation.deleted_orphans {
             tracing::warn!(
                 parent_session_id = %parent_session_id,
@@ -686,7 +692,11 @@ impl OpenWorkCore {
                 task_name = %orphan.task_name,
                 "removed zero-turn sub-agent session during parent turn reconciliation"
             );
-            orphan_session_ids.push(SessionId::new(orphan.session_id));
+            let orphan_session_id = SessionId::new(orphan.session_id);
+            if let Some(control) = &agent_control {
+                control.forget_agent(&orphan.task_name, &orphan_session_id);
+            }
+            orphan_session_ids.push(orphan_session_id);
         }
         self.shutdown_runtime_sessions(&orphan_session_ids).await;
 
@@ -1101,7 +1111,7 @@ impl OpenWorkCore {
             loaded.session.task_name.as_deref(),
         ) {
             let parent_session_id = SessionId::new(parent_session_id);
-            let agent_control = self.agent_control_for_root(&parent_session_id).await;
+            let agent_control = self.agent_control_for_root(&parent_session_id).await?;
             let (agent, tools) =
                 build_explorer_agent_and_tools(&working_directory, &self.skill_permission_roots)?;
             (
@@ -1117,7 +1127,7 @@ impl OpenWorkCore {
                 agent_control,
             )
         } else {
-            let agent_control = self.agent_control_for_root(session_id).await;
+            let agent_control = self.agent_control_for_root(session_id).await?;
             let (agent, tools) = build_default_agent_and_tools(
                 session_id,
                 &working_directory,
@@ -1170,16 +1180,48 @@ impl OpenWorkCore {
         ))
     }
 
-    async fn agent_control_for_root(&self, session_id: &SessionId) -> AgentControl {
+    async fn agent_control_for_root(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<AgentControl, OpenWorkCoreError> {
         if let Some(control) = self.agent_controls.read().await.get(session_id).cloned() {
-            return control;
+            return Ok(control);
         }
+        let children = self.storage.list_sub_agent_sessions(session_id).await?;
         let host: Weak<dyn SubAgentHost> = self.self_weak.clone();
+        let restored = children
+            .into_iter()
+            .map(|child| {
+                let task_name = child.task_name.ok_or_else(|| {
+                    OpenWorkCoreError::RuntimeComponent(format!(
+                        "sub-agent session {} has no task_name",
+                        child.id
+                    ))
+                })?;
+                let agent_role = child.agent_role.ok_or_else(|| {
+                    OpenWorkCoreError::RuntimeComponent(format!(
+                        "sub-agent session {} has no agent_role",
+                        child.id
+                    ))
+                })?;
+                Ok(crate::SubAgent {
+                    task_name,
+                    session_id: SessionId::new(child.id),
+                    agent_role,
+                    started_at: child.created_at,
+                })
+            })
+            .collect::<Result<Vec<_>, OpenWorkCoreError>>()?;
         let mut controls = self.agent_controls.write().await;
-        controls
-            .entry(session_id.clone())
-            .or_insert_with(|| AgentControl::new(session_id.clone(), host))
-            .clone()
+        if let Some(control) = controls.get(session_id).cloned() {
+            return Ok(control);
+        }
+        let control = AgentControl::new(session_id.clone(), host);
+        control
+            .restore_agents(restored)
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        controls.insert(session_id.clone(), control.clone());
+        Ok(control)
     }
 }
 
@@ -1222,13 +1264,9 @@ impl SubAgentHost for OpenWorkCore {
         message: String,
         turn_slot: TurnSlot,
     ) -> Result<(), String> {
-        let handle = self
-            .sessions
-            .read()
+        let handle = OpenWorkCore::session_handle(self, session_id)
             .await
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| format!("session {session_id} is not live"))?;
+            .map_err(|error| error.to_string())?;
         handle
             .start_sub_agent_turn(
                 message,
@@ -1241,12 +1279,9 @@ impl SubAgentHost for OpenWorkCore {
     }
 
     async fn session_handle(&self, session_id: &SessionId) -> Result<SessionHandle, String> {
-        self.sessions
-            .read()
+        OpenWorkCore::session_handle(self, session_id)
             .await
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| format!("session {session_id} is not live"))
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1516,6 +1551,42 @@ mod tests {
 
     use super::*;
 
+    struct FixedTestCredential;
+
+    #[async_trait::async_trait]
+    impl CredentialResolver for FixedTestCredential {
+        async fn resolve(&self, _reference: &str) -> Result<ApiCredential, String> {
+            Ok(ApiCredential::new("test-credential"))
+        }
+    }
+
+    async fn insert_completed_test_turn(
+        storage: &PostgresStorage,
+        session_id: &SessionId,
+        turn_id: &TurnId,
+        client_request_id: &str,
+    ) {
+        // 并行测试会创建 Core 并中断全库 running Turn；直接构造重启前的终态，
+        // 避免夹具在 begin/finish 两步之间被其他测试改成 interrupted。
+        sqlx::query(
+            "INSERT INTO turns (
+                 id, session_id, client_request_id, sequence, model_id,
+                 resolved_provider_kind, resolved_model_name, app_version,
+                 status, ended_at
+             ) VALUES (
+                 $1, $2, $3, 1, NULL, 'test', 'test-model', $4,
+                 'completed', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             )",
+        )
+        .bind(turn_id.as_str())
+        .bind(session_id.as_str())
+        .bind(client_request_id)
+        .bind(env!("CARGO_PKG_VERSION"))
+        .execute(storage.pool())
+        .await
+        .unwrap();
+    }
+
     #[test]
     fn production_explorer_builder_exposes_only_the_readonly_role_surface() {
         let workspace = std::env::temp_dir().join(format!(
@@ -1639,6 +1710,248 @@ mod tests {
             .await
             .unwrap();
         std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn restarted_core_restores_persisted_sub_agent_identities_without_starting_turns() {
+        let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
+        storage.migrate().await.unwrap();
+        let suffix = uuid::Uuid::new_v4().simple();
+        let parent_session_id = SessionId::new(format!("session-agent-restore-parent-{suffix}"));
+        let child_session_id = SessionId::new(format!("session-agent-restore-child-{suffix}"));
+        let child_turn_id = TurnId::new(format!("turn-agent-restore-child-{suffix}"));
+        storage
+            .create_session(&SessionInput {
+                id: parent_session_id.clone(),
+                title: Some("Agent restore parent".to_string()),
+                working_directory: "/tmp/openwork-agent-restore".to_string(),
+                default_model_id: None,
+            })
+            .await
+            .unwrap();
+        storage
+            .create_sub_agent_session(&SubAgentSessionInput {
+                id: child_session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
+                task_name: "inspect_runtime".to_string(),
+                agent_role: "explorer".to_string(),
+                working_directory: "/tmp/openwork-agent-restore".to_string(),
+                default_model_id: None,
+                spawn_span_id: Some("span-agent-restore".to_string()),
+            })
+            .await
+            .unwrap();
+        insert_completed_test_turn(
+            &storage,
+            &child_session_id,
+            &child_turn_id,
+            &format!("request-agent-restore-child-{suffix}"),
+        )
+        .await;
+
+        let restarted = OpenWorkCore::from_storage(Arc::clone(&storage))
+            .await
+            .unwrap();
+        let control = restarted
+            .agent_control_for_root(&parent_session_id)
+            .await
+            .unwrap();
+
+        let restored = control.get("inspect_runtime").unwrap();
+        assert_eq!(restored.session_id, child_session_id);
+        assert_eq!(restored.agent_role, "explorer");
+        assert_eq!(control.list(), vec![restored]);
+        assert_eq!(control.active_turns(), 0);
+        let parent_turns: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+                .bind(parent_session_id.as_str())
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            parent_turns, 0,
+            "restoring identities must not start a Turn"
+        );
+
+        restarted.delete_session(&parent_session_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn restored_sub_agent_can_be_inspected_and_followed_up_after_restart() {
+        let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
+        storage.migrate().await.unwrap();
+        let suffix = uuid::Uuid::new_v4().simple();
+        let model_id = format!("model-agent-followup-{suffix}");
+        storage
+            .upsert_model(&ModelInput {
+                id: model_id.clone(),
+                display_name: "Agent follow-up test".to_string(),
+                provider_kind: "deepseek".to_string(),
+                model_name: format!("agent-followup-model-{suffix}"),
+                base_url: "http://127.0.0.1:9".to_string(),
+                credential_ref: Some("test:credential".to_string()),
+                enabled: true,
+                config: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let parent_session_id = SessionId::new(format!("session-agent-followup-parent-{suffix}"));
+        let child_session_id = SessionId::new(format!("session-agent-followup-child-{suffix}"));
+        let child_turn_id = TurnId::new(format!("turn-agent-followup-child-{suffix}"));
+        storage
+            .create_session(&SessionInput {
+                id: parent_session_id.clone(),
+                title: Some("Agent follow-up parent".to_string()),
+                working_directory: "/tmp/openwork-agent-followup".to_string(),
+                default_model_id: Some(model_id.clone()),
+            })
+            .await
+            .unwrap();
+        storage
+            .create_sub_agent_session(&SubAgentSessionInput {
+                id: child_session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
+                task_name: "inspect_runtime".to_string(),
+                agent_role: "explorer".to_string(),
+                working_directory: "/tmp/openwork-agent-followup".to_string(),
+                default_model_id: Some(model_id),
+                spawn_span_id: None,
+            })
+            .await
+            .unwrap();
+        insert_completed_test_turn(
+            &storage,
+            &child_session_id,
+            &child_turn_id,
+            &format!("request-agent-followup-child-{suffix}"),
+        )
+        .await;
+
+        let restarted = OpenWorkCore::from_storage_with_credentials(
+            Arc::clone(&storage),
+            Arc::new(FixedTestCredential),
+        )
+        .await
+        .unwrap();
+        let control = restarted
+            .agent_control_for_root(&parent_session_id)
+            .await
+            .unwrap();
+
+        control
+            .followup("inspect_runtime", "inspect one more detail".to_string())
+            .await
+            .unwrap();
+        assert!(
+            SubAgentHost::session_handle(restarted.as_ref(), &child_session_id)
+                .await
+                .is_ok(),
+            "follow-up must reopen the persisted child Session on demand"
+        );
+        let statuses = control.list_statuses().await.unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].task_name, "inspect_runtime");
+        let parent_turns: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+                .bind(parent_session_id.as_str())
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(parent_turns, 0, "follow-up must not start a parent Turn");
+
+        restarted.delete_session(&parent_session_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn restart_reconciliation_releases_a_restored_zero_turn_orphan_name() {
+        let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
+        storage.migrate().await.unwrap();
+        let suffix = uuid::Uuid::new_v4().simple();
+        let model_id = format!("model-agent-orphan-{suffix}");
+        storage
+            .upsert_model(&ModelInput {
+                id: model_id.clone(),
+                display_name: "Agent orphan test".to_string(),
+                provider_kind: "deepseek".to_string(),
+                model_name: format!("agent-orphan-model-{suffix}"),
+                base_url: "http://127.0.0.1:9".to_string(),
+                credential_ref: Some("test:credential".to_string()),
+                enabled: true,
+                config: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        let parent_session_id = SessionId::new(format!("session-agent-orphan-parent-{suffix}"));
+        let child_session_id = SessionId::new(format!("session-agent-orphan-child-{suffix}"));
+        storage
+            .create_session(&SessionInput {
+                id: parent_session_id.clone(),
+                title: Some("Agent orphan parent".to_string()),
+                working_directory: "/tmp/openwork-agent-orphan".to_string(),
+                default_model_id: Some(model_id.clone()),
+            })
+            .await
+            .unwrap();
+        storage
+            .create_sub_agent_session(&SubAgentSessionInput {
+                id: child_session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
+                task_name: "orphan_lookup".to_string(),
+                agent_role: "explorer".to_string(),
+                working_directory: "/tmp/openwork-agent-orphan".to_string(),
+                default_model_id: Some(model_id),
+                spawn_span_id: None,
+            })
+            .await
+            .unwrap();
+
+        let restarted = OpenWorkCore::from_storage_with_credentials(
+            Arc::clone(&storage),
+            Arc::new(FixedTestCredential),
+        )
+        .await
+        .unwrap();
+        let control = restarted
+            .agent_control_for_root(&parent_session_id)
+            .await
+            .unwrap();
+        assert!(control.get("orphan_lookup").is_ok());
+        let parent_handle = restarted.session_handle(&parent_session_id).await.unwrap();
+
+        restarted
+            .reconcile_sub_agent_sessions(&parent_session_id, &parent_handle)
+            .await
+            .unwrap();
+
+        assert!(
+            control.get("orphan_lookup").is_err(),
+            "a deleted zero-Turn orphan must not remain addressable"
+        );
+        assert!(
+            storage
+                .load_session(&child_session_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let parent_turns: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM turns WHERE session_id = $1")
+                .bind(parent_session_id.as_str())
+                .fetch_one(storage.pool())
+                .await
+                .unwrap();
+        assert_eq!(parent_turns, 0, "reconciliation must not start a Turn");
+
+        restarted.delete_session(&parent_session_id).await.unwrap();
     }
 
     #[test]
