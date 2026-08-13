@@ -8,10 +8,9 @@ use openwork_models::model::{
 };
 
 use crate::context::{
-    ContextBudgetEstimate, ModelContextLimits, NormalizationPolicy, ResolvedSystemContext,
-    normalize_for_request,
+    ContextBudgetEstimate, ContextEngine, ModelContextLimits, PrepareContextInput,
+    ResolvedSystemContext,
 };
-use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use openwork_chat_state::{ConversationContextView, ConversationItem};
 use openwork_models::model::{ModelError, ModelErrorCode, RetryHint};
 use time::OffsetDateTime;
@@ -148,21 +147,15 @@ pub(super) async fn generate_summary(
             Role::User,
             COMPACTION_PROMPT,
         )));
-    let normalized =
-        normalize_for_request(&summary_input.items, &NormalizationPolicy {
-            accepts_data_blocks: limits.accepts_data_blocks,
-        })
-            .map_err(|error| CompactionError::Request(error.to_string()))?;
-    let messages = normalized.messages;
-    let _normalization_report = normalized.report;
     let request_build_started = Instant::now();
-    let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-        resolved_model_name,
-        system_context,
-        messages,
-        &[],
-    ))
-    .map_err(|error| CompactionError::Request(error.to_string()))?;
+    let prepared = ContextEngine::new(limits.clone())
+        .prepare(PrepareContextInput::new(
+            resolved_model_name,
+            system_context,
+            summary_input,
+            &[],
+        ))
+        .map_err(|error| CompactionError::Request(error.to_string()))?;
     let request_build_ms = elapsed_millis(request_build_started);
     trace.attributes_mut().summary_request_message_count =
         Some(u64::try_from(prepared.request.messages.len()).unwrap_or(u64::MAX));

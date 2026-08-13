@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use openwork_agent::{Agent, AgentBuilder, AgentDefinition, explorer_definition};
-use openwork_chat_state::{ChatStateHandle, ConversationItem};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView, ConversationItem};
 use openwork_models::ProviderFactory;
 use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
@@ -24,10 +24,10 @@ use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::context::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
-    ContextInspectionSystemPart, ContextWindowInspection, ModelContextLimits, PlannedSpill,
-    SystemContextBuilder, list_skills, plan_user_input_admission,
+    ContextEngine, ContextInspectionSystemPart, ContextWindowInspection, ModelContextLimits,
+    PlannedSpill, PrepareContextInput, ProjectedMessageOrigin, SystemContextBuilder, list_skills,
+    plan_user_input_admission,
 };
-use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
@@ -631,29 +631,51 @@ impl OpenWorkCore {
             ));
         }
 
-        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-            &model.model_name,
-            &system_context,
-            conversation_items.into_iter().map(|item| item.message).collect(),
-            tools.definitions(),
-        ))
-        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
-        let projected_conversation = prepared
-            .request
-            .messages
+        let turn_ids_by_message_id = conversation_records
             .iter()
-            .skip(system_context.parts().len());
-        let inspected_messages = conversation_records
-            .into_iter()
-            .zip(projected_conversation)
-            .map(|(record, projected)| ContextInspectionMessage {
-                message_id: record.id,
-                turn_id: record.turn_id,
-                role: projected.role,
-                content: projected.content.clone(),
+            .map(|record| (record.id.as_str(), record.turn_id.clone()))
+            .collect::<HashMap<_, _>>();
+        let context_engine = ContextEngine::new(ModelContextLimits::for_context_window(
+            crate::session::DEFAULT_CONTEXT_WINDOW_TOKENS,
+        ));
+        let prepared = context_engine
+            .prepare(PrepareContextInput::new(
+                &model.model_name,
+                &system_context,
+                ConversationContextView {
+                    items: conversation_items,
+                },
+                tools.definitions(),
+            ))
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let inspected_messages = prepared
+            .conversation_messages()
+            .iter()
+            .zip(prepared.conversation_provenance())
+            .enumerate()
+            .map(|(index, (message, provenance))| {
+                let (message_id, turn_id) = match provenance {
+                    ProjectedMessageOrigin::Persisted { message_id } => (
+                        message_id.clone(),
+                        turn_ids_by_message_id
+                            .get(message_id.as_str())
+                            .cloned()
+                            .flatten(),
+                    ),
+                    ProjectedMessageOrigin::Synthesized => {
+                        (format!("context-synthesized-{index}"), None)
+                    }
+                };
+                ContextInspectionMessage {
+                    message_id,
+                    turn_id,
+                    role: message.role,
+                    content: message.content.clone(),
+                }
             })
             .collect();
         let budget = prepared.context_budget;
+        let tool_surface = prepared.request.tools;
 
         Ok(ContextWindowInspection {
             schema_version: CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION,
@@ -669,7 +691,7 @@ impl OpenWorkCore {
                 })
                 .collect(),
             conversation: inspected_messages,
-            tool_surface: prepared.request.tools,
+            tool_surface,
             budget: ContextInspectionBudget {
                 system_context_tokens: budget.system_context_tokens,
                 conversation_tokens: budget.conversation_tokens,

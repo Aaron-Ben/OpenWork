@@ -3,7 +3,6 @@
 pub mod agent;
 mod context;
 mod core;
-mod model_call;
 pub mod plan;
 mod provider;
 pub mod session;

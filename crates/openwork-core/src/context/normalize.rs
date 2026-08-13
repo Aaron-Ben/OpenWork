@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use openwork_chat_state::{ConversationItem, MessageKind};
+use openwork_chat_state::{ConversationItem, ConversationItemOrigin, MessageKind};
 use openwork_models::model::{ContentBlock, Message, Role, ToolResultBlock, ToolResultState};
 use thiserror::Error;
 
@@ -47,7 +47,15 @@ pub(crate) struct NormalizationReport {
 #[derive(Debug)]
 pub(crate) struct NormalizedConversation {
     pub(crate) messages: Vec<Message>,
+    pub(crate) provenance: Vec<ProjectedMessageOrigin>,
     pub(crate) report: NormalizationReport,
+}
+
+/// 请求副本里一条 Conversation 消息的来源。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProjectedMessageOrigin {
+    Persisted { message_id: String },
+    Synthesized,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -69,6 +77,7 @@ pub(crate) fn normalize_for_request(
     policy: &NormalizationPolicy,
 ) -> Result<NormalizedConversation, NormalizationError> {
     let mut messages = Vec::with_capacity(items.len());
+    let mut provenance = Vec::with_capacity(items.len());
     let mut report = NormalizationReport::default();
     let mut index = 0;
     while index < items.len() {
@@ -81,6 +90,7 @@ pub(crate) fn normalize_for_request(
                 report.dropped_orphan_results += u32::try_from(count).unwrap_or(u32::MAX);
             } else {
                 messages.push(filter_item(item, index, policy, &mut report)?);
+                provenance.push(projected_origin(item));
             }
             index += 1;
             continue;
@@ -94,6 +104,7 @@ pub(crate) fn normalize_for_request(
             })
             .collect::<Vec<_>>();
         messages.push(filter_item(item, index, policy, &mut report)?);
+        provenance.push(projected_origin(item));
         if expected.is_empty() {
             index += 1;
             continue;
@@ -101,13 +112,14 @@ pub(crate) fn normalize_for_request(
         index += 1;
         let mut answered = HashMap::with_capacity(expected.len());
         while index < items.len() && items[index].message.role == Role::Tool {
+            let origin = projected_origin(&items[index]);
             for block in &items[index].message.content {
                 let ContentBlock::ToolResult(result) = block else {
                     continue;
                 };
                 let matches_call = expected.iter().any(|(id, _)| id == &result.id);
                 if matches_call && !answered.contains_key(&result.id) {
-                    answered.insert(result.id.clone(), result.clone());
+                    answered.insert(result.id.clone(), (result.clone(), origin.clone()));
                 } else {
                     report.dropped_orphan_results += 1;
                 }
@@ -115,15 +127,18 @@ pub(crate) fn normalize_for_request(
             index += 1;
         }
         for (id, name) in expected {
-            let mut result = answered.remove(&id).unwrap_or_else(|| {
+            let (mut result, origin) = answered.remove(&id).unwrap_or_else(|| {
                 report.synthesized_tool_results += 1;
-                ToolResultBlock {
-                    id,
-                    name: name.clone(),
-                    output: vec![ContentBlock::text(INTERRUPTED_RESULT_TEXT)],
-                    state: ToolResultState::Interrupted,
-                    artifacts: Vec::new(),
-                }
+                (
+                    ToolResultBlock {
+                        id,
+                        name: name.clone(),
+                        output: vec![ContentBlock::text(INTERRUPTED_RESULT_TEXT)],
+                        state: ToolResultState::Interrupted,
+                        artifacts: Vec::new(),
+                    },
+                    ProjectedMessageOrigin::Synthesized,
+                )
             });
             result.name = name;
             if !policy.accepts_data_blocks {
@@ -133,9 +148,29 @@ pub(crate) fn normalize_for_request(
                 role: Role::Tool,
                 content: vec![ContentBlock::ToolResult(result)],
             });
+            provenance.push(origin);
         }
     }
-    Ok(NormalizedConversation { messages, report })
+    Ok(NormalizedConversation {
+        messages,
+        provenance,
+        report,
+    })
+}
+
+fn projected_origin(item: &ConversationItem) -> ProjectedMessageOrigin {
+    match &item.origin {
+        ConversationItemOrigin::Real {
+            message_id: Some(message_id),
+            ..
+        } => ProjectedMessageOrigin::Persisted {
+            message_id: message_id.clone(),
+        },
+        ConversationItemOrigin::Real {
+            message_id: None, ..
+        }
+        | ConversationItemOrigin::Synthetic { .. } => ProjectedMessageOrigin::Synthesized,
+    }
 }
 fn filter_item(item: &ConversationItem, item_index: usize, policy: &NormalizationPolicy,
     report: &mut NormalizationReport,

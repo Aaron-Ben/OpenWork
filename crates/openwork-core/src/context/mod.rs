@@ -22,7 +22,9 @@ pub use inspection::{
     ContextInspectionSystemPart, ContextWindowInspection,
 };
 pub(crate) use limits::ModelContextLimits;
-pub(crate) use normalize::{NormalizationPolicy, normalize_for_request};
+pub(crate) use normalize::{
+    NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request,
+};
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 pub(crate) use projection::{ProjectionSummary, project_items};
 use skill_catalog::SkillCatalogLoader;
