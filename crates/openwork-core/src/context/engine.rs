@@ -7,7 +7,7 @@ use crate::model_call::{ModelRequestBuildError, ModelRequestBuilder, ModelReques
 use super::normalize::NormalizationError;
 use super::{
     ContextBudgetEstimate, ModelContextLimits, NormalizationPolicy, ResolvedSystemContext,
-    normalize_for_request,
+    ProjectionSummary, normalize_for_request, project_items,
 };
 
 pub(crate) struct ContextEngine {
@@ -27,8 +27,9 @@ impl ContextEngine {
         &self,
         input: PrepareContextInput<'_>,
     ) -> Result<PreparedModelCall, ContextError> {
+        let projected = project_items(&input.conversation.items, &self.limits);
         let normalized = normalize_for_request(
-            &input.conversation.items,
+            &projected.items,
             &NormalizationPolicy { accepts_data_blocks: self.limits.accepts_data_blocks },
         )?;
         let messages = normalized.messages;
@@ -43,6 +44,7 @@ impl ContextEngine {
         Ok(PreparedModelCall {
             request: built.request,
             context_budget: built.context_budget,
+            projection_summary: projected.summary,
             effective_input_tokens: self.limits.effective_input_tokens,
         })
     }
@@ -74,6 +76,7 @@ impl<'a> PrepareContextInput<'a> {
 pub(crate) struct PreparedModelCall {
     pub(crate) request: ModelRequest,
     pub(crate) context_budget: ContextBudgetEstimate,
+    pub(crate) projection_summary: ProjectionSummary,
     effective_input_tokens: u64,
 }
 

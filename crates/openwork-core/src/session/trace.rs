@@ -12,7 +12,7 @@ use std::time::Instant;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 
-use crate::context::ContextBudgetEstimate;
+use crate::context::{ContextBudgetEstimate, ProjectionSummary};
 
 use super::{SessionId, TurnId};
 
@@ -153,6 +153,12 @@ pub struct ModelTraceAttributesV1 {
     #[serde(flatten)]
     request_context_budget: Option<Box<ContextBudgetTraceV1>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_truncated_tool_results: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_original_tool_result_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_projected_tool_result_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_definition_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
@@ -190,6 +196,9 @@ impl ModelTraceAttributesV1 {
             provider_code: None,
             request_message_count: Some(saturating_u64(request.messages.len())),
             request_context_budget: None,
+            request_truncated_tool_results: None,
+            request_original_tool_result_tokens: None,
+            request_projected_tool_result_tokens: None,
             tool_definition_count: Some(saturating_u64(request.tools.len())),
             max_output_tokens: request.max_output_tokens,
             thinking_mode: request.thinking.map(|thinking| match thinking.mode {
@@ -210,6 +219,15 @@ impl ModelTraceAttributesV1 {
             request_estimated_tool_surface_tokens: estimate.tool_surface_tokens,
             request_estimated_input_tokens: estimate.estimated_input_tokens,
         }));
+    }
+
+    pub(crate) fn record_projection_summary(&mut self, summary: ProjectionSummary) {
+        if summary.truncated_tool_results == 0 {
+            return;
+        }
+        self.request_truncated_tool_results = Some(summary.truncated_tool_results);
+        self.request_original_tool_result_tokens = Some(summary.original_tokens);
+        self.request_projected_tool_result_tokens = Some(summary.projected_tokens);
     }
 
     fn record_response(&mut self, response: &ModelResponse) {

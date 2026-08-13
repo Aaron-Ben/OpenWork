@@ -28,8 +28,8 @@ use crate::agent::{
     parse_args as parse_agent_args, validate_wait_timeout,
 };
 use crate::context::{
-    ContextEngine, ModelContextLimits, PrepareContextInput, ResolvedSystemContext,
-    SystemContextBuildError, SystemContextBuilder,
+    ContextEngine, ModelContextLimits, PrepareContextInput, PreparedModelCall,
+    ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder,
 };
 use crate::plan::{
     TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
@@ -161,6 +161,11 @@ struct SubmittedModelCall {
     estimated_input_tokens: u64,
 }
 
+struct PreparedTurnModelCall {
+    prepared: PreparedModelCall,
+    request_build_ms: u64,
+}
+
 struct CompletedModelCall {
     response: ModelResponse,
     trace_span_id: String,
@@ -231,9 +236,11 @@ impl TurnRunner {
             })
             .await?;
 
-            let threshold_estimate = self
-                .threshold_estimate_before_sampling(&context_engine, &system_context)
+            let mut prepared = self
+                .prepare_model_call(&context_engine, &system_context)
                 .await?;
+            let threshold_estimate =
+                self.threshold_estimate_before_sampling(&prepared.prepared);
             let compacted_before_sampling = match threshold_estimate {
                 Some(estimated_input_tokens) => {
                     self.compact(
@@ -250,8 +257,13 @@ impl TurnRunner {
                 }
                 None => false,
             };
+            if compacted_before_sampling {
+                prepared = self
+                    .prepare_model_call(&context_engine, &system_context)
+                    .await?;
+            }
             let completed_model = match self
-                .call_model(model_call_index, 1, &context_engine, &system_context)
+                .call_model(model_call_index, 1, prepared, &system_context)
                 .await
             {
                 Ok(completed) => completed,
@@ -260,7 +272,10 @@ impl TurnRunner {
                     let trigger = self.overflow_trigger(&error);
                     self.compact(&context_engine, &system_context, trigger)
                         .await?;
-                    self.call_model(model_call_index, 2, &context_engine, &system_context)
+                    let prepared = self
+                        .prepare_model_call(&context_engine, &system_context)
+                        .await?;
+                    self.call_model(model_call_index, 2, prepared, &system_context)
                         .await?
                 }
                 Err(error) => return Err(error),
@@ -343,30 +358,23 @@ impl TurnRunner {
         &mut self,
         model_call_index: u32,
         submission_attempt: u8,
-        context_engine: &ContextEngine,
+        prepared: PreparedTurnModelCall,
         system_context: &ResolvedSystemContext,
     ) -> Result<CompletedModelCall, TurnRunError> {
-        let request_build_started = Instant::now();
-        let conversation = self.request.chat.context_view().await?;
-        let prepared = context_engine
-            .prepare(PrepareContextInput::new(
-                &self.request.resolved_model.model_name,
-                system_context,
-                conversation,
-                self.request.tools.definitions(),
-            ))
-            .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
-        let request = prepared.request;
-        let request_build_ms = elapsed_millis_u64(request_build_started);
+        let request = prepared.prepared.request;
         self.request
             .storage
             .begin_model_call(&self.request.turn_id, model_call_index, submission_attempt)
             .await
             .map_err(TurnRunError::Persistence)?;
         self.request.chat.begin_draft().await?;
-        let mut attributes =
-            ModelTraceAttributesV1::from_request(model_call_index, request_build_ms, &request);
-        attributes.record_context_budget(prepared.context_budget);
+        let mut attributes = ModelTraceAttributesV1::from_request(
+            model_call_index,
+            prepared.request_build_ms,
+            &request,
+        );
+        attributes.record_context_budget(prepared.prepared.context_budget);
+        attributes.record_projection_summary(prepared.prepared.projection_summary);
         let options = ModelCallOptions::new(format!(
             "{}-model-{model_call_index}-submission-{submission_attempt}",
             self.request.turn_id
@@ -392,7 +400,7 @@ impl TurnRunner {
         let trace_span_id = model_trace.span_id().to_string();
         self.last_model_call = Some(SubmittedModelCall {
             trace_span_id: trace_span_id.clone(),
-            estimated_input_tokens: prepared.context_budget.estimated_input_tokens,
+            estimated_input_tokens: prepared.prepared.context_budget.estimated_input_tokens,
         });
         let options = options.with_transport_observer(model_trace.transport_observer());
         let result = self
@@ -425,14 +433,12 @@ impl TurnRunner {
         }
     }
 
-    /// The pre-sampling input estimate when it has reached the compaction
-    /// threshold, `None` otherwise. The estimate is returned rather than a bare
-    /// bool so the compaction Span can record what actually tripped it.
-    async fn threshold_estimate_before_sampling(
+    async fn prepare_model_call(
         &self,
         context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
-    ) -> Result<Option<u64>, TurnRunError> {
+    ) -> Result<PreparedTurnModelCall, TurnRunError> {
+        let request_build_started = Instant::now();
         let conversation = self.request.chat.context_view().await?;
         let prepared = context_engine
             .prepare(PrepareContextInput::new(
@@ -442,6 +448,19 @@ impl TurnRunner {
                 self.request.tools.definitions(),
             ))
             .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        Ok(PreparedTurnModelCall {
+            prepared,
+            request_build_ms: elapsed_millis_u64(request_build_started),
+        })
+    }
+
+    /// The pre-sampling input estimate when it has reached the compaction
+    /// threshold, `None` otherwise. The estimate is returned rather than a bare
+    /// bool so the compaction Span can record what actually tripped it.
+    fn threshold_estimate_before_sampling(
+        &self,
+        prepared: &PreparedModelCall,
+    ) -> Option<u64> {
         let estimated_input_tokens = prepared.context_budget.estimated_input_tokens;
         let reaches_input_threshold =
             prepared.reaches_input_threshold(self.request.compaction_policy.threshold_percent);
@@ -451,7 +470,7 @@ impl TurnRunner {
                 .compaction_policy
                 .should_compact(estimated_input_tokens)
         );
-        Ok(reaches_input_threshold.then_some(estimated_input_tokens))
+        reaches_input_threshold.then_some(estimated_input_tokens)
     }
 
     /// Build the trigger for a compaction forced by a context overflow, keeping

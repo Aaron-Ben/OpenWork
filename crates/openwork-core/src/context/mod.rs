@@ -8,12 +8,13 @@ mod inspection;
 mod limits;
 mod normalize;
 mod project_instructions;
+mod projection;
 mod skill_catalog;
 mod user_project;
 
 pub(crate) use budget::{ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens};
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
-pub(crate) use engine::{ContextEngine, PrepareContextInput};
+pub(crate) use engine::{ContextEngine, PrepareContextInput, PreparedModelCall};
 pub use inspection::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
     ContextInspectionSystemPart, ContextWindowInspection,
@@ -21,6 +22,7 @@ pub use inspection::{
 pub(crate) use limits::ModelContextLimits;
 pub(crate) use normalize::{NormalizationPolicy, normalize_for_request};
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
+pub(crate) use projection::{ProjectionSummary, project_items};
 use skill_catalog::SkillCatalogLoader;
 pub(crate) use skill_catalog::list_skills;
 use user_project::{UserProjectContextError, UserProjectContextLoader};

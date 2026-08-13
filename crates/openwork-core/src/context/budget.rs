@@ -103,7 +103,7 @@ impl Write for ByteCounter {
     }
 }
 
-fn estimate_tokens(bytes: u64) -> u64 {
+pub(super) fn estimate_tokens(bytes: u64) -> u64 {
     bytes.saturating_add(ESTIMATED_BYTES_PER_TOKEN - 1) / ESTIMATED_BYTES_PER_TOKEN
 }
 
