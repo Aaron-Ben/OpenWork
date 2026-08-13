@@ -8,10 +8,10 @@
 //! 检查**（超限拒绝），不是投影，不在这里。
 
 use openwork_chat_state::ConversationItem;
-use openwork_models::model::ContentBlock;
+use openwork_models::model::{ContentBlock, DataBlock, DataSource};
 
-use super::budget::estimate_tokens;
 use super::ModelContextLimits;
+use super::budget::estimate_tokens;
 
 /// 截断后保留在头部的预算占比，其余留给尾部。
 ///
@@ -63,36 +63,66 @@ pub(crate) fn project_items(
             let ContentBlock::ToolResult(result) = block else {
                 continue;
             };
+            let original_bytes = result.output.iter().fold(0_u64, |bytes, block| {
+                bytes.saturating_add(model_visible_bytes(block))
+            });
+            let original_tokens = estimate_tokens(original_bytes);
+            let limit = u64::from(limits.max_tool_result_tokens);
+            if original_tokens <= limit {
+                continue;
+            }
+
+            let mut omitted_data_blocks = 0_u32;
+            let mut omitted_data_bytes = 0_u64;
+            result.output.retain(|block| {
+                let ContentBlock::Data(data) = block else {
+                    return true;
+                };
+                omitted_data_blocks = omitted_data_blocks.saturating_add(1);
+                omitted_data_bytes = omitted_data_bytes.saturating_add(data_bytes(data));
+                false
+            });
+            if omitted_data_blocks > 0 {
+                result.output.push(ContentBlock::text(format!(
+                    "[tool result omitted {omitted_data_blocks} data block(s), approximately \
+                     {omitted_data_bytes} bytes; the authoritative result remains unchanged]"
+                )));
+            }
+
             let text_bytes = result.output.iter().fold(0_u64, |bytes, block| {
                 let ContentBlock::Text(text) = block else {
                     return bytes;
                 };
                 bytes.saturating_add(u64::try_from(text.text.len()).unwrap_or(u64::MAX))
             });
-            let original_tokens = estimate_tokens(text_bytes);
-            let limit = u64::from(limits.max_tool_result_tokens);
-            if original_tokens <= limit {
-                continue;
-            }
-
-            let mut original = String::with_capacity(
-                usize::try_from(text_bytes).unwrap_or(usize::MAX),
-            );
+            let mut original =
+                String::with_capacity(usize::try_from(text_bytes).unwrap_or(usize::MAX));
             for block in &result.output {
                 if let ContentBlock::Text(text) = block {
                     original.push_str(&text.text);
                 }
             }
-            let truncated = truncate_text(&original, original_tokens, limit);
-            let projected_tokens = estimate_tokens(
-                u64::try_from(truncated.len()).unwrap_or(u64::MAX),
-            );
-            let mut replacement = Some(truncated);
-            for block in &mut result.output {
-                if let ContentBlock::Text(text) = block {
-                    text.text = replacement.take().unwrap_or_default();
-                }
+            if estimate_tokens(text_bytes) > limit {
+                let truncated = truncate_text(&original, original_tokens, limit);
+                let mut replacement = Some(truncated);
+                result.output.retain_mut(|block| {
+                    let ContentBlock::Text(text) = block else {
+                        return true;
+                    };
+                    let Some(replacement) = replacement.take() else {
+                        return false;
+                    };
+                    text.text = replacement;
+                    !text.text.is_empty()
+                });
             }
+            result
+                .output
+                .retain(|block| !matches!(block, ContentBlock::Text(text) if text.text.is_empty()));
+            let projected_tokens =
+                estimate_tokens(result.output.iter().fold(0_u64, |bytes, block| {
+                    bytes.saturating_add(model_visible_bytes(block))
+                }));
             summary.truncated_tool_results = summary.truncated_tool_results.saturating_add(1);
             summary.original_tokens = summary.original_tokens.saturating_add(original_tokens);
             summary.projected_tokens = summary.projected_tokens.saturating_add(projected_tokens);
@@ -103,6 +133,31 @@ pub(crate) fn project_items(
         items: projected,
         summary,
     }
+}
+
+fn model_visible_bytes(block: &ContentBlock) -> u64 {
+    match block {
+        ContentBlock::Text(text) => u64::try_from(text.text.len()).unwrap_or(u64::MAX),
+        ContentBlock::Data(data) => data_bytes(data),
+        _ => 0,
+    }
+}
+
+fn data_bytes(data: &DataBlock) -> u64 {
+    let source_bytes = match &data.source {
+        DataSource::Url { url, media_type } => {
+            string_bytes(url).saturating_add(string_bytes(media_type))
+        }
+        DataSource::Base64(source) => {
+            string_bytes(&source.data).saturating_add(string_bytes(&source.media_type))
+        }
+        DataSource::FileId { id } => string_bytes(id),
+    };
+    source_bytes.saturating_add(data.name.as_deref().map_or(0, string_bytes))
+}
+
+fn string_bytes(value: &str) -> u64 {
+    u64::try_from(value.len()).unwrap_or(u64::MAX)
 }
 
 fn truncate_text(text: &str, original_tokens: u64, limit: u64) -> String {
@@ -329,6 +384,97 @@ mod tests {
         assert_eq!(result.name, "bash");
         assert_eq!(result.state, ToolResultState::Error);
         assert_eq!(result.artifacts, vec![artifact]);
+    }
+
+    /// D6：工具结果里的 Data block 必须计入预算。
+    ///
+    /// base64 图片无法有意义地截断，因此超限时整块丢弃并留一条说明；权威结果里
+    /// 它仍然完好。不这么做的话，一个返回截图的工具就能带着几 MB 穿过整条链。
+    #[test]
+    fn oversized_data_blocks_inside_tool_results_are_dropped_with_a_note() {
+        let items = vec![ConversationItem::real(Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "call-1".to_string(),
+                name: "screenshot".to_string(),
+                output: vec![
+                    ContentBlock::text("captured"),
+                    ContentBlock::image_base64("Z".repeat(40_000), "image/png", None),
+                ],
+                state: ToolResultState::Success,
+                artifacts: Vec::new(),
+            })],
+        })];
+        let before = items.clone();
+
+        let projected = project_items(&items, &limits_with_tool_result_tokens(100));
+
+        let result = only_result(&projected.items[0]);
+        assert!(
+            !result
+                .output
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Data(_))),
+            "超限时 Data block 必须被丢弃"
+        );
+        assert!(
+            result_text(&projected.items[0]).contains("captured"),
+            "文本部分应当保留"
+        );
+        assert_eq!(projected.summary.truncated_tool_results, 1);
+        assert_eq!(items, before, "权威结果里的 Data block 必须原样保留");
+    }
+
+    /// 额度内的 Data block 不动。
+    #[test]
+    fn small_data_blocks_inside_tool_results_are_kept() {
+        let items = vec![ConversationItem::real(Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "call-1".to_string(),
+                name: "screenshot".to_string(),
+                output: vec![
+                    ContentBlock::text("captured"),
+                    ContentBlock::image_base64("Z".repeat(40), "image/png", None),
+                ],
+                state: ToolResultState::Success,
+                artifacts: Vec::new(),
+            })],
+        })];
+
+        let projected = project_items(&items, &limits_with_tool_result_tokens(100));
+
+        assert_eq!(projected.items, items);
+        assert_eq!(projected.summary, ProjectionSummary::default());
+    }
+
+    /// D7：截断后不得留下空的 Text block。
+    ///
+    /// 空 text block 会被适配器原样编码，而 Anthropic 会拒绝它。
+    #[test]
+    fn truncation_leaves_no_empty_text_blocks() {
+        let items = vec![ConversationItem::real(Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "call-1".to_string(),
+                name: "bash".to_string(),
+                output: vec![
+                    ContentBlock::text("g".repeat(6_000)),
+                    ContentBlock::text("h".repeat(6_000)),
+                ],
+                state: ToolResultState::Success,
+                artifacts: Vec::new(),
+            })],
+        })];
+
+        let projected = project_items(&items, &limits_with_tool_result_tokens(100));
+
+        let empty_blocks = only_result(&projected.items[0])
+            .output
+            .iter()
+            .filter(|block| matches!(block, ContentBlock::Text(text) if text.text.is_empty()))
+            .count();
+        assert_eq!(empty_blocks, 0, "不得留下空 Text block");
     }
 
     /// 本步只投影工具结果。用户与助手正文不在这里截断。

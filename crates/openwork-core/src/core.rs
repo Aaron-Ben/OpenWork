@@ -1,5 +1,5 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -24,7 +24,8 @@ use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::context::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
-    ContextInspectionSystemPart, ContextWindowInspection, SystemContextBuilder, list_skills,
+    ContextInspectionSystemPart, ContextWindowInspection, ModelContextLimits, PlannedSpill,
+    SystemContextBuilder, list_skills, plan_user_input_admission,
 };
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::plan::{TurnPlan, TurnPlanRecord};
@@ -46,6 +47,119 @@ use crate::storage::{
 use crate::{AgentControl, SubAgentHost, SubAgentSpec, TurnSlot};
 
 const CORE_UPDATE_BROADCAST_CAPACITY: usize = 4096;
+
+async fn write_user_input_spills(
+    working_directory: &Path,
+    spills: &[PlannedSpill],
+) -> Result<(), OpenWorkCoreError> {
+    let workspace = tokio::fs::canonicalize(working_directory)
+        .await
+        .map_err(|error| {
+            OpenWorkCoreError::RuntimeComponent(format!(
+                "cannot resolve working directory {}: {error}",
+                working_directory.display()
+            ))
+        })?;
+    if !workspace.is_dir() {
+        return Err(OpenWorkCoreError::RuntimeComponent(format!(
+            "working directory is not a directory: {}",
+            workspace.display()
+        )));
+    }
+
+    for spill in spills {
+        let relative_path = Path::new(&spill.relative_path);
+        if relative_path.as_os_str().is_empty()
+            || relative_path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(OpenWorkCoreError::RuntimeComponent(format!(
+                "spill path must be a normal relative path: {}",
+                spill.relative_path
+            )));
+        }
+
+        let target = workspace.join(relative_path);
+        let parent = target.parent().ok_or_else(|| {
+            OpenWorkCoreError::RuntimeComponent(format!(
+                "spill path has no parent: {}",
+                spill.relative_path
+            ))
+        })?;
+        let resolved_ancestor = canonical_existing_ancestor(parent).await.map_err(|error| {
+            OpenWorkCoreError::RuntimeComponent(format!(
+                "cannot resolve spill path {}: {error}",
+                spill.relative_path
+            ))
+        })?;
+        if !resolved_ancestor.starts_with(&workspace) {
+            return Err(OpenWorkCoreError::RuntimeComponent(format!(
+                "spill path escapes working directory: {}",
+                spill.relative_path
+            )));
+        }
+
+        tokio::fs::create_dir_all(parent).await.map_err(|error| {
+            OpenWorkCoreError::RuntimeComponent(format!(
+                "cannot create parent directory for {}: {error}",
+                spill.relative_path
+            ))
+        })?;
+        let resolved_parent = tokio::fs::canonicalize(parent).await.map_err(|error| {
+            OpenWorkCoreError::RuntimeComponent(format!(
+                "cannot resolve parent directory for {}: {error}",
+                spill.relative_path
+            ))
+        })?;
+        if !resolved_parent.starts_with(&workspace) {
+            return Err(OpenWorkCoreError::RuntimeComponent(format!(
+                "spill path escapes working directory: {}",
+                spill.relative_path
+            )));
+        }
+
+        match tokio::fs::symlink_metadata(&target).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(OpenWorkCoreError::RuntimeComponent(format!(
+                    "spill target must not be a symbolic link: {}",
+                    spill.relative_path
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(OpenWorkCoreError::RuntimeComponent(format!(
+                    "cannot inspect spill target {}: {error}",
+                    spill.relative_path
+                )));
+            }
+        }
+        tokio::fs::write(&target, spill.text.as_bytes())
+            .await
+            .map_err(|error| {
+                OpenWorkCoreError::RuntimeComponent(format!(
+                    "cannot write {}: {error}",
+                    spill.relative_path
+                ))
+            })?;
+    }
+
+    Ok(())
+}
+
+async fn canonical_existing_ancestor(path: &Path) -> std::io::Result<PathBuf> {
+    let mut candidate = path;
+    loop {
+        match tokio::fs::canonicalize(candidate).await {
+            Ok(resolved) => return Ok(resolved),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                candidate = candidate.parent().ok_or(error)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct OpenWorkCoreConfig {
@@ -620,6 +734,21 @@ impl OpenWorkCore {
         if user_content.is_empty() {
             return Err(SessionError::EmptyInput.into());
         }
+        let limits = ModelContextLimits::for_context_window(
+            context_window_tokens.unwrap_or(crate::session::DEFAULT_CONTEXT_WINDOW_TOKENS),
+        );
+        let admission =
+            plan_user_input_admission(&user_content, &limits, client_request_id.as_str());
+        if !admission.spills.is_empty() {
+            let session = self
+                .storage
+                .load_session(session_id)
+                .await?
+                .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
+            write_user_input_spills(Path::new(&session.working_directory), &admission.spills)
+                .await?;
+        }
+        let user_content = admission.content;
 
         let disabled_skill_names = self.disabled_skill_names.read().await.clone();
         let has_skill_input = input
