@@ -9,8 +9,8 @@ const DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT: u64 = 85;
 pub(crate) struct ModelContextLimits {
     pub(crate) context_window_tokens: u64,
     pub(crate) effective_input_tokens: u64,
-    pub(crate) max_output_tokens: u32,
-    pub(crate) reasoning_headroom_tokens: u32,
+    pub(crate) max_output_tokens: Option<u32>,
+    pub(crate) reasoning_headroom_tokens: Option<u32>,
     pub(crate) max_context_item_tokens: u32,
     pub(crate) max_tool_result_tokens: u32,
     pub(crate) max_agent_message_tokens: u32,
@@ -33,8 +33,8 @@ impl ModelContextLimits {
         Self {
             context_window_tokens,
             effective_input_tokens,
-            max_output_tokens: 0,
-            reasoning_headroom_tokens: 0,
+            max_output_tokens: None,
+            reasoning_headroom_tokens: None,
             max_context_item_tokens: DEFAULT_MAX_CONTEXT_ITEM_TOKENS,
             max_tool_result_tokens: DEFAULT_MAX_TOOL_RESULT_TOKENS,
             max_agent_message_tokens: DEFAULT_MAX_AGENT_MESSAGE_TOKENS,

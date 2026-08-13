@@ -2,8 +2,8 @@ use openwork_models::model::{ContentBlock, Message};
 use tokio::sync::oneshot;
 
 use crate::{
-    AssistantDraftSnapshot, ChatStateError, ConversationCompactionView, ConversationItem,
-    ConversationSnapshot, ConversationView, MessageKind,
+    AssistantDraftSnapshot, ChatStateError, ConversationContextView, ConversationItem,
+    ConversationSnapshot, MessageKind,
 };
 
 pub(crate) enum ChatStateCommand {
@@ -43,11 +43,8 @@ pub(crate) enum ChatStateCommand {
         items: Vec<ConversationItem>,
         respond_to: oneshot::Sender<Result<(), ChatStateError>>,
     },
-    ConversationView {
-        respond_to: oneshot::Sender<ConversationView>,
-    },
-    CompactionView {
-        respond_to: oneshot::Sender<ConversationCompactionView>,
+    ContextView {
+        respond_to: oneshot::Sender<ConversationContextView>,
     },
     Snapshot {
         respond_to: oneshot::Sender<ConversationSnapshot>,

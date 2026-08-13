@@ -10,7 +10,7 @@ use openwork_models::model::{
 
 use crate::context::{ContextBudgetEstimate, ResolvedSystemContext};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
-use openwork_chat_state::ConversationView;
+use openwork_chat_state::{ConversationContextView, ConversationItem};
 use openwork_models::model::{ModelError, ModelErrorCode, RetryHint};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
@@ -134,15 +134,18 @@ pub(super) async fn generate_summary(
     model: &dyn ModelPort,
     resolved_model_name: &str,
     system_context: &ResolvedSystemContext,
-    source: ConversationView,
+    source: ConversationContextView,
     model_attempt_id: String,
     mut summary_trace: SummaryTraceContext,
     trace: &mut CompactionTraceGuard,
 ) -> Result<GeneratedSummary, CompactionError> {
     let mut summary_input = legalize_compaction_input(source);
     summary_input
-        .messages
-        .push(Message::text(Role::User, COMPACTION_PROMPT));
+        .items
+        .push(ConversationItem::real(Message::text(
+            Role::User,
+            COMPACTION_PROMPT,
+        )));
     let request_build_started = Instant::now();
     let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
         resolved_model_name,
@@ -419,12 +422,17 @@ fn bounded_option(value: Option<&str>, max_chars: usize) -> Option<String> {
 /// rewriting the durable transcript. Tool results must form the contiguous run
 /// immediately after the Assistant message that declared their call IDs, in
 /// the Assistant's original tool-call order.
-fn legalize_compaction_input(source: ConversationView) -> ConversationView {
-    let mut input = Vec::with_capacity(source.messages.len());
+fn legalize_compaction_input(source: ConversationContextView) -> ConversationContextView {
+    let source = source
+        .items
+        .into_iter()
+        .map(|item| item.message)
+        .collect::<Vec<_>>();
+    let mut input = Vec::with_capacity(source.len());
     let mut index = 0;
 
-    while index < source.messages.len() {
-        let message = &source.messages[index];
+    while index < source.len() {
+        let message = &source[index];
         if message.role != Role::Assistant {
             if message.role != Role::Tool {
                 input.push(message.clone());
@@ -449,8 +457,8 @@ fn legalize_compaction_input(source: ConversationView) -> ConversationView {
 
         index += 1;
         let mut answered = HashMap::with_capacity(expected.len());
-        while index < source.messages.len() && source.messages[index].role == Role::Tool {
-            for block in &source.messages[index].content {
+        while index < source.len() && source[index].role == Role::Tool {
+            for block in &source[index].content {
                 let ContentBlock::ToolResult(result) = block else {
                     continue;
                 };
@@ -486,7 +494,9 @@ fn legalize_compaction_input(source: ConversationView) -> ConversationView {
         }
     }
 
-    ConversationView { messages: input }
+    ConversationContextView {
+        items: input.into_iter().map(ConversationItem::real).collect(),
+    }
 }
 
 async fn invoke_compaction_model(
@@ -1051,29 +1061,32 @@ mod tests {
                 artifacts: Vec::new(),
             })],
         };
-        let input = legalize_compaction_input(ConversationView {
-            messages: vec![
+        let input = legalize_compaction_input(ConversationContextView {
+            items: vec![
                 assistant,
                 answered_out_of_order,
                 Message::text(Role::User, "continue after failure"),
                 displaced,
-            ],
+            ]
+            .into_iter()
+            .map(ConversationItem::real)
+            .collect(),
         });
 
         assert_eq!(
             input
-                .messages
+                .items
                 .iter()
-                .map(|message| message.role)
+                .map(|item| item.message.role)
                 .collect::<Vec<_>>(),
             [Role::Assistant, Role::Tool, Role::Tool, Role::User]
         );
-        let ContentBlock::ToolResult(result) = &input.messages[1].content[0] else {
+        let ContentBlock::ToolResult(result) = &input.items[1].message.content[0] else {
             std::panic::panic_any("synthetic tool result")
         };
         assert_eq!(result.id, "call-1");
         assert_eq!(result.state, ToolResultState::Interrupted);
-        let ContentBlock::ToolResult(result) = &input.messages[2].content[0] else {
+        let ContentBlock::ToolResult(result) = &input.items[2].message.content[0] else {
             std::panic::panic_any("preserved tool result")
         };
         assert_eq!(result.id, "call-2");

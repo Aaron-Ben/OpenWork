@@ -1,4 +1,4 @@
-use openwork_chat_state::ConversationView;
+use openwork_chat_state::ConversationContextView;
 use openwork_models::model::{ModelRequest, ToolDefinition};
 use thiserror::Error;
 
@@ -37,7 +37,7 @@ impl ContextEngine {
 pub(crate) struct PrepareContextInput<'a> {
     model: &'a str,
     system_context: &'a ResolvedSystemContext,
-    conversation: ConversationView,
+    conversation: ConversationContextView,
     tool_definitions: &'a [ToolDefinition],
 }
 
@@ -45,7 +45,7 @@ impl<'a> PrepareContextInput<'a> {
     pub(crate) fn new(
         model: &'a str,
         system_context: &'a ResolvedSystemContext,
-        conversation: ConversationView,
+        conversation: ConversationContextView,
         tool_definitions: &'a [ToolDefinition],
     ) -> Self {
         Self {

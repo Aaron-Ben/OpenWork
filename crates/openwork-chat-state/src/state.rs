@@ -4,8 +4,8 @@ use openwork_models::model::{ContentBlock, Message, Role};
 use thiserror::Error;
 
 use crate::{
-    AssistantDraftSnapshot, ConversationCompactionView, ConversationItem, ConversationSnapshot,
-    ConversationView, MessageKind,
+    AssistantDraftSnapshot, ConversationContextView, ConversationItem, ConversationSnapshot,
+    MessageKind,
 };
 
 pub(crate) struct ConversationState {
@@ -140,14 +140,8 @@ impl ConversationState {
         Ok(())
     }
 
-    pub(crate) fn conversation_view(&self) -> ConversationView {
-        ConversationView {
-            messages: self.items.iter().map(|item| item.message.clone()).collect(),
-        }
-    }
-
-    pub(crate) fn compaction_view(&self) -> ConversationCompactionView {
-        ConversationCompactionView {
+    pub(crate) fn context_view(&self) -> ConversationContextView {
+        ConversationContextView {
             items: self.items.clone(),
         }
     }

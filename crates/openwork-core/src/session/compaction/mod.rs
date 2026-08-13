@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use openwork_agent::Agent;
-use openwork_chat_state::{ChatStateHandle, ConversationView};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView};
 use openwork_models::model::{ModelError, ModelPort};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -274,7 +274,7 @@ async fn run_compaction_inner(
     let prepare_started = Instant::now();
     let source = request
         .chat
-        .compaction_view()
+        .context_view()
         .await
         .map_err(|error| CompactionError::ChatState(error.to_string()))?;
     if source.items.is_empty() {
@@ -283,17 +283,10 @@ async fn run_compaction_inner(
     let source_message_count =
         u32::try_from(source.items.len()).map_err(|_| CompactionError::MessageCountOverflow)?;
     trace.attributes_mut().source_message_count = Some(source_message_count);
-    let source_conversation = ConversationView {
-        messages: source
-            .items
-            .iter()
-            .map(|item| item.message.clone())
-            .collect(),
-    };
     // Trace is best-effort: a failed measurement leaves the attribute absent
     // rather than failing a compaction the user asked for. The Desktop history
     // renders the missing pair as "—" instead of inventing a zero.
-    if let Ok(tokens) = estimate_conversation_tokens(&source_conversation) {
+    if let Ok(tokens) = estimate_conversation_tokens(&source) {
         trace
             .attributes_mut()
             .record_conversation_tokens_before(tokens);
@@ -346,7 +339,7 @@ async fn run_compaction_inner(
         request.model.as_ref(),
         &request.resolved_model_name,
         &system_context,
-        source_conversation,
+        source.clone(),
         format!(
             "{}-compaction-{}",
             request.session_id,
@@ -389,11 +382,8 @@ async fn run_compaction_inner(
 
     let install_started = Instant::now();
     let replacement = compacted_items(&persisted, last_user.message.clone())?;
-    let replacement_conversation = ConversationView {
-        messages: replacement
-            .iter()
-            .map(|item| item.message.clone())
-            .collect(),
+    let replacement_conversation = ConversationContextView {
+        items: replacement.clone(),
     };
     if let Ok(tokens) = estimate_conversation_tokens(&replacement_conversation) {
         trace

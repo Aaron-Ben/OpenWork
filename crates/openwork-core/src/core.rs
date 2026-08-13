@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use openwork_agent::{Agent, AgentBuilder, AgentDefinition, explorer_definition};
-use openwork_chat_state::{ChatStateHandle, ConversationView};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView, ConversationItem};
 use openwork_models::ProviderFactory;
 use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
@@ -499,24 +499,29 @@ impl OpenWorkCore {
             .iter()
             .rev()
             .find_map(|message| message.turn_id.clone());
-        let mut conversation = Vec::with_capacity(conversation_records.len());
+        let mut conversation_items = Vec::with_capacity(conversation_records.len());
         for message in &conversation_records {
             if message.role == Role::System {
                 return Err(OpenWorkCoreError::RuntimeComponent(
                     "persisted system messages are not valid Conversation input".to_string(),
                 ));
             }
-            conversation.push(Message {
-                role: message.role,
-                content: message.content.clone(),
-            });
+            conversation_items.push(ConversationItem::persisted_with_kind(
+                message.id.clone(),
+                message.sequence,
+                message.message_kind,
+                Message {
+                    role: message.role,
+                    content: message.content.clone(),
+                },
+            ));
         }
 
         let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
             &model.model_name,
             &system_context,
-            ConversationView {
-                messages: conversation,
+            ConversationContextView {
+                items: conversation_items,
             },
             tools.definitions(),
         ))

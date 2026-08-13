@@ -345,7 +345,7 @@ impl TurnRunner {
         system_context: &ResolvedSystemContext,
     ) -> Result<CompletedModelCall, TurnRunError> {
         let request_build_started = Instant::now();
-        let conversation = self.request.chat.conversation_view().await?;
+        let conversation = self.request.chat.context_view().await?;
         let prepared = context_engine
             .prepare(PrepareContextInput::new(
                 &self.request.resolved_model.model_name,
@@ -431,7 +431,7 @@ impl TurnRunner {
         context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
     ) -> Result<Option<u64>, TurnRunError> {
-        let conversation = self.request.chat.conversation_view().await?;
+        let conversation = self.request.chat.context_view().await?;
         let prepared = context_engine
             .prepare(PrepareContextInput::new(
                 &self.request.resolved_model.model_name,

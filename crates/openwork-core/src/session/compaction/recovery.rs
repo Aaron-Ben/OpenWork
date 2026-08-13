@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use openwork_chat_state::{ChatStateHandle, ConversationView};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
@@ -163,7 +163,7 @@ async fn rewind_conversation_inner(
     trace: &mut CompactionTraceGuard,
 ) -> Result<ConversationCompaction, CompactionError> {
     let prepare_started = Instant::now();
-    if let Ok(source) = request.chat.conversation_view().await
+    if let Ok(source) = request.chat.context_view().await
         && let Ok(tokens) = estimate_conversation_tokens(&source)
     {
         trace
@@ -212,11 +212,8 @@ async fn rewind_conversation_inner(
 
     let install_started = Instant::now();
     let replacement = compacted_items(&checkpoint, last_user)?;
-    let replacement_conversation = ConversationView {
-        messages: replacement
-            .iter()
-            .map(|item| item.message.clone())
-            .collect(),
+    let replacement_conversation = ConversationContextView {
+        items: replacement.clone(),
     };
     if let Ok(tokens) = estimate_conversation_tokens(&replacement_conversation) {
         trace

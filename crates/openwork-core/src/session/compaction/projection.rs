@@ -1,5 +1,5 @@
 use openwork_chat_state::{
-    ConversationCompactionView, ConversationItem, ConversationItemOrigin, SyntheticReason,
+    ConversationContextView, ConversationItem, ConversationItemOrigin, SyntheticReason,
 };
 use openwork_models::model::{Message, Role};
 
@@ -17,7 +17,7 @@ const SUMMARY_PREFIX: &str = "The earlier Conversation was compacted into the fo
 /// and replace the real request in every compacted projection.
 ///
 /// **Test `kind`, never ordering.**
-pub(super) fn last_real_user(source: &ConversationCompactionView) -> Option<&ConversationItem> {
+pub(super) fn last_real_user(source: &ConversationContextView) -> Option<&ConversationItem> {
     source.items.iter().rev().find(|item| {
         item.message.role == Role::User
             && !item.is_contextual()
@@ -79,7 +79,7 @@ pub(crate) fn compaction_summary_message(summary: &str) -> Message {
 mod tests {
     use openwork_models::model::{ContentBlock, Message, Role};
 
-    use openwork_chat_state::{ConversationCompactionView, ConversationItem, MessageKind};
+    use openwork_chat_state::{ConversationContextView, ConversationItem, MessageKind};
 
     use super::{compacted_items, last_real_user};
     use crate::session::{
@@ -115,8 +115,8 @@ mod tests {
         );
     }
 
-    fn view(items: Vec<ConversationItem>) -> ConversationCompactionView {
-        ConversationCompactionView { items }
+    fn view(items: Vec<ConversationItem>) -> ConversationContextView {
+        ConversationContextView { items }
     }
 
     fn user_item(sequence: i64, kind: MessageKind, text: &str) -> ConversationItem {
@@ -202,7 +202,7 @@ mod tests {
         .await
         .expect("agent message");
 
-        let source = chat.compaction_view().await.expect("compaction view");
+        let source = chat.context_view().await.expect("context view");
         let last_user = last_real_user(&source).expect("a user request must be found");
         assert_eq!(
             last_user.message.content,

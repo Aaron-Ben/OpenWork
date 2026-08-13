@@ -1023,10 +1023,10 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     let restarted_chat = ChatStateHandle::spawn_items(restarted_items).expect("restarted chat");
     assert_eq!(
         restarted_chat
-            .conversation_view()
+            .context_view()
             .await
             .expect("restarted view")
-            .messages
+            .items
             .len(),
         5
     );
