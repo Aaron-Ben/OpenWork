@@ -137,6 +137,7 @@ export interface RuntimeToolDefinition {
 }
 
 export interface RuntimeContextInspectionBudget {
+  contextWindowTokens: number
   systemContextTokens: number
   conversationTokens: number
   toolSurfaceTokens: number

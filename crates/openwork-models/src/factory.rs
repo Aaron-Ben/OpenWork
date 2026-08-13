@@ -100,6 +100,7 @@ mod tests {
                     display_name: None,
                     model_tier: ModelTier::Plus,
                     enabled: true,
+                    capabilities: None,
                 }],
                 enabled: true,
             },

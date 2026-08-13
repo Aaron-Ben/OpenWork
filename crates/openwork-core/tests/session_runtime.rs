@@ -18,7 +18,7 @@ use openwork_core::session::{
     TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
 };
 use openwork_core::skills::SkillRoots;
-use openwork_core::{AgentControl, SubAgentHost, SubAgentSpec};
+use openwork_core::{AgentControl, ModelCapabilities, SubAgentHost, SubAgentSpec};
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
@@ -510,6 +510,7 @@ struct RuntimeFixture {
 
 struct RuntimeOptions {
     session_id: SessionId,
+    model_capabilities: ModelCapabilities,
     approval: SessionApproval,
     parent_link: Option<ParentLink>,
     agent_control: Option<AgentControl>,
@@ -519,10 +520,20 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             session_id: SessionId::new("session-test"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::Interactive,
             parent_link: None,
             agent_control: None,
         }
+    }
+}
+
+fn test_capabilities(window_tokens: u64, max_output_tokens: u32) -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: window_tokens,
+        max_output_tokens,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
     }
 }
 
@@ -615,6 +626,7 @@ impl SubAgentHost for SpawningSessionHost {
             SkillRoots::default(),
             RuntimeOptions {
                 session_id: spec.session_id,
+                model_capabilities: test_capabilities(200_000, 32_768),
                 approval: SessionApproval::NonInteractive,
                 parent_link: Some(ParentLink {
                     parent_session_id: spec.parent_session_id,
@@ -739,6 +751,27 @@ fn runtime(
     )
 }
 
+fn runtime_with_capabilities(
+    responses: Vec<ModelResponse>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    model_capabilities: ModelCapabilities,
+) -> RuntimeFixture {
+    runtime_with_options(
+        responses.into_iter().map(Ok).collect(),
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            model_capabilities,
+            ..RuntimeOptions::default()
+        },
+    )
+}
+
 fn runtime_in_workspace(
     responses: Vec<ModelResponse>,
     tool_results: Vec<ToolResult>,
@@ -783,6 +816,27 @@ fn runtime_with_outcomes(
         permission_mode,
         fail_assistant,
         TestWorkspace::new(),
+    )
+}
+
+fn runtime_with_outcomes_and_capabilities(
+    outcomes: Vec<Result<ModelResponse, ModelError>>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    model_capabilities: ModelCapabilities,
+) -> RuntimeFixture {
+    runtime_with_options(
+        outcomes,
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            model_capabilities,
+            ..RuntimeOptions::default()
+        },
     )
 }
 
@@ -901,7 +955,12 @@ fn runtime_with_options(
             session_id: options.session_id,
             working_directory,
             skill_roots,
-            resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
+            resolved_model: ResolvedModel::new(
+                None::<String>,
+                "test",
+                "test-model",
+                options.model_capabilities,
+            ),
             agent,
             chat: chat.clone(),
             model: Arc::new(FakeModel {
@@ -1195,7 +1254,7 @@ async fn no_tool_turn_completes_after_one_model_call() {
         [Role::System, Role::System, Role::User]
     );
     assert_eq!(requests[0].temperature, None);
-    assert_eq!(requests[0].max_output_tokens, None);
+    assert_eq!(requests[0].max_output_tokens, Some(32_768));
     assert_eq!(requests[0].thinking, None);
     let submitted_messages = requests[0].messages.clone();
     drop(requests);
@@ -1574,6 +1633,7 @@ async fn a_child_terminal_answer_is_delivered_to_its_parent_session() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -1648,6 +1708,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-failed-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id: parent_session_id.clone(),
@@ -1680,6 +1741,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-cancelled-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -1756,6 +1818,7 @@ async fn a_child_still_completes_when_its_parent_can_no_longer_be_reached() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-orphan-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id: orphan_parent_id,
@@ -2828,7 +2891,7 @@ async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
 
 #[tokio::test]
 async fn context_budget_threshold_compacts_before_the_first_provider_submission() {
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             response(compaction_summary(), Vec::new()),
             response("continued after threshold compaction", Vec::new()),
@@ -2836,13 +2899,13 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
     let accepted = fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("threshold-request"),
             openwork_core::session::PreparedTurnInput::text("do the task"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -2912,7 +2975,7 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
 
 #[tokio::test]
 async fn compacted_tool_turn_records_the_seven_documented_spans() {
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             response(compaction_summary(), Vec::new()),
             response(
@@ -2932,6 +2995,7 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
         ],
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(10_000, 1),
     );
     fixture
         .chat
@@ -2946,10 +3010,9 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
 
     let accepted = fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("seven-span-threshold-request"),
             openwork_core::session::PreparedTurnInput::text("inspect the project"),
-            10_000,
             BTreeSet::new(),
         )
         .await
@@ -3005,7 +3068,7 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
 
 #[tokio::test]
 async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget() {
-    let mut fixture = runtime_with_outcomes(
+    let mut fixture = runtime_with_outcomes_and_capabilities(
         vec![
             Ok(response(compaction_summary(), Vec::new())),
             Err(ModelError::context_overflow(
@@ -3015,14 +3078,14 @@ async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget(
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
 
     fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("threshold-overflow-request"),
             openwork_core::session::PreparedTurnInput::text("do the task"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -3637,6 +3700,7 @@ async fn child_active_turn_owns_and_releases_its_slot_at_terminal() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-slot-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -3697,6 +3761,7 @@ async fn explorer_denies_ask_then_runs_readonly_without_permission_card() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-readonly-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -4436,7 +4501,7 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
     // 压缩把模型看到的对话整体换成"用户消息重放 + 摘要 + reminder"三条，原来的
     // update_plan Tool Call 和它的结果都不在其中。所以压缩之后 reminder 是当前计划
     // 唯一的载体——它错了模型就完全失忆，而不是少了一层冗余。
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             // 第 1 轮开头的压缩
             response(compaction_summary(), Vec::new()),
@@ -4462,13 +4527,13 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
     fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("plan-compaction-request"),
             openwork_core::session::PreparedTurnInput::text("do the multi-step task"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -4510,7 +4575,7 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
 async fn clearing_the_plan_removes_it_from_the_next_reminder() {
     // collector 在 collect 返回 None 时会结转旧值，所以清空计划若实现成"没有数据"，
     // 模型会一直看到一份已经删掉的计划，而且全程不报错。
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             response(compaction_summary(), Vec::new()),
             response(
@@ -4536,13 +4601,13 @@ async fn clearing_the_plan_removes_it_from_the_next_reminder() {
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
     fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("plan-clear-request"),
             openwork_core::session::PreparedTurnInput::text("do then abandon the plan"),
-            1,
             BTreeSet::new(),
         )
         .await

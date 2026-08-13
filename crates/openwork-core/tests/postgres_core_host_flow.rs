@@ -4,10 +4,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use openwork_core::{
-    API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, CredentialResolver, ModelInput, OpenWorkCore,
-    OpenWorkCoreConfig, PermissionDecision, ProviderInput, ResolvedModel, RuntimeTurnId, SessionId,
-    SessionInput, SessionStorage, SessionUpdate, SessionUpdateEnvelope, SubAgentHost,
-    SubAgentSessionInput, SubAgentSpec, ToolCallId, TurnOutcome,
+    API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, CredentialResolver, ModelCapabilities, ModelInput,
+    OpenWorkCore, OpenWorkCoreConfig, PermissionDecision, ProviderInput, ResolvedModel,
+    RuntimeTurnId, SessionId, SessionInput, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
+    SubAgentHost, SubAgentSessionInput, SubAgentSpec, ToolCallId, TurnOutcome,
 };
 use openwork_models::model::{Message, Role};
 use openwork_models::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel};
@@ -15,6 +15,15 @@ use uuid::Uuid;
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 struct FixedCredential;
@@ -65,6 +74,7 @@ async fn production_host_persists_and_starts_an_idle_explorer_session() {
             base_url: format!("https://example.invalid/{model_name}"),
             credential_ref: Some("test:credential".to_string()),
             enabled: true,
+            capabilities: test_capabilities(),
             config: serde_json::json!({}),
         })
         .await
@@ -170,6 +180,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
             base_url: "http://127.0.0.1:9".to_string(),
             credential_ref: Some("test:credential".to_string()),
             enabled: true,
+            capabilities: test_capabilities(),
             config: serde_json::json!({}),
         })
         .await
@@ -210,7 +221,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
             &SessionId::new(completed.id),
             &completed_turn_id,
             &ClientRequestId::new(unique("request-reconciliation-completed")),
-            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &ResolvedModel::new(None::<String>, "test", "test-model", test_capabilities()),
             &[],
             &Message::text(Role::User, "inspect completion"),
         )
@@ -257,7 +268,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
             &SessionId::new(interrupted.id),
             &interrupted_turn_id,
             &ClientRequestId::new(unique("request-reconciliation-interrupted")),
-            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &ResolvedModel::new(None::<String>, "test", "test-model", test_capabilities()),
             &[],
             &Message::text(Role::User, "inspect interruption"),
         )
@@ -302,7 +313,6 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
         &parent_session_id,
         ClientRequestId::new(unique("request-reconciliation-parent-first")),
         vec![openwork_core::UserInput::text("continue after restart")],
-        None,
     )
     .await
     .expect("first parent turn");
@@ -328,7 +338,6 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
         &parent_session_id,
         ClientRequestId::new(unique("request-reconciliation-parent-second")),
         vec![openwork_core::UserInput::text("continue again")],
-        None,
     )
     .await
     .expect("second parent turn");
@@ -405,7 +414,6 @@ async fn stored_deepseek_v4_flash_completes_a_real_turn() {
             vec![openwork_core::UserInput::text(
                 "Reply with exactly: OPENWORK_FRONTEND_OK. Do not call tools.",
             )],
-            None,
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -471,6 +479,7 @@ async fn bootstrapped_core_persists_a_provider_and_creates_a_session_from_its_mo
                 display_name: None,
                 model_tier: ModelTier::Lite,
                 enabled: true,
+                capabilities: Some(test_capabilities()),
             }],
             enabled: true,
             extra_body: None,

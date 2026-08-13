@@ -84,12 +84,19 @@ pub(crate) fn plan_user_input_admission(
 
 #[cfg(test)]
 mod tests {
+    use openwork_models::model::ModelCapabilities;
+
     use super::*;
 
     fn limits_with_user_input_tokens(max_user_input_tokens: u32) -> ModelContextLimits {
         ModelContextLimits {
             max_user_input_tokens,
-            ..ModelContextLimits::for_context_window(200_000)
+            ..ModelContextLimits::from_capabilities(ModelCapabilities {
+                context_window_tokens: 200_000,
+                max_output_tokens: 32_000,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: true,
+            })
         }
     }
 
@@ -110,7 +117,8 @@ mod tests {
     fn input_within_the_limit_passes_through_unchanged() {
         let content = vec![ContentBlock::text("帮我看下 run_loop 里的压缩触发")];
 
-        let admission = plan_user_input_admission(&content, &limits_with_user_input_tokens(100), "req-1");
+        let admission =
+            plan_user_input_admission(&content, &limits_with_user_input_tokens(100), "req-1");
 
         assert_eq!(admission.content, content);
         assert!(admission.spills.is_empty());

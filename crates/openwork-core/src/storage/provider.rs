@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
+use openwork_models::model::ModelCapabilities;
 use openwork_models::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
@@ -318,6 +319,7 @@ async fn replace_models(
             "position": position,
             "displayNameProvided": model.display_name.is_some(),
             "modelEnabled": model.enabled,
+            "capabilities": model.capabilities,
             "extraBody": provider.extra_body.clone().unwrap_or_default(),
         });
         sqlx::query(
@@ -394,7 +396,27 @@ fn record_to_model(record: ProviderModelRecord) -> Result<ProviderModel, Provide
         display_name: display_name_provided.then_some(record.display_name),
         model_tier: parse_model_tier(tier)?,
         enabled: model_enabled,
+        capabilities: parse_capabilities(&record.config)?,
     })
+}
+
+fn parse_capabilities(
+    config: &Value,
+) -> Result<Option<ModelCapabilities>, ProviderRepositoryError> {
+    let Some(value) = config.get("capabilities") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let capabilities =
+        serde_json::from_value::<ModelCapabilities>(value.clone()).map_err(|error| {
+            persistence_error(format!("invalid models.config.capabilities: {error}"))
+        })?;
+    capabilities
+        .validate()
+        .map(Some)
+        .map_err(|error| persistence_error(format!("invalid models.config.capabilities: {error}")))
 }
 
 fn provider_config(extra_body: Option<&Map<String, Value>>) -> Value {
@@ -441,6 +463,18 @@ fn validate_input(
         return Err(ProviderRepositoryError::InvalidInput {
             field: "models.modelId",
         });
+    }
+    for model in &input.models {
+        let capabilities = model
+            .capabilities
+            .ok_or(ProviderRepositoryError::InvalidInput {
+                field: "models.capabilities",
+            })?;
+        capabilities
+            .validate()
+            .map_err(|_| ProviderRepositoryError::InvalidInput {
+                field: "models.capabilities",
+            })?;
     }
     Ok(())
 }
@@ -505,5 +539,6 @@ mod tests {
 
         assert_eq!(model.model_tier, ModelTier::Plus);
         assert!(model.enabled);
+        assert_eq!(model.capabilities, None);
     }
 }

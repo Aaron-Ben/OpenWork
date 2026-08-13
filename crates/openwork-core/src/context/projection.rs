@@ -168,9 +168,9 @@ fn truncate_text(text: &str, original_tokens: u64, limit: u64) -> String {
     }
 
     let content_bytes = max_bytes - marker.len();
-    let head_budget = content_bytes.saturating_mul(
-        usize::try_from(TOOL_RESULT_HEAD_PERCENT).unwrap_or(usize::MAX),
-    ) / 100;
+    let head_budget = content_bytes
+        .saturating_mul(usize::try_from(TOOL_RESULT_HEAD_PERCENT).unwrap_or(usize::MAX))
+        / 100;
     let tail_budget = content_bytes - head_budget;
     let head_end = floor_char_boundary(text, head_budget.min(text.len()));
     let tail_start = ceil_char_boundary(text, text.len().saturating_sub(tail_budget));
@@ -195,7 +195,8 @@ fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use openwork_models::model::{
-        ContentBlock, Message, Role, ToolResultArtifact, ToolResultBlock, ToolResultState,
+        ContentBlock, Message, ModelCapabilities, Role, ToolResultArtifact, ToolResultBlock,
+        ToolResultState,
     };
 
     use super::*;
@@ -204,7 +205,12 @@ mod tests {
     fn limits_with_tool_result_tokens(max_tool_result_tokens: u32) -> ModelContextLimits {
         ModelContextLimits {
             max_tool_result_tokens,
-            ..ModelContextLimits::for_context_window(200_000)
+            ..ModelContextLimits::from_capabilities(ModelCapabilities {
+                context_window_tokens: 200_000,
+                max_output_tokens: 32_000,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: true,
+            })
         }
     }
 

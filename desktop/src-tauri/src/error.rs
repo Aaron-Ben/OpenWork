@@ -46,6 +46,12 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::ConfigurationInvalid,
                 format!("Model not found: {id}"),
             ),
+            OpenWorkCoreError::ModelCapabilitiesMissing(id) => Self::new(
+                CommandErrorCode::ConfigurationInvalid,
+                format!(
+                    "Model capabilities are missing for {id}; open Settings > Models and edit its provider"
+                ),
+            ),
             OpenWorkCoreError::SessionActive(id) => Self::new(
                 CommandErrorCode::OperationConflict,
                 format!("Session has an active turn: {id}"),
@@ -102,10 +108,6 @@ impl From<OpenWorkCoreError> for CommandError {
             OpenWorkCoreError::Session(SessionError::EmptyInput) => Self::new(
                 CommandErrorCode::InvalidRequest,
                 "Turn input must not be empty",
-            ),
-            OpenWorkCoreError::Session(SessionError::InvalidContextWindowTokens) => Self::new(
-                CommandErrorCode::InvalidRequest,
-                "Context window token capacity must be positive",
             ),
             OpenWorkCoreError::Session(SessionError::ActorStopped) => Self::new(
                 CommandErrorCode::InternalError,
@@ -250,6 +252,17 @@ mod tests {
 
         assert_eq!(error.code, CommandErrorCode::SkillUnavailable);
         assert_eq!(error.message, "Selected skill is unavailable: commit");
+    }
+
+    #[test]
+    fn missing_model_capabilities_point_to_the_model_settings() {
+        let error = CommandError::from(OpenWorkCoreError::ModelCapabilitiesMissing(
+            "model-1".to_string(),
+        ));
+
+        assert_eq!(error.code, CommandErrorCode::ConfigurationInvalid);
+        assert!(error.message.contains("Model capabilities are missing"));
+        assert!(error.message.contains("Settings > Models"));
     }
 
     #[tokio::test]

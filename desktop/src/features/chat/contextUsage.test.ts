@@ -76,28 +76,28 @@ describe('contextUsageFromTrace', () => {
   it('uses provider input tokens from the latest model call', () => {
     const usage = contextUsageFromTrace(
       trace([modelSpan(1, 12_000), modelSpan(3, 66_000, 64_000)]),
-      258_000,
+      200_000,
     )
 
     expect(usage).toEqual({
       usedTokens: 66_000,
-      totalTokens: 258_000,
+      totalTokens: 200_000,
       estimated: false,
     })
   })
 
   it('falls back to the preflight estimate while provider usage is unavailable', () => {
-    const usage = contextUsageFromTrace(trace([modelSpan(1, null, 4_200)]), 258_000)
+    const usage = contextUsageFromTrace(trace([modelSpan(1, null, 4_200)]), 200_000)
 
     expect(usage).toEqual({
       usedTokens: 4_200,
-      totalTokens: 258_000,
+      totalTokens: 200_000,
       estimated: true,
     })
   })
 
   it('returns no usage without a valid capacity or token count', () => {
-    expect(contextUsageFromTrace(trace([modelSpan(1, null)]), 258_000)).toBeNull()
+    expect(contextUsageFromTrace(trace([modelSpan(1, null)]), 200_000)).toBeNull()
     expect(contextUsageFromTrace(trace([modelSpan(1, 10)]), 0)).toBeNull()
   })
 })

@@ -85,8 +85,11 @@ pub(crate) fn normalize_for_request(
         let message = &item.message;
         if message.role != Role::Assistant {
             if message.role == Role::Tool {
-                let count = message.content.iter()
-                    .filter(|block| matches!(block, ContentBlock::ToolResult(_))).count();
+                let count = message
+                    .content
+                    .iter()
+                    .filter(|block| matches!(block, ContentBlock::ToolResult(_)))
+                    .count();
                 report.dropped_orphan_results += u32::try_from(count).unwrap_or(u32::MAX);
             } else {
                 messages.push(filter_item(item, index, policy, &mut report)?);
@@ -172,28 +175,40 @@ fn projected_origin(item: &ConversationItem) -> ProjectedMessageOrigin {
         | ConversationItemOrigin::Synthetic { .. } => ProjectedMessageOrigin::Synthesized,
     }
 }
-fn filter_item(item: &ConversationItem, item_index: usize, policy: &NormalizationPolicy,
+fn filter_item(
+    item: &ConversationItem,
+    item_index: usize,
+    policy: &NormalizationPolicy,
     report: &mut NormalizationReport,
 ) -> Result<Message, NormalizationError> {
     let mut message = item.message.clone();
     if policy.accepts_data_blocks {
         return Ok(message);
     }
-    message.content = filter_content_blocks(message.content,
-        item.kind == MessageKind::Normal && message.role == Role::User, item_index, report)?;
+    message.content = filter_content_blocks(
+        message.content,
+        item.kind == MessageKind::Normal && message.role == Role::User,
+        item_index,
+        report,
+    )?;
     Ok(message)
 }
-fn filter_content_blocks(blocks: Vec<ContentBlock>, reject_data: bool, item_index: usize,
+fn filter_content_blocks(
+    blocks: Vec<ContentBlock>,
+    reject_data: bool,
+    item_index: usize,
     report: &mut NormalizationReport,
 ) -> Result<Vec<ContentBlock>, NormalizationError> {
     let mut filtered = Vec::with_capacity(blocks.len());
     for block in blocks {
         match block {
-            ContentBlock::Data(_) if reject_data =>
-                return Err(NormalizationError::UnsupportedUserData { item_index }),
+            ContentBlock::Data(_) if reject_data => {
+                return Err(NormalizationError::UnsupportedUserData { item_index });
+            }
             ContentBlock::Data(_) => report.filtered_data_blocks += 1,
             ContentBlock::ToolResult(mut result) => {
-                result.output = filter_content_blocks(result.output, reject_data, item_index, report)?;
+                result.output =
+                    filter_content_blocks(result.output, reject_data, item_index, report)?;
                 filtered.push(ContentBlock::ToolResult(result));
             }
             other => filtered.push(other),
@@ -350,7 +365,10 @@ mod tests {
         let normalized =
             normalize_for_request(&items, &strict_policy()).expect("normalization succeeds");
 
-        assert_eq!(normalized.messages, vec![Message::text(Role::User, "查一下")]);
+        assert_eq!(
+            normalized.messages,
+            vec![Message::text(Role::User, "查一下")]
+        );
         assert_eq!(normalized.report.dropped_orphan_results, 1);
         assert_eq!(items, before, "合法化不得改写输入");
     }
@@ -396,7 +414,10 @@ mod tests {
 
         let error = normalize_for_request(&items, &strict_policy()).expect_err("must reject");
 
-        assert_eq!(error, NormalizationError::UnsupportedUserData { item_index: 1 });
+        assert_eq!(
+            error,
+            NormalizationError::UnsupportedUserData { item_index: 1 }
+        );
     }
 
     /// D5 回归守卫：`MessageKind` 必须全程保留。

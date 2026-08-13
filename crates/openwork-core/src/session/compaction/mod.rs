@@ -1,4 +1,3 @@
-mod policy;
 mod compacted_view;
 mod recovery;
 mod reminder;
@@ -34,8 +33,6 @@ use super::{
     SessionStorage, TraceRecorder, TurnId,
 };
 
-pub(crate) use policy::AutomaticCompactionPolicy;
-pub use policy::{DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT, DEFAULT_CONTEXT_WINDOW_TOKENS};
 pub(crate) use compacted_view::{compacted_items, compaction_summary_message};
 pub use recovery::ConversationProjectionSelector;
 pub(super) use recovery::{CompactionTrigger, ConversationRewindRequest, rewind_conversation};

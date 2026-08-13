@@ -1,10 +1,10 @@
 use openwork_core::{
     ClientRequestId, CompactionFinished, CompactionStarted, CompactionTraceAttributesV1,
-    ModelCallFinished, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
-    PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    ToolCallStarted, ToolCallTraceGuard, ToolTraceAttributesV1, TraceContentConfig,
-    TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TraceStatus, TurnOutcome,
-    session::TurnId,
+    ModelCallFinished, ModelCallStarted, ModelCallTraceGuard, ModelCapabilities,
+    ModelTraceAttributesV1, PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId,
+    SessionInput, SessionStorage, ToolCallStarted, ToolCallTraceGuard, ToolTraceAttributesV1,
+    TraceContentConfig, TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TraceStatus,
+    TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     FinishReason, Message, ModelRequest, ModelResponse, Role, TokenUsage, ToolDefinition,
@@ -21,6 +21,15 @@ fn test_database_url() -> Option<String> {
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 async fn storage() -> Option<PostgresStorage> {
@@ -52,7 +61,7 @@ async fn create_turn(storage: &PostgresStorage, prefix: &str) -> (SessionId, Tur
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-payload")),
-            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &ResolvedModel::new(None::<String>, "test", "test-model", test_capabilities()),
             &[],
             &Message::text(Role::User, "inspect trace payloads"),
         )

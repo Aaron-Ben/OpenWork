@@ -6,7 +6,6 @@ import type {
   RuntimePermissionMode,
   RuntimeSkillInput,
 } from '@/bridge/compat'
-import { useContextWindowStore } from '@/features/settings/contextWindowStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useRuntimeStore } from './runtimeStore'
 
@@ -24,7 +23,6 @@ export function useTurnActions(sessionId: string | null) {
         sessionId,
         clientRequestId,
         [...skills, { type: 'text', text: text.trim() }],
-        useContextWindowStore.getState().contextWindowTokens,
       )
       useRuntimeStore.getState().acceptTurn(sessionId, clientRequestId, accepted.turnId)
       return true

@@ -55,7 +55,7 @@ describe('ChatInput toolbar', () => {
     const markup = renderToStaticMarkup(
       <ChatInput
         {...baseProps}
-        contextUsage={{ usedTokens: 66_000, totalTokens: 258_000, estimated: false }}
+        contextUsage={{ usedTokens: 66_000, totalTokens: 200_000, estimated: false }}
       />,
     )
 
@@ -65,7 +65,7 @@ describe('ChatInput toolbar', () => {
     expect(markup).toContain('DeepSeek Chat · Plus')
     expect(markup).toContain('aria-label="发送"')
     expect(markup).toContain('data-context-usage-ring="true"')
-    expect(markup).toContain('data-context-usage-progress="26"')
+    expect(markup).toContain('data-context-usage-progress="33"')
     expect(markup).not.toContain('data-context-usage-panel')
     expect(markup).toContain('w-auto min-w-[104px] max-w-[min(320px,34vw)]')
     expect(markup).not.toContain('w-[clamp(104px,20vw,200px)]')

@@ -3,10 +3,11 @@ use openwork_core::{
     ClientRequestId, CompactionFinished, CompactionRuntimeState, CompactionStarted,
     CompactionStateCollector, CompactionTraceAttributesV1, ConversationCompactionKind,
     ConversationProjectionSelector, ConversationTranscriptQuery, MessageKind, ModelCallFinished,
-    ModelCallStarted, ModelInput, ModelTraceAttributesV1, NewConversationCompaction,
-    PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads, TraceRecorder,
-    TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
+    ModelCallStarted, ModelCapabilities, ModelInput, ModelTraceAttributesV1,
+    NewConversationCompaction, PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId,
+    SessionInput, SessionStorage, ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1,
+    TracePayloads, TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome,
+    session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
@@ -22,6 +23,15 @@ fn test_database_url() -> Option<String> {
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 fn absolute_time(value: &str) -> OffsetDateTime {
@@ -421,6 +431,7 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             base_url: format!("https://example.invalid/threshold/{model_id}"),
             credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
             enabled: true,
+            capabilities: test_capabilities(),
             config: json!({}),
         })
         .await
@@ -441,7 +452,12 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-threshold")),
-            &ResolvedModel::new(None::<String>, "deepseek", "threshold-test-model"),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "threshold-test-model",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "continue the task"),
         )
@@ -508,7 +524,12 @@ async fn postgres_persists_contextual_input_before_the_visible_user_message() {
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-contextual-input")),
-            &ResolvedModel::new(None::<String>, "deepseek", "contextual-input-test"),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "contextual-input-test",
+                test_capabilities(),
+            ),
             &[Message::text(
                 Role::User,
                 "<skill>\n<name>read-workflow</name>\n<path>/tmp/read-workflow/SKILL.md</path>\nprivate skill body\n</skill>",
@@ -572,7 +593,12 @@ async fn postgres_persists_agent_messages_with_their_contextual_kind() {
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-agent-message")),
-            &ResolvedModel::new(None::<String>, "deepseek", "agent-message-test"),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "agent-message-test",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "continue the task"),
         )
@@ -722,6 +748,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             base_url: format!("https://example.invalid/{model_id}"),
             credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
             enabled: true,
+            capabilities: test_capabilities(),
             config: json!({}),
         })
         .await
@@ -747,7 +774,12 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &session_id,
             &turn_id,
             &client_request_id,
-            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &ResolvedModel::new(
+                Some(model_id.clone()),
+                "deepseek",
+                "deepseek-v4-flash",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "read the file"),
         )
@@ -928,7 +960,12 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &session_id,
             &continuation_turn_id,
             &ClientRequestId::new(unique("request-after-compaction")),
-            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &ResolvedModel::new(
+                Some(model_id.clone()),
+                "deepseek",
+                "deepseek-v4-flash",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "continue from the summary"),
         )
@@ -1364,7 +1401,12 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &session_id,
             &interrupted_turn_id,
             &ClientRequestId::new(unique("request-interrupted")),
-            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &ResolvedModel::new(
+                Some(model_id.clone()),
+                "deepseek",
+                "deepseek-v4-flash",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "this turn will be interrupted"),
         )

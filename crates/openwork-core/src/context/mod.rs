@@ -21,10 +21,8 @@ pub use inspection::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
     ContextInspectionSystemPart, ContextWindowInspection,
 };
-pub(crate) use limits::ModelContextLimits;
-pub(crate) use normalize::{
-    NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request,
-};
+pub(crate) use limits::{AUTO_COMPACT_THRESHOLD_PERCENT, ModelContextLimits};
+pub(crate) use normalize::{NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request};
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 pub(crate) use projection::{ProjectionSummary, project_items};
 use skill_catalog::SkillCatalogLoader;

@@ -23,7 +23,6 @@ describe('i18n', () => {
     expect(i18n.t('sidebar.newSession')).toBe('创建会话')
     expect(i18n.t('settings.models.title')).toBe('模型配置')
     expect(i18n.t('settings.general.title')).toBe('通用')
-    expect(i18n.t('settings.contextWindow.title')).toBe('上下文窗口')
     expect(i18n.t('settings.appearance.system')).toBe('跟随系统')
     expect(i18n.t('activity.title')).toBe('运行记录')
   })

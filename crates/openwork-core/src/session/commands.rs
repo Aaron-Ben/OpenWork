@@ -1,3 +1,4 @@
+use openwork_models::model::ModelCapabilities;
 use openwork_tools::{ApprovalCard, ToolResultStatus};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -10,6 +11,7 @@ pub struct ResolvedModel {
     pub model_id: Option<String>,
     pub provider_kind: String,
     pub model_name: String,
+    pub capabilities: ModelCapabilities,
 }
 
 impl ResolvedModel {
@@ -17,11 +19,13 @@ impl ResolvedModel {
         model_id: Option<impl Into<String>>,
         provider_kind: impl Into<String>,
         model_name: impl Into<String>,
+        capabilities: ModelCapabilities,
     ) -> Self {
         Self {
             model_id: model_id.map(Into::into),
             provider_kind: provider_kind.into(),
             model_name: model_name.into(),
+            capabilities,
         }
     }
 }
@@ -89,8 +93,6 @@ pub enum SessionError {
     PermissionDecisionUnavailable(ToolCallId),
     #[error("turn input must not be empty")]
     EmptyInput,
-    #[error("context window token capacity must be positive")]
-    InvalidContextWindowTokens,
     #[error(
         "session Conversation checkpoint changed but the in-memory projection could not be installed; reload the Session"
     )]

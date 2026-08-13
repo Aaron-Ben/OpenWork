@@ -40,6 +40,7 @@ pub struct ContextInspectionMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextInspectionBudget {
+    pub context_window_tokens: u64,
     pub system_context_tokens: u64,
     pub conversation_tokens: u64,
     pub tool_surface_tokens: u64,

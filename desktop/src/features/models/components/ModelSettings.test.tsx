@@ -29,6 +29,7 @@ describe('ModelSettings colors', () => {
     const markup = renderToStaticMarkup(<ModelSettings />)
 
     expect(markup).toContain('deepseek-chat')
+    expect(markup).toContain('需要补全能力配置')
     expect(markup).toContain('text-status-danger-ink')
     expect(markup).not.toContain('使用中')
     expect(markup).not.toContain('设为当前服务商')

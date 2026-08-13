@@ -28,6 +28,9 @@ pub(super) fn validate_model(input: &ModelInput) -> Result<(), StorageError> {
             "model config must be a JSON object".to_string(),
         ));
     }
+    input.capabilities.validate().map_err(|error| {
+        StorageError::InvalidInput(format!("model capabilities are invalid: {error}"))
+    })?;
     Ok(())
 }
 
@@ -108,6 +111,9 @@ pub(super) fn validate_resolved_model(model: &ResolvedModel) -> Result<(), Stora
             "resolved provider kind and model name must not be blank".to_string(),
         ));
     }
+    model.capabilities.validate().map_err(|error| {
+        StorageError::InvalidInput(format!("resolved model capabilities are invalid: {error}"))
+    })?;
     Ok(())
 }
 pub(super) fn validate_runtime_checkpoint_state(

@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_CONTEXT_WINDOW_TOKENS, useContextWindowStore } from '@/features/settings/contextWindowStore'
 import { GeneralSettings } from './GeneralSettings'
 
 describe('GeneralSettings', () => {
@@ -10,7 +9,7 @@ describe('GeneralSettings', () => {
 
     expect(markup).toContain('通用')
     expect(markup).toContain('外观')
-    expect(markup).toContain('上下文窗口')
+    expect(markup).not.toContain('上下文窗口')
     expect(markup).not.toContain('Trace 内容')
     expect(markup).not.toContain('Skills')
   })
@@ -24,18 +23,6 @@ describe('GeneralSettings', () => {
     expect(markup).toContain('简体中文')
     expect(markup).toContain('繁體中文')
     expect(markup).toContain('English')
-  })
-
-  it('renders a model-independent configurable token budget', () => {
-    useContextWindowStore.setState({ contextWindowTokens: DEFAULT_CONTEXT_WINDOW_TOKENS })
-
-    const markup = renderToStaticMarkup(<GeneralSettings />)
-
-    expect(markup).toContain('value="258000"')
-    expect(markup).toContain('Tokens')
-    expect(markup).toContain('不属于某个模型')
-    expect(markup).not.toContain('每次提交 Provider 前')
-    expect(markup).not.toContain('/compact')
   })
 
   it('does not expose trace content recording tiers', () => {

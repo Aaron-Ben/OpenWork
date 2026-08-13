@@ -10,11 +10,19 @@ export type ProviderKind =
 
 export type ModelTier = 'lite' | 'plus' | 'pro'
 
+export interface ModelCapabilities {
+  contextWindowTokens: number
+  maxOutputTokens: number
+  maxReasoningTokens: number | null
+  acceptsDataBlocks: boolean
+}
+
 export interface ProviderModel {
   modelId: string
   displayName?: string
   modelTier: ModelTier
   enabled: boolean
+  capabilities?: ModelCapabilities
 }
 
 export interface ProviderInput {
@@ -41,7 +49,7 @@ export interface ProviderPreset {
   name: string
   baseUrl: string
   kind: ProviderKind
-  models: Array<Pick<ProviderModel, 'modelId' | 'modelTier'>>
+  models: Array<Pick<ProviderModel, 'modelId' | 'modelTier' | 'capabilities'>>
   websiteUrl: string
   apiKeyUrl: string
 }

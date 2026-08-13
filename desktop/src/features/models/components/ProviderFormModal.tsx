@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { providersApi } from "@/bridge/providers";
 import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
-import type { ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../contracts";
+import type { ModelCapabilities, ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../contracts";
 import { useModelStore } from "../modelStore";
 
 const inputClass =
@@ -20,7 +20,15 @@ interface ProviderFormModalProps {
   open: boolean;
   mode: "create" | "edit";
   initial?: ProviderConfig;
+  focusModelId?: string;
   onClose: () => void;
+}
+
+export interface ModelCapabilitiesDraft {
+  contextWindowTokens: string;
+  maxOutputTokens: string;
+  maxReasoningTokens: string;
+  acceptsDataBlocks: boolean;
 }
 
 export interface ProviderFormDraft {
@@ -32,6 +40,7 @@ export interface ProviderFormDraft {
   plusModelsText: string;
   proModelsText: string;
   extraBodyText: string;
+  capabilitiesByModel: Record<string, ModelCapabilitiesDraft>;
 }
 
 type ProviderFormErrorKey =
@@ -40,6 +49,10 @@ type ProviderFormErrorKey =
   | "apiKeyRequired"
   | "modelRequired"
   | "duplicateModel"
+  | "contextWindowTokensInvalid"
+  | "maxOutputTokensInvalid"
+  | "maxReasoningTokensInvalid"
+  | "generationReservationExhaustsWindow"
   | "extraBodyObject"
   | "extraBodyInvalid";
 
@@ -90,6 +103,46 @@ export function buildProviderInput(
     return { ok: false, errorKey: "duplicateModel", model: duplicate.modelId };
   }
 
+  for (const model of models) {
+    const capabilityDraft = draft.capabilitiesByModel[model.modelId];
+    const contextWindowTokens = parseUnsignedInteger(
+      capabilityDraft?.contextWindowTokens ?? "",
+      true,
+      Number.MAX_SAFE_INTEGER,
+    );
+    if (contextWindowTokens === null) {
+      return { ok: false, errorKey: "contextWindowTokensInvalid", model: model.modelId };
+    }
+    const maxOutputTokens = parseUnsignedInteger(
+      capabilityDraft?.maxOutputTokens ?? "",
+      true,
+      0xffff_ffff,
+    );
+    if (maxOutputTokens === null) {
+      return { ok: false, errorKey: "maxOutputTokensInvalid", model: model.modelId };
+    }
+    const reasoningText = capabilityDraft?.maxReasoningTokens.trim() ?? "";
+    const maxReasoningTokens = reasoningText === ""
+      ? null
+      : parseUnsignedInteger(reasoningText, false, 0xffff_ffff);
+    if (reasoningText !== "" && maxReasoningTokens === null) {
+      return { ok: false, errorKey: "maxReasoningTokensInvalid", model: model.modelId };
+    }
+    if (maxOutputTokens + (maxReasoningTokens ?? 0) >= contextWindowTokens) {
+      return {
+        ok: false,
+        errorKey: "generationReservationExhaustsWindow",
+        model: model.modelId,
+      };
+    }
+    model.capabilities = {
+      contextWindowTokens,
+      maxOutputTokens,
+      maxReasoningTokens,
+      acceptsDataBlocks: capabilityDraft?.acceptsDataBlocks ?? false,
+    };
+  }
+
   let extraBody: Record<string, unknown> | undefined;
   const trimmedExtra = draft.extraBodyText.trim();
   if (trimmedExtra) {
@@ -118,7 +171,7 @@ export function buildProviderInput(
   };
 }
 
-export function ProviderFormModal({ open, mode, initial, onClose }: ProviderFormModalProps) {
+export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }: ProviderFormModalProps) {
   const { t } = useTranslation();
   const presets = useModelStore((state) => state.presets);
   const create = useModelStore((state) => state.create);
@@ -135,6 +188,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
   const [plusModelsText, setPlusModelsText] = useState("");
   const [proModelsText, setProModelsText] = useState("");
   const [extraBodyText, setExtraBodyText] = useState("");
+  const [capabilitiesByModel, setCapabilitiesByModel] = useState<Record<string, ModelCapabilitiesDraft>>({});
   const [showApiKey, setShowApiKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -156,6 +210,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       setPlusModelsText(modelsTextForTier(initial.models, "plus"));
       setProModelsText(modelsTextForTier(initial.models, "pro"));
       setExtraBodyText("");
+      setCapabilitiesByModel(capabilityDraftsFor(initial.models));
     } else {
       const defaultPreset = presets[0];
       setSelectedPresetId(defaultPreset?.id ?? "");
@@ -167,6 +222,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       setPlusModelsText(modelsTextForTier(defaultPreset?.models ?? [], "plus"));
       setProModelsText(modelsTextForTier(defaultPreset?.models ?? [], "pro"));
       setExtraBodyText("");
+      setCapabilitiesByModel(capabilityDraftsFor(defaultPreset?.models ?? []));
     }
   }, [open, mode, initial, presets]);
 
@@ -176,6 +232,22 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     dialogRef.current?.focus();
     return () => previousFocus.current?.focus();
   }, [open]);
+
+  const configuredModels = [
+    ...parseModels(liteModelsText, "lite"),
+    ...parseModels(plusModelsText, "plus"),
+    ...parseModels(proModelsText, "pro"),
+  ].filter((model, index, models) => (
+    models.findIndex((candidate) => candidate.modelId === model.modelId) === index
+  ));
+  const configuredModelIds = configuredModels.map((model) => model.modelId).join("\n");
+
+  useEffect(() => {
+    if (!open || !focusModelId || !configuredModelIds.split("\n").includes(focusModelId)) return;
+    const editor = document.getElementById(capabilitiesEditorId(focusModelId));
+    editor?.scrollIntoView?.({ block: "center" });
+    editor?.querySelector<HTMLInputElement>("input")?.focus();
+  }, [configuredModelIds, focusModelId, open]);
 
   if (!open) return null;
 
@@ -188,6 +260,22 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
     setLiteModelsText(modelsTextForTier(preset.models, "lite"));
     setPlusModelsText(modelsTextForTier(preset.models, "plus"));
     setProModelsText(modelsTextForTier(preset.models, "pro"));
+    setCapabilitiesByModel(capabilityDraftsFor(preset.models));
+  }
+
+  function updateCapability(
+    modelId: string,
+    field: keyof ModelCapabilitiesDraft,
+    value: string | boolean,
+  ) {
+    setCapabilitiesByModel((current) => ({
+      ...current,
+      [modelId]: {
+        ...emptyCapabilitiesDraft(),
+        ...current[modelId],
+        [field]: value,
+      },
+    }));
   }
 
   function buildInput(): ProviderInput | string {
@@ -200,6 +288,7 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
       plusModelsText,
       proModelsText,
       extraBodyText,
+      capabilitiesByModel,
     }, mode);
     if (result.ok) return result.input;
     return t(`settings.models.form.${result.errorKey}`, { model: result.model });
@@ -363,6 +452,65 @@ export function ProviderFormModal({ open, mode, initial, onClose }: ProviderForm
                 placeholder='{"reasoning_effort": "high"}'
               />
             </Field>
+
+            <div className="grid gap-3 sm:col-span-2">
+              <span className="text-sm font-medium text-ink-soft">
+                {t("settings.models.form.capabilities")}
+              </span>
+              {configuredModels.map((model) => {
+                const capability = capabilitiesByModel[model.modelId] ?? emptyCapabilitiesDraft();
+                return (
+                  <fieldset
+                    id={capabilitiesEditorId(model.modelId)}
+                    key={model.modelId}
+                    className="grid gap-3 rounded-lg border border-line p-3"
+                  >
+                    <legend className="px-1 font-mono text-xs text-ink-soft">{model.modelId}</legend>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Field label={t("settings.models.form.contextWindowTokens")}>
+                        <input
+                          className={inputClass}
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={capability.contextWindowTokens}
+                          onChange={(event) => updateCapability(model.modelId, "contextWindowTokens", event.target.value)}
+                        />
+                      </Field>
+                      <Field label={t("settings.models.form.maxOutputTokens")}>
+                        <input
+                          className={inputClass}
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={capability.maxOutputTokens}
+                          onChange={(event) => updateCapability(model.modelId, "maxOutputTokens", event.target.value)}
+                        />
+                      </Field>
+                      <Field label={t("settings.models.form.maxReasoningTokens")}>
+                        <input
+                          className={inputClass}
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={capability.maxReasoningTokens}
+                          placeholder={t("settings.models.form.optional")}
+                          onChange={(event) => updateCapability(model.modelId, "maxReasoningTokens", event.target.value)}
+                        />
+                      </Field>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-ink-soft">
+                      <input
+                        type="checkbox"
+                        checked={capability.acceptsDataBlocks}
+                        onChange={(event) => updateCapability(model.modelId, "acceptsDataBlocks", event.target.checked)}
+                      />
+                      {t("settings.models.form.acceptsDataBlocks")}
+                    </label>
+                  </fieldset>
+                );
+              })}
+            </div>
           </div>
 
           {testResult ? (
@@ -429,4 +577,44 @@ function parseModels(value: string, modelTier: ModelTier): ProviderModel[] {
     .map((modelId) => modelId.trim())
     .filter(Boolean)
     .map((modelId) => ({ modelId, modelTier, enabled: true }));
+}
+
+function capabilityDraftsFor(
+  models: Array<Pick<ProviderModel, "modelId" | "capabilities">>,
+): Record<string, ModelCapabilitiesDraft> {
+  return Object.fromEntries(models.map((model) => [
+    model.modelId,
+    model.capabilities ? capabilitiesToDraft(model.capabilities) : emptyCapabilitiesDraft(),
+  ]));
+}
+
+function capabilitiesToDraft(capabilities: ModelCapabilities): ModelCapabilitiesDraft {
+  return {
+    contextWindowTokens: String(capabilities.contextWindowTokens),
+    maxOutputTokens: String(capabilities.maxOutputTokens),
+    maxReasoningTokens: capabilities.maxReasoningTokens === null
+      ? ""
+      : String(capabilities.maxReasoningTokens),
+    acceptsDataBlocks: capabilities.acceptsDataBlocks,
+  };
+}
+
+function emptyCapabilitiesDraft(): ModelCapabilitiesDraft {
+  return {
+    contextWindowTokens: "",
+    maxOutputTokens: "",
+    maxReasoningTokens: "",
+    acceptsDataBlocks: false,
+  };
+}
+
+function parseUnsignedInteger(value: string, positive: boolean, max: number): number | null {
+  const parsed = Number(value);
+  if (!value.trim() || !Number.isSafeInteger(parsed) || parsed > max) return null;
+  if (positive ? parsed <= 0 : parsed < 0) return null;
+  return parsed;
+}
+
+function capabilitiesEditorId(modelId: string): string {
+  return `model-capabilities-${modelId}`;
 }

@@ -41,9 +41,7 @@ use crate::storage::time::china_now;
 use super::toolset::{ResolvedTurnTool, TurnToolset};
 
 use super::agent_message::AgentMailbox;
-use super::compaction::{
-    AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
-};
+use super::compaction::{CompactionTrigger, ConversationCompactionRequest, run_compaction};
 use super::permission_state::{NON_INTERACTIVE_DENIAL, SessionApproval, SessionPermissionState};
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
@@ -68,7 +66,6 @@ pub(super) struct TurnRunRequest {
     pub tools: Arc<TurnToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
-    pub compaction_policy: AutomaticCompactionPolicy,
     pub reload_required: Arc<AtomicBool>,
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
@@ -225,8 +222,8 @@ impl TurnRunner {
         .with_disabled_skills(self.request.disabled_skill_names.clone())
         .build(&self.system_prompt())
         .await?;
-        let context_engine = ContextEngine::new(ModelContextLimits::for_context_window(
-            self.request.compaction_policy.context_window_tokens,
+        let context_engine = ContextEngine::new(ModelContextLimits::from_capabilities(
+            self.request.resolved_model.capabilities,
         ));
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
@@ -239,8 +236,7 @@ impl TurnRunner {
             let mut prepared = self
                 .prepare_model_call(&context_engine, &system_context)
                 .await?;
-            let threshold_estimate =
-                self.threshold_estimate_before_sampling(&prepared.prepared);
+            let threshold_estimate = self.threshold_estimate_before_sampling(&prepared.prepared);
             let compacted_before_sampling = match threshold_estimate {
                 Some(estimated_input_tokens) => {
                     self.compact(
@@ -248,7 +244,11 @@ impl TurnRunner {
                         &system_context,
                         CompactionTrigger::Threshold {
                             turn_id: self.request.turn_id.clone(),
-                            policy: self.request.compaction_policy,
+                            context_window_tokens: self
+                                .request
+                                .resolved_model
+                                .capabilities
+                                .context_window_tokens,
                             estimated_input_tokens,
                         },
                     )
@@ -457,20 +457,11 @@ impl TurnRunner {
     /// The pre-sampling input estimate when it has reached the compaction
     /// threshold, `None` otherwise. The estimate is returned rather than a bare
     /// bool so the compaction Span can record what actually tripped it.
-    fn threshold_estimate_before_sampling(
-        &self,
-        prepared: &PreparedModelCall,
-    ) -> Option<u64> {
+    fn threshold_estimate_before_sampling(&self, prepared: &PreparedModelCall) -> Option<u64> {
         let estimated_input_tokens = prepared.context_budget.estimated_input_tokens;
-        let reaches_input_threshold =
-            prepared.reaches_input_threshold(self.request.compaction_policy.threshold_percent);
-        debug_assert_eq!(
-            reaches_input_threshold,
-            self.request
-                .compaction_policy
-                .should_compact(estimated_input_tokens)
-        );
-        reaches_input_threshold.then_some(estimated_input_tokens)
+        prepared
+            .reaches_auto_compact_limit()
+            .then_some(estimated_input_tokens)
     }
 
     /// Build the trigger for a compaction forced by a context overflow, keeping
@@ -479,7 +470,11 @@ impl TurnRunner {
         let submitted = self.last_model_call.clone();
         CompactionTrigger::Overflow {
             turn_id: self.request.turn_id.clone(),
-            policy: self.request.compaction_policy,
+            context_window_tokens: self
+                .request
+                .resolved_model
+                .capabilities
+                .context_window_tokens,
             estimated_input_tokens: submitted.as_ref().map(|call| call.estimated_input_tokens),
             model_span_id: submitted.map(|call| call.trace_span_id),
             error_code: error.code().to_string(),

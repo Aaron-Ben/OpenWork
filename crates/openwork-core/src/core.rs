@@ -23,10 +23,10 @@ use thiserror::Error;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::context::{
-    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
-    ContextEngine, ContextInspectionSystemPart, ContextWindowInspection, ModelContextLimits,
-    PlannedSpill, PrepareContextInput, ProjectedMessageOrigin, SystemContextBuilder, list_skills,
-    plan_user_input_admission,
+    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextEngine, ContextInspectionBudget,
+    ContextInspectionMessage, ContextInspectionSystemPart, ContextWindowInspection,
+    ModelContextLimits, PlannedSpill, PrepareContextInput, ProjectedMessageOrigin,
+    SystemContextBuilder, list_skills, plan_user_input_admission,
 };
 use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
@@ -244,6 +244,8 @@ pub enum OpenWorkCoreError {
     DefaultModelMissing(String),
     #[error("model not found: {0}")]
     ModelNotFound(String),
+    #[error("model capabilities are missing for {0}; open Settings > Models and edit its provider")]
+    ModelCapabilitiesMissing(String),
     #[error("session has an active turn and cannot be changed: {0}")]
     SessionActive(String),
     #[error("file change not found: {0}")]
@@ -478,6 +480,14 @@ impl OpenWorkCore {
         &self,
         input: &SessionInput,
     ) -> Result<SessionRecord, OpenWorkCoreError> {
+        if let Some(model_id) = input.default_model_id.as_deref() {
+            let model = self
+                .storage
+                .load_model(model_id)
+                .await?
+                .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
+            require_model_capabilities(&model)?;
+        }
         Ok(self.storage.create_session(input).await?)
     }
 
@@ -577,6 +587,7 @@ impl OpenWorkCore {
             .load_model(model_id)
             .await?
             .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
+        let capabilities = require_model_capabilities(&model)?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
         let (agent, tools, control_surface) = if loaded.session.is_sub_agent() {
             let (agent, tools) =
@@ -635,9 +646,8 @@ impl OpenWorkCore {
             .iter()
             .map(|record| (record.id.as_str(), record.turn_id.clone()))
             .collect::<HashMap<_, _>>();
-        let context_engine = ContextEngine::new(ModelContextLimits::for_context_window(
-            crate::session::DEFAULT_CONTEXT_WINDOW_TOKENS,
-        ));
+        let context_engine =
+            ContextEngine::new(ModelContextLimits::from_capabilities(capabilities));
         let prepared = context_engine
             .prepare(PrepareContextInput::new(
                 &model.model_name,
@@ -693,13 +703,13 @@ impl OpenWorkCore {
             conversation: inspected_messages,
             tool_surface,
             budget: ContextInspectionBudget {
+                context_window_tokens: capabilities.context_window_tokens,
                 system_context_tokens: budget.system_context_tokens,
                 conversation_tokens: budget.conversation_tokens,
                 tool_surface_tokens: budget.tool_surface_tokens,
                 estimated_input_tokens: budget.estimated_input_tokens,
                 reserved_output_tokens: budget.reserved_output_tokens,
-                auto_compaction_threshold_percent:
-                    crate::session::DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT,
+                auto_compaction_threshold_percent: crate::context::AUTO_COMPACT_THRESHOLD_PERCENT,
             },
         })
     }
@@ -734,7 +744,6 @@ impl OpenWorkCore {
         session_id: &SessionId,
         client_request_id: ClientRequestId,
         input: Vec<crate::UserInput>,
-        context_window_tokens: Option<u64>,
     ) -> Result<TurnAccepted, OpenWorkCoreError> {
         let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
@@ -756,9 +765,7 @@ impl OpenWorkCore {
         if user_content.is_empty() {
             return Err(SessionError::EmptyInput.into());
         }
-        let limits = ModelContextLimits::for_context_window(
-            context_window_tokens.unwrap_or(crate::session::DEFAULT_CONTEXT_WINDOW_TOKENS),
-        );
+        let limits = ModelContextLimits::from_capabilities(handle.model_capabilities());
         let admission =
             plan_user_input_admission(&user_content, &limits, client_request_id.as_str());
         if !admission.spills.is_empty() {
@@ -802,23 +809,9 @@ impl OpenWorkCore {
         self.reconcile_sub_agent_sessions(session_id, &handle)
             .await?;
 
-        let accepted = match context_window_tokens {
-            Some(context_window_tokens) => {
-                handle
-                    .start_turn_with_context_window(
-                        client_request_id,
-                        prepared_input,
-                        context_window_tokens,
-                        disabled_skill_names,
-                    )
-                    .await?
-            }
-            None => {
-                handle
-                    .start_turn(client_request_id, prepared_input, disabled_skill_names)
-                    .await?
-            }
-        };
+        let accepted = handle
+            .start_turn(client_request_id, prepared_input, disabled_skill_names)
+            .await?;
         Ok(accepted)
     }
 
@@ -1251,7 +1244,8 @@ impl OpenWorkCore {
         if !model.enabled {
             return Err(OpenWorkCoreError::ModelDisabled(model.id));
         }
-        let runtime = provider_runtime(&model, self.credentials.as_ref()).await?;
+        let capabilities = require_model_capabilities(&model)?;
+        let runtime = provider_runtime(&model, capabilities, self.credentials.as_ref()).await?;
         let model_port = Arc::from(self.provider_factory.build(&runtime));
         let conversation = self.storage.load_conversation_items(session_id).await?;
         let chat = ChatStateHandle::spawn_items(conversation)
@@ -1309,6 +1303,7 @@ impl OpenWorkCore {
                     Some(model.id),
                     model.provider_kind,
                     model.model_name,
+                    capabilities,
                 ),
                 agent,
                 chat,
@@ -1645,6 +1640,7 @@ fn mark_file_changes_state(
 
 async fn provider_runtime(
     model: &ModelRecord,
+    capabilities: openwork_models::model::ModelCapabilities,
     credentials: &dyn CredentialResolver,
 ) -> Result<ProviderRuntimeConfig, OpenWorkCoreError> {
     let provider_kind = parse_provider_kind(&model.provider_kind)?;
@@ -1673,12 +1669,21 @@ async fn provider_runtime(
                 display_name: Some(model.display_name.clone()),
                 model_tier: ModelTier::Plus,
                 enabled: model.enabled,
+                capabilities: Some(capabilities),
             }],
             enabled: model.enabled,
         },
         credential,
         adapter_options,
     })
+}
+
+fn require_model_capabilities(
+    model: &ModelRecord,
+) -> Result<openwork_models::model::ModelCapabilities, OpenWorkCoreError> {
+    model
+        .capabilities()?
+        .ok_or_else(|| OpenWorkCoreError::ModelCapabilitiesMissing(model.id.clone()))
 }
 
 fn parse_provider_kind(value: &str) -> Result<ProviderKind, OpenWorkCoreError> {
@@ -1704,6 +1709,15 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn test_capabilities() -> openwork_models::model::ModelCapabilities {
+        openwork_models::model::ModelCapabilities {
+            context_window_tokens: 200_000,
+            max_output_tokens: 32_768,
+            max_reasoning_tokens: None,
+            accepts_data_blocks: true,
+        }
+    }
 
     struct FixedTestCredential;
 
@@ -1951,6 +1965,7 @@ mod tests {
                 base_url: "http://127.0.0.1:9".to_string(),
                 credential_ref: Some("test:credential".to_string()),
                 enabled: true,
+                capabilities: test_capabilities(),
                 config: serde_json::json!({}),
             })
             .await
@@ -2040,6 +2055,7 @@ mod tests {
                 base_url: "http://127.0.0.1:9".to_string(),
                 credential_ref: Some("test:credential".to_string()),
                 enabled: true,
+                capabilities: test_capabilities(),
                 config: serde_json::json!({}),
             })
             .await

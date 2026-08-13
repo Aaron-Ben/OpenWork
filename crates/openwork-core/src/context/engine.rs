@@ -30,7 +30,9 @@ impl ContextEngine {
         let projected = project_items(&input.conversation.items, &self.limits);
         let normalized = normalize_for_request(
             &projected.items,
-            &NormalizationPolicy { accepts_data_blocks: self.limits.accepts_data_blocks },
+            &NormalizationPolicy {
+                accepts_data_blocks: self.limits.accepts_data_blocks,
+            },
         )?;
         let messages = normalized.messages;
         let provenance = normalized.provenance;
@@ -38,7 +40,7 @@ impl ContextEngine {
         validate_system_context(input.system_context)?;
         validate_conversation(&messages)?;
 
-        let max_output_tokens = None;
+        let max_output_tokens = self.limits.max_output_tokens;
         let context_budget = ContextBudgetEstimate::measure(
             input.system_context,
             &messages,
@@ -66,6 +68,7 @@ impl ContextEngine {
             context_budget,
             projection_summary: projected.summary,
             effective_input_tokens: self.limits.effective_input_tokens,
+            auto_compact_token_limit: self.limits.auto_compact_token_limit,
             system_message_count,
             conversation_provenance: provenance,
         })
@@ -100,6 +103,7 @@ pub(crate) struct PreparedModelCall {
     pub(crate) context_budget: ContextBudgetEstimate,
     pub(crate) projection_summary: ProjectionSummary,
     effective_input_tokens: u64,
+    auto_compact_token_limit: u64,
     system_message_count: usize,
     conversation_provenance: Vec<ProjectedMessageOrigin>,
 }
@@ -117,9 +121,22 @@ impl PreparedModelCall {
         &self.conversation_provenance
     }
 
-    pub(crate) fn reaches_input_threshold(&self, threshold_percent: u8) -> bool {
-        u128::from(self.context_budget.estimated_input_tokens) * 100
-            >= u128::from(self.effective_input_tokens) * u128::from(threshold_percent)
+    /// 这次请求是否已经触到自动压缩线。
+    ///
+    /// 判据是**投影后的输入加上输出预留**，而不是只看输入：窗口是两者共用的，
+    /// 只按输入判断会在最后一次采样时把输出挤出窗口。
+    pub(crate) fn reaches_auto_compact_limit(&self) -> bool {
+        let reserved_output_tokens = u64::from(
+            self.context_budget
+                .reserved_output_tokens
+                .expect("ContextEngine always sets an explicit output limit"),
+        );
+        self.context_budget
+            .estimated_input_tokens
+            .saturating_add(reserved_output_tokens)
+            >= self
+                .auto_compact_token_limit
+                .min(self.effective_input_tokens)
     }
 }
 
@@ -168,13 +185,20 @@ fn validate_conversation(conversation: &[Message]) -> Result<(), ContextError> {
 #[cfg(test)]
 mod tests {
     use openwork_chat_state::ConversationItem;
-    use openwork_models::model::{ContentBlock, Role, ToolCallBlock, ToolCallState};
+    use openwork_models::model::{
+        ContentBlock, ModelCapabilities, Role, ToolCallBlock, ToolCallState,
+    };
 
     use super::*;
     use crate::context::{ResolvedSystemContext, SystemContextPart};
 
     fn engine() -> ContextEngine {
-        ContextEngine::new(ModelContextLimits::for_context_window(200_000))
+        ContextEngine::new(ModelContextLimits::from_capabilities(ModelCapabilities {
+            context_window_tokens: 200_000,
+            max_output_tokens: 32_000,
+            max_reasoning_tokens: None,
+            accepts_data_blocks: true,
+        }))
     }
 
     fn system_context() -> ResolvedSystemContext {
@@ -329,6 +353,48 @@ mod tests {
             ),
             Err(ContextError::SystemMessageInConversation)
         ));
+    }
+
+    /// 请求必须带显式输出上限，不能把额度交给 Provider 的默认值。
+    ///
+    /// 默认值因 Provider 而异，也会随时间变化；不设它等于放弃对窗口的控制，
+    /// 预算里的输出预留也就成了一个没人兑现的数字。
+    #[test]
+    fn prepared_requests_carry_an_explicit_output_limit() {
+        let engine = ContextEngine::new(ModelContextLimits::from_capabilities(ModelCapabilities {
+            context_window_tokens: 200_000,
+            max_output_tokens: 32_000,
+            max_reasoning_tokens: None,
+            accepts_data_blocks: true,
+        }));
+
+        let prepared = prepare(&engine, &system_context(), vec![user("hello")]);
+
+        assert_eq!(prepared.request.max_output_tokens, Some(32_000));
+    }
+
+    /// 自动压缩的判据必须包含输出预留。
+    ///
+    /// 只按输入判断，会让最后一次采样刚好把输出挤出窗口——那正是最该压缩的时候。
+    #[test]
+    fn the_auto_compact_check_counts_the_reserved_output() {
+        let engine = ContextEngine::new(ModelContextLimits::from_capabilities(ModelCapabilities {
+            context_window_tokens: 1_000,
+            max_output_tokens: 400,
+            max_reasoning_tokens: None,
+            accepts_data_blocks: true,
+        }));
+
+        let prepared = prepare(&engine, &system_context(), vec![user(&"x".repeat(1_600))]);
+
+        assert!(
+            prepared.context_budget.estimated_input_tokens < prepared.effective_input_tokens,
+            "前提：只看输入时还没到线"
+        );
+        assert!(
+            prepared.reaches_auto_compact_limit(),
+            "加上输出预留后必须触线"
+        );
     }
 
     /// §14.1 #1：稳定前缀。
