@@ -1,3 +1,9 @@
+//! 压缩之后这段 Conversation 由哪些 item 构成。
+//!
+//! 这里决定的是**成员构成**：摘要替换掉哪一段、边界之后保留哪些原始消息、
+//! 重放哪一条真实用户请求。它不裁剪任何内容——按模型能力裁剪属于
+//! `context/projection.rs`，两者没有交叠。
+
 use openwork_chat_state::{
     ConversationContextView, ConversationItem, ConversationItemOrigin, SyntheticReason,
 };

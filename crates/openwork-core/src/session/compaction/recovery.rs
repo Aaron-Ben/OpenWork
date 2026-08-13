@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::policy::AutomaticCompactionPolicy;
-use super::projection::compacted_items;
+use super::compacted_view::compacted_items;
 use super::{
     CompactionError, CompactionStateCollector, ConversationCompaction, ConversationCompactionKind,
     elapsed_millis, new_trace_id,

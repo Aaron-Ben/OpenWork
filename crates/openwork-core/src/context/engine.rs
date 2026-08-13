@@ -188,6 +188,22 @@ mod tests {
         ConversationItem::persisted(text, 1, Message::text(Role::User, text))
     }
 
+    fn part(key: &str, text: &str) -> SystemContextPart {
+        SystemContextPart::new(key, vec![ContentBlock::text(text)])
+    }
+
+    fn try_prepare(
+        system_context: &ResolvedSystemContext,
+        items: Vec<ConversationItem>,
+    ) -> Result<PreparedModelCall, ContextError> {
+        engine().prepare(PrepareContextInput::new(
+            "model-under-test",
+            system_context,
+            ConversationContextView { items },
+            &[],
+        ))
+    }
+
     fn prepare(
         engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
@@ -201,6 +217,118 @@ mod tests {
                 &[],
             ))
             .expect("prepare succeeds")
+    }
+
+    /// System 片段先于 Conversation，工具面独立，且不替调用方决定采样参数。
+    #[test]
+    fn assembles_the_system_prefix_ahead_of_the_conversation() {
+        let tool = ToolDefinition {
+            name: "read".to_string(),
+            description: "Read a file".to_string(),
+            parameters: serde_json::json!({ "type": "object" }),
+        };
+        let system_context = ResolvedSystemContext::for_test(vec![part("core/agent-system", "s")]);
+
+        let prepared = engine()
+            .prepare(PrepareContextInput::new(
+                "model-under-test",
+                &system_context,
+                ConversationContextView {
+                    items: vec![user("hello")],
+                },
+                std::slice::from_ref(&tool),
+            ))
+            .expect("prepare succeeds");
+
+        assert_eq!(prepared.request.model, "model-under-test");
+        assert_eq!(
+            prepared.request.messages,
+            [
+                Message::text(Role::System, "s"),
+                Message::text(Role::User, "hello"),
+            ]
+        );
+        assert_eq!(prepared.request.tools, [tool]);
+        assert_eq!(prepared.request.temperature, None);
+        assert_eq!(prepared.request.thinking, None);
+        assert!(prepared.context_budget.estimated_input_tokens > 0);
+    }
+
+    /// System 片段按来源顺序物化，不按 key 排序——顺序是上下文优先级。
+    #[test]
+    fn preserves_the_system_materialization_order() {
+        let system_context = ResolvedSystemContext::for_test(vec![
+            part("core/agent-system", "agent"),
+            part("project/z", "project-z"),
+            part("project/a", "project-a"),
+        ]);
+
+        let prepared = try_prepare(&system_context, vec![user("hello")]).expect("prepare succeeds");
+
+        let text = prepared
+            .request
+            .messages
+            .iter()
+            .map(|message| match &message.content[0] {
+                ContentBlock::Text(block) => block.text.as_str(),
+                other => std::panic::panic_any(format!("unexpected block: {other:?}")),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(text, ["agent", "project-z", "project-a", "hello"]);
+    }
+
+    /// key 是片段的身份，重复意味着某个来源被静默覆盖或注入了两次。
+    #[test]
+    fn rejects_duplicate_system_context_keys() {
+        let system_context = ResolvedSystemContext::for_test(vec![
+            part("core/agent-system", "first"),
+            part("core/agent-system", "second"),
+        ]);
+
+        let result = try_prepare(&system_context, Vec::new());
+
+        assert!(matches!(
+            result,
+            Err(ContextError::DuplicateSystemContext(key)) if key == "core/agent-system"
+        ));
+    }
+
+    /// 空 key、空正文、以及混进 Conversation 的 System 消息都必须被拒绝。
+    ///
+    /// 最后一条尤其重要：Conversation 里的 System 消息会绕过 System Context 的
+    /// 准入检查，等于一条没人管辖的最高优先级指令。
+    #[test]
+    fn rejects_malformed_system_context_and_system_messages_in_conversation() {
+        assert!(matches!(
+            try_prepare(
+                &ResolvedSystemContext::for_test(vec![part(" ", "system")]),
+                Vec::new()
+            ),
+            Err(ContextError::EmptySystemContextKey)
+        ));
+
+        assert!(matches!(
+            try_prepare(
+                &ResolvedSystemContext::for_test(vec![SystemContextPart::new(
+                    "core/agent-system",
+                    Vec::new()
+                )]),
+                Vec::new()
+            ),
+            Err(ContextError::EmptySystemContext(key)) if key == "core/agent-system"
+        ));
+
+        assert!(matches!(
+            try_prepare(
+                &system_context(),
+                vec![ConversationItem::persisted(
+                    "system-1",
+                    1,
+                    Message::text(Role::System, "not allowed")
+                )]
+            ),
+            Err(ContextError::SystemMessageInConversation)
+        ));
     }
 
     /// §14.1 #1：稳定前缀。

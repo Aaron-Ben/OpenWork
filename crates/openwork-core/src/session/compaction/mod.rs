@@ -1,5 +1,5 @@
 mod policy;
-mod projection;
+mod compacted_view;
 mod recovery;
 mod reminder;
 mod state;
@@ -27,7 +27,7 @@ use crate::context::{
 use crate::plan::TurnPlan;
 use crate::skills::SkillRoots;
 
-use self::projection::{last_real_user, last_user_source};
+use self::compacted_view::{last_real_user, last_user_source};
 use self::summary::{SummaryTraceContext, generate_summary};
 use super::{
     CompactionStarted, CompactionTraceAttributesV1, CompactionTraceGuard, SessionId,
@@ -36,7 +36,7 @@ use super::{
 
 pub(crate) use policy::AutomaticCompactionPolicy;
 pub use policy::{DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT, DEFAULT_CONTEXT_WINDOW_TOKENS};
-pub(crate) use projection::{compacted_items, compaction_summary_message};
+pub(crate) use compacted_view::{compacted_items, compaction_summary_message};
 pub use recovery::ConversationProjectionSelector;
 pub(super) use recovery::{CompactionTrigger, ConversationRewindRequest, rewind_conversation};
 pub use reminder::ReminderSection;
