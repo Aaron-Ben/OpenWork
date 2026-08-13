@@ -14,7 +14,7 @@ use super::{
     CompactionError, CompactionStateCollector, ConversationCompaction, ConversationCompactionKind,
     elapsed_millis, new_trace_id,
 };
-use crate::model_call::estimate_conversation_tokens;
+use crate::context::estimate_conversation_tokens;
 use crate::session::{
     CompactionStarted, CompactionTraceAttributesV1, CompactionTraceGuard, SessionId,
     SessionStorage, TraceRecorder, TurnId,

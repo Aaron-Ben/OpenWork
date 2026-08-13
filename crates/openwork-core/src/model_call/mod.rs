@@ -4,11 +4,7 @@ use openwork_chat_state::ConversationView;
 use openwork_models::model::{Message, ModelRequest, Role, ToolDefinition};
 use thiserror::Error;
 
-use crate::context::ResolvedSystemContext;
-
-mod budget;
-
-pub(crate) use budget::{ContextBudgetEstimate, estimate_conversation_tokens};
+use crate::context::{ContextBudgetError, ContextBudgetEstimate, ResolvedSystemContext};
 
 /// The three materialized input regions plus the resolved model for one call.
 pub(crate) struct ModelRequestInput<'a> {
@@ -40,7 +36,7 @@ pub(crate) struct ModelRequestBuilder;
 impl ModelRequestBuilder {
     pub(crate) fn build(
         input: ModelRequestInput<'_>,
-    ) -> Result<PreparedModelCall, ModelRequestBuildError> {
+    ) -> Result<BuiltModelRequest, ModelRequestBuildError> {
         validate_system_context(input.system_context)?;
         validate_conversation(&input.conversation)?;
         let conversation = input.conversation;
@@ -61,7 +57,7 @@ impl ModelRequestBuilder {
         }));
         messages.extend(conversation.messages);
 
-        Ok(PreparedModelCall {
+        Ok(BuiltModelRequest {
             request: ModelRequest {
                 model: input.model.to_string(),
                 messages,
@@ -107,7 +103,7 @@ fn validate_conversation(conversation: &ConversationView) -> Result<(), ModelReq
     Ok(())
 }
 
-pub(crate) struct PreparedModelCall {
+pub(crate) struct BuiltModelRequest {
     pub(crate) request: ModelRequest,
     pub(crate) context_budget: ContextBudgetEstimate,
 }
@@ -123,7 +119,7 @@ pub(crate) enum ModelRequestBuildError {
     #[error("conversation view must not contain system messages")]
     SystemMessageInConversation,
     #[error(transparent)]
-    Budget(#[from] budget::ContextBudgetError),
+    Budget(#[from] ContextBudgetError),
 }
 
 #[cfg(test)]

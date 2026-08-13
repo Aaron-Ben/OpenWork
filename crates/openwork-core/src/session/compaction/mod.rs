@@ -21,8 +21,7 @@ use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::context::{ResolvedSystemContext, SystemContextBuilder};
-use crate::model_call::estimate_conversation_tokens;
+use crate::context::{ResolvedSystemContext, SystemContextBuilder, estimate_conversation_tokens};
 use crate::plan::TurnPlan;
 use crate::skills::SkillRoots;
 

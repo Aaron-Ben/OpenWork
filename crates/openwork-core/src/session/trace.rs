@@ -12,7 +12,7 @@ use std::time::Instant;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 
-use crate::model_call::ContextBudgetEstimate;
+use crate::context::ContextBudgetEstimate;
 
 use super::{SessionId, TurnId};
 

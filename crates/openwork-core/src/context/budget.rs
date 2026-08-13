@@ -5,7 +5,7 @@ use openwork_models::model::ToolDefinition;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::context::ResolvedSystemContext;
+use super::ResolvedSystemContext;
 
 const ESTIMATED_BYTES_PER_TOKEN: u64 = 4;
 

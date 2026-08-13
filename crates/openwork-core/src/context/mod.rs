@@ -1,17 +1,23 @@
 use openwork_models::model::ContentBlock;
 use serde::Serialize;
 
+mod budget;
 mod builder;
+mod engine;
 mod inspection;
+mod limits;
 mod project_instructions;
 mod skill_catalog;
 mod user_project;
 
+pub(crate) use budget::{ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens};
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
+pub(crate) use engine::{ContextEngine, PrepareContextInput};
 pub use inspection::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
     ContextInspectionSystemPart, ContextWindowInspection,
 };
+pub(crate) use limits::ModelContextLimits;
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 use skill_catalog::SkillCatalogLoader;
 pub(crate) use skill_catalog::list_skills;

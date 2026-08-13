@@ -8,7 +8,7 @@ use openwork_models::model::{
     Role, ThinkingConfig, ToolResultBlock, ToolResultState,
 };
 
-use crate::context::ResolvedSystemContext;
+use crate::context::{ContextBudgetEstimate, ResolvedSystemContext};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use openwork_chat_state::ConversationView;
 use openwork_models::model::{ModelError, ModelErrorCode, RetryHint};
@@ -79,7 +79,7 @@ pub(super) struct SummaryTraceContext {
     model_id: Option<String>,
     cancellation: CancellationToken,
     request_build_ms: u64,
-    context_budget: Option<crate::model_call::ContextBudgetEstimate>,
+    context_budget: Option<ContextBudgetEstimate>,
     payloads: Option<TracePayloads>,
 }
 
@@ -110,7 +110,7 @@ impl SummaryTraceContext {
     fn record_request_build(
         &mut self,
         request_build_ms: u64,
-        context_budget: crate::model_call::ContextBudgetEstimate,
+        context_budget: ContextBudgetEstimate,
         payloads: TracePayloads,
     ) {
         self.request_build_ms = request_build_ms;
@@ -166,7 +166,7 @@ pub(super) async fn generate_summary(
     let mut model_request = prepared.request;
     model_request.max_output_tokens = Some(COMPACTION_MAX_OUTPUT_TOKENS);
     model_request.thinking = Some(ThinkingConfig::disabled());
-    let summary_context_budget = crate::model_call::ContextBudgetEstimate {
+    let summary_context_budget = ContextBudgetEstimate {
         reserved_output_tokens: Some(COMPACTION_MAX_OUTPUT_TOKENS),
         ..prepared.context_budget
     };

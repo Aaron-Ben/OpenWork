@@ -27,8 +27,10 @@ use crate::agent::{
     AgentTool, FollowupTaskArgs, InterruptAgentArgs, NoArgs, SpawnAgentArgs, WaitAgentArgs,
     parse_args as parse_agent_args, validate_wait_timeout,
 };
-use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
-use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
+use crate::context::{
+    ContextEngine, ModelContextLimits, PrepareContextInput, ResolvedSystemContext,
+    SystemContextBuildError, SystemContextBuilder,
+};
 use crate::plan::{
     TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
     validate_args,
@@ -218,6 +220,9 @@ impl TurnRunner {
         .with_disabled_skills(self.request.disabled_skill_names.clone())
         .build(&self.system_prompt())
         .await?;
+        let context_engine = ContextEngine::new(ModelContextLimits::for_context_window(
+            self.request.compaction_policy.context_window_tokens,
+        ));
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
             self.drain_agent_messages().await?;
@@ -227,7 +232,7 @@ impl TurnRunner {
             .await?;
 
             let threshold_estimate = self
-                .threshold_estimate_before_sampling(&system_context)
+                .threshold_estimate_before_sampling(&context_engine, &system_context)
                 .await?;
             let compacted_before_sampling = match threshold_estimate {
                 Some(estimated_input_tokens) => {
@@ -244,14 +249,16 @@ impl TurnRunner {
                 }
                 None => false,
             };
-            let completed_model = match self.call_model(model_call_index, 1, &system_context).await
+            let completed_model = match self
+                .call_model(model_call_index, 1, &context_engine, &system_context)
+                .await
             {
                 Ok(completed) => completed,
                 Err(error) if !compacted_before_sampling && is_safe_context_overflow(&error) => {
                     self.update(SessionUpdate::DraftCleared).await?;
                     let trigger = self.overflow_trigger(&error);
                     self.compact(&system_context, trigger).await?;
-                    self.call_model(model_call_index, 2, &system_context)
+                    self.call_model(model_call_index, 2, &context_engine, &system_context)
                         .await?
                 }
                 Err(error) => return Err(error),
@@ -334,17 +341,19 @@ impl TurnRunner {
         &mut self,
         model_call_index: u32,
         submission_attempt: u8,
+        context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
     ) -> Result<CompletedModelCall, TurnRunError> {
         let request_build_started = Instant::now();
         let conversation = self.request.chat.conversation_view().await?;
-        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-            &self.request.resolved_model.model_name,
-            system_context,
-            conversation,
-            self.request.tools.definitions(),
-        ))
-        .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        let prepared = context_engine
+            .prepare(PrepareContextInput::new(
+                &self.request.resolved_model.model_name,
+                system_context,
+                conversation,
+                self.request.tools.definitions(),
+            ))
+            .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
         let request = prepared.request;
         let request_build_ms = elapsed_millis_u64(request_build_started);
         self.request
@@ -419,22 +428,28 @@ impl TurnRunner {
     /// bool so the compaction Span can record what actually tripped it.
     async fn threshold_estimate_before_sampling(
         &self,
+        context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
     ) -> Result<Option<u64>, TurnRunError> {
         let conversation = self.request.chat.conversation_view().await?;
-        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-            &self.request.resolved_model.model_name,
-            system_context,
-            conversation,
-            self.request.tools.definitions(),
-        ))
-        .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        let prepared = context_engine
+            .prepare(PrepareContextInput::new(
+                &self.request.resolved_model.model_name,
+                system_context,
+                conversation,
+                self.request.tools.definitions(),
+            ))
+            .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
         let estimated_input_tokens = prepared.context_budget.estimated_input_tokens;
-        Ok(self
-            .request
-            .compaction_policy
-            .should_compact(estimated_input_tokens)
-            .then_some(estimated_input_tokens))
+        let reaches_input_threshold =
+            prepared.reaches_input_threshold(self.request.compaction_policy.threshold_percent);
+        debug_assert_eq!(
+            reaches_input_threshold,
+            self.request
+                .compaction_policy
+                .should_compact(estimated_input_tokens)
+        );
+        Ok(reaches_input_threshold.then_some(estimated_input_tokens))
     }
 
     /// Build the trigger for a compaction forced by a context overflow, keeping
