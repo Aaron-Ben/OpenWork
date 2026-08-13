@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use openwork_agent::{Agent, AgentBuilder, AgentDefinition, explorer_definition};
-use openwork_chat_state::{ChatStateHandle, ConversationContextView, ConversationItem};
+use openwork_chat_state::{ChatStateHandle, ConversationItem};
 use openwork_models::ProviderFactory;
 use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
@@ -520,9 +520,7 @@ impl OpenWorkCore {
         let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
             &model.model_name,
             &system_context,
-            ConversationContextView {
-                items: conversation_items,
-            },
+            conversation_items.into_iter().map(|item| item.message).collect(),
             tools.definitions(),
         ))
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;

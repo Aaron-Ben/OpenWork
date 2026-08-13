@@ -12,6 +12,7 @@ use openwork_tools::{ApprovalSessionAction, PermissionMode};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
+use crate::context::ModelContextLimits;
 use crate::skills::SkillRoots;
 use crate::{AgentControl, TurnSlot};
 
@@ -709,6 +710,9 @@ impl SessionActor {
             model: Arc::clone(&self.model),
             storage: Arc::clone(&self.storage),
             state_collector: Arc::clone(&self.compaction_state),
+            limits: ModelContextLimits::for_context_window(
+                AutomaticCompactionPolicy::default().context_window_tokens,
+            ),
             // 手动压缩在 Turn 活动时会被上面的 SessionActive 挡下，所以这里必然没有
             // 当前计划。传 None 让 collector 结转上次的值，而不是当作一次清空。
             plan: None,

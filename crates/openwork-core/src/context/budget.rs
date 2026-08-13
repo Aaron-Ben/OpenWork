@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use openwork_chat_state::ConversationContextView;
-use openwork_models::model::ToolDefinition;
+use openwork_models::model::{Message, ToolDefinition};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -26,7 +26,7 @@ pub(crate) struct ContextBudgetEstimate {
 impl ContextBudgetEstimate {
     pub(crate) fn measure(
         system_context: &ResolvedSystemContext,
-        conversation: &ConversationContextView,
+        conversation: &[Message],
         tool_definitions: &[ToolDefinition],
         reserved_output_tokens: Option<u32>,
     ) -> Result<Self, ContextBudgetError> {
@@ -37,9 +37,9 @@ impl ContextBudgetEstimate {
         }
 
         let mut conversation_bytes = 0_u64;
-        for item in &conversation.items {
+        for message in conversation {
             conversation_bytes =
-                conversation_bytes.saturating_add(serialized_bytes(&item.message.content)?);
+                conversation_bytes.saturating_add(serialized_bytes(&message.content)?);
         }
         let tool_surface_bytes = if tool_definitions.is_empty() {
             0
@@ -115,7 +115,6 @@ pub(crate) enum ContextBudgetError {
 
 #[cfg(test)]
 mod tests {
-    use openwork_chat_state::ConversationItem;
     use openwork_models::model::{ContentBlock, Message, Role};
 
     use super::*;
@@ -127,9 +126,7 @@ mod tests {
             SystemContextPart::new("core/agent-system", vec![ContentBlock::text("system")]),
             SystemContextPart::new("project/AGENTS.md", vec![ContentBlock::text("project")]),
         ]);
-        let conversation = ConversationContextView {
-            items: vec![ConversationItem::real(Message::text(Role::User, "hello"))],
-        };
+        let conversation = vec![Message::text(Role::User, "hello")];
         let tools = vec![ToolDefinition {
             name: "read".to_string(),
             description: "Read a file".to_string(),
@@ -151,7 +148,7 @@ mod tests {
         );
         assert_eq!(estimate.reserved_output_tokens, Some(256));
         assert_eq!(system_context.parts().len(), 2);
-        assert_eq!(conversation.items.len(), 1);
+        assert_eq!(conversation.len(), 1);
         assert_eq!(tools.len(), 1);
     }
 
@@ -166,9 +163,7 @@ mod tests {
     #[test]
     fn empty_tool_surface_has_no_tool_budget() {
         let system_context = ResolvedSystemContext::for_test(Vec::new());
-        let conversation = ConversationContextView {
-            items: vec![ConversationItem::real(Message::text(Role::User, "hello"))],
-        };
+        let conversation = vec![Message::text(Role::User, "hello")];
 
         let estimate = ContextBudgetEstimate::measure(&system_context, &conversation, &[], None)
             .expect("estimate");

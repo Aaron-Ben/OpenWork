@@ -1,14 +1,16 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use openwork_models::model::{
-    ContentBlock, FinishReason, Message, ModelCallOptions, ModelEvent, ModelPort, ModelResponse,
-    Role, ThinkingConfig, ToolResultBlock, ToolResultState,
+    FinishReason, Message, ModelCallOptions, ModelEvent, ModelPort, ModelResponse, Role,
+    ThinkingConfig,
 };
 
-use crate::context::{ContextBudgetEstimate, ResolvedSystemContext};
+use crate::context::{
+    ContextBudgetEstimate, ModelContextLimits, NormalizationPolicy, ResolvedSystemContext,
+    normalize_for_request,
+};
 use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use openwork_chat_state::{ConversationContextView, ConversationItem};
 use openwork_models::model::{ModelError, ModelErrorCode, RetryHint};
@@ -134,23 +136,30 @@ pub(super) async fn generate_summary(
     model: &dyn ModelPort,
     resolved_model_name: &str,
     system_context: &ResolvedSystemContext,
+    limits: &ModelContextLimits,
     source: ConversationContextView,
-    model_attempt_id: String,
     mut summary_trace: SummaryTraceContext,
     trace: &mut CompactionTraceGuard,
 ) -> Result<GeneratedSummary, CompactionError> {
-    let mut summary_input = legalize_compaction_input(source);
+    let mut summary_input = source;
     summary_input
         .items
         .push(ConversationItem::real(Message::text(
             Role::User,
             COMPACTION_PROMPT,
         )));
+    let normalized =
+        normalize_for_request(&summary_input.items, &NormalizationPolicy {
+            accepts_data_blocks: limits.accepts_data_blocks,
+        })
+            .map_err(|error| CompactionError::Request(error.to_string()))?;
+    let messages = normalized.messages;
+    let _normalization_report = normalized.report;
     let request_build_started = Instant::now();
     let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
         resolved_model_name,
         system_context,
-        summary_input,
+        messages,
         &[],
     ))
     .map_err(|error| CompactionError::Request(error.to_string()))?;
@@ -180,7 +189,11 @@ pub(super) async fn generate_summary(
     let result = invoke_compaction_model_with_retry(
         model,
         model_request,
-        model_attempt_id,
+        format!(
+            "{}-compaction-{}",
+            summary_trace.session_id,
+            Uuid::new_v4().simple()
+        ),
         SummaryRetryPolicy::default(),
         &summary_trace,
         &mut attempts,
@@ -418,87 +431,6 @@ fn bounded_option(value: Option<&str>, max_chars: usize) -> Option<String> {
     value.map(|value| value.chars().take(max_chars).collect())
 }
 
-/// Produces a provider-legal copy for the auxiliary summary call without
-/// rewriting the durable transcript. Tool results must form the contiguous run
-/// immediately after the Assistant message that declared their call IDs, in
-/// the Assistant's original tool-call order.
-fn legalize_compaction_input(source: ConversationContextView) -> ConversationContextView {
-    let source = source
-        .items
-        .into_iter()
-        .map(|item| item.message)
-        .collect::<Vec<_>>();
-    let mut input = Vec::with_capacity(source.len());
-    let mut index = 0;
-
-    while index < source.len() {
-        let message = &source[index];
-        if message.role != Role::Assistant {
-            if message.role != Role::Tool {
-                input.push(message.clone());
-            }
-            index += 1;
-            continue;
-        }
-
-        input.push(message.clone());
-        let expected: Vec<_> = message
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                ContentBlock::ToolCall(call) => Some((call.id.clone(), call.name.clone())),
-                _ => None,
-            })
-            .collect();
-        if expected.is_empty() {
-            index += 1;
-            continue;
-        }
-
-        index += 1;
-        let mut answered = HashMap::with_capacity(expected.len());
-        while index < source.len() && source[index].role == Role::Tool {
-            for block in &source[index].content {
-                let ContentBlock::ToolResult(result) = block else {
-                    continue;
-                };
-                if expected.iter().any(|(id, _)| id == &result.id) {
-                    answered
-                        .entry(result.id.clone())
-                        .or_insert_with(|| result.clone());
-                }
-            }
-            index += 1;
-        }
-
-        for (id, name) in expected {
-            let result = match answered.remove(&id) {
-                Some(mut result) => {
-                    result.name = name;
-                    result
-                }
-                None => ToolResultBlock {
-                    id,
-                    name,
-                    output: vec![ContentBlock::text(
-                        "Tool result unavailable: the previous turn ended before a durable result was recorded.",
-                    )],
-                    state: ToolResultState::Interrupted,
-                    artifacts: Vec::new(),
-                },
-            };
-            input.push(Message {
-                role: Role::Tool,
-                content: vec![ContentBlock::ToolResult(result)],
-            });
-        }
-    }
-
-    ConversationContextView {
-        items: input.into_iter().map(ConversationItem::real).collect(),
-    }
-}
-
 async fn invoke_compaction_model(
     model: &dyn ModelPort,
     request: openwork_models::model::ModelRequest,
@@ -684,8 +616,7 @@ mod tests {
     use futures_util::stream;
     use openwork_models::model::{
         DeliveryState, FinishReason, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent,
-        ModelFailurePhase, ModelRequest, ModelResponse, ModelStream, ToolCallBlock, ToolCallState,
-        ToolResultBlock, ToolResultState,
+        ModelFailurePhase, ModelRequest, ModelResponse, ModelStream,
     };
 
     use super::*;
@@ -1020,76 +951,5 @@ mod tests {
             validate_summary_response(&response(&control_tag, FinishReason::Stop)),
             Err(CompactionError::InvalidResponse(_))
         ));
-    }
-
-    #[test]
-    fn legalizes_dangling_and_displaced_tool_results_for_the_summary_call() {
-        let assistant = Message {
-            role: Role::Assistant,
-            content: vec![
-                ContentBlock::ToolCall(ToolCallBlock {
-                    id: "call-1".to_string(),
-                    name: "read".to_string(),
-                    input: "{}".to_string(),
-                    state: ToolCallState::Submitted,
-                }),
-                ContentBlock::ToolCall(ToolCallBlock {
-                    id: "call-2".to_string(),
-                    name: "list".to_string(),
-                    input: "{}".to_string(),
-                    state: ToolCallState::Submitted,
-                }),
-            ],
-        };
-        let answered_out_of_order = Message {
-            role: Role::Tool,
-            content: vec![ContentBlock::ToolResult(ToolResultBlock {
-                id: "call-2".to_string(),
-                name: "list".to_string(),
-                output: vec![ContentBlock::text("files")],
-                state: ToolResultState::Success,
-                artifacts: Vec::new(),
-            })],
-        };
-        let displaced = Message {
-            role: Role::Tool,
-            content: vec![ContentBlock::ToolResult(ToolResultBlock {
-                id: "call-1".to_string(),
-                name: "read".to_string(),
-                output: vec![ContentBlock::text("late")],
-                state: ToolResultState::Success,
-                artifacts: Vec::new(),
-            })],
-        };
-        let input = legalize_compaction_input(ConversationContextView {
-            items: vec![
-                assistant,
-                answered_out_of_order,
-                Message::text(Role::User, "continue after failure"),
-                displaced,
-            ]
-            .into_iter()
-            .map(ConversationItem::real)
-            .collect(),
-        });
-
-        assert_eq!(
-            input
-                .items
-                .iter()
-                .map(|item| item.message.role)
-                .collect::<Vec<_>>(),
-            [Role::Assistant, Role::Tool, Role::Tool, Role::User]
-        );
-        let ContentBlock::ToolResult(result) = &input.items[1].message.content[0] else {
-            std::panic::panic_any("synthetic tool result")
-        };
-        assert_eq!(result.id, "call-1");
-        assert_eq!(result.state, ToolResultState::Interrupted);
-        let ContentBlock::ToolResult(result) = &input.items[2].message.content[0] else {
-            std::panic::panic_any("preserved tool result")
-        };
-        assert_eq!(result.id, "call-2");
-        assert_eq!(result.output, vec![ContentBlock::text("files")]);
     }
 }

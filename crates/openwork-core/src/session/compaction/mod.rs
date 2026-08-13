@@ -21,7 +21,9 @@ use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::context::{ResolvedSystemContext, SystemContextBuilder, estimate_conversation_tokens};
+use crate::context::{
+    ModelContextLimits, ResolvedSystemContext, SystemContextBuilder, estimate_conversation_tokens,
+};
 use crate::plan::TurnPlan;
 use crate::skills::SkillRoots;
 
@@ -222,6 +224,7 @@ pub(super) struct ConversationCompactionRequest {
     pub model: Arc<dyn ModelPort>,
     pub storage: Arc<dyn SessionStorage>,
     pub state_collector: Arc<CompactionStateCollector>,
+    pub limits: ModelContextLimits,
     /// 当前 Turn 的计划，由 Runner 直接带入。
     ///
     /// contributor 不查库也不解析历史 Tool Call：`turn_plans` 才是权威状态，而那些
@@ -339,12 +342,8 @@ async fn run_compaction_inner(
         request.model.as_ref(),
         &request.resolved_model_name,
         &system_context,
+        &request.limits,
         source.clone(),
-        format!(
-            "{}-compaction-{}",
-            request.session_id,
-            Uuid::new_v4().simple()
-        ),
         summary_trace,
         trace,
     )

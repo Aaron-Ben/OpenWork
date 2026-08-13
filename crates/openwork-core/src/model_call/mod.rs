@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use openwork_chat_state::ConversationContextView;
 use openwork_models::model::{Message, ModelRequest, Role, ToolDefinition};
 use thiserror::Error;
 
@@ -10,7 +9,7 @@ use crate::context::{ContextBudgetError, ContextBudgetEstimate, ResolvedSystemCo
 pub(crate) struct ModelRequestInput<'a> {
     model: &'a str,
     system_context: &'a ResolvedSystemContext,
-    conversation: ConversationContextView,
+    conversation: Vec<Message>,
     tool_definitions: &'a [ToolDefinition],
 }
 
@@ -18,7 +17,7 @@ impl<'a> ModelRequestInput<'a> {
     pub(crate) fn new(
         model: &'a str,
         system_context: &'a ResolvedSystemContext,
-        conversation: ConversationContextView,
+        conversation: Vec<Message>,
         tool_definitions: &'a [ToolDefinition],
     ) -> Self {
         Self {
@@ -50,12 +49,12 @@ impl ModelRequestBuilder {
         )?;
 
         let mut messages =
-            Vec::with_capacity(input.system_context.parts().len() + conversation.items.len());
+            Vec::with_capacity(input.system_context.parts().len() + conversation.len());
         messages.extend(input.system_context.parts().iter().map(|part| Message {
             role: Role::System,
             content: part.content.clone(),
         }));
-        messages.extend(conversation.items.iter().map(|item| item.message.clone()));
+        messages.extend(conversation);
 
         Ok(BuiltModelRequest {
             request: ModelRequest {
@@ -92,13 +91,10 @@ fn validate_system_context(
     Ok(())
 }
 
-fn validate_conversation(
-    conversation: &ConversationContextView,
-) -> Result<(), ModelRequestBuildError> {
+fn validate_conversation(conversation: &[Message]) -> Result<(), ModelRequestBuildError> {
     if conversation
-        .items
         .iter()
-        .any(|item| item.message.role == Role::System)
+        .any(|message| message.role == Role::System)
     {
         return Err(ModelRequestBuildError::SystemMessageInConversation);
     }
@@ -126,7 +122,6 @@ pub(crate) enum ModelRequestBuildError {
 
 #[cfg(test)]
 mod tests {
-    use openwork_chat_state::ConversationItem;
     use openwork_models::model::{ContentBlock, Message, Role, ToolDefinition};
 
     use super::*;
@@ -152,9 +147,7 @@ mod tests {
         let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
             "test-model",
             &system_context,
-            ConversationContextView {
-                items: vec![ConversationItem::real(Message::text(Role::User, "hello"))],
-            },
+            vec![Message::text(Role::User, "hello")],
             std::slice::from_ref(&tool),
         ))
         .expect("request");
@@ -185,9 +178,7 @@ mod tests {
         let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
             "test-model",
             &system_context,
-            ConversationContextView {
-                items: vec![ConversationItem::real(Message::text(Role::User, "hello"))],
-            },
+            vec![Message::text(Role::User, "hello")],
             &[],
         ))
         .expect("request");
@@ -214,7 +205,7 @@ mod tests {
         let result = ModelRequestBuilder::build(ModelRequestInput::new(
             "test-model",
             &system_context,
-            ConversationContextView { items: Vec::new() },
+            Vec::new(),
             &[],
         ));
 
@@ -232,7 +223,7 @@ mod tests {
             ModelRequestBuilder::build(ModelRequestInput::new(
                 "test-model",
                 &empty_key,
-                ConversationContextView { items: Vec::new() },
+                Vec::new(),
                 &[],
             )),
             Err(ModelRequestBuildError::EmptySystemContextKey)
@@ -246,9 +237,7 @@ mod tests {
             ModelRequestBuilder::build(ModelRequestInput::new(
                 "test-model",
                 &empty_content,
-                ConversationContextView {
-                    items: Vec::new(),
-                },
+                Vec::new(),
                 &[],
             )),
             Err(ModelRequestBuildError::EmptySystemContext(key))
@@ -260,12 +249,7 @@ mod tests {
             ModelRequestBuilder::build(ModelRequestInput::new(
                 "test-model",
                 &valid,
-                ConversationContextView {
-                    items: vec![ConversationItem::real(Message::text(
-                        Role::System,
-                        "not allowed",
-                    ))],
-                },
+                vec![Message::text(Role::System, "not allowed")],
                 &[],
             )),
             Err(ModelRequestBuildError::SystemMessageInConversation)

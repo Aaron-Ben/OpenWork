@@ -237,6 +237,7 @@ impl TurnRunner {
             let compacted_before_sampling = match threshold_estimate {
                 Some(estimated_input_tokens) => {
                     self.compact(
+                        &context_engine,
                         &system_context,
                         CompactionTrigger::Threshold {
                             turn_id: self.request.turn_id.clone(),
@@ -257,7 +258,8 @@ impl TurnRunner {
                 Err(error) if !compacted_before_sampling && is_safe_context_overflow(&error) => {
                     self.update(SessionUpdate::DraftCleared).await?;
                     let trigger = self.overflow_trigger(&error);
-                    self.compact(&system_context, trigger).await?;
+                    self.compact(&context_engine, &system_context, trigger)
+                        .await?;
                     self.call_model(model_call_index, 2, &context_engine, &system_context)
                         .await?
                 }
@@ -467,6 +469,7 @@ impl TurnRunner {
 
     async fn compact(
         &mut self,
+        context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
         trigger: CompactionTrigger,
     ) -> Result<(), TurnRunError> {
@@ -486,6 +489,7 @@ impl TurnRunner {
             model: Arc::clone(&self.request.model),
             storage: Arc::clone(&self.request.storage),
             state_collector: Arc::clone(&self.request.compaction_state),
+            limits: context_engine.limits().clone(),
             plan: self.current_plan.clone(),
             reload_required: Arc::clone(&self.request.reload_required),
             trigger,

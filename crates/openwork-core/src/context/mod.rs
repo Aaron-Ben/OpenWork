@@ -6,6 +6,7 @@ mod builder;
 mod engine;
 mod inspection;
 mod limits;
+mod normalize;
 mod project_instructions;
 mod skill_catalog;
 mod user_project;
@@ -18,6 +19,7 @@ pub use inspection::{
     ContextInspectionSystemPart, ContextWindowInspection,
 };
 pub(crate) use limits::ModelContextLimits;
+pub(crate) use normalize::{NormalizationPolicy, normalize_for_request};
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 use skill_catalog::SkillCatalogLoader;
 pub(crate) use skill_catalog::list_skills;

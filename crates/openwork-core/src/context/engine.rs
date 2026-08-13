@@ -4,7 +4,11 @@ use thiserror::Error;
 
 use crate::model_call::{ModelRequestBuildError, ModelRequestBuilder, ModelRequestInput};
 
-use super::{ContextBudgetEstimate, ModelContextLimits, ResolvedSystemContext};
+use super::normalize::NormalizationError;
+use super::{
+    ContextBudgetEstimate, ModelContextLimits, NormalizationPolicy, ResolvedSystemContext,
+    normalize_for_request,
+};
 
 pub(crate) struct ContextEngine {
     limits: ModelContextLimits,
@@ -15,14 +19,24 @@ impl ContextEngine {
         Self { limits }
     }
 
+    pub(crate) fn limits(&self) -> &ModelContextLimits {
+        &self.limits
+    }
+
     pub(crate) fn prepare(
         &self,
         input: PrepareContextInput<'_>,
     ) -> Result<PreparedModelCall, ContextError> {
+        let normalized = normalize_for_request(
+            &input.conversation.items,
+            &NormalizationPolicy { accepts_data_blocks: self.limits.accepts_data_blocks },
+        )?;
+        let messages = normalized.messages;
+        let _normalization_report = normalized.report;
         let built = ModelRequestBuilder::build(ModelRequestInput::new(
             input.model,
             input.system_context,
-            input.conversation,
+            messages,
             input.tool_definitions,
         ))?;
 
@@ -72,6 +86,8 @@ impl PreparedModelCall {
 
 #[derive(Debug, Error)]
 pub(crate) enum ContextError {
+    #[error(transparent)]
+    Normalization(#[from] NormalizationError),
     #[error(transparent)]
     RequestBuild(#[from] ModelRequestBuildError),
 }
