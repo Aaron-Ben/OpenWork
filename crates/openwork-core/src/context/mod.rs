@@ -12,6 +12,10 @@ mod project_instructions;
 mod projection;
 mod skill_catalog;
 mod user_project;
+// 阶段二 A 只落地纯逻辑，接线在二 C。二 C 必须删掉这条 allow——留着它等于允许
+// 一个永远没人调用的 world state 长期存在。
+#[allow(dead_code)]
+mod world_state;
 
 pub(crate) use budget::{
     ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens,
