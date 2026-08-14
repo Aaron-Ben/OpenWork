@@ -35,10 +35,19 @@ impl SkillCatalogLoader {
         self
     }
 
-    pub(crate) fn load(&self) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
+    /// `<available_skills>` 正文本身，不带 `SystemContextPart` 外壳。
+    ///
+    /// `None` 表示没有启用中的 skill。告警照旧一并返回，调用方仍然要记录它们。
+    /// `load()` 必须改成调用这里再包一层，见 `user_project.rs::load_body`。
+    pub(crate) fn load_body(&self) -> (Option<String>, Vec<SkillWarning>) {
         let mut discovery = discover_skills(&self.skill_roots);
         apply_disabled_names(&mut discovery, &self.disabled_names);
-        render_skill_catalog(discovery)
+        render_skill_catalog_body(discovery)
+    }
+
+    pub(crate) fn load(&self) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
+        let (body, warnings) = self.load_body();
+        (body.map(skill_catalog_part), warnings)
     }
 }
 
@@ -64,6 +73,11 @@ fn apply_disabled_names(discovery: &mut SkillDiscovery, disabled_names: &BTreeSe
 pub(crate) fn render_skill_catalog(
     discovery: SkillDiscovery,
 ) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
+    let (body, warnings) = render_skill_catalog_body(discovery);
+    (body.map(skill_catalog_part), warnings)
+}
+
+fn render_skill_catalog_body(discovery: SkillDiscovery) -> (Option<String>, Vec<SkillWarning>) {
     let SkillDiscovery {
         skills,
         mut warnings,
@@ -111,13 +125,11 @@ pub(crate) fn render_skill_catalog(
         catalog.push_str(&line);
     }
     catalog.push_str(CATALOG_FOOTER);
-    (
-        Some(SystemContextPart::new(
-            SKILL_CATALOG_KEY,
-            vec![ContentBlock::text(catalog)],
-        )),
-        warnings,
-    )
+    (Some(catalog), warnings)
+}
+
+fn skill_catalog_part(body: String) -> SystemContextPart {
+    SystemContextPart::new(SKILL_CATALOG_KEY, vec![ContentBlock::text(body)])
 }
 
 #[cfg(test)]

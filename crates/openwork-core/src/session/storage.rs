@@ -44,6 +44,18 @@ pub trait SessionStorage: Send + Sync {
         message: &Message,
     ) -> Result<bool, String>;
 
+    /// 追加一条 world-state fragment（§8.4）。
+    ///
+    /// 一个 section 一条，`message_kind = 'world_state'`，role 恒为 User。
+    /// 返回 `false` 表示 `message_id` 已存在、本次没有插入——采样在同一 Turn 内
+    /// 可能重试，重复写必须是幂等的。
+    async fn append_world_state_fragment(
+        &self,
+        turn_id: &TurnId,
+        message_id: &str,
+        message: &Message,
+    ) -> Result<bool, String>;
+
     /// 收尾一个 Turn。
     ///
     /// `unfinished_plan_steps` 是 §15.1 的观测信号，`None` 表示这个 Turn 没有计划 ——
@@ -166,6 +178,15 @@ impl SessionStorage for NoopSessionStorage {
     }
 
     async fn append_agent_message(
+        &self,
+        _turn_id: &TurnId,
+        _message_id: &str,
+        _message: &Message,
+    ) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    async fn append_world_state_fragment(
         &self,
         _turn_id: &TurnId,
         _message_id: &str,

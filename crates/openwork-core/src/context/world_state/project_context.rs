@@ -31,6 +31,13 @@ impl ProjectContextState {
     }
 }
 
+#[cfg(test)]
+impl ProjectContextState {
+    pub(crate) fn body_for_test(&self) -> String {
+        self.body.clone()
+    }
+}
+
 impl WorldStateSection for ProjectContextState {
     const ID: &'static str = "runtime/user-project-context";
     type Snapshot = Option<String>;

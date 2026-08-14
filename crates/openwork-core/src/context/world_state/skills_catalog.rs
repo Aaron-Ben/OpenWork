@@ -23,6 +23,13 @@ impl SkillsCatalogState {
     }
 }
 
+#[cfg(test)]
+impl SkillsCatalogState {
+    pub(crate) fn body_for_test(&self) -> Option<String> {
+        self.body.clone()
+    }
+}
+
 impl WorldStateSection for SkillsCatalogState {
     const ID: &'static str = "skills/catalog";
     type Snapshot = Option<String>;

@@ -24,7 +24,14 @@ impl ProjectInstructionLoader {
         }
     }
 
-    pub(crate) async fn load(&self) -> Result<Option<SystemContextPart>, ProjectInstructionError> {
+    /// `AGENTS.md` 正文本身，不带 `SystemContextPart` 外壳。
+    ///
+    /// `None` 表示文件不存在或内容为空。`load()` 必须改成调用这里再包一层，见
+    /// `user_project.rs::load_body` 的同款说明。
+    ///
+    /// 注意这里给的是**裸文件内容**：`<project_instructions>` 标记由
+    /// `world_state/agents_md.rs` 加，不在这一层。
+    pub(crate) async fn load_body(&self) -> Result<Option<String>, ProjectInstructionError> {
         let root = tokio::fs::canonicalize(&self.working_directory)
             .await
             .map_err(|source| ProjectInstructionError::WorkingDirectory {
@@ -75,11 +82,13 @@ impl ProjectInstructionLoader {
         if content.trim().is_empty() {
             return Ok(None);
         }
+        Ok(Some(content))
+    }
 
-        Ok(Some(SystemContextPart::new(
-            PROJECT_INSTRUCTION_KEY,
-            vec![ContentBlock::text(content)],
-        )))
+    pub(crate) async fn load(&self) -> Result<Option<SystemContextPart>, ProjectInstructionError> {
+        Ok(self.load_body().await?.map(|content| {
+            SystemContextPart::new(PROJECT_INSTRUCTION_KEY, vec![ContentBlock::text(content)])
+        }))
     }
 
     #[cfg(test)]

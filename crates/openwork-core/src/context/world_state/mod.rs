@@ -11,10 +11,14 @@ use openwork_models::model::ContentBlock;
 
 mod agents_md;
 mod body;
+mod capture;
 mod project_context;
 mod skills_catalog;
 
 pub(crate) use agents_md::AgentsMdState;
+// 二 C-2 接线前无人调用。这条 allow 与 context/mod.rs 上的 dead_code 同期删除。
+#[allow(unused_imports)]
+pub(crate) use capture::{WorldStateCapture, WorldStateCaptureError};
 pub(crate) use project_context::ProjectContextState;
 pub(crate) use skills_catalog::SkillsCatalogState;
 

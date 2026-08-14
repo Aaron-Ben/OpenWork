@@ -22,7 +22,12 @@ impl UserProjectContextLoader {
         }
     }
 
-    pub(crate) async fn load(&self) -> Result<SystemContextPart, UserProjectContextError> {
+    /// `<user_project_context>` 正文本身，不带 `SystemContextPart` 外壳。
+    ///
+    /// world-state section 要的是正文（`context/world_state/`）。`load()` 必须
+    /// 改成调用这里再包一层，两条路径**不能各自构造一遍正文**——那样二 C-2 把
+    /// 它从 System 前缀搬到 Conversation 时，模型看到的内容会悄悄变。
+    pub(crate) async fn load_body(&self) -> Result<String, UserProjectContextError> {
         let working_directory = tokio::fs::canonicalize(&self.working_directory)
             .await
             .map_err(|source| UserProjectContextError::WorkingDirectory {
@@ -61,7 +66,11 @@ impl UserProjectContextLoader {
         if text.chars().count() > MAX_CONTEXT_CHARS {
             return Err(UserProjectContextError::TooLarge(MAX_CONTEXT_CHARS));
         }
+        Ok(text)
+    }
 
+    pub(crate) async fn load(&self) -> Result<SystemContextPart, UserProjectContextError> {
+        let text = self.load_body().await?;
         Ok(SystemContextPart::new(
             USER_PROJECT_CONTEXT_KEY,
             vec![ContentBlock::text(text)],

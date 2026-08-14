@@ -50,6 +50,16 @@ impl AgentsMdState {
     }
 }
 
+#[cfg(test)]
+impl AgentsMdState {
+    /// 裸文件内容，不含 `<project_instructions>` 标记。
+    ///
+    /// 标记是渲染时加的，与 loader 供给的正文是两回事，比较时不能混。
+    pub(crate) fn body_for_test(&self) -> Option<String> {
+        self.body.clone()
+    }
+}
+
 impl WorldStateSection for AgentsMdState {
     const ID: &'static str = "project/AGENTS.md";
     type Snapshot = Option<String>;

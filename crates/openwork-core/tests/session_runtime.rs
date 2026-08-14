@@ -346,6 +346,23 @@ impl SessionStorage for RecordingStorage {
         Ok(inserted)
     }
 
+    async fn append_world_state_fragment(
+        &self,
+        _turn_id: &TurnId,
+        message_id: &str,
+        _message: &Message,
+    ) -> Result<bool, String> {
+        let inserted = self
+            .agent_message_ids
+            .lock()
+            .unwrap()
+            .insert(message_id.to_string());
+        if inserted {
+            self.events.lock().unwrap().push("world_state".to_string());
+        }
+        Ok(inserted)
+    }
+
     async fn finish_turn(
         &self,
         _turn_id: &TurnId,
