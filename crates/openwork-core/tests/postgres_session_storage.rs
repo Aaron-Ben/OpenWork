@@ -740,6 +740,11 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 "backfill model capabilities".to_string(),
                 true,
             ),
+            (
+                202_608_140_001,
+                "widen message kind world state".to_string(),
+                true,
+            ),
         ]
     );
 

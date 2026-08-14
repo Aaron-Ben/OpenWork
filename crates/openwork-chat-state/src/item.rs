@@ -21,6 +21,11 @@ pub enum MessageKind {
     SkillInstruction,
     /// A message a sub-agent delivered to its parent Session.
     AgentMessage,
+    /// One world-state section's full re-render, appended when it changed.
+    ///
+    /// 一个 section 一条，不合并。压缩自愈要靠这个 kind 判断某 section 的消息
+    /// 是否还在投影里，合并成一条就只能三个 section 一起重发。
+    WorldState,
 }
 
 impl MessageKind {
@@ -29,6 +34,7 @@ impl MessageKind {
             Self::Normal => "normal",
             Self::SkillInstruction => "skill_instruction",
             Self::AgentMessage => "agent_message",
+            Self::WorldState => "world_state",
         }
     }
 
@@ -191,5 +197,35 @@ mod tests {
         let encoded = serde_json::to_string(&MessageKind::AgentMessage).expect("serialize");
         assert_eq!(encoded, "\"agent_message\"");
         assert_eq!(MessageKind::AgentMessage.as_str(), "agent_message");
+    }
+
+    /// `as_str` 与 serde 必须给出同一个字符串。
+    ///
+    /// 两者分别喂给数据库列和 IPC，一旦分叉，同一条消息在库里和在前端就是两种
+    /// 东西，而且不会有任何一侧报错。
+    #[test]
+    fn the_world_state_kind_has_one_wire_form() {
+        assert_eq!(MessageKind::WorldState.as_str(), "world_state");
+        assert_eq!(
+            serde_json::to_string(&MessageKind::WorldState).expect("serialize"),
+            "\"world_state\""
+        );
+    }
+
+    /// world-state 消息是模型可见上下文，不是用户请求。
+    ///
+    /// 判错的后果很具体：压缩时 `last_real_user` 会把一段目录树当成用户的最后
+    /// 一句话replay 出去。
+    #[test]
+    fn a_world_state_message_is_contextual_not_a_user_request() {
+        let item = ConversationItem::persisted_with_kind(
+            "msg-1",
+            1,
+            MessageKind::WorldState,
+            user("<user_project_context/>"),
+        );
+
+        assert!(item.is_real(), "world-state 是真实的 messages 行");
+        assert!(item.is_contextual());
     }
 }

@@ -81,7 +81,7 @@ export interface RuntimeStoredMessage {
   sequence: number
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: ContentBlock[]
-  messageKind: 'normal' | 'skill_instruction'
+  messageKind: 'normal' | 'skill_instruction' | 'agent_message' | 'world_state'
   createdAt: string
 }
 
