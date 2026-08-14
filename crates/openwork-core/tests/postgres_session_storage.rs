@@ -1422,7 +1422,10 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         )
         .await
         .unwrap();
-    assert_eq!(storage.mark_running_interrupted().await.unwrap(), 1);
+    // `mark_running_interrupted` 作用于全库，返回值里也包含其他并发测试留下的
+    // running turn，因此这里不能断言精确计数——那是越界的全局断言。本测试要
+    // 验证的是"自己这个 turn 被标成了 interrupted"，紧接着的状态查询就是它。
+    assert!(storage.mark_running_interrupted().await.unwrap() >= 1);
     let interrupted_status: String = sqlx::query_scalar("SELECT status FROM turns WHERE id = $1")
         .bind(interrupted_turn_id.as_str())
         .fetch_one(storage.pool())
@@ -1436,4 +1439,79 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .execute(storage.pool())
         .await
         .unwrap();
+}
+
+/// world-state fragment 落库时必须带上 `world_state` kind，且重写幂等。
+///
+/// kind 判错的后果很具体：压缩时 `last_real_user` 会把一段目录树当成用户的最后
+/// 一句话 replay 出去。幂等则是因为同一 Turn 内采样可能重试——按 §8.3，落库失败
+/// 时基线不推进，下一次会原样重新产出同样的 fragment。
+#[tokio::test]
+async fn postgres_persists_world_state_fragments_with_their_own_kind() {
+    let Some(database_url) = test_database_url() else {
+        return;
+    };
+    let storage = PostgresStorage::connect(Some(&database_url)).await.unwrap();
+    storage.migrate().await.unwrap();
+    let session_id = SessionId::new(unique("session-world-state"));
+    storage
+        .create_session(&SessionInput {
+            id: session_id.clone(),
+            title: Some("World state persistence".to_string()),
+            working_directory: "/tmp/openwork-world-state".to_string(),
+            default_model_id: None,
+        })
+        .await
+        .unwrap();
+    let turn_id = TurnId::new(unique("turn-world-state"));
+    storage
+        .begin_turn(
+            &session_id,
+            &turn_id,
+            &ClientRequestId::new(unique("request-world-state")),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "world-state-test",
+                test_capabilities(),
+            ),
+            &[],
+            &Message::text(Role::User, "continue the task"),
+        )
+        .await
+        .unwrap();
+
+    let fragment_id = unique("world-state-msg");
+    let inserted = storage
+        .append_world_state_fragment(
+            &turn_id,
+            &fragment_id,
+            &Message::text(
+                Role::User,
+                "<user_project_context format_version=\"1\">\nWorking directory: /tmp\n</user_project_context>",
+            ),
+        )
+        .await
+        .unwrap();
+    let duplicate = storage
+        .append_world_state_fragment(
+            &turn_id,
+            &fragment_id,
+            &Message::text(Role::User, "重试不得覆盖第一次写入的内容"),
+        )
+        .await
+        .unwrap();
+    assert!(inserted);
+    assert!(!duplicate, "同一 message_id 重写必须是幂等的");
+
+    let records = storage.load_message_records(&session_id).await.unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].role, Role::User);
+    assert_eq!(records[1].message_kind, MessageKind::WorldState);
+    assert!(matches!(
+        records[1].content.first(),
+        Some(ContentBlock::Text(text)) if text.text.contains("<user_project_context")
+    ));
+
+    storage.delete_session(&session_id).await.unwrap();
 }
