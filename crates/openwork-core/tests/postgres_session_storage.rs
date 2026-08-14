@@ -735,6 +735,11 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 true,
             ),
             (202_608_080_001, "add subagent sessions".to_string(), true),
+            (
+                202_608_130_001,
+                "backfill model capabilities".to_string(),
+                true,
+            ),
         ]
     );
 
