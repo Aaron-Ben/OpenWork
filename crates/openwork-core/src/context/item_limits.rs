@@ -110,7 +110,9 @@ mod tests {
 
         assert_eq!(
             check_item_tokens(
-                BoundedItem::SystemContextPart { key: "project/AGENTS.md" },
+                BoundedItem::SystemContextPart {
+                    key: "project/AGENTS.md"
+                },
                 limits.max_context_item_tokens as u64 - 1,
                 &limits
             ),
@@ -126,7 +128,9 @@ mod tests {
         );
         assert_eq!(
             check_item_tokens(
-                BoundedItem::AgentMessage { task_name: "explore" },
+                BoundedItem::AgentMessage {
+                    task_name: "explore"
+                },
                 limits.max_agent_message_tokens as u64 - 1,
                 &limits
             ),
@@ -240,7 +244,9 @@ mod tests {
 
         assert!(
             check_item_tokens(
-                BoundedItem::AgentMessage { task_name: "explore" },
+                BoundedItem::AgentMessage {
+                    task_name: "explore"
+                },
                 tokens,
                 &limits
             )
