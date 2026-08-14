@@ -125,6 +125,30 @@ impl WorldStateBaseline {
         }
     }
 
+    /// 在 fragment **全部落库成功之后**推进基线。
+    ///
+    /// 与 `WorldState::render_diff` 分开是必需的（§8.3）：渲染时就推进的话，落库
+    /// 失败会留下"内存认为模型已经看过、库里却没有这条消息"的状态，那次更新从此
+    /// 永久丢失，而且不会有任何报错。顺序只能是先落库、再推进。
+    ///
+    /// 只推进真的产生了 fragment 的 section，其余保持原样。
+    pub(crate) fn advance(&mut self, world: &WorldState, fragments: &[WorldStateFragment]) {
+        for fragment in fragments {
+            match fragment.section_id {
+                ProjectContextState::ID => {
+                    self.project_context = SectionBaseline::Known(world.project_context.snapshot());
+                }
+                AgentsMdState::ID => {
+                    self.agents_md = SectionBaseline::Known(world.agents_md.snapshot());
+                }
+                SkillsCatalogState::ID => {
+                    self.skills_catalog = SectionBaseline::Known(world.skills_catalog.snapshot());
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// 把某个 section 的基线打回 `Absent`，用于压缩/rewind 删掉了它的消息之后
     /// 强制重发（§9.3）。
     pub(crate) fn forget(&mut self, section_id: &str) {
@@ -138,36 +162,26 @@ impl WorldStateBaseline {
 }
 
 impl WorldState {
-    /// 对每个有差量的 section 渲染一条 fragment，并推进基线。
+    /// 对每个有差量的 section 渲染一条 fragment。**不推进基线**。
+    ///
+    /// 推进由 `WorldStateBaseline::advance` 在落库成功之后单独完成，理由见那里。
     ///
     /// 一次采样有几个 section 变化就返回几条，不合并（§8.4）：压缩自愈需要逐个
     /// section 判断它的消息还在不在，合成一条就只能三个一起重发。
     ///
     /// 顺序固定为 project_context → agents_md → skills_catalog，保证同样的输入
     /// 产生同样的字节。
-    pub(crate) fn render_diff(&self, baseline: &mut WorldStateBaseline) -> Vec<WorldStateFragment> {
-        let mut fragments = Vec::with_capacity(3);
-
-        if let Some(fragment) = self
-            .project_context
-            .render_diff(baseline.project_context.as_previous())
-        {
-            baseline.project_context = SectionBaseline::Known(self.project_context.snapshot());
-            fragments.push(fragment);
-        }
-        if let Some(fragment) = self.agents_md.render_diff(baseline.agents_md.as_previous()) {
-            baseline.agents_md = SectionBaseline::Known(self.agents_md.snapshot());
-            fragments.push(fragment);
-        }
-        if let Some(fragment) = self
-            .skills_catalog
-            .render_diff(baseline.skills_catalog.as_previous())
-        {
-            baseline.skills_catalog = SectionBaseline::Known(self.skills_catalog.snapshot());
-            fragments.push(fragment);
-        }
-
-        fragments
+    pub(crate) fn render_diff(&self, baseline: &WorldStateBaseline) -> Vec<WorldStateFragment> {
+        [
+            self.project_context
+                .render_diff(baseline.project_context.as_previous()),
+            self.agents_md.render_diff(baseline.agents_md.as_previous()),
+            self.skills_catalog
+                .render_diff(baseline.skills_catalog.as_previous()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 }
 
@@ -187,17 +201,31 @@ mod tests {
         }
     }
 
+    /// 完整走一次采样：渲染 → 落库成功 → 推进基线。
+    ///
+    /// 测试必须走与生产同一条顺序，否则"落库失败就不推进"这条根本测不到。
+    fn sample(world: &WorldState, baseline: &mut WorldStateBaseline) -> Vec<WorldStateFragment> {
+        let fragments = world.render_diff(baseline);
+        baseline.advance(world, &fragments);
+        fragments
+    }
+
+    fn ids(fragments: &[WorldStateFragment]) -> Vec<&'static str> {
+        fragments.iter().map(|f| f.section_id).collect()
+    }
+
     /// 首次采样：三个 section 都发，且顺序固定。
     #[test]
     fn the_first_sampling_emits_every_section_in_a_fixed_order() {
         let mut baseline = WorldStateBaseline::default();
 
-        let fragments =
-            state("<project/>", Some("rule"), Some("<skills/>")).render_diff(&mut baseline);
+        let fragments = sample(
+            &state("<project/>", Some("rule"), Some("<skills/>")),
+            &mut baseline,
+        );
 
-        let ids: Vec<_> = fragments.iter().map(|f| f.section_id).collect();
         assert_eq!(
-            ids,
+            ids(&fragments),
             [
                 ProjectContextState::ID,
                 AgentsMdState::ID,
@@ -213,35 +241,46 @@ mod tests {
     fn an_unchanged_world_emits_nothing() {
         let mut baseline = WorldStateBaseline::default();
         let world = state("<project/>", Some("rule"), Some("<skills/>"));
-        world.render_diff(&mut baseline);
+        sample(&world, &mut baseline);
 
-        assert!(world.render_diff(&mut baseline).is_empty());
+        assert!(sample(&world, &mut baseline).is_empty());
     }
 
     /// 只有变了的 section 发消息，其余一个字节不发。
     #[test]
     fn only_the_changed_section_emits() {
         let mut baseline = WorldStateBaseline::default();
-        state("<project/>", Some("rule"), Some("<skills/>")).render_diff(&mut baseline);
+        sample(
+            &state("<project/>", Some("rule"), Some("<skills/>")),
+            &mut baseline,
+        );
 
-        let fragments =
-            state("<project v=\"2\"/>", Some("rule"), Some("<skills/>")).render_diff(&mut baseline);
+        let fragments = sample(
+            &state("<project v=\"2\"/>", Some("rule"), Some("<skills/>")),
+            &mut baseline,
+        );
 
-        let ids: Vec<_> = fragments.iter().map(|f| f.section_id).collect();
-        assert_eq!(ids, [ProjectContextState::ID]);
+        assert_eq!(ids(&fragments), [ProjectContextState::ID]);
     }
 
     /// 多个 section 同时变化写成多条，不合并（§8.4 / 决定 9）。
     #[test]
     fn simultaneous_changes_stay_separate_messages() {
         let mut baseline = WorldStateBaseline::default();
-        state("<project/>", Some("rule"), Some("<skills/>")).render_diff(&mut baseline);
+        sample(
+            &state("<project/>", Some("rule"), Some("<skills/>")),
+            &mut baseline,
+        );
 
-        let fragments = state("<project v=\"2\"/>", Some("rule 2"), Some("<skills/>"))
-            .render_diff(&mut baseline);
+        let fragments = sample(
+            &state("<project v=\"2\"/>", Some("rule 2"), Some("<skills/>")),
+            &mut baseline,
+        );
 
-        let ids: Vec<_> = fragments.iter().map(|f| f.section_id).collect();
-        assert_eq!(ids, [ProjectContextState::ID, AgentsMdState::ID]);
+        assert_eq!(
+            ids(&fragments),
+            [ProjectContextState::ID, AgentsMdState::ID]
+        );
     }
 
     /// 恢复会话：基线为 Unknown，三个 section 全部重发。
@@ -249,8 +288,10 @@ mod tests {
     fn an_unknown_baseline_re_emits_every_section() {
         let mut baseline = WorldStateBaseline::unknown();
 
-        let fragments =
-            state("<project/>", Some("rule"), Some("<skills/>")).render_diff(&mut baseline);
+        let fragments = sample(
+            &state("<project/>", Some("rule"), Some("<skills/>")),
+            &mut baseline,
+        );
 
         assert_eq!(fragments.len(), 3);
     }
@@ -260,13 +301,12 @@ mod tests {
     fn forgetting_one_section_re_emits_only_that_section() {
         let mut baseline = WorldStateBaseline::default();
         let world = state("<project/>", Some("rule"), Some("<skills/>"));
-        world.render_diff(&mut baseline);
+        sample(&world, &mut baseline);
 
         baseline.forget(AgentsMdState::ID);
-        let fragments = world.render_diff(&mut baseline);
+        let fragments = sample(&world, &mut baseline);
 
-        let ids: Vec<_> = fragments.iter().map(|f| f.section_id).collect();
-        assert_eq!(ids, [AgentsMdState::ID]);
+        assert_eq!(ids(&fragments), [AgentsMdState::ID]);
     }
 
     /// 未知 section_id 不能静默改动基线。
@@ -274,11 +314,51 @@ mod tests {
     fn forgetting_an_unknown_section_changes_nothing() {
         let mut baseline = WorldStateBaseline::default();
         let world = state("<project/>", Some("rule"), Some("<skills/>"));
-        world.render_diff(&mut baseline);
+        sample(&world, &mut baseline);
         let before = baseline.clone();
 
         baseline.forget("runtime/not-a-section");
 
         assert_eq!(baseline, before);
+    }
+
+    /// 渲染本身不推进基线。
+    ///
+    /// 这条守的是 §8.3 的顺序：落库失败时 Turn 必须失败且基线不动，否则内存认为
+    /// 模型已经看过、库里却没有这条消息，那次更新永久丢失且不会报错。
+    #[test]
+    fn rendering_alone_does_not_advance_the_baseline() {
+        let mut baseline = WorldStateBaseline::default();
+        let world = state("<project/>", Some("rule"), Some("<skills/>"));
+
+        // 模拟落库失败：渲染了，但没有 advance。
+        let first = world.render_diff(&baseline);
+        assert_eq!(first.len(), 3);
+
+        // 下一次采样必须重新产出同样三条，一条都不能少。
+        let retried = world.render_diff(&baseline);
+        assert_eq!(retried, first);
+
+        baseline.advance(&world, &retried);
+        assert!(world.render_diff(&baseline).is_empty());
+    }
+
+    /// 只推进真的发出去了的 section。
+    ///
+    /// 部分落库成功时，没发出去的那个必须留在原基线上等下一轮重试。
+    #[test]
+    fn advancing_only_touches_the_sections_that_emitted() {
+        let mut baseline = WorldStateBaseline::default();
+        let world = state("<project/>", Some("rule"), Some("<skills/>"));
+        let fragments = world.render_diff(&baseline);
+
+        let project_only: Vec<_> = fragments
+            .into_iter()
+            .filter(|fragment| fragment.section_id == ProjectContextState::ID)
+            .collect();
+        baseline.advance(&world, &project_only);
+
+        let remaining = world.render_diff(&baseline);
+        assert_eq!(ids(&remaining), [AgentsMdState::ID, SkillsCatalogState::ID]);
     }
 }
