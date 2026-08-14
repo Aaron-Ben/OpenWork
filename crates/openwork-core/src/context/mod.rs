@@ -6,6 +6,7 @@ mod budget;
 mod builder;
 mod engine;
 mod inspection;
+mod item_limits;
 mod limits;
 mod normalize;
 mod project_instructions;
@@ -14,13 +15,17 @@ mod skill_catalog;
 mod user_project;
 
 pub(crate) use admission::{PlannedSpill, plan_user_input_admission};
-pub(crate) use budget::{ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens};
+pub(crate) use budget::{
+    ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens,
+    estimate_serialized_tokens,
+};
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
 pub(crate) use engine::{ContextEngine, PrepareContextInput, PreparedModelCall};
 pub use inspection::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
     ContextInspectionSystemPart, ContextWindowInspection,
 };
+pub(crate) use item_limits::{BoundedItem, check_item_tokens};
 pub(crate) use limits::{AUTO_COMPACT_THRESHOLD_PERCENT, ModelContextLimits};
 pub(crate) use normalize::{NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request};
 use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};

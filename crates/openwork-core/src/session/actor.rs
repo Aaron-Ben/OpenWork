@@ -12,9 +12,11 @@ use openwork_tools::{ApprovalSessionAction, PermissionMode};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-use crate::context::ModelContextLimits;
+use crate::context::{
+    BoundedItem, ModelContextLimits, check_item_tokens, estimate_serialized_tokens,
+};
 use crate::skills::SkillRoots;
-use crate::{AgentControl, TurnSlot};
+use crate::{AgentControl, AgentControlError, TurnSlot};
 
 use super::agent_message::{AgentMailbox, AgentMessage};
 use super::compaction::{
@@ -184,15 +186,25 @@ impl SessionHandle {
         task_name: impl Into<String>,
         kind: super::AgentMessageKind,
         body: impl Into<String>,
-    ) -> Result<(), SessionError> {
-        self.send(SessionCommand::DeliverAgentMessage {
-            child_session_id,
-            child_turn_id,
-            task_name: task_name.into(),
-            kind,
-            body: body.into(),
-        })
-        .await
+    ) -> Result<(), AgentControlError> {
+        let task_name = task_name.into();
+        let message = AgentMessage::new(&child_session_id, &child_turn_id, task_name, kind, body);
+        let model_message = message.clone().into_model_message();
+        let tokens = estimate_serialized_tokens(&model_message.content)
+            .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))?;
+        let limits = ModelContextLimits::from_capabilities(self.model_capabilities);
+        check_item_tokens(
+            BoundedItem::AgentMessage {
+                task_name: &message.task_name,
+            },
+            tokens,
+            &limits,
+        )
+        .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))?;
+
+        self.send(SessionCommand::DeliverAgentMessage { message })
+            .await
+            .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))
     }
 
     pub async fn resolve_permission(
@@ -318,11 +330,7 @@ enum SessionCommand {
         respond_to: oneshot::Sender<Result<(), SessionError>>,
     },
     DeliverAgentMessage {
-        child_session_id: SessionId,
-        child_turn_id: TurnId,
-        task_name: String,
-        kind: super::AgentMessageKind,
-        body: String,
+        message: AgentMessage,
     },
     SetPermissionMode {
         mode: PermissionMode,
@@ -508,22 +516,8 @@ impl SessionActor {
                 let result = self.resolve_permission(turn_id, tool_call_id, decision);
                 let _ = respond_to.send(result);
             }
-            SessionCommand::DeliverAgentMessage {
-                child_session_id,
-                child_turn_id,
-                task_name,
-                kind,
-                body,
-            } => {
-                self.mailbox
-                    .push(AgentMessage::new(
-                        &child_session_id,
-                        &child_turn_id,
-                        task_name,
-                        kind,
-                        body,
-                    ))
-                    .await;
+            SessionCommand::DeliverAgentMessage { message } => {
+                self.mailbox.push(message).await;
             }
             SessionCommand::SetPermissionMode { mode, respond_to } => {
                 self.set_permission_mode(mode, PermissionModeOrigin::UserToggle);

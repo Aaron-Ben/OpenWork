@@ -24,7 +24,6 @@ use crate::session::{
     TraceRecorder, TraceStatus, TurnId,
 };
 
-const COMPACTION_MAX_OUTPUT_TOKENS: u32 = 16_384;
 const MIN_SUMMARY_CHARS: usize = 500;
 const COMPACTION_SUMMARY_MAX_ATTEMPTS: usize = 3;
 const COMPACTION_SUMMARY_RETRY_DELAY: Duration = Duration::from_secs(3);
@@ -167,12 +166,13 @@ pub(super) async fn generate_summary(
         Some(prepared.context_budget.conversation_tokens);
     trace.attributes_mut().summary_estimated_tool_surface_tokens =
         Some(prepared.context_budget.tool_surface_tokens);
-    trace.attributes_mut().summary_max_output_tokens = Some(COMPACTION_MAX_OUTPUT_TOKENS);
+    let summary_output_tokens = limits.max_compaction_summary_tokens;
+    trace.attributes_mut().summary_max_output_tokens = Some(summary_output_tokens);
     let mut model_request = prepared.request;
-    model_request.max_output_tokens = Some(COMPACTION_MAX_OUTPUT_TOKENS);
+    model_request.max_output_tokens = Some(summary_output_tokens);
     model_request.thinking = Some(ThinkingConfig::disabled());
     let summary_context_budget = ContextBudgetEstimate {
-        reserved_output_tokens: Some(COMPACTION_MAX_OUTPUT_TOKENS),
+        reserved_output_tokens: Some(summary_output_tokens),
         ..prepared.context_budget
     };
     let payloads = TracePayloads::for_model_call(&model_request, system_context);

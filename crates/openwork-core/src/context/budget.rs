@@ -79,6 +79,14 @@ pub(crate) fn estimate_conversation_tokens(
     Ok(estimate_tokens(bytes))
 }
 
+/// Measure one model-visible value with the same JSON byte accounting used by
+/// the full request budget.
+pub(crate) fn estimate_serialized_tokens(
+    value: &impl Serialize,
+) -> Result<u64, ContextBudgetError> {
+    Ok(estimate_tokens(serialized_bytes(value)?))
+}
+
 fn serialized_bytes(value: &impl Serialize) -> Result<u64, ContextBudgetError> {
     let mut counter = ByteCounter::default();
     serde_json::to_writer(&mut counter, value)?;

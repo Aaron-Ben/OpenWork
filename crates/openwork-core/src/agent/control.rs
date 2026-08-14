@@ -350,7 +350,6 @@ impl AgentControl {
                 body,
             )
             .await
-            .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))
     }
 }
 

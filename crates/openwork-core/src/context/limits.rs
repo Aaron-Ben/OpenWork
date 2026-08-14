@@ -5,7 +5,9 @@ const DEFAULT_MAX_USER_INPUT_TOKENS: u32 = 10_000;
 const DEFAULT_MAX_TOOL_RESULT_TOKENS: u32 = 8_000;
 const DEFAULT_MAX_AGENT_MESSAGE_TOKENS: u32 = 4_000;
 const DEFAULT_MAX_SKILL_INSTRUCTION_TOKENS: u32 = 8_000;
-const DEFAULT_MAX_COMPACTION_SUMMARY_TOKENS: u32 = 8_000;
+/// 摘要写不完就是压缩失败，而压缩发生在窗口快满时——最不能失败的时刻。
+/// 这个值沿用产品实际运行过的额度，没有实测数据支持收紧之前不要动它。
+const DEFAULT_MAX_COMPACTION_SUMMARY_TOKENS: u32 = 16_384;
 pub(crate) const AUTO_COMPACT_THRESHOLD_PERCENT: u8 = 85;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

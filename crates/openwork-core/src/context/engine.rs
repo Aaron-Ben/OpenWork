@@ -4,10 +4,12 @@ use openwork_chat_state::ConversationContextView;
 use openwork_models::model::{Message, ModelRequest, Role, ToolDefinition};
 use thiserror::Error;
 
+use super::item_limits::ItemLimitError;
 use super::normalize::{NormalizationError, ProjectedMessageOrigin};
 use super::{
-    ContextBudgetError, ContextBudgetEstimate, ModelContextLimits, NormalizationPolicy,
-    ProjectionSummary, ResolvedSystemContext, normalize_for_request, project_items,
+    BoundedItem, ContextBudgetError, ContextBudgetEstimate, ModelContextLimits,
+    NormalizationPolicy, ProjectionSummary, ResolvedSystemContext, check_item_tokens,
+    estimate_serialized_tokens, normalize_for_request, project_items,
 };
 
 pub(crate) struct ContextEngine {
@@ -37,7 +39,7 @@ impl ContextEngine {
         let messages = normalized.messages;
         let provenance = normalized.provenance;
         let _normalization_report = normalized.report;
-        validate_system_context(input.system_context)?;
+        validate_system_context(input.system_context, &self.limits)?;
         validate_conversation(&messages)?;
 
         let max_output_tokens = self.limits.max_output_tokens;
@@ -154,9 +156,14 @@ pub(crate) enum ContextError {
     SystemMessageInConversation,
     #[error(transparent)]
     Budget(#[from] ContextBudgetError),
+    #[error(transparent)]
+    ItemLimit(#[from] ItemLimitError),
 }
 
-fn validate_system_context(system_context: &ResolvedSystemContext) -> Result<(), ContextError> {
+fn validate_system_context(
+    system_context: &ResolvedSystemContext,
+    limits: &ModelContextLimits,
+) -> Result<(), ContextError> {
     let mut seen_keys = HashSet::with_capacity(system_context.parts().len());
     for part in system_context.parts() {
         if part.key.trim().is_empty() {
@@ -168,6 +175,11 @@ fn validate_system_context(system_context: &ResolvedSystemContext) -> Result<(),
         if !seen_keys.insert(part.key.as_str()) {
             return Err(ContextError::DuplicateSystemContext(part.key.clone()));
         }
+        check_item_tokens(
+            BoundedItem::SystemContextPart { key: &part.key },
+            estimate_serialized_tokens(&part.content)?,
+            limits,
+        )?;
     }
     Ok(())
 }

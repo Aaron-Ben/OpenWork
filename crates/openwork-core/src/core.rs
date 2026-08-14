@@ -23,10 +23,11 @@ use thiserror::Error;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::context::{
-    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextEngine, ContextInspectionBudget,
+    BoundedItem, CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextEngine, ContextInspectionBudget,
     ContextInspectionMessage, ContextInspectionSystemPart, ContextWindowInspection,
     ModelContextLimits, PlannedSpill, PrepareContextInput, ProjectedMessageOrigin,
-    SystemContextBuilder, list_skills, plan_user_input_admission,
+    SystemContextBuilder, check_item_tokens, estimate_serialized_tokens, list_skills,
+    plan_user_input_admission,
 };
 use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
@@ -794,13 +795,23 @@ impl OpenWorkCore {
         } else {
             Vec::new()
         };
-        let prepared_input = PreparedTurnInput::new(
-            skills
-                .into_iter()
-                .map(|skill| skill.into_message())
-                .collect(),
-            user_content,
-        );
+        let skill_messages = skills
+            .into_iter()
+            .map(|skill| {
+                let skill_name = skill.name.clone();
+                let message = skill.into_message();
+                let tokens = estimate_serialized_tokens(&message.content)
+                    .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+                check_item_tokens(
+                    BoundedItem::SkillInstruction { name: &skill_name },
+                    tokens,
+                    &limits,
+                )
+                .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+                Ok(message)
+            })
+            .collect::<Result<Vec<_>, OpenWorkCoreError>>()?;
+        let prepared_input = PreparedTurnInput::new(skill_messages, user_content);
 
         // The parent workspace guard is held and no parent Turn is active at
         // this point, so no legitimate spawn can be in progress. A zero-Turn
@@ -880,7 +891,8 @@ impl OpenWorkCore {
                     kind,
                     body,
                 )
-                .await?;
+                .await
+                .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         }
         Ok(())
     }
@@ -2133,7 +2145,6 @@ mod tests {
             Arc::new(crate::session::NoopSessionStorage),
         )
         .expect("default toolset");
-
         let definition = tools
             .resolve(COMPACTION_TRANSCRIPT_TOOL_NAME)
             .expect("conversation history tool");
