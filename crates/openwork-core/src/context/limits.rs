@@ -1,7 +1,6 @@
 use openwork_models::model::ModelCapabilities;
 
 const DEFAULT_MAX_CONTEXT_ITEM_TOKENS: u32 = 10_000;
-const DEFAULT_MAX_USER_INPUT_TOKENS: u32 = 10_000;
 const DEFAULT_MAX_TOOL_RESULT_TOKENS: u32 = 8_000;
 const DEFAULT_MAX_AGENT_MESSAGE_TOKENS: u32 = 4_000;
 const DEFAULT_MAX_SKILL_INSTRUCTION_TOKENS: u32 = 8_000;
@@ -19,10 +18,6 @@ pub(crate) struct ModelContextLimits {
     /// 需要与 `max_output_tokens` 一起从窗口预留的推理额度，见 `ModelCapabilities`。
     pub(crate) max_reasoning_tokens: Option<u32>,
     pub(crate) max_context_item_tokens: u32,
-    /// 单条真实用户消息里，一段正文的上限。
-    ///
-    /// 超限不拒绝也不裁剪，而是转存为工作区文件引用，见 `admission.rs`。
-    pub(crate) max_user_input_tokens: u32,
     pub(crate) max_tool_result_tokens: u32,
     pub(crate) max_agent_message_tokens: u32,
     pub(crate) max_skill_instruction_tokens: u32,
@@ -57,7 +52,6 @@ impl ModelContextLimits {
             max_output_tokens: Some(capabilities.max_output_tokens),
             max_reasoning_tokens: capabilities.max_reasoning_tokens,
             max_context_item_tokens: DEFAULT_MAX_CONTEXT_ITEM_TOKENS,
-            max_user_input_tokens: DEFAULT_MAX_USER_INPUT_TOKENS,
             max_tool_result_tokens: DEFAULT_MAX_TOOL_RESULT_TOKENS,
             max_agent_message_tokens: DEFAULT_MAX_AGENT_MESSAGE_TOKENS,
             max_skill_instruction_tokens: DEFAULT_MAX_SKILL_INSTRUCTION_TOKENS,

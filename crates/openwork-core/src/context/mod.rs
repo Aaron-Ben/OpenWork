@@ -1,7 +1,6 @@
 use openwork_models::model::ContentBlock;
 use serde::Serialize;
 
-mod admission;
 mod budget;
 mod builder;
 mod engine;
@@ -14,7 +13,6 @@ mod projection;
 mod skill_catalog;
 mod user_project;
 
-pub(crate) use admission::{PlannedSpill, plan_user_input_admission};
 pub(crate) use budget::{
     ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens,
     estimate_serialized_tokens,
