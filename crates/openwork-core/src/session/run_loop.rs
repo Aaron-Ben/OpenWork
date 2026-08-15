@@ -54,6 +54,9 @@ use super::{
     TraceRecorder, TraceStatus, TurnId, TurnOutcome,
 };
 
+const INITIAL_WORLD_STATE_SAMPLE_INDEX: u8 = 1;
+const POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX: u8 = 2;
+
 pub(super) struct TurnRunRequest {
     pub session_id: SessionId,
     pub working_directory: PathBuf,
@@ -242,8 +245,13 @@ impl TurnRunner {
             })
             .await?;
             let mut conversation = self.request.chat.context_view().await?;
-            self.sample_world_state(model_call_index, &world_state_capture, &mut conversation)
-                .await?;
+            self.sample_world_state(
+                model_call_index,
+                INITIAL_WORLD_STATE_SAMPLE_INDEX,
+                &world_state_capture,
+                &mut conversation,
+            )
+            .await?;
 
             let mut prepared = self
                 .prepare_model_call(&context_engine, &system_context, conversation)
@@ -270,7 +278,14 @@ impl TurnRunner {
                 None => false,
             };
             if compacted_before_sampling {
-                let conversation = self.request.chat.context_view().await?;
+                let mut conversation = self.request.chat.context_view().await?;
+                self.sample_world_state(
+                    model_call_index,
+                    POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX,
+                    &world_state_capture,
+                    &mut conversation,
+                )
+                .await?;
                 prepared = self
                     .prepare_model_call(&context_engine, &system_context, conversation)
                     .await?;
@@ -285,7 +300,14 @@ impl TurnRunner {
                     let trigger = self.overflow_trigger(&error);
                     self.compact(&context_engine, &system_context, trigger)
                         .await?;
-                    let conversation = self.request.chat.context_view().await?;
+                    let mut conversation = self.request.chat.context_view().await?;
+                    self.sample_world_state(
+                        model_call_index,
+                        POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX,
+                        &world_state_capture,
+                        &mut conversation,
+                    )
+                    .await?;
                     let prepared = self
                         .prepare_model_call(&context_engine, &system_context, conversation)
                         .await?;
@@ -350,6 +372,7 @@ impl TurnRunner {
     async fn sample_world_state(
         &self,
         model_call_index: u32,
+        sample_index: u8,
         capture: &WorldStateCapture,
         conversation: &mut ConversationContextView,
     ) -> Result<(), TurnRunError> {
@@ -368,7 +391,7 @@ impl TurnRunner {
                 content: fragment.content.clone(),
             };
             let message_id = format!(
-                "world-state:{}:{model_call_index}:{}",
+                "world-state:{}:{model_call_index}:{sample_index}:{}",
                 self.request.turn_id, fragment.section_id
             );
             let inserted = self

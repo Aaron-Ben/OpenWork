@@ -4884,3 +4884,53 @@ async fn a_turn_without_a_plan_reports_nothing_rather_than_zero() {
         "简单任务本就不该建计划，把它记成 0 会污染规则生效率的分母"
     );
 }
+
+/// 溢出压缩之后重新提交的那次请求，必须仍然带着 world state。
+///
+/// 压缩把历史尾部换成摘要，被换走的 world-state fragment 等于模型再也看不到了。
+/// §9.3 的自愈本来就是为这一刻准备的：扫描会发现消息不在了，把 previous 判成
+/// `Absent` 并重发。但重发只发生在**采样点**，而压缩后重建请求的路径上没有采样。
+///
+/// 后果很具体：模型刚丢掉全部历史，紧接着的这次提交连工作目录和项目规范都没有，
+/// 要等下一轮循环才补上——而这一次提交恰恰是它最需要上下文的时候。
+#[tokio::test]
+async fn a_request_rebuilt_after_compaction_still_carries_world_state() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("永远先跑测试");
+    let mut fixture = runtime_with_outcomes_in_workspace(
+        vec![
+            Err(ModelError::context_overflow(
+                "input exceeds the model context window",
+            )),
+            Ok(response(compaction_summary(), Vec::new())),
+            Ok(response("recovered after compaction", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        workspace,
+    );
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let resubmitted = requests.last().expect("resubmitted request");
+    let texts = user_message_texts(resubmitted);
+
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("<user_project_context")),
+        "压缩后重新提交的请求缺少项目上下文：{texts:?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("<project_instructions>") && text.contains("永远先跑测试")),
+        "压缩后重新提交的请求缺少 AGENTS.md：{texts:?}"
+    );
+}
