@@ -11,7 +11,7 @@ use crate::context::{
     ContextBudgetEstimate, ContextEngine, ModelContextLimits, PrepareContextInput,
     ResolvedSystemContext,
 };
-use openwork_chat_state::{ConversationContextView, ConversationItem};
+use openwork_chat_state::{ConversationContextView, ConversationItem, MessageKind};
 use openwork_models::model::{ModelError, ModelErrorCode, RetryHint};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
@@ -140,6 +140,9 @@ pub(super) async fn generate_summary(
     trace: &mut CompactionTraceGuard,
 ) -> Result<GeneratedSummary, CompactionError> {
     let mut summary_input = source;
+    summary_input
+        .items
+        .retain(|item| item.kind != MessageKind::WorldState);
     summary_input
         .items
         .push(ConversationItem::real(Message::text(

@@ -2886,7 +2886,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
 }
 
 #[tokio::test]
-async fn manual_compaction_rematerializes_the_same_explicit_user_skill_catalog() {
+async fn manual_compaction_keeps_the_dynamic_skill_catalog_out_of_the_summary() {
     let workspace = TestWorkspace::new();
     let user_root = workspace.path().join("user-skills");
     let skill_path = workspace.write_skill(&user_root, "review", "Review changes when requested.");
@@ -2912,23 +2912,17 @@ async fn manual_compaction_rematerializes_the_same_explicit_user_skill_catalog()
 
     let requests = fixture.model.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    let catalog_text = |request: &ModelRequest| {
-        request
-            .messages
-            .iter()
-            .filter(|message| message.role == Role::User)
-            .find_map(|message| match message.content.first() {
-                Some(ContentBlock::Text(text)) if text.text.contains("<available_skills>") => {
-                    Some(text.text.clone())
-                }
-                _ => None,
-            })
-            .expect("skill catalog")
-    };
-    let turn_catalog = catalog_text(&requests[0]);
-    let compaction_catalog = catalog_text(&requests[1]);
-    assert_eq!(turn_catalog, compaction_catalog);
+    let turn_catalog = user_message_texts(&requests[0])
+        .into_iter()
+        .find(|text| text.contains("<available_skills>"))
+        .expect("turn skill catalog");
     assert!(turn_catalog.contains(skill_path.to_str().expect("UTF-8 path")));
+    assert!(
+        !user_message_texts(&requests[1])
+            .iter()
+            .any(|text| text.contains("<available_skills>")),
+        "动态 skill catalog 不应进入摘要输入"
+    );
 }
 
 #[tokio::test]
@@ -4932,5 +4926,64 @@ async fn a_request_rebuilt_after_compaction_still_carries_world_state() {
             .iter()
             .any(|text| text.contains("<project_instructions>") && text.contains("永远先跑测试")),
         "压缩后重新提交的请求缺少 AGENTS.md：{texts:?}"
+    );
+}
+
+/// 摘要请求里不该出现 world-state fragment（§9.2）。
+///
+/// 它们不是对话事实，是当时的环境快照。让模型去总结一份目录列表有两重代价：
+/// 压缩恰好发生在窗口最紧张的时刻，白白占额度；而且模型可能把目录结构当成
+/// 对话内容写进摘要，于是一份过时的环境快照被冻结进摘要，此后再也不会更新。
+///
+/// 摘要请求靠"没有工具面"识别——`summary.rs` 传的 tool_definitions 是空的。
+#[tokio::test]
+async fn the_summary_request_excludes_world_state_fragments() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("永远先跑测试");
+    let mut fixture = runtime_in_workspace(
+        vec![
+            response("first answer", Vec::new()),
+            response(compaction_summary(), Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        workspace,
+    );
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+
+    fixture
+        .handle
+        .compact_conversation(BTreeSet::new())
+        .await
+        .expect("compaction");
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let summary_request = requests
+        .iter()
+        .find(|request| request.tools.is_empty())
+        .expect("summary request");
+    let texts = user_message_texts(summary_request);
+
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains("<user_project_context")),
+        "摘要请求不该带项目上下文：{texts:?}"
+    );
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains("<project_instructions>")),
+        "摘要请求不该带 AGENTS.md：{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("first answer"))
+            || summary_request
+                .messages
+                .iter()
+                .any(|message| message.role == Role::Assistant),
+        "真实对话事实必须保留，否则摘要没有可总结的内容：{texts:?}"
     );
 }
