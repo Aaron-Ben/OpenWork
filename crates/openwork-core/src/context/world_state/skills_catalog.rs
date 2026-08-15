@@ -6,6 +6,8 @@
 use super::body::{BodyNotices, render_body_diff};
 use super::{PreviousSectionState, WorldStateFragment, WorldStateSection};
 
+const OPEN_TAG: &str = "<available_skills>";
+
 const NOTICES: BodyNotices = BodyNotices {
     replacement: "以下 skill 清单取代先前提供的清单。",
     removal: "先前提供的 skill 清单不再适用，当前没有可用 skill。",
@@ -43,6 +45,15 @@ impl WorldStateSection for SkillsCatalogState {
         previous: PreviousSectionState<'_, Self::Snapshot>,
     ) -> Option<WorldStateFragment> {
         render_body_diff(Self::ID, NOTICES, self.body.as_deref(), previous)
+    }
+
+    fn matches(text: &str) -> bool {
+        text.starts_with(OPEN_TAG)
+            || text
+                .strip_prefix(NOTICES.replacement)
+                .and_then(|body| body.strip_prefix("\n\n"))
+                .is_some_and(|body| body.starts_with(OPEN_TAG))
+            || text == NOTICES.removal
     }
 }
 

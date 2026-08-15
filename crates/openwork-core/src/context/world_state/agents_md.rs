@@ -74,6 +74,15 @@ impl WorldStateSection for AgentsMdState {
     ) -> Option<WorldStateFragment> {
         render_body_diff(Self::ID, NOTICES, self.wrapped().as_deref(), previous)
     }
+
+    fn matches(text: &str) -> bool {
+        text.starts_with(OPEN_TAG)
+            || text
+                .strip_prefix(NOTICES.replacement)
+                .and_then(|body| body.strip_prefix("\n\n"))
+                .is_some_and(|body| body.starts_with(OPEN_TAG))
+            || text == NOTICES.removal
+    }
 }
 
 #[cfg(test)]

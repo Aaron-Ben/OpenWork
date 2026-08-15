@@ -12,6 +12,8 @@
 use super::body::{BodyNotices, render_body_diff};
 use super::{PreviousSectionState, WorldStateFragment, WorldStateSection};
 
+const OPEN_TAG: &str = "<user_project_context";
+
 const NOTICES: BodyNotices = BodyNotices {
     replacement: "以下项目上下文取代先前提供的项目上下文。",
     // 工作目录在 Session 内始终存在，这条实际发不出来；保留是为了让三个 section
@@ -51,6 +53,15 @@ impl WorldStateSection for ProjectContextState {
         previous: PreviousSectionState<'_, Self::Snapshot>,
     ) -> Option<WorldStateFragment> {
         render_body_diff(Self::ID, NOTICES, Some(self.body.as_str()), previous)
+    }
+
+    fn matches(text: &str) -> bool {
+        text.starts_with(OPEN_TAG)
+            || text
+                .strip_prefix(NOTICES.replacement)
+                .and_then(|body| body.strip_prefix("\n\n"))
+                .is_some_and(|body| body.starts_with(OPEN_TAG))
+            || text == NOTICES.removal
     }
 }
 

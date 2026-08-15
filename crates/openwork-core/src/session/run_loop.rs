@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use futures_util::StreamExt;
 use openwork_agent::Agent;
-use openwork_chat_state::{ChatStateError, ChatStateHandle, MessageKind};
+use openwork_chat_state::{
+    ChatStateError, ChatStateHandle, ConversationContextView, ConversationItem, MessageKind,
+};
 use openwork_models::model::{
     ContentBlock, DeliveryState, Message, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent,
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
@@ -29,8 +31,8 @@ use crate::agent::{
 };
 use crate::context::{
     ContextEngine, ModelContextLimits, PrepareContextInput, PreparedModelCall,
-    ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder, WorldStateBaseline,
-    WorldStateCapture,
+    ResolvedSystemContext, RetainedSections, SystemContextBuildError, SystemContextBuilder,
+    WorldStateBaseline, WorldStateCapture,
 };
 use crate::plan::{
     TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
@@ -239,11 +241,12 @@ impl TurnRunner {
                 phase: SessionPhase::RunningModel,
             })
             .await?;
-            self.sample_world_state(model_call_index, &world_state_capture)
+            let mut conversation = self.request.chat.context_view().await?;
+            self.sample_world_state(model_call_index, &world_state_capture, &mut conversation)
                 .await?;
 
             let mut prepared = self
-                .prepare_model_call(&context_engine, &system_context)
+                .prepare_model_call(&context_engine, &system_context, conversation)
                 .await?;
             let threshold_estimate = self.threshold_estimate_before_sampling(&prepared.prepared);
             let compacted_before_sampling = match threshold_estimate {
@@ -267,8 +270,9 @@ impl TurnRunner {
                 None => false,
             };
             if compacted_before_sampling {
+                let conversation = self.request.chat.context_view().await?;
                 prepared = self
-                    .prepare_model_call(&context_engine, &system_context)
+                    .prepare_model_call(&context_engine, &system_context, conversation)
                     .await?;
             }
             let completed_model = match self
@@ -281,8 +285,9 @@ impl TurnRunner {
                     let trigger = self.overflow_trigger(&error);
                     self.compact(&context_engine, &system_context, trigger)
                         .await?;
+                    let conversation = self.request.chat.context_view().await?;
                     let prepared = self
-                        .prepare_model_call(&context_engine, &system_context)
+                        .prepare_model_call(&context_engine, &system_context, conversation)
                         .await?;
                     self.call_model(model_call_index, 2, prepared, &system_context)
                         .await?
@@ -346,6 +351,7 @@ impl TurnRunner {
         &self,
         model_call_index: u32,
         capture: &WorldStateCapture,
+        conversation: &mut ConversationContextView,
     ) -> Result<(), TurnRunError> {
         let world = capture
             .capture()
@@ -353,7 +359,7 @@ impl TurnRunner {
             .map_err(SystemContextBuildError::from)?;
         let fragments = {
             let baseline = self.request.world_state_baseline.lock().await;
-            world.render_diff(&baseline)
+            world.render_diff(&baseline, RetainedSections::scan(&conversation.items))
         };
 
         for fragment in &fragments {
@@ -374,8 +380,12 @@ impl TurnRunner {
             if inserted {
                 self.request
                     .chat
-                    .append_user_with_kind(message.content, MessageKind::WorldState)
+                    .append_user_with_kind(message.content.clone(), MessageKind::WorldState)
                     .await?;
+                conversation.items.push(ConversationItem::real_with_kind(
+                    message,
+                    MessageKind::WorldState,
+                ));
             }
         }
 
@@ -491,9 +501,9 @@ impl TurnRunner {
         &self,
         context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
+        conversation: ConversationContextView,
     ) -> Result<PreparedTurnModelCall, TurnRunError> {
         let request_build_started = Instant::now();
-        let conversation = self.request.chat.context_view().await?;
         let prepared = context_engine
             .prepare(PrepareContextInput::new(
                 &self.request.resolved_model.model_name,
