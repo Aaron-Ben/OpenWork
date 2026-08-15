@@ -2,13 +2,6 @@ use std::collections::BTreeSet;
 
 use crate::skills::{SkillDiscovery, SkillRoots, SkillWarning, discover_skills};
 
-#[cfg(test)]
-use super::SystemContextPart;
-#[cfg(test)]
-use openwork_models::model::ContentBlock;
-
-#[cfg(test)]
-const SKILL_CATALOG_KEY: &str = "skills/catalog";
 const MAX_CATALOG_CHARS: usize = 8000;
 const CATALOG_HEADER: &str = "<available_skills>\n\
 Skill 是一份放在 SKILL.md 里的操作指令。下面是本会话可用的全部 skill。\n\n";
@@ -37,20 +30,13 @@ impl SkillCatalogLoader {
         self
     }
 
-    /// `<available_skills>` 正文本身，不带 `SystemContextPart` 外壳。
+    /// `<available_skills>` 正文。`None` 表示没有启用中的 skill。
     ///
-    /// `None` 表示没有启用中的 skill。告警照旧一并返回，调用方仍然要记录它们。
-    /// `load()` 必须改成调用这里再包一层，见 `user_project.rs::load_body`。
+    /// 告警一并返回，调用方负责记录——它们不进模型上下文。
     pub(crate) fn load_body(&self) -> (Option<String>, Vec<SkillWarning>) {
         let mut discovery = discover_skills(&self.skill_roots);
         apply_disabled_names(&mut discovery, &self.disabled_names);
         render_skill_catalog_body(discovery)
-    }
-
-    #[cfg(test)]
-    fn load(&self) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
-        let (body, warnings) = self.load_body();
-        (body.map(skill_catalog_part), warnings)
     }
 }
 
@@ -71,14 +57,6 @@ fn apply_disabled_names(discovery: &mut SkillDiscovery, disabled_names: &BTreeSe
     for skill in &mut discovery.skills {
         skill.disabled = disabled_names.contains(&skill.name);
     }
-}
-
-#[cfg(test)]
-fn render_skill_catalog(
-    discovery: SkillDiscovery,
-) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
-    let (body, warnings) = render_skill_catalog_body(discovery);
-    (body.map(skill_catalog_part), warnings)
 }
 
 fn render_skill_catalog_body(discovery: SkillDiscovery) -> (Option<String>, Vec<SkillWarning>) {
@@ -133,11 +111,6 @@ fn render_skill_catalog_body(discovery: SkillDiscovery) -> (Option<String>, Vec<
 }
 
 #[cfg(test)]
-fn skill_catalog_part(body: String) -> SystemContextPart {
-    SystemContextPart::new(SKILL_CATALOG_KEY, vec![ContentBlock::text(body)])
-}
-
-#[cfg(test)]
 mod tests {
     use std::fs;
 
@@ -161,18 +134,15 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let (first_part, first_warnings) = render_skill_catalog(discovery.clone());
-        let (second_part, second_warnings) = render_skill_catalog(discovery);
+        let (first_body, first_warnings) = render_skill_catalog_body(discovery.clone());
+        let (second_body, second_warnings) = render_skill_catalog_body(discovery);
 
-        assert_eq!(first_part, second_part);
+        assert_eq!(first_body, second_body);
         assert_eq!(first_warnings, second_warnings);
-        let part = first_part.expect("bounded catalog");
-        let ContentBlock::Text(text) = &part.content[0] else {
-            panic!("catalog must be text")
-        };
-        assert!(text.text.chars().count() <= 8000);
-        assert!(text.text.contains("- skill-6:"));
-        assert!(!text.text.contains("- skill-7:"));
+        let text = first_body.expect("bounded catalog");
+        assert!(text.chars().count() <= 8000);
+        assert!(text.contains("- skill-6:"));
+        assert!(!text.contains("- skill-7:"));
         assert_eq!(first_warnings.len(), 1);
         assert_eq!(first_warnings[0].path, "/tmp/skill-7/SKILL.md");
         assert!(first_warnings[0].reason.contains("8000"));
@@ -200,18 +170,15 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let (part, warnings) = render_skill_catalog(discovery);
+        let (body, warnings) = render_skill_catalog_body(discovery);
 
         assert!(warnings.is_empty());
-        let part = part.expect("catalog");
-        let ContentBlock::Text(text) = &part.content[0] else {
-            panic!("catalog must be text")
-        };
-        assert!(text.text.contains("- commit: Agents commit."));
-        assert!(text.text.contains("- review: Review changes."));
+        let text = body.expect("catalog");
+        assert!(text.contains("- commit: Agents commit."));
+        assert!(text.contains("- review: Review changes."));
         assert!(
-            text.text.find("- commit:").expect("commit row")
-                < text.text.find("- review:").expect("review row")
+            text.find("- commit:").expect("commit row")
+                < text.find("- review:").expect("review row")
         );
     }
 
@@ -236,16 +203,13 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let (part, warnings) = render_skill_catalog(discovery.clone());
+        let (part, warnings) = render_skill_catalog_body(discovery.clone());
 
         assert!(warnings.is_empty());
         assert_eq!(discovery.skills[0], disabled);
-        let part = part.expect("enabled skill catalog");
-        let ContentBlock::Text(text) = &part.content[0] else {
-            panic!("catalog must be text")
-        };
-        assert!(!text.text.contains("- commit:"));
-        assert!(text.text.contains("- review:"));
+        let text = part.expect("enabled skill catalog");
+        assert!(!text.contains("- commit:"));
+        assert!(text.contains("- review:"));
     }
 
     #[test]
@@ -277,7 +241,7 @@ mod tests {
             agents: Some(agents_root),
         };
         let listing = list_skills(&roots, &BTreeSet::new());
-        let (_, turn_warnings) = SkillCatalogLoader::new(roots).load();
+        let (_, turn_warnings) = SkillCatalogLoader::new(roots).load_body();
 
         assert_eq!(listing.warnings, turn_warnings);
         assert_eq!(listing.skills.len(), 8);

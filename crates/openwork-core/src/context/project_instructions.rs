@@ -3,14 +3,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-#[cfg(test)]
-use super::SystemContextPart;
-#[cfg(test)]
-use openwork_models::model::ContentBlock;
-
 const PROJECT_INSTRUCTION_FILE: &str = "AGENTS.md";
-#[cfg(test)]
-const PROJECT_INSTRUCTION_KEY: &str = "project/AGENTS.md";
 const MAX_PROJECT_INSTRUCTION_BYTES: u64 = 64 * 1024;
 
 /// Loads the project instructions scoped to one Session working directory.
@@ -27,13 +20,11 @@ impl ProjectInstructionLoader {
         }
     }
 
-    /// `AGENTS.md` 正文本身，不带 `SystemContextPart` 外壳。
+    /// `AGENTS.md` 正文。`None` 表示文件不存在或内容为空。
     ///
-    /// `None` 表示文件不存在或内容为空。`load()` 必须改成调用这里再包一层，见
-    /// `user_project.rs::load_body` 的同款说明。
-    ///
-    /// 注意这里给的是**裸文件内容**：`<project_instructions>` 标记由
-    /// `world_state/agents_md.rs` 加，不在这一层。
+    /// 给的是**裸文件内容**：`<project_instructions>` 标记由
+    /// `world_state/agents_md.rs` 在渲染时加，不在这一层。两层混了的话，比较用
+    /// 带标记的、基线存裸的，每次都会判成"变了"。
     pub(crate) async fn load_body(&self) -> Result<Option<String>, ProjectInstructionError> {
         let root = tokio::fs::canonicalize(&self.working_directory)
             .await
@@ -89,13 +80,6 @@ impl ProjectInstructionLoader {
     }
 
     #[cfg(test)]
-    async fn load(&self) -> Result<Option<SystemContextPart>, ProjectInstructionError> {
-        Ok(self.load_body().await?.map(|content| {
-            SystemContextPart::new(PROJECT_INSTRUCTION_KEY, vec![ContentBlock::text(content)])
-        }))
-    }
-
-    #[cfg(test)]
     fn with_max_bytes(mut self, max_bytes: u64) -> Self {
         self.max_bytes = max_bytes;
         self
@@ -141,7 +125,6 @@ pub(crate) enum ProjectInstructionError {
 mod tests {
     use std::fs;
 
-    use openwork_models::model::ContentBlock;
     use uuid::Uuid;
 
     use super::*;
@@ -175,12 +158,12 @@ mod tests {
     async fn missing_file_produces_no_context() {
         let workspace = TestWorkspace::new();
 
-        let part = ProjectInstructionLoader::new(&workspace.root)
-            .load()
+        let body = ProjectInstructionLoader::new(&workspace.root)
+            .load_body()
             .await
             .expect("context");
 
-        assert!(part.is_none());
+        assert!(body.is_none());
     }
 
     #[tokio::test]
@@ -188,14 +171,13 @@ mod tests {
         let workspace = TestWorkspace::new();
         workspace.write("root project rule\n");
 
-        let part = ProjectInstructionLoader::new(&workspace.root)
-            .load()
+        let body = ProjectInstructionLoader::new(&workspace.root)
+            .load_body()
             .await
             .expect("context")
-            .expect("project instruction part");
+            .expect("project instruction body");
 
-        assert_eq!(part.key, PROJECT_INSTRUCTION_KEY);
-        assert_eq!(part.content, [ContentBlock::text("root project rule\n")]);
+        assert_eq!(body, "root project rule\n");
     }
 
     #[tokio::test]
@@ -203,12 +185,12 @@ mod tests {
         let workspace = TestWorkspace::new();
         workspace.write(" \n\t");
 
-        let part = ProjectInstructionLoader::new(&workspace.root)
-            .load()
+        let body = ProjectInstructionLoader::new(&workspace.root)
+            .load_body()
             .await
             .expect("context");
 
-        assert!(part.is_none());
+        assert!(body.is_none());
     }
 
     #[tokio::test]
@@ -217,7 +199,7 @@ mod tests {
         workspace.write("too long");
         let oversized = ProjectInstructionLoader::new(&workspace.root)
             .with_max_bytes(3)
-            .load()
+            .load_body()
             .await;
         assert!(matches!(
             oversized,
@@ -225,7 +207,9 @@ mod tests {
         ));
 
         workspace.write([0xff, 0xfe]);
-        let non_utf8 = ProjectInstructionLoader::new(&workspace.root).load().await;
+        let non_utf8 = ProjectInstructionLoader::new(&workspace.root)
+            .load_body()
+            .await;
         assert!(matches!(non_utf8, Err(ProjectInstructionError::NonUtf8(_))));
     }
 
@@ -242,7 +226,9 @@ mod tests {
         fs::write(&outside, "outside rule").expect("outside");
         symlink(&outside, workspace.root.join(PROJECT_INSTRUCTION_FILE)).expect("symlink");
 
-        let result = ProjectInstructionLoader::new(&workspace.root).load().await;
+        let result = ProjectInstructionLoader::new(&workspace.root)
+            .load_body()
+            .await;
 
         assert!(matches!(result, Err(ProjectInstructionError::Symlink(_))));
         let _ = fs::remove_file(outside);
