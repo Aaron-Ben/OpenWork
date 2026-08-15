@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 
-use openwork_models::model::ContentBlock;
-
 use crate::skills::{SkillDiscovery, SkillRoots, SkillWarning, discover_skills};
 
+#[cfg(test)]
 use super::SystemContextPart;
+#[cfg(test)]
+use openwork_models::model::ContentBlock;
 
+#[cfg(test)]
 const SKILL_CATALOG_KEY: &str = "skills/catalog";
 const MAX_CATALOG_CHARS: usize = 8000;
 const CATALOG_HEADER: &str = "<available_skills>\n\
@@ -45,7 +47,8 @@ impl SkillCatalogLoader {
         render_skill_catalog_body(discovery)
     }
 
-    pub(crate) fn load(&self) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
+    #[cfg(test)]
+    fn load(&self) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
         let (body, warnings) = self.load_body();
         (body.map(skill_catalog_part), warnings)
     }
@@ -57,7 +60,7 @@ pub(crate) fn list_skills(
 ) -> SkillDiscovery {
     let mut discovery = discover_skills(skill_roots);
     apply_disabled_names(&mut discovery, disabled_names);
-    let (_, warnings) = render_skill_catalog(discovery.clone());
+    let (_, warnings) = render_skill_catalog_body(discovery.clone());
     SkillDiscovery {
         skills: discovery.skills,
         warnings,
@@ -70,7 +73,8 @@ fn apply_disabled_names(discovery: &mut SkillDiscovery, disabled_names: &BTreeSe
     }
 }
 
-pub(crate) fn render_skill_catalog(
+#[cfg(test)]
+fn render_skill_catalog(
     discovery: SkillDiscovery,
 ) -> (Option<SystemContextPart>, Vec<SkillWarning>) {
     let (body, warnings) = render_skill_catalog_body(discovery);
@@ -128,6 +132,7 @@ fn render_skill_catalog_body(discovery: SkillDiscovery) -> (Option<String>, Vec<
     (Some(catalog), warnings)
 }
 
+#[cfg(test)]
 fn skill_catalog_part(body: String) -> SystemContextPart {
     SystemContextPart::new(SKILL_CATALOG_KEY, vec![ContentBlock::text(body)])
 }

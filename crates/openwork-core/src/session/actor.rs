@@ -9,11 +9,12 @@ use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
 use openwork_models::model::{ModelCapabilities, ModelPort};
 use openwork_tools::{ApprovalSessionAction, PermissionMode};
-use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::context::{
-    BoundedItem, ModelContextLimits, check_item_tokens, estimate_serialized_tokens,
+    BoundedItem, ModelContextLimits, WorldStateBaseline, check_item_tokens,
+    estimate_serialized_tokens,
 };
 use crate::skills::SkillRoots;
 use crate::{AgentControl, AgentControlError, TurnSlot};
@@ -386,6 +387,7 @@ struct SessionActor {
     tools: Arc<TurnToolset>,
     storage: Arc<dyn SessionStorage>,
     compaction_state: Arc<CompactionStateCollector>,
+    world_state_baseline: Arc<Mutex<WorldStateBaseline>>,
     reload_required: Arc<AtomicBool>,
     trace: Arc<dyn TraceRecorder>,
     approval: SessionApproval,
@@ -436,6 +438,7 @@ impl SessionActor {
             tools: config.tools,
             storage: config.storage,
             compaction_state: config.compaction_state,
+            world_state_baseline: Arc::new(Mutex::new(WorldStateBaseline::default())),
             reload_required,
             trace: config.trace,
             approval: config.approval,
@@ -637,6 +640,7 @@ impl SessionActor {
             tools: Arc::clone(&self.tools),
             storage: Arc::clone(&self.storage),
             compaction_state: Arc::clone(&self.compaction_state),
+            world_state_baseline: Arc::clone(&self.world_state_baseline),
             reload_required: Arc::clone(&self.reload_required),
             trace: Arc::clone(&self.trace),
             cancel,

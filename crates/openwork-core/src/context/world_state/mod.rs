@@ -16,8 +16,6 @@ mod project_context;
 mod skills_catalog;
 
 pub(crate) use agents_md::AgentsMdState;
-// 二 C-2 接线前无人调用。这条 allow 与 context/mod.rs 上的 dead_code 同期删除。
-#[allow(unused_imports)]
 pub(crate) use capture::{WorldStateCapture, WorldStateCaptureError};
 pub(crate) use project_context::ProjectContextState;
 pub(crate) use skills_catalog::SkillsCatalogState;
@@ -31,6 +29,7 @@ pub(crate) enum PreviousSectionState<'a, S> {
     ///
     /// 这不是降级路径而是一等状态：section 必须按“模型可能还记得旧值”处理，
     /// 也就是带替换声明重发，而不是当作首次出现。
+    #[cfg(test)]
     Unknown,
     Known(&'a S),
 }
@@ -105,6 +104,7 @@ pub(crate) struct WorldStateBaseline {
 pub(crate) enum SectionBaseline<S> {
     #[default]
     Absent,
+    #[cfg(test)]
     Unknown,
     Known(S),
 }
@@ -113,6 +113,7 @@ impl<S> SectionBaseline<S> {
     fn as_previous(&self) -> PreviousSectionState<'_, S> {
         match self {
             Self::Absent => PreviousSectionState::Absent,
+            #[cfg(test)]
             Self::Unknown => PreviousSectionState::Unknown,
             Self::Known(snapshot) => PreviousSectionState::Known(snapshot),
         }
@@ -121,6 +122,7 @@ impl<S> SectionBaseline<S> {
 
 impl WorldStateBaseline {
     /// 恢复会话后的基线：见过但记不得，三个 section 都要带声明重发（§9.4）。
+    #[cfg(test)]
     pub(crate) fn unknown() -> Self {
         Self {
             project_context: SectionBaseline::Unknown,
@@ -155,6 +157,7 @@ impl WorldStateBaseline {
 
     /// 把某个 section 的基线打回 `Absent`，用于压缩/rewind 删掉了它的消息之后
     /// 强制重发（§9.3）。
+    #[cfg(test)]
     pub(crate) fn forget(&mut self, section_id: &str) {
         match section_id {
             ProjectContextState::ID => self.project_context = SectionBaseline::Absent,

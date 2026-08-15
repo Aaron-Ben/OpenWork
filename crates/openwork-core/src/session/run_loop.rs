@@ -18,7 +18,7 @@ use openwork_tools::{
     ToolValidationError,
 };
 use time::OffsetDateTime;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -29,7 +29,8 @@ use crate::agent::{
 };
 use crate::context::{
     ContextEngine, ModelContextLimits, PrepareContextInput, PreparedModelCall,
-    ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder,
+    ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder, WorldStateBaseline,
+    WorldStateCapture,
 };
 use crate::plan::{
     TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
@@ -66,6 +67,7 @@ pub(super) struct TurnRunRequest {
     pub tools: Arc<TurnToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
+    pub world_state_baseline: Arc<Mutex<WorldStateBaseline>>,
     pub reload_required: Arc<AtomicBool>,
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
@@ -225,6 +227,11 @@ impl TurnRunner {
         let context_engine = ContextEngine::new(ModelContextLimits::from_capabilities(
             self.request.resolved_model.capabilities,
         ));
+        let world_state_capture = WorldStateCapture::new(
+            &self.request.working_directory,
+            self.request.skill_roots.clone(),
+        )
+        .with_disabled_skills(self.request.disabled_skill_names.clone());
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
             self.drain_agent_messages().await?;
@@ -232,6 +239,8 @@ impl TurnRunner {
                 phase: SessionPhase::RunningModel,
             })
             .await?;
+            self.sample_world_state(model_call_index, &world_state_capture)
+                .await?;
 
             let mut prepared = self
                 .prepare_model_call(&context_engine, &system_context)
@@ -331,6 +340,51 @@ impl TurnRunner {
         Err(TurnRunError::MaxModelCalls(
             self.request.agent.policy().max_model_calls,
         ))
+    }
+
+    async fn sample_world_state(
+        &self,
+        model_call_index: u32,
+        capture: &WorldStateCapture,
+    ) -> Result<(), TurnRunError> {
+        let world = capture
+            .capture()
+            .await
+            .map_err(SystemContextBuildError::from)?;
+        let fragments = {
+            let baseline = self.request.world_state_baseline.lock().await;
+            world.render_diff(&baseline)
+        };
+
+        for fragment in &fragments {
+            let message = Message {
+                role: Role::User,
+                content: fragment.content.clone(),
+            };
+            let message_id = format!(
+                "world-state:{}:{model_call_index}:{}",
+                self.request.turn_id, fragment.section_id
+            );
+            let inserted = self
+                .request
+                .storage
+                .append_world_state_fragment(&self.request.turn_id, &message_id, &message)
+                .await
+                .map_err(TurnRunError::Persistence)?;
+            if inserted {
+                self.request
+                    .chat
+                    .append_user_with_kind(message.content, MessageKind::WorldState)
+                    .await?;
+            }
+        }
+
+        self.request
+            .world_state_baseline
+            .lock()
+            .await
+            .advance(&world, &fragments);
+        Ok(())
     }
 
     async fn drain_agent_messages(&self) -> Result<(), TurnRunError> {

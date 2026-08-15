@@ -12,9 +12,6 @@ mod project_instructions;
 mod projection;
 mod skill_catalog;
 mod user_project;
-// 阶段二 A 只落地纯逻辑，接线在二 C。二 C 必须删掉这条 allow——留着它等于允许
-// 一个永远没人调用的 world state 长期存在。
-#[allow(dead_code)]
 mod world_state;
 
 pub(crate) use budget::{
@@ -30,11 +27,9 @@ pub use inspection::{
 pub(crate) use item_limits::{BoundedItem, check_item_tokens};
 pub(crate) use limits::{AUTO_COMPACT_THRESHOLD_PERCENT, ModelContextLimits};
 pub(crate) use normalize::{NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request};
-use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 pub(crate) use projection::{ProjectionSummary, project_items};
-use skill_catalog::SkillCatalogLoader;
 pub(crate) use skill_catalog::list_skills;
-use user_project::{UserProjectContextError, UserProjectContextLoader};
+pub(crate) use world_state::{WorldStateBaseline, WorldStateCapture};
 
 /// One independently assembled system-context contribution.
 #[derive(Debug, Clone, PartialEq, Serialize)]

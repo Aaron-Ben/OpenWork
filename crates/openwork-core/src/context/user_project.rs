@@ -2,11 +2,14 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use openwork_models::model::ContentBlock;
 use thiserror::Error;
 
+#[cfg(test)]
 use super::SystemContextPart;
+#[cfg(test)]
+use openwork_models::model::ContentBlock;
 
+#[cfg(test)]
 const USER_PROJECT_CONTEXT_KEY: &str = "runtime/user-project-context";
 const MAX_LAYOUT_ENTRIES: usize = 64;
 const MAX_CONTEXT_CHARS: usize = 16 * 1024;
@@ -69,7 +72,8 @@ impl UserProjectContextLoader {
         Ok(text)
     }
 
-    pub(crate) async fn load(&self) -> Result<SystemContextPart, UserProjectContextError> {
+    #[cfg(test)]
+    async fn load(&self) -> Result<SystemContextPart, UserProjectContextError> {
         let text = self.load_body().await?;
         Ok(SystemContextPart::new(
             USER_PROJECT_CONTEXT_KEY,

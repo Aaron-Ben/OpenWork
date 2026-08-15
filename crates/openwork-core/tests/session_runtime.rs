@@ -1187,17 +1187,83 @@ async fn start_with_request(fixture: &RuntimeFixture, client_request_id: &str) -
         .turn_id
 }
 
-fn project_instruction_text(request: &ModelRequest) -> Option<&str> {
+/// 请求副本里全部 User 消息的文本。
+fn user_message_texts(request: &ModelRequest) -> Vec<String> {
     request
         .messages
         .iter()
-        .filter(|message| message.role == Role::System)
-        .next_back()
-        .and_then(|message| message.content.first())
-        .and_then(|block| match block {
-            ContentBlock::Text(text) => Some(text.text.as_str()),
+        .filter(|message| message.role == Role::User)
+        .filter_map(|message| match message.content.first() {
+            Some(ContentBlock::Text(text)) => Some(text.text.clone()),
             _ => None,
         })
+        .collect()
+}
+
+/// System 前缀的字节表示，用于断言相邻 Model Call 之间逐字节一致。
+fn system_prefix_bytes(request: &ModelRequest) -> Vec<u8> {
+    let system: Vec<_> = request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .collect();
+    serde_json::to_vec(&system).expect("system prefix bytes")
+}
+
+/// 一条消息是不是 world-state fragment，靠三个 section 的正文标记识别。
+fn is_world_state_message(message: &Message) -> bool {
+    message.role == Role::User
+        && matches!(
+            message.content.first(),
+            Some(ContentBlock::Text(text))
+                if text.text.contains("<user_project_context")
+                    || text.text.contains("<project_instructions>")
+                    || text.text.contains("<available_skills>")
+                    || text.text.contains("不再适用。")
+        )
+}
+
+/// 请求里的 role 序列，**跳过 world-state 消息**。
+///
+/// world-state 是独立机制，有自己的测试。让每个无关测试都去数它的条数，等于
+/// 把三个 section 的变化耦合进整个测试套件——工作区多一个顶层目录就要改一堆
+/// 断言，那些断言也就不再说明它们本来要说明的事。
+fn roles_ignoring_world_state(request: &ModelRequest) -> Vec<Role> {
+    request
+        .messages
+        .iter()
+        .filter(|message| !is_world_state_message(message))
+        .map(|message| message.role)
+        .collect()
+}
+
+/// 存储事件序列，**跳过 world_state 写入**。理由同上。
+///
+/// world-state 的落库顺序（必须在 model_N 之前）由专门的测试断言，不摊派给
+/// 每一条生命周期测试。
+fn events_ignoring_world_state(fixture: &RuntimeFixture) -> Vec<String> {
+    fixture
+        .storage
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event.as_str() != "world_state")
+        .cloned()
+        .collect()
+}
+
+/// 请求里 world-state 消息的条数，靠三个 section 的正文标记识别。
+fn world_state_message_count(request: &ModelRequest) -> usize {
+    user_message_texts(request)
+        .iter()
+        .filter(|text| {
+            text.contains("<user_project_context")
+                || text.contains("<project_instructions>")
+                || text.contains("<available_skills>")
+                || text.contains("不再适用。")
+        })
+        .count()
 }
 
 async fn wait_for_terminal(
@@ -1263,12 +1329,8 @@ async fn no_tool_turn_completes_after_one_model_call() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].model, "test-model");
     assert_eq!(
-        requests[0]
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        [Role::System, Role::System, Role::User]
+        roles_ignoring_world_state(&requests[0]),
+        [Role::System, Role::User]
     );
     assert_eq!(requests[0].temperature, None);
     assert_eq!(requests[0].max_output_tokens, Some(32_768));
@@ -1277,7 +1339,7 @@ async fn no_tool_turn_completes_after_one_model_call() {
     drop(requests);
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
     assert_eq!(
-        *fixture.storage.events.lock().unwrap(),
+        events_ignoring_world_state(&fixture),
         ["begin_turn", "model_1", "assistant", "finish_turn"]
     );
     let signals = fixture.trace.signals.lock().unwrap();
@@ -1299,8 +1361,140 @@ async fn no_tool_turn_completes_after_one_model_call() {
     assert!(finished.response_payload.is_none());
 }
 
+/// System 前缀只有一段，三个 section 以 User 消息进入 Conversation（§8.0、§16.2）。
+///
+/// 前缀里再没有会变的东西，所以它在整个 Session 内逐字节不变；三段内容改用正文
+/// 标记而不是 role 表明来源。
 #[tokio::test]
-async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
+async fn world_state_reaches_the_model_as_user_messages_not_system_parts() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("永远先跑测试");
+    let skill_root = workspace.path().join("skills");
+    fs::create_dir_all(&skill_root).expect("skill root");
+    workspace.write_skill(&skill_root, "commit", "Create a commit.");
+    let mut fixture = runtime_in_workspace_with_skill_roots(
+        vec![response("done", Vec::new())],
+        PermissionMode::AcceptEdits,
+        workspace,
+        SkillRoots {
+            agents: Some(skill_root),
+        },
+    );
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let system: Vec<_> = requests[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .collect();
+    assert_eq!(system.len(), 1, "System 前缀只应有 core/agent-system 一段");
+
+    let user_text = user_message_texts(&requests[0]);
+    assert!(
+        user_text
+            .iter()
+            .any(|text| text.contains("<user_project_context")),
+        "项目上下文应作为 User 消息出现"
+    );
+    assert!(
+        user_text
+            .iter()
+            .any(|text| text.contains("<project_instructions>") && text.contains("永远先跑测试")),
+        "AGENTS.md 应带标记作为 User 消息出现"
+    );
+    assert!(
+        user_text
+            .iter()
+            .any(|text| text.contains("<available_skills>")),
+        "skill 清单应作为 User 消息出现"
+    );
+}
+
+/// 没有变化时，第二次 Model Call 不新增任何 world-state 消息，前缀逐字节相同。
+///
+/// 这是整个改造的收益本身。任何一处不确定性都会让它失败。
+#[tokio::test]
+async fn an_unchanged_world_adds_nothing_to_the_next_model_call() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("规范");
+    let mut fixture = runtime_in_workspace(
+        vec![
+            response(
+                "",
+                vec![tool_call("call-1", "read", r#"{"path":"AGENTS.md"}"#)],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        workspace,
+    );
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    // §8.3 的顺序：fragment 必须在调用 Provider 之前落库。反过来做的话，落库
+    // 失败时基线已经推进，那次更新永久丢失且不报错。
+    let events = fixture.storage.events.lock().unwrap().clone();
+    let first_world_state = events
+        .iter()
+        .position(|event| event == "world_state")
+        .expect("首次 Model Call 之前应有 world-state 落库");
+    let first_model_call = events
+        .iter()
+        .position(|event| event == "model_1")
+        .expect("model_1");
+    assert!(
+        first_world_state < first_model_call,
+        "world-state 必须先落库再调用 Provider：{events:?}"
+    );
+
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        system_prefix_bytes(&requests[0]),
+        system_prefix_bytes(&requests[1]),
+        "相邻 Model Call 的 System 前缀必须逐字节一致"
+    );
+    // 本 fixture 没有配置任何 skill，因此 skills_catalog 是缺失的。按 §8.2，
+    // "一直不存在"既不渲染也不发消息——所以正确数量是 2 而不是 3。
+    //
+    // 先确认第一次确实发了消息，否则下面的相等断言在"一条都没有"时也成立，
+    // 会变成一条永远为真的假绿。
+    assert_eq!(
+        world_state_message_count(&requests[0]),
+        2,
+        "首次 Model Call 应发出项目上下文与 AGENTS.md 两个 section"
+    );
+    assert!(
+        !user_message_texts(&requests[0])
+            .iter()
+            .any(|text| text.contains("<available_skills>")),
+        "没有 skill 时不该为一个不存在的 section 发消息"
+    );
+    assert_eq!(
+        world_state_message_count(&requests[0]),
+        world_state_message_count(&requests[1]),
+        "没有变化就不该再追加 world-state 消息"
+    );
+}
+
+/// AGENTS.md 在 Turn 中途被改，同一个 Turn 的下一次 Model Call 就能看到（§8.3）。
+///
+/// 采样按 Model Call 而不是按 Turn，所以模型能看见自己动作的后果。重发带取代
+/// 声明，否则历史里会同时躺着两份互相矛盾的项目规范。
+#[tokio::test]
+async fn an_agents_md_edit_is_seen_by_the_next_model_call_in_the_same_turn() {
     let workspace = TestWorkspace::new();
     workspace.write_instructions("instruction-v1");
     let mut fixture = runtime_in_workspace(
@@ -1313,8 +1507,7 @@ async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
                     r#"{"replaceProjectInstruction":"instruction-v2"}"#,
                 )],
             ),
-            response("first turn done", Vec::new()),
-            response("second turn done", Vec::new()),
+            response("done", Vec::new()),
         ],
         Vec::new(),
         PermissionMode::AcceptEdits,
@@ -1322,42 +1515,21 @@ async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
         workspace,
     );
 
-    start_with_request(&fixture, "project-instructions-turn-1").await;
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-    start_with_request(&fixture, "project-instructions-turn-2").await;
+    start(&fixture).await;
     assert!(matches!(
         wait_for_terminal(&mut fixture.updates).await,
         TurnOutcome::Completed { .. }
     ));
 
-    {
-        let requests = fixture.model.requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
-        assert_eq!(
-            project_instruction_text(&requests[0]),
-            Some("instruction-v1")
-        );
-        assert_eq!(
-            project_instruction_text(&requests[1]),
-            Some("instruction-v1")
-        );
-        assert_eq!(
-            project_instruction_text(&requests[2]),
-            Some("instruction-v2")
-        );
-    }
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let second = user_message_texts(&requests[1]);
     assert!(
-        fixture
-            .chat
-            .snapshot()
-            .await
-            .expect("chat snapshot")
-            .messages
-            .iter()
-            .all(|message| message.role != Role::System)
+        second.iter().any(|text| {
+            text.contains("以下 AGENTS.md 指令取代先前提供的全部 AGENTS.md 指令。")
+                && text.contains("instruction-v2")
+        }),
+        "同一 Turn 内的下一次 Model Call 应带取代声明重发新的 AGENTS.md"
     );
 }
 
@@ -1398,9 +1570,12 @@ async fn invalid_project_instructions_fail_before_model_and_leave_no_draft() {
     ));
     let requests = fixture.model.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
-    assert_eq!(
-        project_instruction_text(&requests[0]),
-        Some("valid instruction")
+    // 修好之后，规范以带标记的 User 消息重新进入 Conversation，而不再是 System 前缀。
+    assert!(
+        user_message_texts(&requests[0])
+            .iter()
+            .any(|text| text.contains("<project_instructions>")
+                && text.contains("valid instruction"))
     );
 }
 
@@ -1432,7 +1607,7 @@ async fn tool_result_is_in_the_next_model_request() {
             .any(|message| message.role == Role::Tool)
     );
     assert_eq!(
-        *fixture.storage.events.lock().unwrap(),
+        events_ignoring_world_state(&fixture),
         [
             "begin_turn",
             "model_1",
@@ -1494,7 +1669,7 @@ async fn agent_message_is_persisted_after_tool_results_and_seen_by_the_same_turn
         )]
     );
     assert_eq!(
-        *fixture.storage.events.lock().unwrap(),
+        events_ignoring_world_state(&fixture),
         [
             "begin_turn",
             "model_1",
@@ -2545,7 +2720,9 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         .await
         .expect("compaction");
 
-    assert_eq!(compaction.source_message_count, 2);
+    // 首次 Model Call 之前追加了项目上下文，因此压缩源是
+    // world-state + user + assistant = 3。
+    assert_eq!(compaction.source_message_count, 3);
     assert_eq!(compaction.summary, compaction_summary());
     {
         let signals = fixture.trace.signals.lock().unwrap();
@@ -2561,7 +2738,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         assert_eq!(compact_trace.status, TraceStatus::Succeeded);
         assert_eq!(compact_trace.attempt_count, Some(1));
         assert_eq!(compact_trace.attributes.trigger, "manual");
-        assert_eq!(compact_trace.attributes.source_message_count, Some(2));
+        assert_eq!(compact_trace.attributes.source_message_count, Some(3));
         assert!(compact_trace.attributes.prepare_ms.is_some());
         assert_eq!(
             compact_trace.attributes.summary_max_output_tokens,
@@ -2672,18 +2849,8 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         let requests = fixture.model.requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_eq!(
-            requests[1]
-                .messages
-                .iter()
-                .map(|message| message.role)
-                .collect::<Vec<_>>(),
-            [
-                Role::System,
-                Role::System,
-                Role::User,
-                Role::Assistant,
-                Role::User
-            ]
+            roles_ignoring_world_state(&requests[1]),
+            [Role::System, Role::User, Role::Assistant, Role::User]
         );
         assert!(requests[1].tools.is_empty());
         assert_eq!(requests[1].max_output_tokens, Some(16_384));
@@ -2705,24 +2872,17 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
     wait_for_terminal(&mut fixture.updates).await;
     let requests = fixture.model.requests.lock().unwrap();
     assert_eq!(
-        requests[2]
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        [
-            Role::System,
-            Role::System,
-            Role::User,
-            Role::User,
-            Role::User,
-            Role::User
-        ]
+        roles_ignoring_world_state(&requests[2]),
+        [Role::System, Role::User, Role::User, Role::User, Role::User]
     );
-    let ContentBlock::Text(projected_summary) = &requests[2].messages[3].content[0] else {
-        panic!("expected projected summary")
-    };
-    assert!(projected_summary.text.contains(compaction_summary()));
+    // 按标记查找而不是按下标：world-state 消息会改变位置，绑定下标的断言每次
+    // 上下文结构调整都要跟着改，而且改错了也不会有人发现。
+    assert!(
+        user_message_texts(&requests[2])
+            .iter()
+            .any(|text| text.contains(compaction_summary())),
+        "压缩摘要应出现在投影里"
+    );
 }
 
 #[tokio::test]
@@ -2756,7 +2916,7 @@ async fn manual_compaction_rematerializes_the_same_explicit_user_skill_catalog()
         request
             .messages
             .iter()
-            .filter(|message| message.role == Role::System)
+            .filter(|message| message.role == Role::User)
             .find_map(|message| match message.content.first() {
                 Some(ContentBlock::Text(text)) if text.text.contains("<available_skills>") => {
                     Some(text.text.clone())
@@ -2891,18 +3051,8 @@ async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
     assert!(requests[1].tools.is_empty());
     assert!(!requests[2].tools.is_empty());
     assert_eq!(
-        requests[2]
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        [
-            Role::System,
-            Role::System,
-            Role::User,
-            Role::User,
-            Role::User
-        ]
+        roles_ignoring_world_state(&requests[2]),
+        [Role::System, Role::User, Role::User, Role::User]
     );
 }
 

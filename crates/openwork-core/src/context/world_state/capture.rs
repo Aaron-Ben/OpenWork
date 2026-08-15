@@ -82,14 +82,22 @@ pub(crate) enum WorldStateCaptureError {
     SkillCatalogTask(#[source] tokio::task::JoinError),
 }
 
+impl WorldStateCaptureError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::UserProjectContext(_) => "user_project_context_error",
+            Self::ProjectInstruction(_) => "project_instruction_error",
+            Self::SkillCatalogTask(_) => "skill_catalog_task_error",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
 
-    use openwork_models::model::ContentBlock;
     use uuid::Uuid;
 
-    use super::super::super::SystemContextBuilder;
     use super::*;
 
     struct TestWorkspace {
@@ -123,15 +131,6 @@ mod tests {
                 },
             )
         }
-
-        fn builder(&self) -> SystemContextBuilder {
-            SystemContextBuilder::new(
-                &self.root,
-                SkillRoots {
-                    agents: Some(self.agents.clone()),
-                },
-            )
-        }
     }
 
     impl Drop for TestWorkspace {
@@ -140,25 +139,18 @@ mod tests {
         }
     }
 
-    fn part_text(context: &crate::context::ResolvedSystemContext, key: &str) -> Option<String> {
-        context
-            .parts()
-            .iter()
-            .find(|part| part.key == key)
-            .map(|part| match part.content.as_slice() {
-                [ContentBlock::Text(block)] => block.text.clone(),
-                other => panic!("part {key} must be one text block, got {other:?}"),
-            })
-    }
-
-    /// **本步最重要的一条。** capture 的三段正文必须与当前 System 前缀里那三个
-    /// part 的内容逐字节相同。
+    /// 三段正文各自的形态。
     ///
-    /// 有它锁住，二 C-2 的搬家就只改变位置和 role，不改变模型看到的内容。没有它，
-    /// 搬完之后如果模型行为变了，分不清是"位置变了"还是"内容变了"——而这两者的
-    /// 排查成本差一个数量级。
+    /// 原先这里比对的是 `SystemContextBuilder` 的输出，用来锁住"二 C-2 的搬家只
+    /// 改变位置和 role、不改变内容"。搬完之后前缀里已经没有这三段可比，那条过渡
+    /// 守卫的使命结束；改为直接锁住各自的形态。端到端的内容验证在
+    /// `tests/session_runtime.rs` 的接线测试里。
+    ///
+    /// `agents_md` 给的是**裸文件内容**：`<project_instructions>` 标记由
+    /// `agents_md.rs` 在渲染时加，不在捕获这一层。两层混了的话，比较用带标记的、
+    /// 基线存裸的，每次都会判成"变了"。
     #[tokio::test]
-    async fn the_captured_bodies_are_byte_identical_to_the_current_system_parts() {
+    async fn each_captured_body_has_its_own_shape() {
         let workspace = TestWorkspace::new();
         fs::write(workspace.root.join("AGENTS.md"), "永远先跑测试\n").expect("instructions");
         workspace.write_skill(
@@ -167,23 +159,26 @@ mod tests {
         );
 
         let world = workspace.capture().capture().await.expect("capture");
-        let context = workspace
-            .builder()
-            .build("agent system")
-            .await
-            .expect("system context");
 
-        assert_eq!(
-            world.project_context.body_for_test(),
-            part_text(&context, "runtime/user-project-context").expect("project context part")
+        assert!(
+            world
+                .project_context
+                .body_for_test()
+                .starts_with("<user_project_context"),
+            "项目上下文自带标记"
         );
         assert_eq!(
-            world.agents_md.body_for_test(),
-            part_text(&context, "project/AGENTS.md")
+            world.agents_md.body_for_test().as_deref(),
+            Some("永远先跑测试\n"),
+            "AGENTS.md 在这一层是裸文件内容，不带标记"
         );
-        assert_eq!(
-            world.skills_catalog.body_for_test(),
-            part_text(&context, "skills/catalog")
+        assert!(
+            world
+                .skills_catalog
+                .body_for_test()
+                .expect("catalog")
+                .starts_with("<available_skills>"),
+            "skill 清单自带标记"
         );
     }
 

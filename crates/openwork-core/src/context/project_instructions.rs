@@ -1,12 +1,15 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use openwork_models::model::ContentBlock;
 use thiserror::Error;
 
+#[cfg(test)]
 use super::SystemContextPart;
+#[cfg(test)]
+use openwork_models::model::ContentBlock;
 
 const PROJECT_INSTRUCTION_FILE: &str = "AGENTS.md";
+#[cfg(test)]
 const PROJECT_INSTRUCTION_KEY: &str = "project/AGENTS.md";
 const MAX_PROJECT_INSTRUCTION_BYTES: u64 = 64 * 1024;
 
@@ -85,7 +88,8 @@ impl ProjectInstructionLoader {
         Ok(Some(content))
     }
 
-    pub(crate) async fn load(&self) -> Result<Option<SystemContextPart>, ProjectInstructionError> {
+    #[cfg(test)]
+    async fn load(&self) -> Result<Option<SystemContextPart>, ProjectInstructionError> {
         Ok(self.load_body().await?.map(|content| {
             SystemContextPart::new(PROJECT_INSTRUCTION_KEY, vec![ContentBlock::text(content)])
         }))

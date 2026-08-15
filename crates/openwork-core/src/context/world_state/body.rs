@@ -37,6 +37,7 @@ pub(crate) fn render_body_diff(
     let may_contain = match previous {
         PreviousSectionState::Known(previous) if previous.as_deref() == current => return None,
         PreviousSectionState::Known(previous) => previous.is_some(),
+        #[cfg(test)]
         PreviousSectionState::Unknown => true,
         PreviousSectionState::Absent => false,
     };
