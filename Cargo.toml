@@ -2,6 +2,7 @@
 members = [
   "crates/openwork-agent",
   "crates/openwork-chat-state",
+  "crates/openwork-collab",
   "crates/openwork-models",
   "crates/openwork-tools",
   "crates/openwork-core",
