@@ -4,6 +4,8 @@ Tauri 2 + React + TypeScript。React 只通过 Tauri Command/Event 与 Core 通�
 
 本文描述当前已经落地的 Desktop 实现。具体协议仍以 [permissions.md](permissions.md)、[multi-agent.md](multi-agent.md)、[skills.md](skills.md) 与 [trace.md](trace.md) 为准。
 
+**本篇只描述工作台（`AppShell`）这一侧。** 协作模式是与它平级的第二个 Shell，由一个 `mode` 字段切换，见 [collaboration-desktop.md](collaboration-desktop.md)；两者只共享 UI 原语、主题与 i18n 基建，导航、状态与事件通道各自独立。
+
 ## 1. 目录与职责
 
 ```text

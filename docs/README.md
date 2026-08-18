@@ -15,6 +15,9 @@
 | [update-plan.md](update-plan.md) | Turn 级任务清单、Core 控制工具、持久化与 Desktop 投影 |
 | [skills.md](skills.md) | Skill 目录契约、`$` 精确路径选择、三层渐进披露、只读边界 |
 | [multi-agent.md](multi-agent.md) | 只读子 Agent：身份与拓扑、五个控制工具、mailbox 与信封、并发限额、非交互授权、重启对账 |
+| [collaboration.md](collaboration.md) | 协作模式：常驻对等 Agent、独立 daemon、OpenCode 引擎、MCP 动作面、权限与审批、房间与看板、triage 与发言竞争 |
+| [collaboration-desktop.md](collaboration-desktop.md) | 协作模式桌面端：两个 Shell 与 mode 切换、Rail 与三栏、事件通道、消息分页、待审批角标、复用边界 |
+| [collaboration-data-model.md](collaboration-data-model.md) | 协作模式的 13 张 `collab_*` 表：DDL、约束理由、写入顺序、不建表的东西、保留期 |
 | [permissions.md](permissions.md) | 效果模型、只读判定、`default` / `acceptEdits` 两模式、内置规则、命令解析、审批卡片、会话状态 |
 | [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
@@ -27,6 +30,7 @@
 | 文档 | 内容 |
 |---|---|
 | [references/codex-multi-agent.md](references/codex-multi-agent.md) | Codex 的多代理实现：AgentPath 身份、AgentControl 控制平面、mailbox 通信、四层资源限额、角色即配置层、V1/V2 差异 |
+| [references/cumora-byoa.md](references/cumora-byoa.md) | Cumora 的 BYOA 实现：daemon 与服务器切分、本地引擎适配、shim、triage 非对称失败、seen/HELD 发言竞争、主动性三层与常量表 |
 
 ## 事实来源
 
@@ -45,7 +49,7 @@
 1. [architecture.md](architecture.md) —— 建立词汇和边界
 2. [session-runtime.md](session-runtime.md) —— 一次请求怎么跑完
 3. [context-window.md](context-window.md) —— 模型每次看到什么
-4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [update-plan.md](update-plan.md) / [trace.md](trace.md) / [skills.md](skills.md) / [multi-agent.md](multi-agent.md)
+4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [update-plan.md](update-plan.md) / [trace.md](trace.md) / [skills.md](skills.md) / [multi-agent.md](multi-agent.md) / [collaboration.md](collaboration.md) / [collaboration-desktop.md](collaboration-desktop.md) / [collaboration-data-model.md](collaboration-data-model.md)
 
 ## 维护原则
 
