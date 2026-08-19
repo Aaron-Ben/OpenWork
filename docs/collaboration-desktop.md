@@ -195,6 +195,16 @@ OpenCode 可能重复送出逐字节相同的帧，**去重由 daemon 按活跃 
 
 **不做第二套 Trace UI。** [trace.md](trace.md) 的 Span 树与完整度派生建立在"OpenWork 组装了这次请求"之上；协作的请求由 OpenCode 自己组装，口径对不上。日志抽屉是 `collab_runs` / `collab_triages` / `collab_events` 三张平表的时间序视图。
 
+## 7A. Agent 创建表单
+
+**不让用户填 id。** 规则与理由见 `collaboration.md §3.1`；前端只需按它呈现：
+
+- 用户输入**名称**，id 由名称派生并作为只读预览显示，让用户知道队友之间会怎么称呼它；
+- 只有**派生不出**时（名称里没有可用的 ASCII 字母，中文名即属此类），才出现一个必填的英文标识输入框，并说明它是队友称呼这位同事的方式；
+- id 建成后不可改——它同时是 home 目录名与 OpenCode agent 名。表单上要说明这一点，编辑态下该字段只读。
+
+**Provider ID / Model ID 属于 OpenCode，不是 OpenWork 的 provider。** 两边都有"provider"这个词，而填错的失败发生在第一次唤醒时，不在保存时。表单上必须写明这一点，并指向 `opencode models` 的输出。
+
 ## 8. i18n、主题与时间
 
 - **三语全跟**（zh-CN / en-US / zh-TW）。现有三份合计 1047 行，协作预计再加 150~250 键 × 3。漏键会回退成 key 名显示，比多写两遍更糟。

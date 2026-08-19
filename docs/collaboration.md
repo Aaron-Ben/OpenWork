@@ -78,6 +78,19 @@ Agent 定义存 `collab_agents`，由用户在 Desktop 创建编辑。id 稳定�
 | `opencode_session_id` | 该 Agent 当前的 OpenCode session，跨重启复用 |
 | `enabled` | 停用后不参与任何唤醒 |
 
+**id 由系统从名称派生，用户不填。** 它同时是 home 目录名、OpenCode agent 名、以及模型称呼队友时用的串，格式受 `^[a-z][a-z0-9_]{0,47}$` 约束——让用户去满足一个正则，失败形态是数据库 CHECK 报错，而这个值建完基本改不了。
+
+派生规则：
+
+| 输入名称 | 派生结果 |
+|---|---|
+| `Alice` | `alice` |
+| `Code Review` | `code_review` |
+| `Alice`（已存在） | `alice_7f3a`（短随机尾，重试若干次后退化为更长的尾） |
+| `小艾` | **派生不出** |
+
+**派生不出时才向用户要一个英文标识**，而不是自动生成 `agent_7f3a` 这类无信息的串。理由：这个 id 会出现在每一次唤醒的 roster 里，也会出现在 Agent 互相称呼的文本里；一屋子 `agent_7f3a` / `agent_2b81` 会让模型每次都得回查映射，而中文名产品里这会是常态而非例外。
+
 **库表是唯一事实源。** daemon 把它渲染成 OpenCode 的 agent 定义（`prompt` + `permission` + `model` + `mode`），一次下发同时解决人格与权限，Desktop 改完下一轮生效。
 
 **定义不放在 home 里。** home 是 Agent 自己的可写空间，放进去的东西它自己就能改——人格可被静默改写且不留痕迹。同理 `opencode_session_id` 也在库里，不落 home。
@@ -264,6 +277,10 @@ seen 游标 **fail-open**：它是协调信号不是正确性不变量，丢了�
 ```
 
 `prompt_async` 的输入是一份 inbox digest（未读消息、房间近况、名册、`MEMORY.md`、triage 给出的 promptNote）。
+
+**名册随每次唤醒下发，不写进 `AGENTS.md`。** 房间成员会变，静态文件会过期。
+
+**称呼队友必须用 roster 里的 id，不用显示名**——这一条要写进 standing prompt。`@` 在本设计里不是路由原语（没有任何正则解析它），所以写错**不会报错**：消息照常发出，triage 甚至可能猜对。代价出在长期——房间历史里混着 `@小艾` / `@Alice` / `@alice` 三种写法，triage 每次都要花 token 消歧，而猜错时的表现是"我明明叫了它，它没理我"，且查不出原因。显示名可以是中文，这让写错几乎必然发生。
 
 **忙时语义已实测（1.18.18）：被运行中的循环接住。** 向忙碌 session 发 `prompt_async` 返回 204，第二条内容立刻写成同 session 的新 user message；它不会挤进已经在进行中的那一次工具调用，而是由**同一个尚未 idle 的 runner 的下一次 loop step** 处理。两轮之间没有 idle、没有排队边界、没有 HTTP 错误。
 
