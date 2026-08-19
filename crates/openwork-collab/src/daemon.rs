@@ -19,11 +19,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     activity::AgentRuntimeRegistry,
+    claim_reaper,
     coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
     home::{HomeError, HomeManager},
     mcp::{IdentityRegistry, MessageNotice, start_server},
-    model::{AgentInput, AgentView, MessagePageAnchor, MessagePageQuery},
+    model::{AgentInput, AgentView, CardInput, CardMutation, MessagePageAnchor, MessagePageQuery},
     opencode::{OpenCodeError, OpenCodeSupervisor, PermissionReply},
     permission::PermissionTracker,
     scheduler::{AgentTokens, start as start_scheduler},
@@ -68,12 +69,19 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
     storage.migrate().await?;
     let repaired_runs = storage.repair_interrupted_runs().await?;
     println!("daemon.startup.repaired_runs={repaired_runs}");
+    let events = CollabEventPublisher::default();
+    let released_claims = storage.release_all_claims().await?;
+    println!("daemon.startup.released_claims={}", released_claims.count);
+    for room_id in released_claims.room_ids {
+        events
+            .publish(CollabEventKind::BoardsChanged { room_id })
+            .await;
+    }
 
     let cancel = CancellationToken::new();
     let identities = IdentityRegistry::default();
     let tokens: AgentTokens = Arc::new(RwLock::new(HashMap::new()));
     let (notice_tx, notice_rx) = mpsc::unbounded_channel();
-    let events = CollabEventPublisher::default();
     let coordination = CoordinationHub::default();
     let runtime = AgentRuntimeRegistry::default();
     let mcp = start_server(
@@ -120,6 +128,14 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         cancel.clone(),
     )
     .await?;
+    let claim_reaper = claim_reaper::start(
+        storage.clone(),
+        homes.clone(),
+        supervisor.subscribe(),
+        notice_tx.clone(),
+        events.clone(),
+        cancel.clone(),
+    );
     let context = DaemonContext {
         storage,
         homes,
@@ -155,6 +171,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
 
     cancel.cancel();
     scheduler.shutdown().await;
+    claim_reaper.shutdown().await;
     supervisor.shutdown().await;
     mcp.shutdown().await;
     drop(socket);
@@ -236,6 +253,33 @@ pub enum IpcRequest {
     },
     ListTriages {
         room_id: Option<String>,
+    },
+    CreateBoard {
+        id: String,
+        room_id: String,
+        title: String,
+    },
+    CreateBoardColumn {
+        id: String,
+        board_id: String,
+        title: String,
+        position: i32,
+        is_done: bool,
+    },
+    ListBoards {
+        room_id: String,
+    },
+    CreateCard {
+        card: CardInput,
+    },
+    MoveCard {
+        card_id: String,
+        column_id: String,
+        position: i32,
+    },
+    ReleaseCardClaim {
+        card_id: String,
+        claimed_by: String,
     },
 }
 
@@ -578,7 +622,79 @@ async fn handle_request_inner(
         IpcRequest::ListTriages { room_id } => Ok(IpcResponse::success(
             context.storage.triage_records(room_id.as_deref()).await?,
         )),
+        IpcRequest::CreateBoard { id, room_id, title } => Ok(IpcResponse::success(
+            context.storage.create_board(&id, &room_id, &title).await?,
+        )),
+        IpcRequest::CreateBoardColumn {
+            id,
+            board_id,
+            title,
+            position,
+            is_done,
+        } => Ok(IpcResponse::success(
+            context
+                .storage
+                .create_board_column(&id, &board_id, &title, position, is_done)
+                .await?,
+        )),
+        IpcRequest::ListBoards { room_id } => Ok(IpcResponse::success(
+            context.storage.boards(&room_id).await?,
+        )),
+        IpcRequest::CreateCard { card } => {
+            let mutation = context.storage.create_card(card, "user").await?;
+            publish_card_mutation(context, &mutation).await;
+            Ok(IpcResponse::success(mutation))
+        }
+        IpcRequest::MoveCard {
+            card_id,
+            column_id,
+            position,
+        } => {
+            let mutation = context
+                .storage
+                .move_card(&card_id, &column_id, position, "user")
+                .await?;
+            publish_card_mutation(context, &mutation).await;
+            Ok(IpcResponse::success(mutation))
+        }
+        IpcRequest::ReleaseCardClaim {
+            card_id,
+            claimed_by,
+        } => {
+            let mutation = context
+                .storage
+                .release_card_claim(&card_id, &claimed_by, "user", "user_cancelled")
+                .await?
+                .ok_or_else(|| {
+                    DaemonError::InvalidRequest(format!(
+                        "card {card_id} is no longer claimed by {claimed_by}"
+                    ))
+                })?;
+            publish_card_mutation(context, &mutation).await;
+            Ok(IpcResponse::success(mutation))
+        }
     }
+}
+
+async fn publish_card_mutation(context: &DaemonContext, mutation: &CardMutation) {
+    let _ = context.notices.send(MessageNotice {
+        room_id: mutation.message.room_id.clone(),
+        author_id: mutation.message.author_id.clone(),
+        body: mutation.message.body.clone(),
+        sequence: mutation.message.sequence,
+    });
+    context
+        .events
+        .publish(CollabEventKind::RoomsChanged {
+            room_id: mutation.message.room_id.clone(),
+        })
+        .await;
+    context
+        .events
+        .publish(CollabEventKind::BoardsChanged {
+            room_id: mutation.message.room_id.clone(),
+        })
+        .await;
 }
 
 pub async fn request(socket: &Path, request: &IpcRequest) -> Result<IpcResponse, DaemonError> {

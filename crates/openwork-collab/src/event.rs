@@ -17,6 +17,9 @@ pub enum CollabEventKind {
     RoomsChanged {
         room_id: String,
     },
+    BoardsChanged {
+        room_id: String,
+    },
     AgentsChanged,
     PermissionsChanged,
     EngineChanged,

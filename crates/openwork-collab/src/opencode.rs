@@ -38,6 +38,7 @@ const RESTART_DELAY: Duration = Duration::from_millis(500);
 const CONTRACT_PROBES: &[&str] = &[
     "GET /session (v1 路径族，返回数组)",
     "GET /agent",
+    "GET /session/status (v1 路径族，返回 session-id map)",
     "GET /global/event (可建立 SSE)",
 ];
 
@@ -102,11 +103,25 @@ impl OpenCodeClient {
             });
         }
 
+        let statuses: serde_json::Value = self
+            .json(self.authenticated(self.http.get(self.url("/session/status"))))
+            .await
+            .map_err(|error| OpenCodeError::ContractUnsatisfied {
+                probe: CONTRACT_PROBES[2],
+                detail: error.to_string(),
+            })?;
+        if !statuses.is_object() {
+            return Err(OpenCodeError::ContractUnsatisfied {
+                probe: CONTRACT_PROBES[2],
+                detail: format!("expected a JSON object, got {statuses}"),
+            });
+        }
+
         // 全局流是跨 instance 汇总待审批的唯一廉价通路（见 docs/collaboration.md §6）。
         self.global_events()
             .await
             .map_err(|error| OpenCodeError::ContractUnsatisfied {
-                probe: CONTRACT_PROBES[2],
+                probe: CONTRACT_PROBES[3],
                 detail: error.to_string(),
             })?;
 
@@ -141,6 +156,14 @@ impl OpenCodeClient {
             return Ok(None);
         }
         Ok(Some(parse_json_response(response).await?))
+    }
+
+    pub async fn session_statuses(
+        &self,
+        directory: &Path,
+    ) -> Result<BTreeMap<String, SessionRuntimeStatus>, OpenCodeError> {
+        self.json(self.for_directory(self.http.get(self.url("/session/status")), directory))
+            .await
     }
 
     pub async fn prompt_async(
@@ -275,6 +298,20 @@ pub struct Session {
     pub id: String,
     pub directory: String,
     pub version: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum SessionRuntimeStatus {
+    Idle,
+    Busy,
+    Retry,
+}
+
+impl SessionRuntimeStatus {
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Busy | Self::Retry)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

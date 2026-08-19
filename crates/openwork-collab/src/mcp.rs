@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::{
     coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
-    model::AgentReplyOutcome,
+    model::{AgentReplyOutcome, CardClaimOutcome, CardInput, CardMutation},
     storage::CollabStorage,
 };
 
@@ -88,6 +88,42 @@ struct ReactRequest {
     message_id: String,
     #[schemars(description = "Exact emoji to attach")]
     emoji: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum CardAction {
+    List,
+    Create,
+    Claim,
+    Move,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct CardRequest {
+    action: CardAction,
+    #[serde(default)]
+    #[schemars(description = "Required for list")]
+    room_id: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Required for create")]
+    board_id: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Required for create and move")]
+    column_id: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Required for create")]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Required for create and move")]
+    position: Option<i32>,
+    #[serde(default)]
+    assignee_id: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Required for claim and move")]
+    card_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -231,6 +267,82 @@ impl CollaborationMcp {
             .map_err(|error| error.to_string())?;
         serde_json::to_string(&reaction).map_err(|error| error.to_string())
     }
+
+    #[tool(
+        description = "List, create, claim, or move shared OpenWork board cards. Claims are only for real shared work, never chat turns."
+    )]
+    async fn card(
+        &self,
+        Parameters(request): Parameters<CardRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<String, String> {
+        let agent_id = self.authenticated_agent(&context)?;
+        match request.action {
+            CardAction::List => {
+                let room_id = required_parameter(request.room_id, "room_id", "list")?;
+                self.require_membership(&room_id, &agent_id).await?;
+                serde_json::to_string(
+                    &self
+                        .storage
+                        .boards(&room_id)
+                        .await
+                        .map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())
+            }
+            CardAction::Create => {
+                let mutation = self
+                    .storage
+                    .create_card(
+                        CardInput {
+                            board_id: required_parameter(request.board_id, "board_id", "create")?,
+                            column_id: required_parameter(
+                                request.column_id,
+                                "column_id",
+                                "create",
+                            )?,
+                            title: required_parameter(request.title, "title", "create")?,
+                            description: request.description,
+                            position: required_parameter(request.position, "position", "create")?,
+                            assignee_id: request.assignee_id,
+                        },
+                        &agent_id,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                self.publish_card_mutation(&mutation).await;
+                serde_json::to_string(&mutation).map_err(|error| error.to_string())
+            }
+            CardAction::Claim => {
+                let card_id = required_parameter(request.card_id, "card_id", "claim")?;
+                let outcome = self
+                    .storage
+                    .claim_card(&card_id, &agent_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if let CardClaimOutcome::Claimed(mutation) = &outcome {
+                    self.publish_card_mutation(mutation).await;
+                }
+                serde_json::to_string(&outcome).map_err(|error| error.to_string())
+            }
+            CardAction::Move => {
+                let card_id = required_parameter(request.card_id, "card_id", "move")?;
+                let column_id = required_parameter(request.column_id, "column_id", "move")?;
+                let position = required_parameter(request.position, "position", "move")?;
+                let mutation = self
+                    .storage
+                    .move_card(&card_id, &column_id, position, &agent_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                self.publish_card_mutation(&mutation).await;
+                serde_json::to_string(&mutation).map_err(|error| error.to_string())
+            }
+        }
+    }
+}
+
+fn required_parameter<T>(value: Option<T>, name: &str, action: &str) -> Result<T, String> {
+    value.ok_or_else(|| format!("card action {action} requires {name}"))
 }
 
 impl CollaborationMcp {
@@ -244,6 +356,40 @@ impl CollaborationMcp {
         self.identities
             .resolve(token)?
             .ok_or_else(|| "invalid X-OpenWork-Token".to_string())
+    }
+
+    async fn require_membership(&self, room_id: &str, agent_id: &str) -> Result<(), String> {
+        if self
+            .storage
+            .is_member(room_id, agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Agent {agent_id} is not a member of room {room_id}"
+            ))
+        }
+    }
+
+    async fn publish_card_mutation(&self, mutation: &CardMutation) {
+        let _ = self.notices.send(MessageNotice {
+            room_id: mutation.message.room_id.clone(),
+            author_id: mutation.message.author_id.clone(),
+            body: mutation.message.body.clone(),
+            sequence: mutation.message.sequence,
+        });
+        self.events
+            .publish(CollabEventKind::RoomsChanged {
+                room_id: mutation.message.room_id.clone(),
+            })
+            .await;
+        self.events
+            .publish(CollabEventKind::BoardsChanged {
+                room_id: mutation.message.room_id.clone(),
+            })
+            .await;
     }
 }
 
@@ -300,7 +446,7 @@ pub async fn start_server(
 
 #[cfg(test)]
 mod tests {
-    use super::IdentityRegistry;
+    use super::{CardRequest, IdentityRegistry};
 
     #[test]
     fn issued_token_binds_one_agent_without_accepting_an_agent_parameter() {
@@ -308,5 +454,15 @@ mod tests {
         let token = registry.issue("alice").unwrap();
         assert_eq!(registry.resolve(&token).unwrap().as_deref(), Some("alice"));
         assert_eq!(registry.resolve("not-a-token").unwrap(), None);
+    }
+
+    #[test]
+    fn card_tool_input_schema_is_a_root_object() {
+        let schema = rmcp::schemars::schema_for!(CardRequest);
+        let value = serde_json::to_value(schema).unwrap();
+        assert_eq!(
+            value.get("type").and_then(serde_json::Value::as_str),
+            Some("object")
+        );
     }
 }

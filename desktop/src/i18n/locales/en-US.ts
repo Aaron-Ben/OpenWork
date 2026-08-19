@@ -285,7 +285,14 @@ export const enUS = {
       title: 'Waiting for your approval', request: '{{agent}} requests {{permission}}', paths: 'Affected scope',
       once: 'Allow once', always: 'Always allow', reject: 'Reject', reason: 'Tell the teammate why', abort: 'Abort run',
     },
-    unavailable: { boards: 'Boards arrive in P4', logs: 'Logs arrive in P6' },
+    boards: {
+      title: 'Shared boards', createCard: 'Create card', noRoom: 'Create or select a room first',
+      noBoard: 'This room has no board yet', noCards: 'No cards', cardTitle: 'Title',
+      description: 'Description', column: 'Column', assignee: 'Assignee', unassigned: 'Unassigned',
+      claimedBy: 'Claimed by', releaseClaim: 'Force release claim', moveLeft: 'Move left',
+      moveRight: 'Move right', done: 'Done',
+    },
+    unavailable: { logs: 'Logs arrive in P6' },
   },
   tool: {
     mutation: {

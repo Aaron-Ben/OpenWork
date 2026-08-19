@@ -103,6 +103,10 @@ async fn self_check_rejects_a_v2_shaped_session_response() {
 async fn self_check_accepts_a_server_that_satisfies_every_probe() {
     let router = healthy()
         .route("/session", get(|| async { Json(serde_json::json!([])) }))
+        .route(
+            "/session/status",
+            get(|| async { Json(serde_json::json!({})) }),
+        )
         .route("/agent", get(|| async { Json(serde_json::json!([])) }))
         .route("/global/event", get(|| async { "" }));
 
@@ -116,6 +120,20 @@ async fn self_check_accepts_a_server_that_satisfies_every_probe() {
     tokio::time::timeout(Duration::from_secs(10), supervisor.shutdown())
         .await
         .expect("cancelled supervisor must stop");
+}
+
+#[tokio::test]
+async fn self_check_rejects_a_server_without_session_status() {
+    let router = healthy()
+        .route("/session", get(|| async { Json(serde_json::json!([])) }))
+        .route("/agent", get(|| async { Json(serde_json::json!([])) }))
+        .route("/global/event", get(|| async { "" }));
+
+    let (outcome, _cancel) = start_against(router).await;
+    let error = outcome
+        .err()
+        .expect("a server without /session/status must not be accepted");
+    assert!(error.contains("GET /session/status"), "{error}");
 }
 
 #[tokio::test]
@@ -151,5 +169,36 @@ async fn instance_event_stream_uses_the_agent_directory_and_unwraps_the_event() 
     assert_eq!(event.session_id(), Some("ses_alice"));
     assert_eq!(event.session_status(), Some("busy"));
 
+    server.abort();
+}
+
+#[tokio::test]
+async fn session_status_is_instance_scoped_and_distinguishes_running_states() {
+    let router = Router::new().route(
+        "/session/status",
+        get(|headers: HeaderMap| async move {
+            assert_eq!(
+                headers
+                    .get(DIRECTORY_HEADER)
+                    .and_then(|value| value.to_str().ok()),
+                Some("/tmp/alice-home")
+            );
+            Json(serde_json::json!({
+                "ses_idle": {"type": "idle"},
+                "ses_busy": {"type": "busy"},
+                "ses_retry": {"type": "retry", "attempt": 1, "message": "again", "next": 42}
+            }))
+        }),
+    );
+    let (address, server) = serve(router).await;
+    let client = OpenCodeClient::new(format!("http://{address}"));
+    let statuses = client
+        .session_statuses(std::path::Path::new("/tmp/alice-home"))
+        .await
+        .unwrap();
+
+    assert!(!statuses["ses_idle"].is_running());
+    assert!(statuses["ses_busy"].is_running());
+    assert!(statuses["ses_retry"].is_running());
     server.abort();
 }

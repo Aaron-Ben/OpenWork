@@ -1,6 +1,7 @@
 //! OpenWork collaboration daemon, persistence, scheduling, and local protocols.
 
 pub mod activity;
+pub mod claim_reaper;
 pub mod coordination;
 pub mod daemon;
 pub mod domain;

@@ -11,7 +11,8 @@ Desktop and every CLI command below talk to its Unix socket.
   `postgres://openwork:openwork@localhost:5432/openwork`).
 - `opencode` is on `PATH` and already logged in. The daemon does **not** compare version numbers;
   it runs a startup self-check against the behaviour it actually depends on (the v1 `/session`
-  family and its array shape, `/agent`, and a connectable `/global/event`). Any probe that fails
+  family and its array shape, `/agent`, the session-id map from `/session/status`, and a connectable
+  `/global/event`). Any probe that fails
   rejects startup before `daemon.ready=true` and names which one. The version is reported in
   diagnostics only. See `docs/collaboration.md` §4.2.
 - `OPENWORK_API_KEY_ENCRYPTION_KEY` is set when using `credential-check` or triage. Triage decrypts
@@ -147,6 +148,49 @@ cargo run -p openwork-collab --bin openwork-collab -- \
   'Prefix every published reply with V2:'
 ```
 
+## Create a board and inspect claims
+
+Boards belong to rooms; columns belong to boards. Create both explicitly so completion remains the
+column's `isDone` field rather than a guess based on its title:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- \
+  board-create work general 'Shared work'
+cargo run -p openwork-collab --bin openwork-collab -- \
+  board-column-create todo work Todo 0 false
+cargo run -p openwork-collab --bin openwork-collab -- \
+  board-column-create doing work Doing 1 false
+cargo run -p openwork-collab --bin openwork-collab -- \
+  board-column-create done work Done 2 true
+```
+
+Open the **Boards** Rail destination to create a card, choose a column, and assign an enabled room
+Agent. The same operation is available from the CLI for setup and diagnosis:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- \
+  card-create work todo 'Verify the P4 migration' alice
+cargo run -p openwork-collab --bin openwork-collab -- board-list general
+```
+
+`board-list` shows `assigneeId`, `claimedBy`, and `claimedAt`. Agents use the authenticated
+`openwork_card` tool with `list`, `create`, `claim`, or `move`; a losing claim returns
+`status: "already_claimed"` and the winner's id. Create, claim, move, runtime release, and manual
+release each write a structured room system message and enter the normal 2.5-second wake path.
+Desktop refreshes the affected room board from `boards_changed`, so claims appear without a manual
+reload.
+
+Claims have no TTL. Daemon startup releases all claims without adding room messages. Every 15
+seconds the daemon checks claims older than a 60-second grace period against the owning Agent's
+instance-scoped `GET /session/status`; a stopped or missing session releases the card and writes a
+room system message. Use the card's unlock action, or the following command, for an explicit user
+release:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- \
+  card-release <card-id> <claimant-id>
+```
+
 ## Operational checks
 
 - `permissions` returns the daemon's cross-instance pending set built from one
@@ -182,13 +226,13 @@ Pure domain and process tests:
 cargo test -p openwork-collab
 ```
 
-The PostgreSQL test uses a random empty schema, runs every collab migration in order, exercises
-concurrent sequence allocation, HELD/retry, exact deduplication, reactions, and triage persistence,
-then drops only that test-owned schema:
+The PostgreSQL tests use random empty schemas, run every collab migration in order, and exercise
+concurrent sequence allocation, HELD/retry, exact deduplication, reactions, triage persistence,
+atomic card claim competition, and claim release. They drop only their test-owned schemas:
 
 ```sh
 TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
-  cargo test -p openwork-collab --test postgres
+  cargo test -p openwork-collab --tests
 ```
 
 Repository acceptance checks:
@@ -210,8 +254,8 @@ The dependency tree may contain only the two approved OpenWork dependencies:
 `openwork-models` and `openwork-credentials`; it must not contain `openwork-core`,
 `openwork-agent`, `openwork-chat-state`, or `openwork-tools`.
 
-The dated manual and automated P3 evidence is in [`P3-ACCEPTANCE.md`](P3-ACCEPTANCE.md). P2 evidence
-remains in [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
+The dated P4 evidence is in [`P4-ACCEPTANCE.md`](P4-ACCEPTANCE.md). Earlier evidence remains in
+[`P3-ACCEPTANCE.md`](P3-ACCEPTANCE.md) and [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
 
 ## Where the P0/P1 findings live
 

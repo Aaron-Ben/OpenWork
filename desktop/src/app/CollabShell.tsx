@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { AgentManager } from '@/features/collab/agents/AgentManager'
 import { useAgentStore } from '@/features/collab/agents/agentStore'
 import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
+import { BoardView } from '@/features/collab/boards/BoardView'
 import { CollabRail } from '@/features/collab/components/CollabRail'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
 import { MessagePane } from '@/features/collab/rooms/MessagePane'
@@ -47,9 +48,11 @@ export function CollabShell() {
         </>
       ) : view === 'agents' ? (
         <AgentManager />
+      ) : view === 'boards' ? (
+        <BoardView room={activeRoom} />
       ) : (
         <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">
-          {view === 'boards' ? t('collab.unavailable.boards') : t('collab.unavailable.logs')}
+          {t('collab.unavailable.logs')}
         </section>
       )}
     </main>

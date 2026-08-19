@@ -280,7 +280,14 @@ export const zhTW = {
       title: '等待你的審批', request: '{{agent}} 請求 {{permission}}', paths: '涉及範圍',
       once: '允許一次', always: '始終允許', reject: '拒絕', reason: '告訴同事拒絕原因', abort: '終止本輪',
     },
-    unavailable: { boards: '看板將於 P4 提供', logs: '日誌將於 P6 提供' },
+    boards: {
+      title: '共享看板', createCard: '新增卡片', noRoom: '先建立或選擇一個房間',
+      noBoard: '這個房間還沒有看板', noCards: '暫無卡片', cardTitle: '標題',
+      description: '說明', column: '欄', assignee: '指派給', unassigned: '未指派',
+      claimedBy: '認領人', releaseClaim: '強制取消認領', moveLeft: '向左移動',
+      moveRight: '向右移動', done: '已完成',
+    },
+    unavailable: { logs: '日誌將於 P6 提供' },
   },
   tool: {
     mutation: {

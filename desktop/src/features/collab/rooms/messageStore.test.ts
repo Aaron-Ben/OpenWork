@@ -13,6 +13,7 @@ function message(sequence: number): CollabMessage {
     authorId: 'user',
     kind: 'normal',
     body: `message ${sequence}`,
+    systemPayload: null,
     createdAt: '2026-08-19T10:00:00+08:00',
   }
 }

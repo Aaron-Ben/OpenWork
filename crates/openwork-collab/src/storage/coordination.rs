@@ -51,9 +51,9 @@ impl CollabStorage {
                 .await?
                 .ok_or_else(|| StorageError::NotFound(format!("room {room_id}")))?;
         let records = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, kind, body, created_at
+            "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                FROM (
-                    SELECT id, room_id, sequence, author_id, kind, body, created_at
+                    SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                       FROM collab_messages WHERE room_id = $1
                       ORDER BY sequence DESC LIMIT $2
                ) recent ORDER BY sequence",
@@ -248,7 +248,7 @@ impl CollabStorage {
         if held_precheck(member_count, peer_sequence, seen_sequence) == HeldDecision::Hold {
             let messages = super::records_to_messages(
                 sqlx::query_as::<_, MessageRow>(
-                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                    "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                        FROM collab_messages
                       WHERE room_id = $1 AND author_id <> $2 AND sequence > $3
                       ORDER BY sequence",
@@ -269,7 +269,7 @@ impl CollabStorage {
         let dedup_window_ms = i64::try_from(MESSAGE_DEDUP_WINDOW.as_millis())
             .map_err(|_| StorageError::InvalidInput("dedup window is too large".to_string()))?;
         if let Some(record) = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, kind, body, created_at
+            "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                FROM collab_messages
               WHERE room_id = $1 AND author_id = $2 AND body = $3
                 AND created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
@@ -296,7 +296,7 @@ impl CollabStorage {
             "INSERT INTO collab_messages (
                 id, room_id, sequence, author_id, kind, body, created_at
              ) VALUES ($1, $2, $3, $4, 'normal', $5, $6)
-             RETURNING id, room_id, sequence, author_id, kind, body, created_at",
+             RETURNING id, room_id, sequence, author_id, kind, body, system_payload, created_at",
         )
         .bind(&id)
         .bind(room_id)

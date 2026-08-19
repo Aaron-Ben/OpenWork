@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +87,7 @@ pub struct Message {
     pub author_id: String,
     pub kind: String,
     pub body: String,
+    pub system_payload: Option<Value>,
     pub created_at: String,
 }
 
@@ -155,6 +157,88 @@ pub struct Reaction {
     pub actor_id: String,
     pub emoji: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Board {
+    pub id: String,
+    pub room_id: String,
+    pub title: String,
+    pub columns: Vec<BoardColumn>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardColumn {
+    pub id: String,
+    pub board_id: String,
+    pub title: String,
+    pub position: i32,
+    pub is_done: bool,
+    pub cards: Vec<Card>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Card {
+    pub id: String,
+    pub board_id: String,
+    pub column_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub position: i32,
+    pub assignee_id: Option<String>,
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardInput {
+    pub board_id: String,
+    pub column_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub position: i32,
+    pub assignee_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardMutation {
+    pub card: Card,
+    pub message: Message,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "status",
+    content = "result",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum CardClaimOutcome {
+    Claimed(Box<CardMutation>),
+    AlreadyClaimed { card_id: String, claimed_by: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimReleaseCandidate {
+    pub card_id: String,
+    pub room_id: String,
+    pub claimed_by: String,
+    pub opencode_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleasedClaims {
+    pub count: u64,
+    pub room_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

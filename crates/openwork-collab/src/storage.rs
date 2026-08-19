@@ -15,6 +15,7 @@ use crate::{
     time::{china_now, format_china},
 };
 
+mod board;
 mod coordination;
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
@@ -346,7 +347,7 @@ impl CollabStorage {
         let dedup_window_ms = i64::try_from(MESSAGE_DEDUP_WINDOW.as_millis())
             .map_err(|_| StorageError::InvalidInput("dedup window is too large".to_string()))?;
         if let Some(record) = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, kind, body, created_at
+            "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                FROM collab_messages
               WHERE room_id = $1 AND author_id = $2 AND body = $3
                 AND created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
@@ -374,7 +375,7 @@ impl CollabStorage {
             "INSERT INTO collab_messages (
                 id, room_id, sequence, author_id, kind, body, created_at
              ) VALUES ($1, $2, $3, $4, 'normal', $5, $6)
-             RETURNING id, room_id, sequence, author_id, kind, body, created_at",
+             RETURNING id, room_id, sequence, author_id, kind, body, system_payload, created_at",
         )
         .bind(&id)
         .bind(room_id)
@@ -403,7 +404,7 @@ impl CollabStorage {
     pub async fn room_messages(&self, room_id: &str) -> Result<Vec<Message>, StorageError> {
         records_to_messages(
             sqlx::query_as::<_, MessageRow>(
-                "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                    FROM collab_messages
                   WHERE room_id = $1
                   ORDER BY sequence",
@@ -428,16 +429,16 @@ impl CollabStorage {
         let records = match query.anchor {
             MessagePageAnchor::Around(sequence) => {
                 sqlx::query_as::<_, MessageRow>(
-                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                    "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                        FROM (
-                            SELECT id, room_id, sequence, author_id, kind, body, created_at
+                            SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                               FROM (
-                                   (SELECT id, room_id, sequence, author_id, kind, body, created_at
+                                   (SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                                       FROM collab_messages
                                      WHERE room_id = $1 AND sequence <= $2
                                      ORDER BY sequence DESC LIMIT $3)
                                    UNION ALL
-                                   (SELECT id, room_id, sequence, author_id, kind, body, created_at
+                                   (SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                                       FROM collab_messages
                                      WHERE room_id = $1 AND sequence > $2
                                      ORDER BY sequence LIMIT $3)
@@ -454,9 +455,9 @@ impl CollabStorage {
             }
             MessagePageAnchor::Before(sequence) => {
                 sqlx::query_as::<_, MessageRow>(
-                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                    "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                        FROM (
-                            SELECT id, room_id, sequence, author_id, kind, body, created_at
+                            SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                               FROM collab_messages
                              WHERE room_id = $1 AND sequence < $2
                              ORDER BY sequence DESC
@@ -472,7 +473,7 @@ impl CollabStorage {
             }
             MessagePageAnchor::After(sequence) => {
                 sqlx::query_as::<_, MessageRow>(
-                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                    "SELECT id, room_id, sequence, author_id, kind, body, system_payload, created_at
                        FROM collab_messages
                       WHERE room_id = $1 AND sequence > $2
                       ORDER BY sequence
@@ -503,7 +504,8 @@ impl CollabStorage {
 
     pub async fn inbox(&self, participant_id: &str) -> Result<Inbox, StorageError> {
         let records = sqlx::query_as::<_, MessageRow>(
-            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.kind, m.body, m.created_at
+            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.kind, m.body,
+                    m.system_payload, m.created_at
                FROM collab_room_members rm
                JOIN collab_messages m ON m.room_id = rm.room_id
               WHERE rm.participant_id = $1
@@ -694,6 +696,7 @@ struct MessageRow {
     author_id: String,
     kind: String,
     body: String,
+    system_payload: Option<serde_json::Value>,
     created_at: PrimitiveDateTime,
 }
 
@@ -706,6 +709,7 @@ impl MessageRow {
             author_id: self.author_id,
             kind: self.kind,
             body: self.body,
+            system_payload: self.system_payload,
             created_at: format_china(self.created_at)?,
         })
     }

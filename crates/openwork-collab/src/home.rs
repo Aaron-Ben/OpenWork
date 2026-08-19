@@ -84,7 +84,8 @@ fn render_agents_md(agent: &Agent) -> String {
          2. Reply from real published state, never from assumptions about your place in a queue.\n\
          3. Send optimistically; the server is the safety net. Do not loop on `openwork_glance`; after HELD, reread, recompute, and resend.\n\
          4. Do not repeat what a teammate already said; stop after speaking.\n\
-         5. Do not claim chat turns. Claims are only for real shared work.\n",
+         5. Do not claim chat turns. Claims are only for real shared work on a board card.\n\n\
+         Put work teammates and users should see on the shared board; use session todo only for steps in your current turn.\n",
         name = agent.display_name,
         prompt = agent.system_prompt.trim(),
     )

@@ -2,12 +2,13 @@ import { ArrowDown, ArrowUp, AtSign, Send } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { CollabRoomSummary } from '@/bridge/collab'
+import type { CollabMessage, CollabRoomSummary } from '@/bridge/collab'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { formatBeijingDateTime } from '@/lib/dateTime'
 import { useCoordinationStore } from '@/features/collab/coordinationStore'
+import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
 import { useMessageStore } from './messageStore'
 import { useRoomStore } from './roomStore'
 
@@ -20,6 +21,7 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
   const send = useMessageStore((state) => state.send)
   const markRead = useRoomStore((state) => state.markRead)
   const held = useCoordinationStore((state) => state.heldByRoom[room.id])
+  const navigate = useCollabNavigationStore((state) => state.navigate)
   const [draft, setDraft] = useState('')
   const viewportRef = useRef<HTMLDivElement>(null)
   const positionedRoom = useRef<string | null>(null)
@@ -72,13 +74,18 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
         <div className="grid gap-4">
           {window?.messages.map((message) => {
             const author = room.members.find((member) => member.id === message.authorId)
+            const cardId = systemCardId(message)
             return (
               <article key={message.id} data-message-sequence={message.sequence} className="rounded-2xl border border-line bg-paper-hover px-4 py-3">
                 <header className="mb-2 flex items-baseline justify-between gap-4">
                   <strong className="text-sm">{message.authorId === 'user' ? t('collab.rooms.user') : author?.displayName ?? message.authorId}</strong>
                   <time className="text-[11px] text-ink-faint">{formatBeijingDateTime(message.createdAt)}</time>
                 </header>
-                <MarkdownRenderer content={message.body} variant="compact" />
+                {cardId ? (
+                  <button type="button" data-system-card-id={cardId} className="text-left text-sm font-medium text-clay hover:underline" onClick={() => navigate('boards')}>
+                    {message.body}
+                  </button>
+                ) : <MarkdownRenderer content={message.body} variant="compact" />}
               </article>
             )
           })}
@@ -112,4 +119,10 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
       </form>
     </section>
   )
+}
+
+export function systemCardId(message: CollabMessage): string | null {
+  return message.kind === 'system' && typeof message.systemPayload?.cardId === 'string'
+    ? message.systemPayload.cardId
+    : null
 }

@@ -10,6 +10,7 @@ export interface CollabEventDependencies {
   refreshRooms: () => Promise<void>
   refreshAgents: () => Promise<void>
   refreshPermissions: () => Promise<void>
+  refreshBoards: (roomId: string) => Promise<void>
   refreshRoomTail: (roomId: string) => Promise<void>
   applyAgentActivity: (agentId: string, activity: CollabAgentActivity) => void
   recordHeld: (notice: HeldNotice) => void
@@ -29,6 +30,9 @@ export function createCollabEventController(deps: CollabEventDependencies) {
       switch (event.type) {
         case 'rooms_changed':
           await Promise.all([deps.refreshRooms(), deps.refreshRoomTail(event.roomId)])
+          break
+        case 'boards_changed':
+          await deps.refreshBoards(event.roomId)
           break
         case 'agents_changed':
           await Promise.all([deps.refreshAgents(), deps.refreshRooms()])

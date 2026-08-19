@@ -349,7 +349,14 @@ export const zhCN = {
       title: '等待你的审批', request: '{{agent}} 请求 {{permission}}', paths: '涉及范围',
       once: '允许一次', always: '始终允许', reject: '拒绝', reason: '告诉同事拒绝原因', abort: '终止本轮',
     },
-    unavailable: { boards: '看板将在 P4 提供', logs: '日志将在 P6 提供' },
+    boards: {
+      title: '共享看板', createCard: '新建卡片', noRoom: '先创建或选择一个房间',
+      noBoard: '这个房间还没有看板', noCards: '暂无卡片', cardTitle: '标题',
+      description: '说明', column: '列', assignee: '指派给', unassigned: '未指派',
+      claimedBy: '认领人', releaseClaim: '强制取消认领', moveLeft: '向左移动',
+      moveRight: '向右移动', done: '已完成',
+    },
+    unavailable: { logs: '日志将在 P6 提供' },
   },
   tool: {
     mutation: {

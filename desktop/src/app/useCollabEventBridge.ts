@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { listenToCollabEvents } from '@/bridge/collab'
 import { useAgentStore } from '@/features/collab/agents/agentStore'
 import { useCoordinationStore } from '@/features/collab/coordinationStore'
+import { useBoardStore } from '@/features/collab/boards/boardStore'
 import { useMessageStore } from '@/features/collab/rooms/messageStore'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
@@ -19,12 +20,17 @@ export function useCollabEventBridge(): void {
         useAgentStore.getState().fetchAll(),
         usePermissionStore.getState().fetchAll(),
       ])
+      await Promise.all(
+        useRoomStore.getState().rooms.map((room) =>
+          useBoardStore.getState().fetchRoom(room.id)),
+      )
     }
     const controller = createCollabEventController({
       refreshAll,
       refreshRooms: () => useRoomStore.getState().fetchAll(),
       refreshAgents: () => useAgentStore.getState().fetchAll(),
       refreshPermissions: () => usePermissionStore.getState().fetchAll(),
+      refreshBoards: (roomId) => useBoardStore.getState().fetchRoom(roomId),
       refreshRoomTail: (roomId) => useMessageStore.getState().refreshTail(roomId),
       applyAgentActivity: (agentId, activity) =>
         useAgentStore.getState().applyActivity(agentId, activity),

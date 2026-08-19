@@ -74,6 +74,9 @@ async fn startup_repair_overwrites_managed_files_but_preserves_memory() {
     );
     assert!(standing_prompt.contains("openwork_glance"));
     assert!(standing_prompt.contains("openwork_react"));
+    assert!(standing_prompt.contains(
+        "Put work teammates and users should see on the shared board; use session todo only for steps in your current turn."
+    ));
     assert_eq!(
         tokio::fs::read_to_string(home.join("memory/MEMORY.md"))
             .await

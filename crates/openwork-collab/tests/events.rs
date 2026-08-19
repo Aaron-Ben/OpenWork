@@ -40,3 +40,23 @@ fn event_payload_fields_match_the_desktop_camel_case_contract() {
         })
     );
 }
+
+#[test]
+fn board_invalidation_names_the_room_without_exposing_storage_details() {
+    let envelope = openwork_collab::event::CollabEventEnvelope {
+        version: 1,
+        sequence: 8,
+        event: CollabEventKind::BoardsChanged {
+            room_id: "general".to_string(),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(envelope).unwrap(),
+        serde_json::json!({
+            "version": 1,
+            "sequence": 8,
+            "type": "boards_changed",
+            "roomId": "general"
+        })
+    );
+}

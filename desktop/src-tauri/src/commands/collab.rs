@@ -1,8 +1,8 @@
 use openwork_collab::{
     daemon::IpcRequest,
     model::{
-        Agent, AgentInput, AgentView, MessagePage, MessagePageAnchor, Room, RoomSummary,
-        SendMessageOutcome,
+        Agent, AgentInput, AgentView, Board, BoardColumn, CardInput, CardMutation, MessagePage,
+        MessagePageAnchor, Room, RoomSummary, SendMessageOutcome,
     },
     opencode::PermissionReply,
     permission::PendingPermission,
@@ -168,6 +168,94 @@ pub async fn collab_permission_abort(
 ) -> Result<Value, CommandError> {
     client
         .call(&IpcRequest::AbortPermission { id })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_board_list(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+) -> Result<Vec<Board>, CommandError> {
+    client
+        .call(&IpcRequest::ListBoards { room_id })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_board_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    id: String,
+    room_id: String,
+    title: String,
+) -> Result<Board, CommandError> {
+    client
+        .call(&IpcRequest::CreateBoard { id, room_id, title })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_board_column_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    id: String,
+    board_id: String,
+    title: String,
+    position: i32,
+    is_done: bool,
+) -> Result<BoardColumn, CommandError> {
+    client
+        .call(&IpcRequest::CreateBoardColumn {
+            id,
+            board_id,
+            title,
+            position,
+            is_done,
+        })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_card_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card: CardInput,
+) -> Result<CardMutation, CommandError> {
+    client
+        .call(&IpcRequest::CreateCard { card })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_card_move(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card_id: String,
+    column_id: String,
+    position: i32,
+) -> Result<CardMutation, CommandError> {
+    client
+        .call(&IpcRequest::MoveCard {
+            card_id,
+            column_id,
+            position,
+        })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_card_release_claim(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card_id: String,
+    claimed_by: String,
+) -> Result<CardMutation, CommandError> {
+    client
+        .call(&IpcRequest::ReleaseCardClaim {
+            card_id,
+            claimed_by,
+        })
         .await
         .map_err(CommandError::from)
 }

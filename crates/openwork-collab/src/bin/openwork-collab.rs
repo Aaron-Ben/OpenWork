@@ -2,7 +2,7 @@ use std::{env, error::Error, io};
 
 use openwork_collab::{
     daemon::{DaemonConfig, IpcRequest, request, run},
-    model::AgentInput,
+    model::{AgentInput, CardInput},
     opencode::PermissionReply,
 };
 
@@ -73,6 +73,40 @@ async fn run_cli() -> CliResult<()> {
         "triage-list" => IpcRequest::ListTriages {
             room_id: args.next(),
         },
+        "board-create" => IpcRequest::CreateBoard {
+            id: required(&mut args, "board id")?,
+            room_id: required(&mut args, "room id")?,
+            title: required(&mut args, "board title")?,
+        },
+        "board-column-create" => IpcRequest::CreateBoardColumn {
+            id: required(&mut args, "column id")?,
+            board_id: required(&mut args, "board id")?,
+            title: required(&mut args, "column title")?,
+            position: parse_i32(&required(&mut args, "position")?, "position")?,
+            is_done: parse_bool(&required(&mut args, "is done")?, "is done")?,
+        },
+        "board-list" => IpcRequest::ListBoards {
+            room_id: required(&mut args, "room id")?,
+        },
+        "card-create" => IpcRequest::CreateCard {
+            card: CardInput {
+                board_id: required(&mut args, "board id")?,
+                column_id: required(&mut args, "column id")?,
+                title: required(&mut args, "card title")?,
+                description: None,
+                position: 0,
+                assignee_id: args.next(),
+            },
+        },
+        "card-move" => IpcRequest::MoveCard {
+            card_id: required(&mut args, "card id")?,
+            column_id: required(&mut args, "column id")?,
+            position: parse_i32(&required(&mut args, "position")?, "position")?,
+        },
+        "card-release" => IpcRequest::ReleaseCardClaim {
+            card_id: required(&mut args, "card id")?,
+            claimed_by: required(&mut args, "claimant id")?,
+        },
         unknown => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -133,6 +167,26 @@ fn required(args: &mut impl Iterator<Item = String>, name: &'static str) -> CliR
     })
 }
 
+fn parse_i32(value: &str, name: &str) -> CliResult<i32> {
+    value.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {name} {value:?}: {error}"),
+        )
+        .into()
+    })
+}
+
+fn parse_bool(value: &str, name: &str) -> CliResult<bool> {
+    value.parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {name} {value:?}: {error}"),
+        )
+        .into()
+    })
+}
+
 fn print_usage() {
     println!(
         "OpenWork collaboration\n\n\
@@ -150,6 +204,12 @@ fn print_usage() {
            openwork-collab credential-check <provider-id>\n\n\
            openwork-collab triage-config <provider-id> <model-id>\n\
            openwork-collab triage-list [room-id]\n\n\
+           openwork-collab board-create <id> <room-id> <title>\n\
+           openwork-collab board-column-create <id> <board-id> <title> <position> <is-done>\n\
+           openwork-collab board-list <room-id>\n\
+           openwork-collab card-create <board-id> <column-id> <title> [assignee-id]\n\
+           openwork-collab card-move <card-id> <column-id> <position>\n\
+           openwork-collab card-release <card-id> <claimant-id>\n\n\
          Environment:\n\
            DATABASE_URL            PostgreSQL URL\n\
            OPENWORK_COLLAB_HOME     daemon state root (default ~/.openwork/collab)\n\

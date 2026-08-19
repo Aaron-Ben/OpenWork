@@ -7,6 +7,9 @@ const P1_SQL: &str = include_str!("../migrations/202608180001_collab_p1.sql");
 const P3_VERSION: i64 = 202_608_190_001;
 const P3_DESCRIPTION: &str = "collab p3";
 const P3_SQL: &str = include_str!("../migrations/202608190001_collab_p3.sql");
+const P4_VERSION: i64 = 202_608_190_002;
+const P4_DESCRIPTION: &str = "collab p4";
+const P4_SQL: &str = include_str!("../migrations/202608190002_collab_p4.sql");
 
 pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
     let mut transaction = pool.begin().await?;
@@ -23,6 +26,7 @@ pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
     for (version, description, sql) in [
         (P1_VERSION, P1_DESCRIPTION, P1_SQL),
         (P3_VERSION, P3_DESCRIPTION, P3_SQL),
+        (P4_VERSION, P4_DESCRIPTION, P4_SQL),
     ] {
         let applied: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM collab_schema_migrations WHERE version = $1)",
@@ -53,7 +57,7 @@ pub enum MigrationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{P1_SQL, P3_SQL};
+    use super::{P1_SQL, P3_SQL, P4_SQL};
 
     #[test]
     fn p1_schema_obeys_time_and_terminal_run_constraints() {
@@ -71,5 +75,14 @@ mod tests {
         assert!(!P3_SQL.contains("TIMESTAMPTZ"));
         assert!(P3_SQL.contains("AT TIME ZONE 'Asia/Shanghai'"));
         assert!(P3_SQL.contains("latency_ms    BIGINT"));
+    }
+
+    #[test]
+    fn p4_schema_keeps_completion_explicit_and_time_local() {
+        assert!(!P4_SQL.contains("TIMESTAMP WITH TIME ZONE"));
+        assert!(!P4_SQL.contains("TIMESTAMPTZ"));
+        assert!(P4_SQL.contains("AT TIME ZONE 'Asia/Shanghai'"));
+        assert!(P4_SQL.contains("is_done  BOOLEAN NOT NULL DEFAULT FALSE"));
+        assert!(P4_SQL.contains("collab_cards_claim_consistent"));
     }
 }

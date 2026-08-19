@@ -49,7 +49,54 @@ export interface CollabMessage {
   authorId: string
   kind: 'normal' | 'system'
   body: string
+  systemPayload: Record<string, unknown> | null
   createdAt: string
+}
+
+export interface CollabBoard {
+  id: string
+  roomId: string
+  title: string
+  columns: CollabBoardColumn[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CollabBoardColumn {
+  id: string
+  boardId: string
+  title: string
+  position: number
+  isDone: boolean
+  cards: CollabCard[]
+}
+
+export interface CollabCard {
+  id: string
+  boardId: string
+  columnId: string
+  title: string
+  description: string | null
+  position: number
+  assigneeId: string | null
+  claimedBy: string | null
+  claimedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CollabCardInput {
+  boardId: string
+  columnId: string
+  title: string
+  description: string | null
+  position: number
+  assigneeId: string | null
+}
+
+export interface CollabCardMutation {
+  card: CollabCard
+  message: CollabMessage
 }
 
 export interface CollabMessagePage {
@@ -75,6 +122,7 @@ export type CollabPermissionReply = 'once' | 'always' | 'reject'
 
 export type CollabEvent =
   | { version: number; sequence: number; type: 'rooms_changed'; roomId: string }
+  | { version: number; sequence: number; type: 'boards_changed'; roomId: string }
   | { version: number; sequence: number; type: 'agents_changed' }
   | { version: number; sequence: number; type: 'permissions_changed' }
   | { version: number; sequence: number; type: 'engine_changed' }
@@ -129,6 +177,24 @@ export const collabCommands = {
   ): Promise<unknown> => invoke('collab_permission_reply', { id, reply, message }),
   abortPermission: (id: string): Promise<unknown> =>
     invoke('collab_permission_abort', { id }),
+  listBoards: (roomId: string): Promise<CollabBoard[]> =>
+    invoke('collab_board_list', { roomId }),
+  createBoard: (id: string, roomId: string, title: string): Promise<CollabBoard> =>
+    invoke('collab_board_create', { id, roomId, title }),
+  createBoardColumn: (
+    id: string,
+    boardId: string,
+    title: string,
+    position: number,
+    isDone: boolean,
+  ): Promise<CollabBoardColumn> =>
+    invoke('collab_board_column_create', { id, boardId, title, position, isDone }),
+  createCard: (card: CollabCardInput): Promise<CollabCardMutation> =>
+    invoke('collab_card_create', { card }),
+  moveCard: (cardId: string, columnId: string, position: number): Promise<CollabCardMutation> =>
+    invoke('collab_card_move', { cardId, columnId, position }),
+  releaseCardClaim: (cardId: string, claimedBy: string): Promise<CollabCardMutation> =>
+    invoke('collab_card_release_claim', { cardId, claimedBy }),
 }
 
 export async function listenToCollabEvents(
