@@ -13,6 +13,7 @@ pub struct Agent {
     pub model_id: String,
     pub opencode_session_id: Option<String>,
     pub enabled: bool,
+    pub scanner_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +27,7 @@ pub struct AgentInput {
     pub provider_id: String,
     pub model_id: String,
     pub enabled: bool,
+    pub scanner_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,4 +285,38 @@ pub struct TriageRecord {
     pub output_tokens: Option<i64>,
     pub latency_ms: i64,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgendaCard {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub assignee_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgendaCandidate {
+    pub room_id: String,
+    pub highest_sequence: i64,
+    pub cards: Vec<AgendaCard>,
+    pub stalled: bool,
+    pub recent_messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannerRoomSnapshot {
+    pub room_id: String,
+    pub highest_sequence: i64,
+    pub recent_messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannerSnapshot {
+    pub agent_id: String,
+    pub rooms: Vec<ScannerRoomSnapshot>,
 }

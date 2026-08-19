@@ -1,4 +1,6 @@
-use openwork_collab::triage::{ResponseMode, TriageSource, parse_decision, resolve_failure};
+use openwork_collab::triage::{
+    ResponseMode, TriageSource, parse_decision, resolve_agenda_failure, resolve_failure,
+};
 
 #[test]
 fn triage_decision_parses_model_json_without_using_response_mode_as_selection() {
@@ -23,6 +25,15 @@ fn triage_failure_is_open_for_a_waiting_human_and_closed_for_agents() {
     let agents = resolve_failure(false, "provider timed out");
     assert!(!agents.actionable);
     assert_eq!(agents.source, TriageSource::FailClosed);
+}
+
+#[test]
+fn agenda_failure_never_silences_an_agent_with_candidate_work() {
+    let decision = resolve_agenda_failure("support model unavailable");
+
+    assert!(decision.actionable);
+    assert_eq!(decision.source, TriageSource::FailOpen);
+    assert_eq!(decision.reason, "support model unavailable");
 }
 
 #[test]

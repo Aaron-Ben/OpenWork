@@ -8,9 +8,9 @@ use axum::{
     routing::post,
 };
 use openwork_collab::{
-    model::{AgentInput, TriageSettings},
+    model::{AgendaCandidate, AgendaCard, AgentInput, TriageSettings},
     storage::CollabStorage,
-    triage::{TriageClient, TriageContext, TriageMessage},
+    triage::{AgendaTriageContext, DmLoopContext, TriageClient, TriageContext, TriageMessage},
 };
 use openwork_credentials::{ApiKeyCipher, PostgresCredentialStore, ProviderCredentialInput};
 use serde_json::{Value, json};
@@ -95,6 +95,7 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
             provider_id: "opencode".to_string(),
             model_id: "main".to_string(),
             enabled: true,
+            scanner_enabled: false,
         })
         .await
         .unwrap();
@@ -133,12 +134,13 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
         sequence: 1,
         body: "Question for someone else".to_string(),
     }];
+    let settings = TriageSettings {
+        provider_id: "cheap".to_string(),
+        model_id: "cheap-model".to_string(),
+    };
     let result = client
         .decide(
-            &TriageSettings {
-                provider_id: "cheap".to_string(),
-                model_id: "cheap-model".to_string(),
-            },
+            &settings,
             TriageContext {
                 agent: &agent,
                 room_id: "general",
@@ -158,6 +160,54 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
             .to_string()
             .contains("an explicitly requested reaction is actionable"),
         "triage must wake an Agent for react even when no prose reply is needed"
+    );
+    let agenda = AgendaCandidate {
+        room_id: "general".to_string(),
+        highest_sequence: 1,
+        cards: vec![AgendaCard {
+            id: "card_1".to_string(),
+            title: "Do shared work".to_string(),
+            description: None,
+            assignee_id: Some("alice".to_string()),
+        }],
+        stalled: false,
+        recent_messages: Vec::new(),
+    };
+    let agenda_result = client
+        .decide_agenda(
+            &settings,
+            AgendaTriageContext {
+                agent: &agent,
+                candidate: &agenda,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!agenda_result.decision.actionable);
+    let (_, agenda_request) = captured.0.lock().await.clone().unwrap();
+    assert!(
+        agenda_request
+            .to_string()
+            .contains("Before spending an OpenCode main-reasoning turn")
+    );
+    assert_eq!(agenda_request["model"], "cheap-model");
+    let dm_result = client
+        .decide_dm_progress(
+            &settings,
+            DmLoopContext {
+                agent: &agent,
+                room_id: "dm_alice_bob",
+                messages: &messages,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!dm_result.decision.actionable);
+    let (_, dm_request) = captured.0.lock().await.clone().unwrap();
+    assert!(
+        dm_request
+            .to_string()
+            .contains("mandatory every-eighth-message check")
     );
 
     server.abort();

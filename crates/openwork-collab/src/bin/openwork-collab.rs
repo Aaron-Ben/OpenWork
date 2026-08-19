@@ -42,6 +42,10 @@ async fn run_cli() -> CliResult<()> {
             id: required(&mut args, "room id")?,
             title: required(&mut args, "room title")?,
         },
+        "dm-create" => IpcRequest::CreateDirectRoom {
+            first_participant: required(&mut args, "first participant id")?,
+            second_participant: required(&mut args, "second participant id")?,
+        },
         "room-add" => IpcRequest::AddMember {
             room_id: required(&mut args, "room id")?,
             participant_id: required(&mut args, "participant id")?,
@@ -145,6 +149,7 @@ fn agent_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput>
         role: None,
         bio: None,
         enabled: true,
+        scanner_enabled: parse_bool(&required(args, "scanner enabled")?, "scanner enabled")?,
     })
 }
 
@@ -195,9 +200,10 @@ fn print_usage() {
            openwork-collab status | shutdown | agent-list | permissions\n\
            openwork-collab permission-reply <permission-id> <once|always|reject> [message]\n\
            openwork-collab permission-abort <permission-id>\n\
-           openwork-collab agent-create <id> <display-name> <provider-id> <model-id> <system-prompt>\n\
-           openwork-collab agent-update <id> <display-name> <provider-id> <model-id> <system-prompt>\n\
+           openwork-collab agent-create <id> <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled>\n\
+           openwork-collab agent-update <id> <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled>\n\
            openwork-collab room-create <id> <title>\n\
+           openwork-collab dm-create <first-participant-id> <second-participant-id>\n\
            openwork-collab room-add <room-id> <participant-id>\n\
            openwork-collab send <room-id> <author-id> <body>\n\
            openwork-collab messages <room-id>\n\

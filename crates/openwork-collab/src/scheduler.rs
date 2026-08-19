@@ -14,16 +14,19 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     activity::AgentRuntimeRegistry,
+    autonomy::{self, AutonomousWake},
     coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
     home::HomeManager,
     mcp::MessageNotice,
-    model::{Agent, TriageRecordInput},
+    model::Agent,
     opencode::{EngineConnection, GlobalEvent, OpenCodeClient},
     permission::PermissionTracker,
+    proactivity::ProactivityHub,
     runtime_events::{self, InstanceEventSubscriptions},
     storage::CollabStorage,
-    triage::{TriageClient, TriageContext, TriageMessage, TriageSource, resolve_failure},
+    triage::{TriageClient, TriageSource},
+    wake_triage,
 };
 
 pub const DEBOUNCE: Duration = Duration::from_millis(2_500);
@@ -106,6 +109,12 @@ struct RuntimeState {
     active_run_id: Option<String>,
     pending: HashMap<String, Vec<MessageNotice>>,
     prompt_note: Option<String>,
+    proactive: Option<ProactivePrompt>,
+}
+
+struct ProactivePrompt {
+    reason: String,
+    context: serde_json::Value,
 }
 
 impl RuntimeState {
@@ -116,6 +125,7 @@ impl RuntimeState {
             active_run_id: None,
             pending: HashMap::new(),
             prompt_note: None,
+            proactive: None,
         }
     }
 }
@@ -124,6 +134,7 @@ pub struct SchedulerHandle {
     scheduler: JoinHandle<()>,
     global_events: JoinHandle<()>,
     instance_events: JoinHandle<()>,
+    autonomy: autonomy::AutonomyHandle,
 }
 
 struct DispatchServices<'a> {
@@ -141,6 +152,7 @@ impl SchedulerHandle {
         let _ = self.scheduler.await;
         let _ = self.global_events.await;
         let _ = self.instance_events.await;
+        self.autonomy.shutdown().await;
     }
 }
 
@@ -193,6 +205,14 @@ pub async fn start(
         published_events.clone(),
         event_cancel,
     ));
+    let proactivity = ProactivityHub::default();
+    let (autonomous_tx, mut autonomous_rx) = mpsc::unbounded_channel();
+    let autonomy = autonomy::start(
+        storage.clone(),
+        proactivity.clone(),
+        autonomous_tx,
+        cancel.clone(),
+    );
     let scheduler_cancel = cancel.clone();
     let scheduler = tokio::spawn(async move {
         let triage = TriageClient::new(storage.pool().clone());
@@ -202,6 +222,9 @@ pub async fn start(
             tokio::select! {
                 _ = scheduler_cancel.cancelled() => return,
                 Some(notice) = notices.recv() => {
+                    if let Err(error) = proactivity.observe_room_message(&notice.room_id) {
+                        eprintln!("failed to reset stalled-room declines: {error}");
+                    }
                     published_events
                         .publish(CollabEventKind::RoomsChanged {
                             room_id: notice.room_id.clone(),
@@ -226,6 +249,25 @@ pub async fn start(
                         }
                         Err(error) => eprintln!("failed to resolve collaboration candidates: {error}"),
                     }
+                }
+                Some(wake) = autonomous_rx.recv() => {
+                    let services = DispatchServices {
+                        storage: &storage,
+                        homes: &homes,
+                        tokens: &tokens,
+                        connections: &connections,
+                        coordination: &coordination,
+                        runtime: &runtime,
+                        subscriptions: &subscriptions,
+                    };
+                    handle_autonomous(
+                        &services,
+                        &mut states,
+                        &mut sessions,
+                        &published_events,
+                        &proactivity,
+                        wake,
+                    ).await;
                 }
                 Some(event) = event_rx.recv() => {
                     if event.event_type() == Some("openwork.engine.restarted") {
@@ -328,7 +370,117 @@ pub async fn start(
         scheduler,
         global_events,
         instance_events,
+        autonomy,
     })
+}
+
+async fn handle_autonomous(
+    services: &DispatchServices<'_>,
+    states: &mut HashMap<String, RuntimeState>,
+    sessions: &mut HashMap<String, String>,
+    events: &CollabEventPublisher,
+    proactivity: &ProactivityHub,
+    wake: AutonomousWake,
+) {
+    let stalled_claim = wake.stalled_claim;
+    let claimed_room_id = wake.room_id.clone();
+    let agent = match services.storage.agent(&wake.agent_id).await {
+        Ok(Some(agent)) if agent.enabled => agent,
+        Ok(_) => {
+            cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+            return;
+        }
+        Err(error) => {
+            eprintln!("failed to load autonomous Agent {}: {error}", wake.agent_id);
+            cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+            return;
+        }
+    };
+    let state = states
+        .entry(agent.id.clone())
+        .or_insert_with(|| RuntimeState::new(&agent));
+    if state.wake.is_running() {
+        autonomy::record_dispatch_short_circuit(
+            services.storage,
+            &wake,
+            TriageSource::LoopCap,
+            "Agent already owns an active turn token",
+        )
+        .await;
+        cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+        return;
+    }
+    match proactivity.acquire_autonomous_rate(&agent.id, std::time::Instant::now()) {
+        Ok(true) => {}
+        Ok(false) => {
+            autonomy::record_dispatch_short_circuit(
+                services.storage,
+                &wake,
+                TriageSource::RateLimited,
+                "Agent autonomous wake rate gate is cooling down",
+            )
+            .await;
+            cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+            return;
+        }
+        Err(error) => {
+            eprintln!("failed to acquire autonomous rate gate: {error}");
+            cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+            return;
+        }
+    }
+    let marker = match services
+        .storage
+        .insert_proactive_marker(&wake.room_id, &agent.id, wake.trigger, &wake.reason)
+        .await
+    {
+        Ok(marker) => marker,
+        Err(error) => {
+            eprintln!("failed to write proactive room marker: {error}");
+            cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+            return;
+        }
+    };
+    events
+        .publish(CollabEventKind::RoomsChanged {
+            room_id: marker.room_id,
+        })
+        .await;
+    state.room_id = Some(wake.room_id);
+    state.prompt_note = Some(wake.prompt_note);
+    state.proactive = Some(ProactivePrompt {
+        reason: wake.reason,
+        context: wake.context,
+    });
+    let action = state.wake.on_debounce_elapsed();
+    if let Err(error) = dispatch(
+        services,
+        sessions,
+        &agent.id,
+        state,
+        wake.trigger,
+        action == WakeAction::Start,
+    )
+    .await
+    {
+        eprintln!(
+            "failed to start {} wake for Agent {}: {error}",
+            wake.trigger, agent.id
+        );
+        state.wake.on_dispatch_failed(action);
+        cancel_stalled_wake(proactivity, stalled_claim, &claimed_room_id);
+    } else if stalled_claim
+        && let Err(error) =
+            proactivity.finish_stall(&claimed_room_id, std::time::Instant::now(), true)
+    {
+        eprintln!("failed to finish stalled-room claim: {error}");
+    }
+}
+
+fn cancel_stalled_wake(proactivity: &ProactivityHub, stalled_claim: bool, room_id: &str) {
+    if stalled_claim && let Err(error) = proactivity.cancel_stall(room_id) {
+        eprintln!("failed to cancel stalled-room claim: {error}");
+    }
 }
 
 async fn handle_due(
@@ -345,7 +497,7 @@ async fn handle_due(
     else {
         return false;
     };
-    let triage = evaluate_triage(services.storage, triage, agent_id, room_id, &batch).await;
+    let triage = wake_triage::evaluate(services.storage, triage, agent_id, room_id, &batch).await;
     if !triage.actionable {
         return false;
     }
@@ -369,130 +521,6 @@ async fn handle_due(
         return state.wake.on_dispatch_failed(action);
     }
     false
-}
-
-struct WakeTriage {
-    actionable: bool,
-    prompt_note: Option<String>,
-}
-
-async fn evaluate_triage(
-    storage: &CollabStorage,
-    triage: &TriageClient,
-    agent_id: &str,
-    room_id: &str,
-    batch: &[MessageNotice],
-) -> WakeTriage {
-    let Some(up_to_sequence) = batch.iter().map(|notice| notice.sequence).max() else {
-        return WakeTriage {
-            actionable: false,
-            prompt_note: None,
-        };
-    };
-    let human_waiting = batch.iter().any(|notice| notice.author_id == "user");
-    let messages = batch
-        .iter()
-        .map(|notice| TriageMessage {
-            author_id: notice.author_id.clone(),
-            sequence: notice.sequence,
-            body: notice.body.clone(),
-        })
-        .collect::<Vec<_>>();
-    let agent = match storage.agent(agent_id).await {
-        Ok(Some(agent)) => agent,
-        Ok(None) => {
-            return WakeTriage {
-                actionable: false,
-                prompt_note: None,
-            };
-        }
-        Err(error) => {
-            eprintln!("failed to load Agent {agent_id} for triage: {error}");
-            return WakeTriage {
-                actionable: human_waiting,
-                prompt_note: None,
-            };
-        }
-    };
-    let settings = match storage.triage_settings().await {
-        Ok(settings) => settings,
-        Err(error) => {
-            eprintln!("failed to load triage settings: {error}");
-            None
-        }
-    };
-    let started = std::time::Instant::now();
-    let (actionable, response_mode, source, reason, prompt_note, input_tokens, output_tokens) =
-        match settings.as_ref() {
-            Some(settings) => match triage
-                .decide(
-                    settings,
-                    TriageContext {
-                        agent: &agent,
-                        room_id,
-                        messages: &messages,
-                    },
-                )
-                .await
-            {
-                Ok(result) => (
-                    result.decision.actionable,
-                    Some(result.decision.response_mode.as_database_str()),
-                    TriageSource::SupportModel,
-                    Some(result.decision.reason),
-                    Some(result.decision.prompt_note),
-                    result.input_tokens,
-                    result.output_tokens,
-                ),
-                Err(error) => {
-                    let fallback = resolve_failure(human_waiting, error.to_string());
-                    (
-                        fallback.actionable,
-                        None,
-                        fallback.source,
-                        Some(fallback.reason),
-                        None,
-                        None,
-                        None,
-                    )
-                }
-            },
-            None => {
-                let fallback = resolve_failure(human_waiting, "triage model is not configured");
-                (
-                    fallback.actionable,
-                    None,
-                    fallback.source,
-                    Some(fallback.reason),
-                    None,
-                    None,
-                    None,
-                )
-            }
-        };
-    let latency_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-    let record = TriageRecordInput {
-        agent_id,
-        room_id,
-        up_to_sequence,
-        actionable,
-        response_mode,
-        source: source.as_str(),
-        reason: reason.as_deref(),
-        prompt_note: prompt_note.as_deref(),
-        provider_id: settings.as_ref().map(|value| value.provider_id.as_str()),
-        model_id: settings.as_ref().map(|value| value.model_id.as_str()),
-        input_tokens,
-        output_tokens,
-        latency_ms,
-    };
-    if let Err(error) = storage.record_triage(record).await {
-        eprintln!("failed to record triage for Agent {agent_id}: {error}");
-    }
-    WakeTriage {
-        actionable,
-        prompt_note,
-    }
 }
 
 async fn handle_idle(
@@ -600,17 +628,38 @@ async fn dispatch(
     let memory = tokio::fs::read_to_string(home.join("memory/MEMORY.md"))
         .await
         .map_err(|error| error.to_string())?;
-    let prompt = json!({
-        "instruction": "Triage found this room update actionable for you. Read the published state, decide independently whether speaking still adds value, then use openwork_reply or openwork_react. Natural-language output without a successful tool call does not publish a response.",
-        "roomId": room_id,
-        "unread": inbox,
-        "recentPublishedState": glance,
-        "roster": roster,
-        "memory": memory,
-        "triagePromptNote": state.prompt_note.as_deref(),
-        "delivery": "Unread is authoritative. This prompt and its seen coordination cursor do not clear or update last_read_seq."
-    })
-    .to_string();
+    let proactive = state.proactive.take();
+    let prompt = proactive.as_ref().map_or_else(
+        || {
+            json!({
+                "instruction": "Triage found this room update actionable for you. Read the published state, decide independently whether speaking still adds value, then use openwork_reply or openwork_react. Natural-language output without a successful tool call does not publish a response.",
+                "roomId": room_id,
+                "unread": inbox,
+                "recentPublishedState": glance,
+                "roster": roster,
+                "memory": memory,
+                "triagePromptNote": state.prompt_note.as_deref(),
+                "delivery": "Unread is authoritative. This prompt and its seen coordination cursor do not clear or update last_read_seq."
+            })
+            .to_string()
+        },
+        |proactive| {
+            json!({
+                "instruction": "This is an explicitly autonomous collaboration turn. Execute the focused brief using the published state and collaboration tools. Do not spend the turn merely deciding whether work exists; the cheap agenda gate already did that. Natural-language output without a successful tool call does not publish a response.",
+                "trigger": trigger,
+                "reason": proactive.reason,
+                "focusedContext": proactive.context,
+                "roomId": room_id,
+                "unread": inbox,
+                "recentPublishedState": glance,
+                "roster": roster,
+                "memory": memory,
+                "triagePromptNote": state.prompt_note.as_deref(),
+                "delivery": "Unread is authoritative. Autonomous dispatch and seen coordination never update last_read_seq."
+            })
+            .to_string()
+        },
+    );
     let run_id = if start_run {
         Some(
             services

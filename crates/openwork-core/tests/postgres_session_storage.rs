@@ -673,7 +673,9 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     let business_tables: Vec<String> = sqlx::query_scalar(
         "SELECT tablename
          FROM pg_tables
-         WHERE schemaname = 'public' AND tablename <> '_sqlx_migrations'
+         WHERE schemaname = 'public'
+           AND tablename <> '_sqlx_migrations'
+           AND tablename NOT LIKE 'collab\\_%' ESCAPE '\\'
          ORDER BY tablename",
     )
     .fetch_all(storage.pool())

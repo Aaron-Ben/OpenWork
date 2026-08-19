@@ -268,11 +268,13 @@ export const zhTW = {
       messages: '訊息', older: '載入更早訊息', newer: '載入更新訊息', loading: '正在載入…',
       messagePlaceholder: '發訊息，用 @ 點名同事', send: '發送', members: '同事名冊', addMember: '加入房間',
       markRead: '標為已讀', noMessages: '還沒有訊息', user: '你', held: '{{agent}} 因隊友的新訊息讓位，正在重算。',
+      agendaWake: 'Agenda 主動發起', scannerWake: 'Scanner 主動發起',
     },
     agents: {
       title: '同事管理', create: '建立同事', edit: '編輯', save: '儲存', disable: '停用', enable: '啟用',
       id: 'ID', displayName: '名稱', role: '角色', bio: '簡介', prompt: 'System Prompt',
       provider: 'Provider ID', model: 'Model ID', enabled: '已啟用', disabled: '已停用',
+      scanner: '跨房間 Scanner', scannerHint: '明確開啟後，這位同事會觀察跨房間變化；可能在無人值守時消耗模型額度。', scannerOn: 'Scanner 已開啟',
       idle: '閒置', waitingApproval: '等待審批', noAgents: '還沒有同事',
       activity: { idle: '閒置', busy: '忙碌中', replying: '正在回覆', compacting: '正在整理上下文', executing: '正在執行 {{detail}}', unresponsive: '無回應' },
     },

@@ -17,6 +17,7 @@ const emptyAgent: CollabAgentInput = {
   providerId: '',
   modelId: '',
   enabled: true,
+  scannerEnabled: false,
 }
 
 function editable(agent: CollabAgent): CollabAgentInput {
@@ -58,7 +59,7 @@ export function AgentManager() {
             <span className="grid size-10 place-items-center rounded-full bg-clay/10 text-clay"><Bot size={19} /></span>
             <div className="min-w-0 flex-1">
               <strong className="block truncate">{agent.displayName}</strong>
-              <span className="text-sm text-ink-faint">{agent.role || agent.id} · {agent.enabled ? t('collab.agents.enabled') : t('collab.agents.disabled')}</span>
+              <span className="text-sm text-ink-faint">{agent.role || agent.id} · {agent.enabled ? t('collab.agents.enabled') : t('collab.agents.disabled')}{agent.scannerEnabled ? ` · ${t('collab.agents.scannerOn')}` : ''}</span>
             </div>
             <Button type="button" variant="ghost" size="sm" onClick={() => { setEditing(true); setForm(editable(agent)) }}><Pencil size={14} />{t('collab.agents.edit')}</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => void update({ ...editable(agent), enabled: !agent.enabled })}><Power size={14} />{agent.enabled ? t('collab.agents.disable') : t('collab.agents.enable')}</Button>
@@ -76,6 +77,10 @@ export function AgentManager() {
               <Field label={t('collab.agents.role')}><Input value={form.role ?? ''} onChange={(event) => patch({ role: event.target.value || null })} /></Field>
               <Field label={t('collab.agents.bio')}><Input value={form.bio ?? ''} onChange={(event) => patch({ bio: event.target.value || null })} /></Field>
             </div>
+            <label className="flex items-start gap-3 rounded-xl border border-line p-3 text-sm">
+              <input type="checkbox" className="mt-0.5 size-4 accent-clay" checked={form.scannerEnabled} onChange={(event) => patch({ scannerEnabled: event.target.checked })} />
+              <span className="grid gap-0.5"><strong>{t('collab.agents.scanner')}</strong><span className="text-xs text-ink-faint">{t('collab.agents.scannerHint')}</span></span>
+            </label>
             <Field label={t('collab.agents.prompt')}><Textarea required rows={5} value={form.systemPrompt} onChange={(event) => patch({ systemPrompt: event.target.value })} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label={t('collab.agents.provider')}><Input required value={form.providerId} onChange={(event) => patch({ providerId: event.target.value })} /></Field>

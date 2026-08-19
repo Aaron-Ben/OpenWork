@@ -273,11 +273,13 @@ export const enUS = {
       messages: 'Messages', older: 'Load older messages', newer: 'Load newer messages', loading: 'Loading…',
       messagePlaceholder: 'Message the room; use @ to name a teammate', send: 'Send', members: 'Teammates', addMember: 'Add to room',
       markRead: 'Mark read', noMessages: 'No messages yet', user: 'You', held: '{{agent}} yielded to a newer teammate message and is recomputing.',
+      agendaWake: 'Started by agenda', scannerWake: 'Started by scanner',
     },
     agents: {
       title: 'Teammate management', create: 'Create teammate', edit: 'Edit', save: 'Save', disable: 'Disable', enable: 'Enable',
       id: 'ID', displayName: 'Name', role: 'Role', bio: 'Bio', prompt: 'System prompt',
       provider: 'Provider ID', model: 'Model ID', enabled: 'Enabled', disabled: 'Disabled',
+      scanner: 'Cross-room scanner', scannerHint: 'When explicitly enabled, this teammate watches cross-room changes and may spend model quota unattended.', scannerOn: 'Scanner on',
       idle: 'Idle', waitingApproval: 'Waiting for approval', noAgents: 'No teammates yet',
       activity: { idle: 'Idle', busy: 'Busy', replying: 'Replying', compacting: 'Organizing context', executing: 'Running {{detail}}', unresponsive: 'Not responding' },
     },

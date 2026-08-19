@@ -337,11 +337,13 @@ export const zhCN = {
       messages: '消息', older: '加载更早消息', newer: '加载更新消息', loading: '正在加载…',
       messagePlaceholder: '发消息，用 @ 点名同事', send: '发送', members: '同事名册', addMember: '加入房间',
       markRead: '标为已读', noMessages: '还没有消息', user: '你', held: '{{agent}} 因队友的新消息让位，正在重算。',
+      agendaWake: 'Agenda 主动发起', scannerWake: 'Scanner 主动发起',
     },
     agents: {
       title: '同事管理', create: '创建同事', edit: '编辑', save: '保存', disable: '停用', enable: '启用',
       id: 'ID', displayName: '名称', role: '角色', bio: '简介', prompt: 'System Prompt',
       provider: 'Provider ID', model: 'Model ID', enabled: '已启用', disabled: '已停用',
+      scanner: '跨房间 Scanner', scannerHint: '显式开启后，这位同事会观察跨房间变化；可能在无人值守时消耗模型额度。', scannerOn: 'Scanner 已开启',
       idle: '空闲', waitingApproval: '等待审批', noAgents: '还没有同事',
       activity: { idle: '空闲', busy: '在忙', replying: '正在回复', compacting: '正在整理上下文', executing: '正在执行 {{detail}}', unresponsive: '无响应' },
     },

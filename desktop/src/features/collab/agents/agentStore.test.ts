@@ -10,6 +10,7 @@ vi.mock('@/bridge/collab', () => ({
 const input: CollabAgentInput = {
   id: 'alice', displayName: 'Alice', role: null, bio: null,
   systemPrompt: 'Be clear', providerId: 'provider', modelId: 'model', enabled: true,
+  scannerEnabled: false,
 }
 
 describe('agentStore', () => {

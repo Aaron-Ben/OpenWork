@@ -21,7 +21,8 @@ impl CollabStorage {
     ) -> Result<Vec<Agent>, StorageError> {
         Ok(sqlx::query_as::<_, super::AgentRow>(
             "SELECT a.id, p.display_name, a.role, a.bio, a.system_prompt,
-                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled
+                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled,
+                    a.scanner_enabled
                FROM collab_room_members rm
                JOIN collab_agents a ON a.id = rm.participant_id
                JOIN collab_participants p ON p.id = a.id

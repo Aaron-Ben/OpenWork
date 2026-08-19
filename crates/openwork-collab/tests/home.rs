@@ -14,6 +14,7 @@ async fn startup_repair_overwrites_managed_files_but_preserves_memory() {
         model_id: "hy3-free".to_string(),
         opencode_session_id: None,
         enabled: true,
+        scanner_enabled: false,
     };
 
     let home = manager.repair(&agent, "token-v2").await.unwrap();

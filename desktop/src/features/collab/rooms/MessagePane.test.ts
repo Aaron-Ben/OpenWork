@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CollabMessage } from '@/bridge/collab'
-import { systemCardId } from './MessagePane'
+import { proactiveMessageDetails, systemCardId } from './MessagePane'
 
 function message(kind: 'normal' | 'system', systemPayload: Record<string, unknown> | null): CollabMessage {
   return {
@@ -17,5 +17,19 @@ describe('systemCardId', () => {
       .toBe('card_1')
     expect(systemCardId(message('normal', { cardId: 'card_2' }))).toBeNull()
     expect(systemCardId(message('system', null))).toBeNull()
+  })
+})
+
+describe('proactiveMessageDetails', () => {
+  it('renders only daemon-tagged agenda and scanner markers', () => {
+    expect(proactiveMessageDetails(message('system', {
+      type: 'proactive_wake', trigger: 'agenda', reason: 'one unfinished card',
+    }))).toEqual({ trigger: 'agenda', reason: 'one unfinished card' })
+    expect(proactiveMessageDetails(message('system', {
+      type: 'proactive_wake', trigger: 'other', reason: 'x',
+    }))).toBeNull()
+    expect(proactiveMessageDetails(message('normal', {
+      type: 'proactive_wake', trigger: 'agenda', reason: 'x',
+    }))).toBeNull()
   })
 })

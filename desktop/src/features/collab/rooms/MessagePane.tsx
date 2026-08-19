@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, AtSign, Send } from 'lucide-react'
+import { ArrowDown, ArrowUp, AtSign, Send, Sparkles } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -75,13 +75,19 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
           {window?.messages.map((message) => {
             const author = room.members.find((member) => member.id === message.authorId)
             const cardId = systemCardId(message)
+            const proactive = proactiveMessageDetails(message)
             return (
               <article key={message.id} data-message-sequence={message.sequence} className="rounded-2xl border border-line bg-paper-hover px-4 py-3">
                 <header className="mb-2 flex items-baseline justify-between gap-4">
                   <strong className="text-sm">{message.authorId === 'user' ? t('collab.rooms.user') : author?.displayName ?? message.authorId}</strong>
                   <time className="text-[11px] text-ink-faint">{formatBeijingDateTime(message.createdAt)}</time>
                 </header>
-                {cardId ? (
+                {proactive ? (
+                  <div data-proactive-trigger={proactive.trigger} className="grid gap-1 text-sm">
+                    <span className="flex w-fit items-center gap-1 rounded-full bg-clay/10 px-2 py-0.5 text-xs font-semibold text-clay"><Sparkles size={12} />{t(`collab.rooms.${proactive.trigger}Wake`)}</span>
+                    <span>{proactive.reason}</span>
+                  </div>
+                ) : cardId ? (
                   <button type="button" data-system-card-id={cardId} className="text-left text-sm font-medium text-clay hover:underline" onClick={() => navigate('boards')}>
                     {message.body}
                   </button>
@@ -124,5 +130,17 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
 export function systemCardId(message: CollabMessage): string | null {
   return message.kind === 'system' && typeof message.systemPayload?.cardId === 'string'
     ? message.systemPayload.cardId
+    : null
+}
+
+export function proactiveMessageDetails(message: CollabMessage): {
+  trigger: 'agenda' | 'scanner'
+  reason: string
+} | null {
+  if (message.kind !== 'system' || message.systemPayload?.type !== 'proactive_wake') return null
+  const trigger = message.systemPayload.trigger
+  const reason = message.systemPayload.reason
+  return (trigger === 'agenda' || trigger === 'scanner') && typeof reason === 'string'
+    ? { trigger, reason }
     : null
 }

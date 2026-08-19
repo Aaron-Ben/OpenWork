@@ -19,12 +19,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     activity::AgentRuntimeRegistry,
-    claim_reaper,
+    card_events, claim_reaper,
     coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
     home::{HomeError, HomeManager},
     mcp::{IdentityRegistry, MessageNotice, start_server},
-    model::{AgentInput, AgentView, CardInput, CardMutation, MessagePageAnchor, MessagePageQuery},
+    model::{AgentInput, AgentView, CardInput, MessagePageAnchor, MessagePageQuery},
     opencode::{OpenCodeError, OpenCodeSupervisor, PermissionReply},
     permission::PermissionTracker,
     scheduler::{AgentTokens, start as start_scheduler},
@@ -209,6 +209,10 @@ pub enum IpcRequest {
     CreateRoom {
         id: String,
         title: String,
+    },
+    CreateDirectRoom {
+        first_participant: String,
+        second_participant: String,
     },
     AddMember {
         room_id: String,
@@ -441,6 +445,22 @@ async fn handle_request_inner(
                 .await;
             Ok(IpcResponse::success(room))
         }
+        IpcRequest::CreateDirectRoom {
+            first_participant,
+            second_participant,
+        } => {
+            let room = context
+                .storage
+                .create_direct_room(&first_participant, &second_participant)
+                .await?;
+            context
+                .events
+                .publish(CollabEventKind::RoomsChanged {
+                    room_id: room.id.clone(),
+                })
+                .await;
+            Ok(IpcResponse::success(room))
+        }
         IpcRequest::AddMember {
             room_id,
             participant_id,
@@ -642,7 +662,7 @@ async fn handle_request_inner(
         )),
         IpcRequest::CreateCard { card } => {
             let mutation = context.storage.create_card(card, "user").await?;
-            publish_card_mutation(context, &mutation).await;
+            card_events::publish(&context.notices, &context.events, &mutation).await;
             Ok(IpcResponse::success(mutation))
         }
         IpcRequest::MoveCard {
@@ -654,7 +674,7 @@ async fn handle_request_inner(
                 .storage
                 .move_card(&card_id, &column_id, position, "user")
                 .await?;
-            publish_card_mutation(context, &mutation).await;
+            card_events::publish(&context.notices, &context.events, &mutation).await;
             Ok(IpcResponse::success(mutation))
         }
         IpcRequest::ReleaseCardClaim {
@@ -670,31 +690,10 @@ async fn handle_request_inner(
                         "card {card_id} is no longer claimed by {claimed_by}"
                     ))
                 })?;
-            publish_card_mutation(context, &mutation).await;
+            card_events::publish(&context.notices, &context.events, &mutation).await;
             Ok(IpcResponse::success(mutation))
         }
     }
-}
-
-async fn publish_card_mutation(context: &DaemonContext, mutation: &CardMutation) {
-    let _ = context.notices.send(MessageNotice {
-        room_id: mutation.message.room_id.clone(),
-        author_id: mutation.message.author_id.clone(),
-        body: mutation.message.body.clone(),
-        sequence: mutation.message.sequence,
-    });
-    context
-        .events
-        .publish(CollabEventKind::RoomsChanged {
-            room_id: mutation.message.room_id.clone(),
-        })
-        .await;
-    context
-        .events
-        .publish(CollabEventKind::BoardsChanged {
-            room_id: mutation.message.room_id.clone(),
-        })
-        .await;
 }
 
 pub async fn request(socket: &Path, request: &IpcRequest) -> Result<IpcResponse, DaemonError> {

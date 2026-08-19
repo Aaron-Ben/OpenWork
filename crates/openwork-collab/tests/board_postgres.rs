@@ -26,6 +26,7 @@ async fn concurrent_card_claim_has_exactly_one_winner() {
                 provider_id: "opencode".to_string(),
                 model_id: "model".to_string(),
                 enabled: true,
+                scanner_enabled: false,
             })
             .await
             .unwrap();

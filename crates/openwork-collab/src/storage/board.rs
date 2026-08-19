@@ -402,7 +402,7 @@ async fn card_write_room(
     .ok_or_else(|| StorageError::NotFound(format!("writable board {board_id}")))
 }
 
-async fn insert_system_message(
+pub(super) async fn insert_system_message(
     transaction: &mut Transaction<'_, Postgres>,
     room_id: &str,
     author_id: &str,

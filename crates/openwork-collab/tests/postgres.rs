@@ -40,7 +40,7 @@ async fn p1_migration_and_message_invariants_work_from_an_empty_schema() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 3);
+    assert_eq!(applied, 4);
     let collab_feature_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.tables
           WHERE table_schema = current_schema()
@@ -64,6 +64,7 @@ async fn p1_migration_and_message_invariants_work_from_an_empty_schema() {
             provider_id: "opencode".to_string(),
             model_id: "hy3-free".to_string(),
             enabled: true,
+            scanner_enabled: false,
         })
         .await
         .unwrap();
@@ -172,6 +173,7 @@ async fn concurrent_group_replies_hold_the_stale_writer_and_retry_without_duplic
                 provider_id: "opencode".to_string(),
                 model_id: "model".to_string(),
                 enabled: true,
+                scanner_enabled: false,
             })
             .await
             .unwrap();
@@ -460,6 +462,7 @@ async fn disabling_an_agent_stops_triage_candidacy_without_erasing_room_identity
         provider_id: "opencode".to_string(),
         model_id: "hy3-free".to_string(),
         enabled: true,
+        scanner_enabled: false,
     };
     storage.create_agent(&enabled).await.unwrap();
     storage
@@ -484,6 +487,7 @@ async fn disabling_an_agent_stops_triage_candidacy_without_erasing_room_identity
     storage
         .update_agent(&AgentInput {
             enabled: false,
+            scanner_enabled: false,
             ..enabled
         })
         .await

@@ -12,7 +12,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::{ParsedDecision, TriageParseError, parse_decision};
-use crate::model::{Agent, TriageSettings};
+use crate::model::{AgendaCandidate, Agent, TriageSettings};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +24,19 @@ pub struct TriageMessage {
 
 #[derive(Debug)]
 pub struct TriageContext<'a> {
+    pub agent: &'a Agent,
+    pub room_id: &'a str,
+    pub messages: &'a [TriageMessage],
+}
+
+#[derive(Debug)]
+pub struct AgendaTriageContext<'a> {
+    pub agent: &'a Agent,
+    pub candidate: &'a AgendaCandidate,
+}
+
+#[derive(Debug)]
+pub struct DmLoopContext<'a> {
     pub agent: &'a Agent,
     pub room_id: &'a str,
     pub messages: &'a [TriageMessage],
@@ -62,8 +75,6 @@ impl TriageClient {
         settings: &TriageSettings,
         context: TriageContext<'_>,
     ) -> Result<SupportDecision, TriageClientError> {
-        let runtime = self.load_runtime(&settings.provider_id).await?;
-        let provider = self.factory.build(&runtime);
         let prompt = json!({
             "task": "Decide whether this candidate Agent should wake for the new room messages. Speaking, reacting, or carrying out another requested action are all actionable; an explicitly requested reaction is actionable even when no prose reply is needed. Return only the required JSON object. Do not choose an Agent by responseMode; judge only whether this candidate has something useful to contribute or do.",
             "requiredShape": {
@@ -81,16 +92,75 @@ impl TriageClient {
             },
             "roomId": context.room_id,
             "newMessages": context.messages,
-        })
-        .to_string();
-        let mut request = ModelRequest::text(&settings.model_id, prompt);
+        });
+        self.invoke_decision(settings, "triage", prompt).await
+    }
+
+    pub async fn decide_agenda(
+        &self,
+        settings: &TriageSettings,
+        context: AgendaTriageContext<'_>,
+    ) -> Result<SupportDecision, TriageClientError> {
+        let prompt = json!({
+            "task": "Before spending an OpenCode main-reasoning turn, decide whether this Agent has real actionable shared work in this one room. Assigned or explicitly mentioned unfinished cards and a genuinely stalled exchange can be actionable. Return actionable=false when waking the main Agent would only make it inspect and conclude that there is nothing to do. Return only the required JSON object.",
+            "requiredShape": {
+                "actionable": "boolean",
+                "responseMode": "me|each|one-of-us",
+                "reason": "short explanation of why the main Agent should or should not wake",
+                "promptNote": "focused execution brief for the main Agent"
+            },
+            "candidate": {
+                "id": context.agent.id,
+                "displayName": context.agent.display_name,
+                "role": context.agent.role,
+                "bio": context.agent.bio,
+                "systemPrompt": context.agent.system_prompt,
+            },
+            "agenda": context.candidate,
+        });
+        self.invoke_decision(settings, "agenda", prompt).await
+    }
+
+    pub async fn decide_dm_progress(
+        &self,
+        settings: &TriageSettings,
+        context: DmLoopContext<'_>,
+    ) -> Result<SupportDecision, TriageClientError> {
+        let prompt = json!({
+            "task": "This is the mandatory every-eighth-message check for an Agent-to-Agent direct conversation. Decide whether the exchange is making concrete progress and should continue. Repetition, mutual acknowledgement with no new work, or cycling over the same point is not progress. actionable=true means continue; actionable=false means stop the loop. Return only the required JSON object.",
+            "requiredShape": {
+                "actionable": "boolean",
+                "responseMode": "me|each|one-of-us",
+                "reason": "short progress or loop explanation",
+                "promptNote": "short continuation instruction, empty when stopping"
+            },
+            "candidate": {
+                "id": context.agent.id,
+                "displayName": context.agent.display_name,
+                "role": context.agent.role,
+            },
+            "roomId": context.room_id,
+            "recentExchange": context.messages,
+        });
+        self.invoke_decision(settings, "dm-loop", prompt).await
+    }
+
+    async fn invoke_decision(
+        &self,
+        settings: &TriageSettings,
+        task_prefix: &str,
+        prompt: Value,
+    ) -> Result<SupportDecision, TriageClientError> {
+        let runtime = self.load_runtime(&settings.provider_id).await?;
+        let provider = self.factory.build(&runtime);
+        let mut request = ModelRequest::text(&settings.model_id, prompt.to_string());
         request.temperature = Some(0.0);
         request.max_output_tokens = Some(512);
         request.thinking = Some(ThinkingConfig::disabled());
         let mut stream = provider
             .invoke(
                 request,
-                ModelCallOptions::new(format!("triage-{}", Uuid::new_v4().simple())),
+                ModelCallOptions::new(format!("{task_prefix}-{}", Uuid::new_v4().simple())),
             )
             .await?;
         let mut deltas = String::new();

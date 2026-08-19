@@ -11,6 +11,7 @@ export interface CollabAgent {
   modelId: string
   opencodeSessionId: string | null
   enabled: boolean
+  scannerEnabled: boolean
   activity: CollabAgentActivity
 }
 

@@ -1,9 +1,9 @@
 # OpenWork collaboration daemon
 
 `openwork-collab` is the persistent backend for collaboration mode. It triages each debounced room
-update for every eligible Agent, wakes the relevant OpenCode sessions, and publishes authenticated
-MCP replies and reactions back into the room. The daemon is the only writer of `collab_*` data;
-Desktop and every CLI command below talk to its Unix socket.
+update, runs a cheap agenda gate before any autonomous main-Agent turn, optionally scans cross-room
+changes, and publishes authenticated MCP actions back into rooms. The daemon is the only writer of
+`collab_*` data; Desktop and every CLI command below talk to its Unix socket.
 
 ## Prerequisites
 
@@ -111,11 +111,11 @@ Arguments containing spaces must be shell-quoted.
 ```sh
 cargo run -p openwork-collab --bin openwork-collab -- \
   agent-create alice Alice opencode hy3-free \
-  'Answer only when you can materially help. Publish through openwork_reply.'
+  'Answer only when you can materially help. Publish through openwork_reply.' false
 
 cargo run -p openwork-collab --bin openwork-collab -- \
   agent-create bob Bob opencode hy3-free \
-  'Avoid repeating a published answer. Use openwork_react when agreement is enough.'
+  'Avoid repeating a published answer. Use openwork_react when agreement is enough.' false
 
 cargo run -p openwork-collab --bin openwork-collab -- room-create general General
 cargo run -p openwork-collab --bin openwork-collab -- room-add general alice
@@ -145,7 +145,7 @@ sends the current prompt/model to `prompt_async`:
 ```sh
 cargo run -p openwork-collab --bin openwork-collab -- \
   agent-update alice Alice opencode hy3-free \
-  'Prefix every published reply with V2:'
+  'Prefix every published reply with V2:' false
 ```
 
 ## Create a board and inspect claims
@@ -191,6 +191,51 @@ cargo run -p openwork-collab --bin openwork-collab -- \
   card-release <card-id> <claimant-id>
 ```
 
+## Autonomous agenda, scanner, and DM loop checks
+
+Autonomy starts only after an Agent has been quiet for 90 seconds. Once per minute, `idle` rotates
+across available Agents. Before any agenda wake spends an OpenCode turn, the configured triage
+provider evaluates one focused room candidate: incomplete cards use the column's explicit
+`isDone=false`, while a stalled room must be between 5 minutes and 6 hours old. No candidate writes
+an `empty_inbox` triage record and creates no `collab_runs` row. A gate failure is `fail_open` when a
+real candidate exists, so a broken cheap model cannot silently stop all autonomous work.
+
+Inspect why a wake did or did not happen with the existing command:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- triage-list general
+```
+
+`rate_limited` means the room cooldown or per-Agent autonomous rate gate stopped the wake;
+`loop_cap` means a turn token, the three-decline cap, or the eighth-message Agent-DM check stopped
+it. Stalled-room cooldown is keyed only by room and lasts 45 minutes. Three unnecessary-nudge
+decisions stop further nudges until any new room message resets that count.
+
+Scanner is intentionally off for every existing and newly created Agent. Enable it explicitly in
+Desktop's teammate editor, or pass the final boolean to `agent-create` / `agent-update`:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- \
+  agent-update alice Alice opencode hy3-free \
+  'Answer only when you can materially help. Publish through openwork_reply.' true
+```
+
+The first eligible 24-hour snapshot is a no-cost baseline. A scanner wake requires at least eight
+recent messages and a changed cross-room peer fingerprint; the scanner's own marker/reply cannot
+re-arm it, and an unchanged snapshot never wakes the main Agent again. Scanner and agenda share the
+per-Agent autonomous rate gate. There is deliberately no quota gate: usage is recorded but not
+used to block model calls.
+
+Create or reuse an Agent-to-Agent DM by member set, then inspect every-eighth-message decisions:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- dm-create alice bob
+cargo run -p openwork-collab --bin openwork-collab -- triage-list
+```
+
+Agent DMs participate by default. Messages 8, 16, 24, and so on invoke the cheap progress detector;
+a no-progress verdict records `loop_cap` and does not wake the other main Agent.
+
 ## Operational checks
 
 - `permissions` returns the daemon's cross-instance pending set built from one
@@ -228,7 +273,8 @@ cargo test -p openwork-collab
 
 The PostgreSQL tests use random empty schemas, run every collab migration in order, and exercise
 concurrent sequence allocation, HELD/retry, exact deduplication, reactions, triage persistence,
-atomic card claim competition, and claim release. They drop only their test-owned schemas:
+atomic card claim competition, claim release, agenda card selection, scanner baselining, and the
+single in-memory stalled-room pusher over a real room. They drop only their test-owned schemas:
 
 ```sh
 TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
@@ -254,7 +300,8 @@ The dependency tree may contain only the two approved OpenWork dependencies:
 `openwork-models` and `openwork-credentials`; it must not contain `openwork-core`,
 `openwork-agent`, `openwork-chat-state`, or `openwork-tools`.
 
-The dated P4 evidence is in [`P4-ACCEPTANCE.md`](P4-ACCEPTANCE.md). Earlier evidence remains in
+The dated P5 evidence is in [`P5-ACCEPTANCE.md`](P5-ACCEPTANCE.md). Earlier evidence remains in
+[`P4-ACCEPTANCE.md`](P4-ACCEPTANCE.md),
 [`P3-ACCEPTANCE.md`](P3-ACCEPTANCE.md) and [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
 
 ## Where the P0/P1 findings live

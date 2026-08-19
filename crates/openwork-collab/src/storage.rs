@@ -17,6 +17,7 @@ use crate::{
 
 mod board;
 mod coordination;
+mod proactivity;
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
 pub const MESSAGE_DEDUP_WINDOW: Duration = Duration::from_secs(3);
@@ -82,8 +83,8 @@ impl CollabStorage {
         .await?;
         sqlx::query(
             "INSERT INTO collab_agents (
-                id, role, bio, system_prompt, provider_id, model_id, enabled
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                id, role, bio, system_prompt, provider_id, model_id, enabled, scanner_enabled
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&input.id)
         .bind(input.role.as_deref())
@@ -92,6 +93,7 @@ impl CollabStorage {
         .bind(input.provider_id.trim())
         .bind(input.model_id.trim())
         .bind(input.enabled)
+        .bind(input.scanner_enabled)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
@@ -114,7 +116,7 @@ impl CollabStorage {
         let agent = sqlx::query(
             "UPDATE collab_agents SET
                 role = $2, bio = $3, system_prompt = $4,
-                provider_id = $5, model_id = $6, enabled = $7,
+                provider_id = $5, model_id = $6, enabled = $7, scanner_enabled = $8,
                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
              WHERE id = $1",
         )
@@ -125,6 +127,7 @@ impl CollabStorage {
         .bind(input.provider_id.trim())
         .bind(input.model_id.trim())
         .bind(input.enabled)
+        .bind(input.scanner_enabled)
         .execute(&mut *transaction)
         .await?;
         if participant.rows_affected() == 0 || agent.rows_affected() == 0 {
@@ -139,7 +142,8 @@ impl CollabStorage {
     pub async fn agent(&self, id: &str) -> Result<Option<Agent>, StorageError> {
         Ok(sqlx::query_as::<_, AgentRow>(
             "SELECT a.id, p.display_name, a.role, a.bio, a.system_prompt,
-                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled
+                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled,
+                    a.scanner_enabled
                FROM collab_agents a
                JOIN collab_participants p ON p.id = a.id
               WHERE a.id = $1",
@@ -153,7 +157,8 @@ impl CollabStorage {
     pub async fn agents(&self) -> Result<Vec<Agent>, StorageError> {
         Ok(sqlx::query_as::<_, AgentRow>(
             "SELECT a.id, p.display_name, a.role, a.bio, a.system_prompt,
-                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled
+                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled,
+                    a.scanner_enabled
                FROM collab_agents a
                JOIN collab_participants p ON p.id = a.id
               ORDER BY a.created_at, a.id",
@@ -622,6 +627,7 @@ struct AgentRow {
     model_id: String,
     opencode_session_id: Option<String>,
     enabled: bool,
+    scanner_enabled: bool,
 }
 
 impl AgentRow {
@@ -636,6 +642,7 @@ impl AgentRow {
             model_id: self.model_id,
             opencode_session_id: self.opencode_session_id,
             enabled: self.enabled,
+            scanner_enabled: self.scanner_enabled,
         }
     }
 }
