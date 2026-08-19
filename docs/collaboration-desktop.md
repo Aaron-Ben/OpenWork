@@ -180,7 +180,7 @@ openwork://collab-event         + batch   协作     ← useCollabEventBridge
 | 会话状态转 idle / busy | 空闲 / 在忙 |
 | 超时无事件 | 无响应 |
 
-具体事件名以实测为准（P0 尖刺产出），**前端不硬编码事件名**——daemon 负责归一化成上面五种表现，前端只消费归一化后的状态。这样 OpenCode 换事件名时改动只落在 daemon。
+OpenCode 可能重复送出逐字节相同的帧，**去重由 daemon 按活跃 run 完成**，前端拿到的是已去重的流。具体事件名以实测为准，**前端不硬编码事件名**——daemon 负责归一化成上面五种表现，前端只消费归一化后的状态。这样 OpenCode 换事件名时改动只落在 daemon。
 
 ### 7.2 待审批角标
 

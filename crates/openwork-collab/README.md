@@ -336,21 +336,27 @@ The dependency tree may contain only the two approved OpenWork dependencies:
 `openwork-models` and `openwork-credentials`; it must not contain `openwork-core`,
 `openwork-agent`, `openwork-chat-state`, or `openwork-tools`.
 
-The dated P6 evidence is in [`P6-ACCEPTANCE.md`](P6-ACCEPTANCE.md). Earlier evidence remains in
-[`P5-ACCEPTANCE.md`](P5-ACCEPTANCE.md),
-[`P4-ACCEPTANCE.md`](P4-ACCEPTANCE.md),
-[`P3-ACCEPTANCE.md`](P3-ACCEPTANCE.md) and [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
+## Where the findings live
 
-## Where the P0/P1 findings live
-
-The P0 probes (`src/bin/spike*.rs`) and their reports (`SPIKE-P0.md`, `API-RESEARCH.md`) are gone.
+The P0 probes (`src/bin/spike*.rs`) and every per-phase acceptance record (`SPIKE-P0.md`,
+`API-RESEARCH.md`, `P2`–`P6-ACCEPTANCE.md`) are gone.
 Everything they proved is now either running code or design documentation:
 
 - process startup, ready-line parsing, the v1 client, SSE framing and global-event normalization →
   `src/opencode.rs`; the official `rmcp` server pattern → `src/mcp.rs`;
-- the API facts and their consequences → `docs/collaboration.md` §4 (endpoints, self-check),
-  §6 (why a single `/global/event` carries every agent's pending approvals), and §8.1 (what
-  happens when a busy session is prompted again).
+- the API facts and their consequences → `docs/collaboration.md` §4 (endpoints, self-check,
+  duplicate frames), §6 (why a single `/global/event` carries every agent's pending approvals),
+  §8.1 (what happens when a busy session is prompted again), §8.2 (an explicitly requested
+  non-prose action still counts as actionable) and §11 (scanner must exclude its own output; a
+  stall claim is held through dispatch);
+- the claim grace-period rationale → `docs/collaboration-data-model.md` §7.3;
+- the macOS capture/drag limitation → `docs/collaboration-desktop.md` R-F7.
+
+Operational values deliberately stay here rather than in `docs/`: GC environment names and
+defaults, idle/scanner/rate/cooldown intervals, and the claim check and grace seconds. They are
+tuned per deployment; the design docs carry the reason a knob exists, not its current setting.
+One library gotcha also stays here: `rmcp` rejects an enum as a tool's root input schema with
+`Schema is missing 'type' field` — the request must be a root JSON object containing the action enum.
 
 A finding worth keeping belongs in `docs/`, which is the only place describing the target state.
 Anything that was not worth moving there was not worth keeping.

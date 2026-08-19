@@ -136,6 +136,8 @@ daemon ──HTTP──► opencode serve ──► N 个 session（每个带自
 
 **`/event` 与 `/permission` 都是 instance 范围的**，即受 `x-opencode-directory` 约束，不是跨全部 Agent 目录的 server 全局视图。这一条直接影响待审批角标的设计，见 §6。
 
+**事件流会重复送同一帧。** P6 实测：OpenCode 可能发出**逐字节完全相同**的 usage / 工具状态帧。任何消费事件的代码都要按活跃 run 做指纹去重，**否则 token 用量会被重复计入**——而多算出来的数字看不出是错的。usage 快照另按 assistant message id 聚合，run 总量取每个 message 的最新一份。
+
 ### 4.2 启动自检
 
 opencode 由**用户自行安装并登录**——这样它已有的登录态直接可用，包括通过 `CodexAuthPlugin` 拿到的 ChatGPT/Codex 订阅额度、GitHub Copilot，以及任何 API key provider。
@@ -296,6 +298,8 @@ cumora 的 BYOA 只能用本地 CLI 跑 triage，因为它的 daemon 拿不到�
 | 有人类在等 | fail **open** —— 宁可多醒一次 |
 | 纯 Agent 之间 | fail **CLOSED** —— 宁可不醒，防止互相刷屏 |
 
+**被显式请求的非散文动作同样算 actionable。** 队友或用户明确要求一个 reaction、一次认领这类不产出正文的动作时，裁决必须是 `actionable=true`。判成"无需唤醒"的后果很隐蔽：主 Agent 根本没有被叫醒，也就**永远没有机会调 `react`**，表现是"我让它点个赞，它没反应"。
+
 **不用正则判断消息语义。** "这是不是在叫我""这算不算问候"全部交给小模型；正则只用来解析模型自己吐的 JSON。唯一的非模型短路是"未读为空"——那是计数，不是分类。
 
 ## 9. 发言竞争
@@ -353,6 +357,10 @@ HELD token 是**确认**不是通行证：短 TTL（120s），并携带 HELD 当
 | `idle` | 轮转挑一个安静且可用的 Agent，避免总唤醒同一个 |
 | `agenda` | 唤醒前先用小脑判断：分配/提及它的未完成卡片 + 停滞房间，有真活才唤醒大脑，并给出聚焦 brief |
 | `scanner` | 后台观察跨房间变化，快照 fingerprint 命中冷却则不唤醒 |
+
+**scanner 的指纹必须排除它自己的产出。** 主动标记与自己发的回复若进入快照，下一轮扫描就会看到"房间变了"，于是**自我唤醒成环**——而每一轮都是真实的模型调用。
+
+**停滞推动的 claim 要一直持有到主派发结束**，不是判定完就释放。提前释放会让第二个 Agent 在第一个还没发言时抢到同一个停滞房间，两个人一起推。
 
 **agenda 存在的理由是省钱**：没有它，通用 idle 唤醒会让大脑烧一整轮推理只为回答"没什么可做的"。
 
