@@ -1,7 +1,8 @@
 use openwork_collab::{
     daemon::IpcRequest,
     model::{
-        Agent, AgentInput, MessagePage, MessagePageAnchor, Room, RoomSummary, SendMessageOutcome,
+        Agent, AgentInput, AgentView, MessagePage, MessagePageAnchor, Room, RoomSummary,
+        SendMessageOutcome,
     },
     opencode::PermissionReply,
     permission::PendingPermission,
@@ -23,7 +24,7 @@ pub async fn collab_status(
 #[tauri::command]
 pub async fn collab_agent_list(
     client: tauri::State<'_, CollabDaemonClient>,
-) -> Result<Vec<Agent>, CommandError> {
+) -> Result<Vec<AgentView>, CommandError> {
     client
         .call(&IpcRequest::ListAgents)
         .await

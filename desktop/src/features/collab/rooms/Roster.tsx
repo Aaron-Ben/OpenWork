@@ -1,7 +1,7 @@
 import { Bot, ShieldAlert, UserRoundPlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type { CollabAgent, CollabRoomSummary } from '@/bridge/collab'
+import type { CollabAgent, CollabAgentActivity, CollabRoomSummary } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { ApprovalCard } from '@/features/collab/permissions/ApprovalCard'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
@@ -33,12 +33,16 @@ export function Roster({ room, agents }: { room: CollabRoomSummary; agents: Coll
       <div className="grid gap-1">
         {roster.map((member) => {
           const waiting = pending.some((permission) => permission.agentId === member.id)
+          const activity = agents.find((agent) => agent.id === member.id)?.activity ?? { kind: 'idle' }
+          const activityText = activity.kind === 'executing'
+            ? t('collab.agents.activity.executing', { detail: activity.detail })
+            : t(activityLabelKey(activity))
           return (
             <div key={member.id} className="flex items-center gap-3 rounded-xl px-3 py-2">
               <span className={`grid size-8 place-items-center rounded-full ${waiting ? 'bg-red-100 text-red-700' : 'bg-clay/10 text-clay'}`}><Bot size={16} /></span>
               <span className="min-w-0 flex-1">
                 <strong className="block truncate text-sm">{member.displayName}</strong>
-                <span className={`block text-xs ${waiting ? 'text-red-700' : 'text-ink-faint'}`}>{waiting ? t('collab.agents.waitingApproval') : t('collab.agents.idle')}</span>
+                <span className={`block truncate text-xs ${waiting ? 'text-red-700' : 'text-ink-faint'}`}>{waiting ? t('collab.agents.waitingApproval') : activityText}</span>
               </span>
             </div>
           )
@@ -56,4 +60,15 @@ export function Roster({ room, agents }: { room: CollabRoomSummary; agents: Coll
       ) : null}
     </aside>
   )
+}
+
+function activityLabelKey(activity: CollabAgentActivity) {
+  switch (activity.kind) {
+    case 'idle': return 'collab.agents.activity.idle' as const
+    case 'busy': return 'collab.agents.activity.busy' as const
+    case 'replying': return 'collab.agents.activity.replying' as const
+    case 'compacting': return 'collab.agents.activity.compacting' as const
+    case 'unresponsive': return 'collab.agents.activity.unresponsive' as const
+    case 'executing': return 'collab.agents.activity.executing' as const
+  }
 }

@@ -20,7 +20,7 @@ const emptyAgent: CollabAgentInput = {
 }
 
 function editable(agent: CollabAgent): CollabAgentInput {
-  const { opencodeSessionId: _, ...input } = agent
+  const { opencodeSessionId: _, activity: _activity, ...input } = agent
   return input
 }
 

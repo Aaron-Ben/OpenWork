@@ -28,6 +28,25 @@ pub struct AgentInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentActivity {
+    Idle,
+    Busy,
+    Replying,
+    Compacting,
+    Executing { detail: String },
+    Unresponsive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentView {
+    #[serde(flatten)]
+    pub agent: Agent,
+    pub activity: AgentActivity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Room {
     pub id: String,
@@ -102,7 +121,82 @@ pub struct SendMessageOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HeldReply {
+    pub peer_sequence: i64,
+    pub messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", content = "result", rename_all = "snake_case")]
+pub enum AgentReplyOutcome {
+    Published(SendMessageOutcome),
+    Held(HeldReply),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Inbox {
     pub messages: Vec<Message>,
     pub unread_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomGlance {
+    pub room_id: String,
+    pub highest_sequence: i64,
+    pub messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reaction {
+    pub message_id: String,
+    pub actor_id: String,
+    pub emoji: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageSettings {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TriageRecordInput<'a> {
+    pub agent_id: &'a str,
+    pub room_id: &'a str,
+    pub up_to_sequence: i64,
+    pub actionable: bool,
+    pub response_mode: Option<&'a str>,
+    pub source: &'a str,
+    pub reason: Option<&'a str>,
+    pub prompt_note: Option<&'a str>,
+    pub provider_id: Option<&'a str>,
+    pub model_id: Option<&'a str>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub latency_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageRecord {
+    pub id: String,
+    pub agent_id: String,
+    pub room_id: String,
+    pub up_to_sequence: i64,
+    pub actionable: bool,
+    pub response_mode: Option<String>,
+    pub source: String,
+    pub reason: Option<String>,
+    pub prompt_note: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub latency_ms: i64,
+    pub created_at: String,
 }

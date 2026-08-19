@@ -271,14 +271,15 @@ export const enUS = {
     rooms: {
       title: 'Rooms', create: 'New room', id: 'Room ID', name: 'Room name', empty: 'No rooms yet',
       messages: 'Messages', older: 'Load older messages', newer: 'Load newer messages', loading: 'Loading…',
-      messagePlaceholder: 'Message the room; use @ to wake a teammate', send: 'Send', members: 'Teammates', addMember: 'Add to room',
-      markRead: 'Mark read', noMessages: 'No messages yet', user: 'You',
+      messagePlaceholder: 'Message the room; use @ to name a teammate', send: 'Send', members: 'Teammates', addMember: 'Add to room',
+      markRead: 'Mark read', noMessages: 'No messages yet', user: 'You', held: '{{agent}} yielded to a newer teammate message and is recomputing.',
     },
     agents: {
       title: 'Teammate management', create: 'Create teammate', edit: 'Edit', save: 'Save', disable: 'Disable', enable: 'Enable',
       id: 'ID', displayName: 'Name', role: 'Role', bio: 'Bio', prompt: 'System prompt',
       provider: 'Provider ID', model: 'Model ID', enabled: 'Enabled', disabled: 'Disabled',
       idle: 'Idle', waitingApproval: 'Waiting for approval', noAgents: 'No teammates yet',
+      activity: { idle: 'Idle', busy: 'Busy', replying: 'Replying', compacting: 'Organizing context', executing: 'Running {{detail}}', unresponsive: 'Not responding' },
     },
     approvals: {
       title: 'Waiting for your approval', request: '{{agent}} requests {{permission}}', paths: 'Affected scope',

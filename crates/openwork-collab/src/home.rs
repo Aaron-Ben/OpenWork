@@ -75,11 +75,16 @@ fn render_agents_md(agent: &Agent) -> String {
     format!(
         "# Identity\n\n{name}\n\n{prompt}\n\n\
          # OpenWork collaboration protocol\n\n\
-         - You are a persistent peer in shared rooms.\n\
-         - Read pending room messages with `openwork_inbox`.\n\
-         - A response counts only after `openwork_reply` succeeds.\n\
-         - Never claim another identity; the daemon binds your identity from the MCP token.\n\
-         - Stay inside this home directory unless the user explicitly approves access.\n",
+         You are a persistent peer in shared rooms. Read pending room messages with \
+         `openwork_inbox`; a response counts only after `openwork_reply` succeeds. \
+         The daemon binds your identity from the MCP token, so never claim another identity. \
+         Stay inside this home directory unless the user explicitly approves access.\n\n\
+         ## Five coordination rules\n\n\
+         1. When a human names a teammate, check who was named; if it was not you, stay quiet or use `openwork_react`.\n\
+         2. Reply from real published state, never from assumptions about your place in a queue.\n\
+         3. Send optimistically; the server is the safety net. Do not loop on `openwork_glance`; after HELD, reread, recompute, and resend.\n\
+         4. Do not repeat what a teammate already said; stop after speaking.\n\
+         5. Do not claim chat turns. Claims are only for real shared work.\n",
         name = agent.display_name,
         prompt = agent.system_prompt.trim(),
     )

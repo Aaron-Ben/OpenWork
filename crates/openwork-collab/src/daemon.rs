@@ -18,10 +18,12 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    activity::AgentRuntimeRegistry,
+    coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
     home::{HomeError, HomeManager},
     mcp::{IdentityRegistry, MessageNotice, start_server},
-    model::{AgentInput, MessagePageAnchor, MessagePageQuery},
+    model::{AgentInput, AgentView, MessagePageAnchor, MessagePageQuery},
     opencode::{OpenCodeError, OpenCodeSupervisor, PermissionReply},
     permission::PermissionTracker,
     scheduler::{AgentTokens, start as start_scheduler},
@@ -71,10 +73,15 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
     let identities = IdentityRegistry::default();
     let tokens: AgentTokens = Arc::new(RwLock::new(HashMap::new()));
     let (notice_tx, notice_rx) = mpsc::unbounded_channel();
+    let events = CollabEventPublisher::default();
+    let coordination = CoordinationHub::default();
+    let runtime = AgentRuntimeRegistry::default();
     let mcp = start_server(
         storage.clone(),
         identities.clone(),
         notice_tx.clone(),
+        coordination.clone(),
+        events.clone(),
         cancel.clone(),
     )
     .await?;
@@ -100,7 +107,6 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         initial.generation
     );
     let permissions = PermissionTracker::default();
-    let events = CollabEventPublisher::default();
     let scheduler = start_scheduler(
         storage.clone(),
         homes.clone(),
@@ -109,6 +115,8 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         notice_rx,
         permissions.clone(),
         events.clone(),
+        coordination,
+        runtime.clone(),
         cancel.clone(),
     )
     .await?;
@@ -120,6 +128,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         notices: notice_tx,
         permissions,
         events,
+        runtime,
         engine: supervisor.subscribe(),
         cancel: cancel.clone(),
     };
@@ -162,6 +171,7 @@ struct DaemonContext {
     notices: mpsc::UnboundedSender<MessageNotice>,
     permissions: PermissionTracker,
     events: CollabEventPublisher,
+    runtime: AgentRuntimeRegistry,
     engine: tokio::sync::watch::Receiver<Option<crate::opencode::EngineConnection>>,
     cancel: CancellationToken,
 }
@@ -219,6 +229,13 @@ pub enum IpcRequest {
     },
     CredentialCheck {
         provider_id: String,
+    },
+    ConfigureTriage {
+        provider_id: String,
+        model_id: String,
+    },
+    ListTriages {
+        room_id: Option<String>,
     },
 }
 
@@ -361,7 +378,14 @@ async fn handle_request_inner(
             context.events.publish(CollabEventKind::AgentsChanged).await;
             Ok(IpcResponse::success(updated))
         }
-        IpcRequest::ListAgents => Ok(IpcResponse::success(context.storage.agents().await?)),
+        IpcRequest::ListAgents => {
+            let mut agents = Vec::new();
+            for agent in context.storage.agents().await? {
+                let activity = context.runtime.activity(&agent.id).await;
+                agents.push(AgentView { agent, activity });
+            }
+            Ok(IpcResponse::success(agents))
+        }
         IpcRequest::CreateRoom { id, title } => {
             let room = context.storage.create_group_room(&id, &title).await?;
             context.storage.add_member(&room.id, "user").await?;
@@ -406,6 +430,7 @@ async fn handle_request_inner(
                     room_id,
                     author_id,
                     body,
+                    sequence: outcome.message.sequence,
                 });
             }
             Ok(IpcResponse::success(outcome))
@@ -541,6 +566,18 @@ async fn handle_request_inner(
             drop(credential);
             Ok(IpcResponse::success(response))
         }
+        IpcRequest::ConfigureTriage {
+            provider_id,
+            model_id,
+        } => Ok(IpcResponse::success(
+            context
+                .storage
+                .configure_triage(&provider_id, &model_id)
+                .await?,
+        )),
+        IpcRequest::ListTriages { room_id } => Ok(IpcResponse::success(
+            context.storage.triage_records(room_id.as_deref()).await?,
+        )),
     }
 }
 

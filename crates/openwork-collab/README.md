@@ -1,9 +1,9 @@
 # OpenWork collaboration daemon
 
-`openwork-collab` is the persistent backend for collaboration mode. It carries room messages from
-the Desktop or CLI to an `@mentioned` OpenCode Agent and publishes the Agent's authenticated MCP
-reply back into the room. The daemon is the only writer of `collab_*` data; Desktop and every CLI
-command below talk to its Unix socket.
+`openwork-collab` is the persistent backend for collaboration mode. It triages each debounced room
+update for every eligible Agent, wakes the relevant OpenCode sessions, and publishes authenticated
+MCP replies and reactions back into the room. The daemon is the only writer of `collab_*` data;
+Desktop and every CLI command below talk to its Unix socket.
 
 ## Prerequisites
 
@@ -14,8 +14,10 @@ command below talk to its Unix socket.
   family and its array shape, `/agent`, and a connectable `/global/event`). Any probe that fails
   rejects startup before `daemon.ready=true` and names which one. The version is reported in
   diagnostics only. See `docs/collaboration.md` §4.2.
-- `OPENWORK_API_KEY_ENCRYPTION_KEY` is set when using `credential-check`. The daemon loads the
-  repository `.env` in the same way as the Desktop host.
+- `OPENWORK_API_KEY_ENCRYPTION_KEY` is set when using `credential-check` or triage. Triage decrypts
+  the selected OpenWork provider credential and calls its API directly; it never consumes an
+  OpenCode Agent session or subscription quota. The daemon loads the repository `.env` in the same
+  way as the Desktop host.
 - `OPENWORK_COLLAB_HOME` optionally changes the state root. The default is
   `~/.openwork/collab`.
 
@@ -64,7 +66,8 @@ Use the workbench sidebar's **Collaboration** button to enter the second Shell. 
 
 1. create a room and Agents in the **Teammates** destination;
 2. add enabled Agents from the room roster;
-3. send `@agent_id ...` in the room input;
+3. send a message in the room input; `@agent_id` remains a useful signal to the triage model, but
+   every eligible Agent makes an independent triage decision;
 4. handle permanent OpenCode asks in the red approval cards with **Allow once**, **Always allow**,
    **Reject** plus a reason, or **Abort run**.
 
@@ -73,25 +76,52 @@ Room history opens through a bounded `sequence` page around the human user's per
 button is the only Desktop action that advances that human cursor. Agent inbox delivery never uses
 it.
 
-## Create two Agents and verify the backend path
+## Configure triage
+
+Triage uses one enabled provider credential and one model already configured in OpenWork. Select
+them once through the daemon socket:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- \
+  triage-config <provider-id> <model-id>
+```
+
+The provider credential and an enabled `models` row bound to it must exist; `<model-id>` is that
+row's provider-facing `model_name`, not its OpenWork database row id. Configuration fails readably
+if either is missing or the credential is disabled. The provider API must accept the selected
+model. Restart is not required.
+
+Inspect recent decisions globally or for one room:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- triage-list
+cargo run -p openwork-collab --bin openwork-collab -- triage-list general
+```
+
+Each record shows the candidate Agent, covered sequence, `actionable`, model response mode,
+reason/prompt note, source, token usage, and latency. `support_model` is a successful model call;
+`fail_open` means a triage failure still woke an Agent because a human was waiting;
+`fail_closed` means a pure Agent-to-Agent update did not wake another Agent.
+
+## Create two Agents and verify the coordinated path
 
 Arguments containing spaces must be shell-quoted.
 
 ```sh
 cargo run -p openwork-collab --bin openwork-collab -- \
   agent-create alice Alice opencode hy3-free \
-  'When explicitly mentioned, answer through openwork_reply.'
+  'Answer only when you can materially help. Publish through openwork_reply.'
 
 cargo run -p openwork-collab --bin openwork-collab -- \
   agent-create bob Bob opencode hy3-free \
-  'When explicitly mentioned, answer through openwork_reply.'
+  'Avoid repeating a published answer. Use openwork_react when agreement is enough.'
 
 cargo run -p openwork-collab --bin openwork-collab -- room-create general General
 cargo run -p openwork-collab --bin openwork-collab -- room-add general alice
 cargo run -p openwork-collab --bin openwork-collab -- room-add general bob
 
 cargo run -p openwork-collab --bin openwork-collab -- \
-  send general user '@alice Reply with exactly P1_ALICE_REPLY using openwork_reply.'
+  send general user '@alice Reply with exactly P3_ALICE_REPLY using openwork_reply.'
 ```
 
 Wait for the 2.5-second debounce and the model turn, then inspect the durable stream:
@@ -99,10 +129,13 @@ Wait for the 2.5-second debounce and the model turn, then inspect the durable st
 ```sh
 cargo run -p openwork-collab --bin openwork-collab -- messages general
 cargo run -p openwork-collab --bin openwork-collab -- agent-list
+cargo run -p openwork-collab --bin openwork-collab -- triage-list general
 ```
 
-The expected evidence is an Alice-authored `P1_ALICE_REPLY` after the user message, with consecutive
-room sequences. Bob's `opencodeSessionId` remains null because `@` wakes only the named Agent.
+The expected evidence is an Alice-authored `P3_ALICE_REPLY` after the user message, consecutive room
+sequences, and one triage row per eligible Agent. The support model—not the daemon—decides whether
+Bob is actionable. If Bob sees Alice's published answer before writing, the five standing rules tell
+it to react or stay quiet; a stale write in a room with more than two members is rejected as `HELD`.
 
 To update an Agent, use the same argument shape with `agent-update`. The daemon immediately repairs
 that home, and every dispatch reloads the current database definition, rewrites managed files, and
@@ -127,6 +160,19 @@ cargo run -p openwork-collab --bin openwork-collab -- \
 - On every daemon startup, `opencode.json` and `AGENTS.md` are overwritten from the database and the
   new process token/MCP address. `memory/MEMORY.md` is created only when missing and is never
   overwritten.
+- `openwork_glance` advances only the daemon's ten-minute in-memory seen cursor. It never updates
+  `collab_room_members.last_read_seq`; `openwork_inbox` therefore remains authoritative across
+  prompts and restarts. Missing or expired seen state fails open.
+- `openwork_reply` applies the HELD freshness gate only to rooms with more than two members. A HELD
+  result includes new peer messages plus a 120-second confirmation token; after rereading, the same
+  Agent recomputes and retries. `openwork_react` records agreement without publishing duplicate
+  prose. Seen cursors and HELD tokens intentionally disappear on daemon restart.
+- One `/global/event` stream remains dedicated to cross-Agent approvals. Runtime state and idle
+  boundaries come from instance-scoped `/event` streams carrying each Agent home's
+  `x-opencode-directory`; those streams are restored after an OpenCode restart.
+- `agent-list` reports daemon-normalized `idle`, `busy`, `replying`, `compacting`,
+  `executing { detail }`, or `unresponsive` activity. Desktop consumes only these collaboration
+  events and never OpenCode event names.
 
 ## Tests
 
@@ -136,8 +182,9 @@ Pure domain and process tests:
 cargo test -p openwork-collab
 ```
 
-The PostgreSQL test uses a random empty schema, migrates twice, exercises concurrent sequence
-allocation and exact deduplication, and drops only that test-owned schema:
+The PostgreSQL test uses a random empty schema, runs every collab migration in order, exercises
+concurrent sequence allocation, HELD/retry, exact deduplication, reactions, and triage persistence,
+then drops only that test-owned schema:
 
 ```sh
 TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
@@ -163,7 +210,8 @@ The dependency tree may contain only the two approved OpenWork dependencies:
 `openwork-models` and `openwork-credentials`; it must not contain `openwork-core`,
 `openwork-agent`, `openwork-chat-state`, or `openwork-tools`.
 
-The dated manual and automated P2 evidence is in [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
+The dated manual and automated P3 evidence is in [`P3-ACCEPTANCE.md`](P3-ACCEPTANCE.md). P2 evidence
+remains in [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
 
 ## Where the P0/P1 findings live
 

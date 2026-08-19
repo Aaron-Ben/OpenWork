@@ -3,15 +3,32 @@ use std::{collections::VecDeque, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 
+use crate::model::AgentActivity;
+
 pub const COLLAB_EVENT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum CollabEventKind {
-    RoomsChanged { room_id: String },
+    RoomsChanged {
+        room_id: String,
+    },
     AgentsChanged,
     PermissionsChanged,
     EngineChanged,
+    ReplyHeld {
+        agent_id: String,
+        room_id: String,
+        peer_sequence: i64,
+    },
+    AgentActivityChanged {
+        agent_id: String,
+        activity: AgentActivity,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

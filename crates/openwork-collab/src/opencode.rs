@@ -221,6 +221,26 @@ impl OpenCodeClient {
         })
     }
 
+    pub async fn events(&self, directory: &Path) -> Result<InstanceEventStream, OpenCodeError> {
+        let response = self
+            .for_directory(
+                self.http
+                    .get(self.url("/event"))
+                    .header(reqwest::header::ACCEPT, "text/event-stream"),
+                directory,
+            )
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(response_error(response).await);
+        }
+        Ok(InstanceEventStream {
+            response,
+            buffer: Vec::new(),
+            directory: directory.to_path_buf(),
+        })
+    }
+
     async fn json<T: for<'de> Deserialize<'de>>(
         &self,
         request: RequestBuilder,
@@ -308,6 +328,39 @@ impl GlobalEventStream {
                 if let Some(data) = sse_data(&frame)? {
                     let raw: Value = serde_json::from_str(&data)?;
                     return normalize_global_event(raw);
+                }
+                continue;
+            }
+            let chunk = self
+                .response
+                .chunk()
+                .await?
+                .ok_or(OpenCodeError::EventStreamClosed)?;
+            self.buffer.extend_from_slice(&chunk);
+        }
+    }
+}
+
+pub struct InstanceEventStream {
+    response: reqwest::Response,
+    buffer: Vec<u8>,
+    directory: PathBuf,
+}
+
+impl InstanceEventStream {
+    pub async fn next(&mut self) -> Result<GlobalEvent, OpenCodeError> {
+        loop {
+            if let Some(frame) = take_sse_frame(&mut self.buffer) {
+                if let Some(data) = sse_data(&frame)? {
+                    let payload: Value = serde_json::from_str(&data)?;
+                    if payload.get("type").and_then(Value::as_str).is_none() {
+                        return Err(OpenCodeError::InvalidEvent(payload));
+                    }
+                    return Ok(GlobalEvent {
+                        directory: Some(self.directory.clone()),
+                        project: None,
+                        payload,
+                    });
                 }
                 continue;
             }
@@ -623,9 +676,9 @@ pub enum OpenCodeError {
         headers: BTreeMap<String, String>,
         body: String,
     },
-    #[error("OpenCode global event stream closed")]
+    #[error("OpenCode event stream closed")]
     EventStreamClosed,
-    #[error("OpenCode global event wrapper was invalid: {0}")]
+    #[error("OpenCode event payload was invalid: {0}")]
     InvalidEvent(Value),
     #[error("OpenCode is restarting and temporarily unavailable")]
     Unavailable,

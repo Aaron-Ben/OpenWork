@@ -4,6 +4,9 @@ use thiserror::Error;
 const P1_VERSION: i64 = 202_608_180_001;
 const P1_DESCRIPTION: &str = "collab p1";
 const P1_SQL: &str = include_str!("../migrations/202608180001_collab_p1.sql");
+const P3_VERSION: i64 = 202_608_190_001;
+const P3_DESCRIPTION: &str = "collab p3";
+const P3_SQL: &str = include_str!("../migrations/202608190001_collab_p3.sql");
 
 pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
     let mut transaction = pool.begin().await?;
@@ -17,19 +20,26 @@ pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
              )",
         )
         .await?;
-    let applied: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM collab_schema_migrations WHERE version = $1)",
-    )
-    .bind(P1_VERSION)
-    .fetch_one(&mut *transaction)
-    .await?;
-    if !applied {
-        sqlx::raw_sql(P1_SQL).execute(&mut *transaction).await?;
-        sqlx::query("INSERT INTO collab_schema_migrations (version, description) VALUES ($1, $2)")
-            .bind(P1_VERSION)
-            .bind(P1_DESCRIPTION)
+    for (version, description, sql) in [
+        (P1_VERSION, P1_DESCRIPTION, P1_SQL),
+        (P3_VERSION, P3_DESCRIPTION, P3_SQL),
+    ] {
+        let applied: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM collab_schema_migrations WHERE version = $1)",
+        )
+        .bind(version)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !applied {
+            sqlx::raw_sql(sql).execute(&mut *transaction).await?;
+            sqlx::query(
+                "INSERT INTO collab_schema_migrations (version, description) VALUES ($1, $2)",
+            )
+            .bind(version)
+            .bind(description)
             .execute(&mut *transaction)
             .await?;
+        }
     }
     transaction.commit().await?;
     Ok(())
@@ -43,7 +53,7 @@ pub enum MigrationError {
 
 #[cfg(test)]
 mod tests {
-    use super::P1_SQL;
+    use super::{P1_SQL, P3_SQL};
 
     #[test]
     fn p1_schema_obeys_time_and_terminal_run_constraints() {
@@ -53,5 +63,13 @@ mod tests {
         assert!(P1_SQL.contains("collab_runs_terminal_time_valid"));
         assert!(P1_SQL.contains("status =  'running' AND ended_at IS     NULL"));
         assert!(P1_SQL.contains("status <> 'running' AND ended_at IS NOT NULL"));
+    }
+
+    #[test]
+    fn p3_schema_obeys_time_and_duration_constraints() {
+        assert!(!P3_SQL.contains("TIMESTAMP WITH TIME ZONE"));
+        assert!(!P3_SQL.contains("TIMESTAMPTZ"));
+        assert!(P3_SQL.contains("AT TIME ZONE 'Asia/Shanghai'"));
+        assert!(P3_SQL.contains("latency_ms    BIGINT"));
     }
 }

@@ -48,6 +48,32 @@ async fn startup_repair_overwrites_managed_files_but_preserves_memory() {
             .unwrap()
             .contains("PROMPT_V2")
     );
+    let standing_prompt = tokio::fs::read_to_string(home.join("AGENTS.md"))
+        .await
+        .unwrap();
+    for rule in [
+        "When a human names a teammate, check who was named",
+        "Reply from real published state",
+        "Send optimistically; the server is the safety net",
+        "Do not repeat what a teammate already said",
+        "Do not claim chat turns",
+    ] {
+        assert!(standing_prompt.contains(rule), "missing rule: {rule}");
+    }
+    assert_eq!(
+        standing_prompt
+            .lines()
+            .filter(|line| {
+                line.trim_start()
+                    .split_once(". ")
+                    .is_some_and(|(number, _)| number.parse::<u8>().is_ok())
+            })
+            .count(),
+        5,
+        "the standing coordination protocol must stay at exactly five numbered rules"
+    );
+    assert!(standing_prompt.contains("openwork_glance"));
+    assert!(standing_prompt.contains("openwork_react"));
     assert_eq!(
         tokio::fs::read_to_string(home.join("memory/MEMORY.md"))
             .await

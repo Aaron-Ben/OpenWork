@@ -15,6 +15,8 @@ use crate::{
     time::{china_now, format_china},
 };
 
+mod coordination;
+
 pub const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
 pub const MESSAGE_DEDUP_WINDOW: Duration = Duration::from_secs(3);
 
@@ -429,10 +431,18 @@ impl CollabStorage {
                     "SELECT id, room_id, sequence, author_id, kind, body, created_at
                        FROM (
                             SELECT id, room_id, sequence, author_id, kind, body, created_at
-                              FROM collab_messages
-                             WHERE room_id = $1
-                             ORDER BY ABS(sequence - $2), sequence
-                             LIMIT $3
+                              FROM (
+                                   (SELECT id, room_id, sequence, author_id, kind, body, created_at
+                                      FROM collab_messages
+                                     WHERE room_id = $1 AND sequence <= $2
+                                     ORDER BY sequence DESC LIMIT $3)
+                                   UNION ALL
+                                   (SELECT id, room_id, sequence, author_id, kind, body, created_at
+                                      FROM collab_messages
+                                     WHERE room_id = $1 AND sequence > $2
+                                     ORDER BY sequence LIMIT $3)
+                              ) candidates
+                             ORDER BY ABS(sequence - $2), sequence LIMIT $3
                        ) nearest
                       ORDER BY sequence",
                 )
@@ -522,30 +532,6 @@ impl CollabStorage {
         })
     }
 
-    pub async fn mentioned_agents(
-        &self,
-        room_id: &str,
-        body: &str,
-    ) -> Result<Vec<Agent>, StorageError> {
-        let agents = sqlx::query_as::<_, AgentRow>(
-            "SELECT a.id, p.display_name, a.role, a.bio, a.system_prompt,
-                    a.provider_id, a.model_id, a.opencode_session_id, a.enabled
-               FROM collab_room_members rm
-               JOIN collab_agents a ON a.id = rm.participant_id
-               JOIN collab_participants p ON p.id = a.id
-              WHERE rm.room_id = $1 AND a.enabled = TRUE AND rm.muted = FALSE
-              ORDER BY a.id",
-        )
-        .bind(room_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(agents
-            .into_iter()
-            .map(AgentRow::into_agent)
-            .filter(|agent| contains_mention(body, &agent.id))
-            .collect())
-    }
-
     pub async fn begin_run(
         &self,
         agent: &Agent,
@@ -614,17 +600,6 @@ fn validate_agent(input: &AgentInput) -> Result<(), StorageError> {
         }
     }
     Ok(())
-}
-
-fn contains_mention(body: &str, agent_id: &str) -> bool {
-    let needle = format!("@{agent_id}");
-    body.match_indices(&needle).any(|(start, matched)| {
-        let end = start + matched.len();
-        body[end..]
-            .chars()
-            .next()
-            .is_none_or(|next| !(next.is_ascii_alphanumeric() || next == '_'))
-    })
 }
 
 fn records_to_messages(records: Vec<MessageRow>) -> Result<Vec<Message>, StorageError> {
@@ -756,17 +731,4 @@ pub enum StorageError {
     InvalidInput(String),
     #[error("collaboration time formatting failed: {0}")]
     TimeFormat(#[from] time::error::Format),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::contains_mention;
-
-    #[test]
-    fn mention_matching_respects_identifier_boundaries() {
-        assert!(contains_mention("hello @alice", "alice"));
-        assert!(contains_mention("@alice, please respond", "alice"));
-        assert!(!contains_mention("@alice_2", "alice"));
-        assert!(!contains_mention("alice", "alice"));
-    }
 }

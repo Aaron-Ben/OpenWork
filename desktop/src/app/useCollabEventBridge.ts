@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 
 import { listenToCollabEvents } from '@/bridge/collab'
 import { useAgentStore } from '@/features/collab/agents/agentStore'
+import { useCoordinationStore } from '@/features/collab/coordinationStore'
 import { useMessageStore } from '@/features/collab/rooms/messageStore'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
@@ -25,6 +26,9 @@ export function useCollabEventBridge(): void {
       refreshAgents: () => useAgentStore.getState().fetchAll(),
       refreshPermissions: () => usePermissionStore.getState().fetchAll(),
       refreshRoomTail: (roomId) => useMessageStore.getState().refreshTail(roomId),
+      applyAgentActivity: (agentId, activity) =>
+        useAgentStore.getState().applyActivity(agentId, activity),
+      recordHeld: (notice) => useCoordinationStore.getState().recordHeld(notice),
     })
     void refreshAll()
     void listenToCollabEvents((event) => {

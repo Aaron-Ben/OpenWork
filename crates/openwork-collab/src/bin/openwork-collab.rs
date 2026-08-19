@@ -66,6 +66,13 @@ async fn run_cli() -> CliResult<()> {
         "credential-check" => IpcRequest::CredentialCheck {
             provider_id: required(&mut args, "provider id")?,
         },
+        "triage-config" => IpcRequest::ConfigureTriage {
+            provider_id: required(&mut args, "provider id")?,
+            model_id: required(&mut args, "model id")?,
+        },
+        "triage-list" => IpcRequest::ListTriages {
+            room_id: args.next(),
+        },
         unknown => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -141,6 +148,8 @@ fn print_usage() {
            openwork-collab send <room-id> <author-id> <body>\n\
            openwork-collab messages <room-id>\n\
            openwork-collab credential-check <provider-id>\n\n\
+           openwork-collab triage-config <provider-id> <model-id>\n\
+           openwork-collab triage-list [room-id]\n\n\
          Environment:\n\
            DATABASE_URL            PostgreSQL URL\n\
            OPENWORK_COLLAB_HOME     daemon state root (default ~/.openwork/collab)\n\

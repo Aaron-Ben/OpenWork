@@ -335,14 +335,15 @@ export const zhCN = {
     rooms: {
       title: '房间', create: '新建房间', id: '房间 ID', name: '房间名称', empty: '还没有房间',
       messages: '消息', older: '加载更早消息', newer: '加载更新消息', loading: '正在加载…',
-      messagePlaceholder: '发消息，用 @ 唤醒同事', send: '发送', members: '同事名册', addMember: '加入房间',
-      markRead: '标为已读', noMessages: '还没有消息', user: '你',
+      messagePlaceholder: '发消息，用 @ 点名同事', send: '发送', members: '同事名册', addMember: '加入房间',
+      markRead: '标为已读', noMessages: '还没有消息', user: '你', held: '{{agent}} 因队友的新消息让位，正在重算。',
     },
     agents: {
       title: '同事管理', create: '创建同事', edit: '编辑', save: '保存', disable: '停用', enable: '启用',
       id: 'ID', displayName: '名称', role: '角色', bio: '简介', prompt: 'System Prompt',
       provider: 'Provider ID', model: 'Model ID', enabled: '已启用', disabled: '已停用',
       idle: '空闲', waitingApproval: '等待审批', noAgents: '还没有同事',
+      activity: { idle: '空闲', busy: '在忙', replying: '正在回复', compacting: '正在整理上下文', executing: '正在执行 {{detail}}', unresponsive: '无响应' },
     },
     approvals: {
       title: '等待你的审批', request: '{{agent}} 请求 {{permission}}', paths: '涉及范围',

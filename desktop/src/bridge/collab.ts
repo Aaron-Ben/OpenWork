@@ -11,9 +11,18 @@ export interface CollabAgent {
   modelId: string
   opencodeSessionId: string | null
   enabled: boolean
+  activity: CollabAgentActivity
 }
 
-export type CollabAgentInput = Omit<CollabAgent, 'opencodeSessionId'>
+export type CollabAgentInput = Omit<CollabAgent, 'opencodeSessionId' | 'activity'>
+
+export type CollabAgentActivity =
+  | { kind: 'idle' }
+  | { kind: 'busy' }
+  | { kind: 'replying' }
+  | { kind: 'compacting' }
+  | { kind: 'executing'; detail: string }
+  | { kind: 'unresponsive' }
 
 export interface CollabRoomMember {
   id: string
@@ -69,6 +78,21 @@ export type CollabEvent =
   | { version: number; sequence: number; type: 'agents_changed' }
   | { version: number; sequence: number; type: 'permissions_changed' }
   | { version: number; sequence: number; type: 'engine_changed' }
+  | {
+      version: number
+      sequence: number
+      type: 'reply_held'
+      agentId: string
+      roomId: string
+      peerSequence: number
+    }
+  | {
+      version: number
+      sequence: number
+      type: 'agent_activity_changed'
+      agentId: string
+      activity: CollabAgentActivity
+    }
 
 export const COLLAB_EVENT_VERSION = 1
 export const COLLAB_EVENT = 'openwork://collab-event'

@@ -1,4 +1,9 @@
-import { COLLAB_EVENT_VERSION, type CollabEvent } from '@/bridge/collab'
+import {
+  COLLAB_EVENT_VERSION,
+  type CollabAgentActivity,
+  type CollabEvent,
+} from '@/bridge/collab'
+import type { HeldNotice } from '@/features/collab/coordinationStore'
 
 export interface CollabEventDependencies {
   refreshAll: () => Promise<void>
@@ -6,6 +11,8 @@ export interface CollabEventDependencies {
   refreshAgents: () => Promise<void>
   refreshPermissions: () => Promise<void>
   refreshRoomTail: (roomId: string) => Promise<void>
+  applyAgentActivity: (agentId: string, activity: CollabAgentActivity) => void
+  recordHeld: (notice: HeldNotice) => void
 }
 
 export function createCollabEventController(deps: CollabEventDependencies) {
@@ -31,6 +38,16 @@ export function createCollabEventController(deps: CollabEventDependencies) {
           break
         case 'engine_changed':
           await deps.refreshPermissions()
+          break
+        case 'reply_held':
+          deps.recordHeld({
+            agentId: event.agentId,
+            roomId: event.roomId,
+            peerSequence: event.peerSequence,
+          })
+          break
+        case 'agent_activity_changed':
+          deps.applyAgentActivity(event.agentId, event.activity)
           break
       }
     },

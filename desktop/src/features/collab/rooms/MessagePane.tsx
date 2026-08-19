@@ -7,6 +7,7 @@ import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { formatBeijingDateTime } from '@/lib/dateTime'
+import { useCoordinationStore } from '@/features/collab/coordinationStore'
 import { useMessageStore } from './messageStore'
 import { useRoomStore } from './roomStore'
 
@@ -18,6 +19,7 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
   const loadNewer = useMessageStore((state) => state.loadNewer)
   const send = useMessageStore((state) => state.send)
   const markRead = useRoomStore((state) => state.markRead)
+  const held = useCoordinationStore((state) => state.heldByRoom[room.id])
   const [draft, setDraft] = useState('')
   const viewportRef = useRef<HTMLDivElement>(null)
   const positionedRoom = useRef<string | null>(null)
@@ -58,6 +60,11 @@ export function MessagePane({ room }: { room: CollabRoomSummary }) {
           </Button>
         ) : null}
       </header>
+      {held ? (
+        <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-xs text-amber-900" role="status">
+          {t('collab.rooms.held', { agent: room.members.find((member) => member.id === held.agentId)?.displayName ?? held.agentId })}
+        </div>
+      ) : null}
       <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {window?.hasOlder ? (
           <div className="mb-4 text-center"><Button type="button" variant="ghost" size="sm" onClick={() => void loadOlder(room.id)}><ArrowUp size={15} />{t('collab.rooms.older')}</Button></div>

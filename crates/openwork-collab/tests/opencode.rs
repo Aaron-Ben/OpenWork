@@ -7,8 +7,8 @@
 
 use std::{net::SocketAddr, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
-use axum::{Json, Router, routing::get};
-use openwork_collab::opencode::OpenCodeSupervisor;
+use axum::{Json, Router, http::HeaderMap, routing::get};
+use openwork_collab::opencode::{DIRECTORY_HEADER, OpenCodeClient, OpenCodeSupervisor};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -116,4 +116,40 @@ async fn self_check_accepts_a_server_that_satisfies_every_probe() {
     tokio::time::timeout(Duration::from_secs(10), supervisor.shutdown())
         .await
         .expect("cancelled supervisor must stop");
+}
+
+#[tokio::test]
+async fn instance_event_stream_uses_the_agent_directory_and_unwraps_the_event() {
+    let router = Router::new().route(
+        "/event",
+        get(|headers: HeaderMap| async move {
+            assert_eq!(
+                headers
+                    .get(DIRECTORY_HEADER)
+                    .and_then(|value| value.to_str().ok()),
+                Some("/tmp/alice-home")
+            );
+            ([
+                ("content-type", "text/event-stream"),
+                ("cache-control", "no-cache"),
+            ], "data: {\"type\":\"session.status\",\"properties\":{\"sessionID\":\"ses_alice\",\"status\":{\"type\":\"busy\"}}}\n\n")
+        }),
+    );
+    let (address, server) = serve(router).await;
+    let client = OpenCodeClient::new(format!("http://{address}"));
+    let mut stream = client
+        .events(std::path::Path::new("/tmp/alice-home"))
+        .await
+        .unwrap();
+
+    let event = stream.next().await.unwrap();
+    assert_eq!(
+        event.directory.as_deref(),
+        Some(std::path::Path::new("/tmp/alice-home"))
+    );
+    assert_eq!(event.event_type(), Some("session.status"));
+    assert_eq!(event.session_id(), Some("ses_alice"));
+    assert_eq!(event.session_status(), Some("busy"));
+
+    server.abort();
 }

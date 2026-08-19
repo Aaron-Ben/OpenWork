@@ -20,7 +20,12 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{model::SendMessageOutcome, storage::CollabStorage};
+use crate::{
+    coordination::CoordinationHub,
+    event::{CollabEventKind, CollabEventPublisher},
+    model::AgentReplyOutcome,
+    storage::CollabStorage,
+};
 
 const TOKEN_HEADER: &str = "x-openwork-token";
 
@@ -29,6 +34,7 @@ pub struct MessageNotice {
     pub room_id: String,
     pub author_id: String,
     pub body: String,
+    pub sequence: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -62,16 +68,35 @@ struct ReplyRequest {
     room_id: String,
     #[schemars(description = "Exact message body to publish")]
     body: String,
+    #[serde(default)]
+    #[schemars(description = "HELD token returned by a previous rejected reply")]
+    held_token: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 struct InboxRequest {}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct GlanceRequest {
+    #[schemars(description = "Room id to reread")]
+    room_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ReactRequest {
+    #[schemars(description = "Message id to react to")]
+    message_id: String,
+    #[schemars(description = "Exact emoji to attach")]
+    emoji: String,
+}
 
 #[derive(Clone)]
 struct CollaborationMcp {
     storage: CollabStorage,
     identities: IdentityRegistry,
     notices: mpsc::UnboundedSender<MessageNotice>,
+    coordination: CoordinationHub,
+    events: CollabEventPublisher,
 }
 
 #[tool_router(server_handler)]
@@ -96,23 +121,54 @@ impl CollaborationMcp {
                 request.room_id
             ));
         }
+        let seen_sequence = self
+            .coordination
+            .effective_seen(&agent_id, &request.room_id, request.held_token.as_deref())
+            .await;
         let outcome = self
             .storage
-            .send_message(&request.room_id, &agent_id, &request.body)
+            .send_agent_reply(&request.room_id, &agent_id, &request.body, seen_sequence)
             .await
             .map_err(|error| error.to_string())?;
-        if !outcome.deduplicated {
-            let _ = self.notices.send(MessageNotice {
-                room_id: request.room_id,
-                author_id: agent_id,
-                body: request.body,
-            });
+        match outcome {
+            AgentReplyOutcome::Published(outcome) => {
+                if !outcome.deduplicated {
+                    let _ = self.notices.send(MessageNotice {
+                        room_id: request.room_id,
+                        author_id: agent_id,
+                        body: request.body,
+                        sequence: outcome.message.sequence,
+                    });
+                }
+                serde_json::to_string(&AgentReplyOutcome::Published(outcome))
+                    .map_err(|error| error.to_string())
+            }
+            AgentReplyOutcome::Held(held) => {
+                let token = self
+                    .coordination
+                    .issue_held(&agent_id, &request.room_id, held.peer_sequence)
+                    .await;
+                self.events
+                    .publish(CollabEventKind::ReplyHeld {
+                        agent_id,
+                        room_id: request.room_id,
+                        peer_sequence: held.peer_sequence,
+                    })
+                    .await;
+                serde_json::to_string(&serde_json::json!({
+                    "status": "held",
+                    "heldToken": token,
+                    "peerSequence": held.peer_sequence,
+                    "messages": held.messages,
+                    "instruction": "Reread these published peer messages, recompute, then call openwork_reply again with held_token."
+                }))
+                .map_err(|error| error.to_string())
+            }
         }
-        serialize_outcome(&outcome)
     }
 
     #[tool(
-        description = "Read all of your currently unread OpenWork room messages. This P1 tool never advances the persisted read cursor."
+        description = "Read all of your currently unread OpenWork room messages. This tool never advances the persisted read cursor."
     )]
     async fn inbox(
         &self,
@@ -126,6 +182,54 @@ impl CollaborationMcp {
             .await
             .map_err(|error| error.to_string())?;
         serde_json::to_string(&inbox).map_err(|error| error.to_string())
+    }
+
+    #[tool(
+        description = "Reread the latest published state of an OpenWork room before recomputing a HELD reply."
+    )]
+    async fn glance(
+        &self,
+        Parameters(request): Parameters<GlanceRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<String, String> {
+        let agent_id = self.authenticated_agent(&context)?;
+        if !self
+            .storage
+            .is_member(&request.room_id, &agent_id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "Agent {agent_id} is not a member of room {}",
+                request.room_id
+            ));
+        }
+        let glance = self
+            .storage
+            .glance(&request.room_id, 50)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.coordination
+            .observe(&agent_id, &request.room_id, glance.highest_sequence)
+            .await;
+        serde_json::to_string(&glance).map_err(|error| error.to_string())
+    }
+
+    #[tool(
+        description = "React to a published teammate message without posting a duplicate reply."
+    )]
+    async fn react(
+        &self,
+        Parameters(request): Parameters<ReactRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<String, String> {
+        let agent_id = self.authenticated_agent(&context)?;
+        let reaction = self
+            .storage
+            .add_reaction(&request.message_id, &agent_id, &request.emoji)
+            .await
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string(&reaction).map_err(|error| error.to_string())
     }
 }
 
@@ -141,10 +245,6 @@ impl CollaborationMcp {
             .resolve(token)?
             .ok_or_else(|| "invalid X-OpenWork-Token".to_string())
     }
-}
-
-fn serialize_outcome(outcome: &SendMessageOutcome) -> Result<String, String> {
-    serde_json::to_string(outcome).map_err(|error| error.to_string())
 }
 
 pub struct McpServerHandle {
@@ -167,12 +267,16 @@ pub async fn start_server(
     storage: CollabStorage,
     identities: IdentityRegistry,
     notices: mpsc::UnboundedSender<MessageNotice>,
+    coordination: CoordinationHub,
+    events: CollabEventPublisher,
     cancel: CancellationToken,
 ) -> Result<McpServerHandle, io::Error> {
     let handler = CollaborationMcp {
         storage,
         identities,
         notices,
+        coordination,
+        events,
     };
     let service: StreamableHttpService<CollaborationMcp, LocalSessionManager> =
         StreamableHttpService::new(
