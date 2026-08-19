@@ -126,7 +126,7 @@ daemon ──HTTP──► opencode serve ──► N 个 session（每个带自
 | 发起一轮 | `POST /session/{id}/prompt_async`（返回 **204 No Content**） |
 | 打断 | `POST /session/{id}/abort` |
 | 事件流 | `GET /event`，**客户端按 `properties.sessionID` 过滤** |
-| 待决审批 | `GET /permission`、`POST /permission/{id}/reply` |
+| 待决审批 | `POST /permission/{id}/reply` 回复；`GET /permission` **仅按 Agent 查询**（instance 范围），全局集合由 `GET /global/event` 维护，见 §6 |
 | Agent 定义 | `GET /agent` |
 | 健康与版本 | `GET /global/health` |
 
@@ -374,7 +374,7 @@ HELD token 是**确认**不是通行证：短 TTL（120s），并携带 HELD 当
 
 Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉起；关闭时**不停止** daemon。前端跑在 WebView 里连不了 Unix socket，因此读写与事件一律经 `src-tauri` 中转。
 
-界面四块：房间、Agent 管理、看板、日志与事件流抽屉，外加一个**全局待审批角标**（数据来自 `GET /permission`）——审批永久挂起，所以“有人在等你”必须永远可见，见 §6。**不做第二套 Trace UI**——[trace.md](trace.md) 的 Span 树与完整度派生建立在"OpenWork 组装了这次请求"之上，而这里请求由 OpenCode 自己组装，口径对不上；协作提供的是 `collab_runs` / `collab_triages` / `collab_events` 三张平表的时间序视图。
+界面四块：房间、Agent 管理、看板、日志与事件流抽屉，外加一个**全局待审批角标**（由 daemon 从单条 `GET /global/event` 维护的全局集合给出，见 §6）——审批永久挂起，所以“有人在等你”必须永远可见。**不做第二套 Trace UI**——[trace.md](trace.md) 的 Span 树与完整度派生建立在"OpenWork 组装了这次请求"之上，而这里请求由 OpenCode 自己组装，口径对不上；协作提供的是 `collab_runs` / `collab_triages` / `collab_events` 三张平表的时间序视图。
 
 **前端的 Shell 划分、导航、状态、复用边界与验收见 [collaboration-desktop.md](collaboration-desktop.md)，那篇是前端的唯一权威。**
 

@@ -321,7 +321,7 @@ CREATE INDEX idx_collab_events_run ON collab_events(run_id) WHERE run_id IS NOT 
 | 停滞推动的 claim 与 decline 计数 | daemon 内存 | 窗口级状态，重启后最多多推一次 |
 | Agent 的 MCP token | daemon 内存 | 与 daemon 进程同生共死，不需要 TTL 或刷新 |
 | 未读数 | 查询 | `last_read_seq` 与房间最高 `sequence` 的差，不是存储 |
-| 待审批 | OpenCode | `GET /permission` 是权威，daemon 只代理 |
+| 待审批 | OpenCode + daemon 内存 | 单条 `GET /global/event` 维护跨 Agent 的待决集合；`GET /permission` 是 instance 范围的，只用于按 Agent 查询 |
 | Agent 记忆 | `<home>/memory/MEMORY.md` | 文件，Agent 自己维护 |
 
 ## 7. 写入顺序与原子操作
