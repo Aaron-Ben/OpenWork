@@ -358,7 +358,14 @@ export const zhCN = {
       claimedBy: '认领人', releaseClaim: '强制取消认领', moveLeft: '向左移动',
       moveRight: '向右移动', done: '已完成',
     },
-    unavailable: { logs: '日志将在 P6 提供' },
+    logs: {
+      title: '协作日志', description: '按时间查看运行、triage 裁决与持久事件。',
+      allRooms: '全部房间', currentRoom: '当前房间', refresh: '刷新', loading: '正在加载日志…',
+      empty: '还没有协作日志。', payload: '记录载荷',
+      actionable: '需要处理', notActionable: '无需处理',
+      tokenSummary: 'Token：输入 {{input}} · 缓存 {{cached}} · 输出 {{output}}',
+      sources: { run: '运行', triage: 'Triage', event: '事件' },
+    },
   },
   tool: {
     mutation: {

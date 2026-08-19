@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     model::{AgendaCandidate, Agent, TriageRecordInput},
+    observation::{ObservationSink, record_triage},
     proactivity::{
         NudgeClaim, ProactivityError, ProactivityHub, ScannerDecision, scanner_fingerprint,
     },
@@ -40,14 +41,20 @@ pub struct AutonomyEngine {
     storage: CollabStorage,
     triage: TriageClient,
     state: ProactivityHub,
+    observations: ObservationSink,
 }
 
 impl AutonomyEngine {
-    pub fn new(storage: CollabStorage, state: ProactivityHub) -> Self {
+    pub fn new(
+        storage: CollabStorage,
+        state: ProactivityHub,
+        observations: ObservationSink,
+    ) -> Self {
         Self {
             triage: TriageClient::new(storage.pool().clone()),
             storage,
             state,
+            observations,
         }
     }
 
@@ -192,9 +199,10 @@ impl AutonomyEngine {
             }
         };
         let latency_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-        if let Err(error) = self
-            .storage
-            .record_triage(TriageRecordInput {
+        if let Err(error) = record_triage(
+            &self.storage,
+            &self.observations,
+            TriageRecordInput {
                 agent_id: &agent.id,
                 room_id: &candidate.room_id,
                 up_to_sequence: candidate.highest_sequence,
@@ -208,8 +216,9 @@ impl AutonomyEngine {
                 input_tokens: evaluated.input_tokens,
                 output_tokens: evaluated.output_tokens,
                 latency_ms,
-            })
-            .await
+            },
+        )
+        .await
         {
             if stall_claimed {
                 self.state.cancel_stall(&candidate.room_id)?;
@@ -260,8 +269,10 @@ impl AutonomyEngine {
         else {
             return Ok(());
         };
-        self.storage
-            .record_triage(TriageRecordInput {
+        record_triage(
+            &self.storage,
+            &self.observations,
+            TriageRecordInput {
                 agent_id: &agent.id,
                 room_id: &room_id,
                 up_to_sequence,
@@ -277,8 +288,9 @@ impl AutonomyEngine {
                 input_tokens: None,
                 output_tokens: None,
                 latency_ms: 0,
-            })
-            .await?;
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -289,8 +301,10 @@ impl AutonomyEngine {
         source: TriageSource,
         reason: &str,
     ) -> Result<(), AutonomyError> {
-        self.storage
-            .record_triage(TriageRecordInput {
+        record_triage(
+            &self.storage,
+            &self.observations,
+            TriageRecordInput {
                 agent_id: &agent.id,
                 room_id: &candidate.room_id,
                 up_to_sequence: candidate.highest_sequence,
@@ -304,8 +318,9 @@ impl AutonomyEngine {
                 input_tokens: None,
                 output_tokens: None,
                 latency_ms: 0,
-            })
-            .await?;
+            },
+        )
+        .await?;
         Ok(())
     }
 }
@@ -346,10 +361,11 @@ pub fn start(
     storage: CollabStorage,
     state: ProactivityHub,
     wakes: mpsc::UnboundedSender<AutonomousWake>,
+    observations: ObservationSink,
     cancel: CancellationToken,
 ) -> AutonomyHandle {
     let task = tokio::spawn(async move {
-        let engine = AutonomyEngine::new(storage, state);
+        let engine = AutonomyEngine::new(storage, state, observations);
         let mut ticker = interval_at(tokio::time::Instant::now() + AGENDA_CHECK, AGENDA_CHECK);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
@@ -380,12 +396,15 @@ pub fn start(
 
 pub async fn record_dispatch_short_circuit(
     storage: &CollabStorage,
+    observations: &ObservationSink,
     wake: &AutonomousWake,
     source: TriageSource,
     reason: &str,
 ) {
-    if let Err(error) = storage
-        .record_triage(TriageRecordInput {
+    if let Err(error) = record_triage(
+        storage,
+        observations,
+        TriageRecordInput {
             agent_id: &wake.agent_id,
             room_id: &wake.room_id,
             up_to_sequence: wake.up_to_sequence,
@@ -399,8 +418,9 @@ pub async fn record_dispatch_short_circuit(
             input_tokens: None,
             output_tokens: None,
             latency_ms: 0,
-        })
-        .await
+        },
+    )
+    .await
     {
         eprintln!("failed to record autonomous short circuit: {error}");
     }

@@ -40,19 +40,20 @@ async fn p1_migration_and_message_invariants_work_from_an_empty_schema() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
     let collab_feature_tables: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.tables
           WHERE table_schema = current_schema()
             AND table_name IN (
                 'collab_triages', 'collab_reactions',
-                'collab_boards', 'collab_board_columns', 'collab_cards'
+                'collab_boards', 'collab_board_columns', 'collab_cards',
+                'collab_events'
             )",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(collab_feature_tables, 5);
+    assert_eq!(collab_feature_tables, 6);
 
     storage
         .create_agent(&AgentInput {

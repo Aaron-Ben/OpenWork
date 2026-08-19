@@ -1,6 +1,40 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone)]
+pub struct ObservationInput<'a> {
+    pub run_id: Option<&'a str>,
+    pub agent_id: Option<&'a str>,
+    pub room_id: Option<&'a str>,
+    pub kind: &'a str,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservationRecord {
+    pub id: String,
+    pub run_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub room_id: Option<String>,
+    pub kind: String,
+    pub payload: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollabLogEntry {
+    pub source: String,
+    pub id: String,
+    pub run_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub room_id: Option<String>,
+    pub kind: String,
+    pub payload: Value,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Agent {

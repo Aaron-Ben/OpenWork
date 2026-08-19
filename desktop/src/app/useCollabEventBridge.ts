@@ -6,6 +6,8 @@ import { useCoordinationStore } from '@/features/collab/coordinationStore'
 import { useBoardStore } from '@/features/collab/boards/boardStore'
 import { useMessageStore } from '@/features/collab/rooms/messageStore'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
+import { useLogStore } from '@/features/collab/logs/logStore'
+import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { createCollabEventController } from './collabEventController'
@@ -19,6 +21,7 @@ export function useCollabEventBridge(): void {
         useRoomStore.getState().fetchAll(),
         useAgentStore.getState().fetchAll(),
         usePermissionStore.getState().fetchAll(),
+        useLogStore.getState().fetch(useLogStore.getState().roomId),
       ])
       await Promise.all(
         useRoomStore.getState().rooms.map((room) =>
@@ -32,6 +35,9 @@ export function useCollabEventBridge(): void {
       refreshPermissions: () => usePermissionStore.getState().fetchAll(),
       refreshBoards: (roomId) => useBoardStore.getState().fetchRoom(roomId),
       refreshRoomTail: (roomId) => useMessageStore.getState().refreshTail(roomId),
+      refreshLogs: () => useCollabNavigationStore.getState().view === 'logs'
+        ? useLogStore.getState().fetch(useLogStore.getState().roomId)
+        : Promise.resolve(),
       applyAgentActivity: (agentId, activity) =>
         useAgentStore.getState().applyActivity(agentId, activity),
       recordHeld: (notice) => useCoordinationStore.getState().recordHeld(notice),

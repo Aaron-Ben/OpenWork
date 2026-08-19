@@ -77,6 +77,10 @@ async fn run_cli() -> CliResult<()> {
         "triage-list" => IpcRequest::ListTriages {
             room_id: args.next(),
         },
+        "logs" => IpcRequest::ListLogs {
+            room_id: args.next(),
+            limit: 300,
+        },
         "board-create" => IpcRequest::CreateBoard {
             id: required(&mut args, "board id")?,
             room_id: required(&mut args, "room id")?,
@@ -210,6 +214,7 @@ fn print_usage() {
            openwork-collab credential-check <provider-id>\n\n\
            openwork-collab triage-config <provider-id> <model-id>\n\
            openwork-collab triage-list [room-id]\n\n\
+           openwork-collab logs [room-id]\n\n\
            openwork-collab board-create <id> <room-id> <title>\n\
            openwork-collab board-column-create <id> <board-id> <title> <position> <is-done>\n\
            openwork-collab board-list <room-id>\n\
@@ -219,6 +224,10 @@ fn print_usage() {
          Environment:\n\
            DATABASE_URL            PostgreSQL URL\n\
            OPENWORK_COLLAB_HOME     daemon state root (default ~/.openwork/collab)\n\
+           OPENWORK_COLLAB_EVENT_RETENTION_DAYS  event retention (default 30)\n\
+           OPENWORK_COLLAB_TRIAGE_RETENTION_DAYS triage retention (default 30)\n\
+           OPENWORK_COLLAB_GC_BATCH_SIZE          rows per delete (default 500)\n\
+           OPENWORK_COLLAB_GC_STATEMENT_TIMEOUT_MS per-delete timeout (default 2000)\n\
            OPENCODE_BIN             alternate opencode executable\n\
            OPENCODE_SERVER_PASSWORD optional OpenCode basic-auth password"
     );

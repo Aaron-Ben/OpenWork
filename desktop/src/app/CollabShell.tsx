@@ -7,6 +7,7 @@ import { useCollabNavigationStore } from '@/features/collab/collabNavigationStor
 import { BoardView } from '@/features/collab/boards/BoardView'
 import { CollabRail } from '@/features/collab/components/CollabRail'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
+import { LogDrawer } from '@/features/collab/logs/LogDrawer'
 import { MessagePane } from '@/features/collab/rooms/MessagePane'
 import { RoomList } from '@/features/collab/rooms/RoomList'
 import { Roster } from '@/features/collab/rooms/Roster'
@@ -51,9 +52,7 @@ export function CollabShell() {
       ) : view === 'boards' ? (
         <BoardView room={activeRoom} />
       ) : (
-        <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">
-          {t('collab.unavailable.logs')}
-        </section>
+        <LogDrawer activeRoomId={activeRoomId} />
       )}
     </main>
   )

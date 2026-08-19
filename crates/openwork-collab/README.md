@@ -236,6 +236,40 @@ cargo run -p openwork-collab --bin openwork-collab -- triage-list
 Agent DMs participate by default. Messages 8, 16, 24, and so on invoke the cheap progress detector;
 a no-progress verdict records `loop_cap` and does not wake the other main Agent.
 
+## Collaboration logs and retention
+
+Open the **Logs** Rail destination for one flat, reverse-chronological timeline assembled from
+`collab_runs`, `collab_triages`, and `collab_events`. It is intentionally not a Span tree or a
+second Trace UI. Use **All rooms** for daemon-wide diagnosis or **Current room** to follow one
+wake through triage, prompt start/end, tool and command states, published speech, and usage.
+Committed observations update an open drawer without a manual refresh.
+
+The same bounded feed is available over the daemon socket:
+
+```sh
+cargo run -p openwork-collab --bin openwork-collab -- logs
+cargo run -p openwork-collab --bin openwork-collab -- logs general
+```
+
+Observation persistence is best-effort and runs behind a bounded queue: a slow or failed event
+insert is logged and never delays a prompt, reply, or card mutation. `collab_events.kind` remains
+open-ended so new normalized OpenCode events do not require a migration.
+
+An independent GC worker runs immediately at daemon startup and then once per day. These variables
+configure it; every value must be a positive integer:
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `OPENWORK_COLLAB_EVENT_RETENTION_DAYS` | `30` | Days to retain `collab_events` |
+| `OPENWORK_COLLAB_TRIAGE_RETENTION_DAYS` | `30` | Days to retain `collab_triages` |
+| `OPENWORK_COLLAB_GC_BATCH_SIZE` | `500` | Maximum rows deleted from each table per transaction |
+| `OPENWORK_COLLAB_GC_STATEMENT_TIMEOUT_MS` | `2000` | PostgreSQL timeout applied to each delete transaction |
+
+GC deletes only expired `collab_events` and `collab_triages`, in small transactions with a
+transaction-local `statement_timeout`. It never deletes `collab_messages` (room history) or
+`collab_runs` (which has a separate retention policy). A nonzero sweep prints deleted row counts;
+an error is logged and retried on the next daily sweep without stopping the daemon.
+
 ## Operational checks
 
 - `permissions` returns the daemon's cross-instance pending set built from one
@@ -274,7 +308,9 @@ cargo test -p openwork-collab
 The PostgreSQL tests use random empty schemas, run every collab migration in order, and exercise
 concurrent sequence allocation, HELD/retry, exact deduplication, reactions, triage persistence,
 atomic card claim competition, claim release, agenda card selection, scanner baselining, and the
-single in-memory stalled-room pusher over a real room. They drop only their test-owned schemas:
+single in-memory stalled-room pusher over a real room. P6 also covers the three-table log timeline,
+duplicate OpenCode observation frames, and both sides of the GC retention boundary while asserting
+that messages and runs survive. They drop only their test-owned schemas:
 
 ```sh
 TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
@@ -300,7 +336,8 @@ The dependency tree may contain only the two approved OpenWork dependencies:
 `openwork-models` and `openwork-credentials`; it must not contain `openwork-core`,
 `openwork-agent`, `openwork-chat-state`, or `openwork-tools`.
 
-The dated P5 evidence is in [`P5-ACCEPTANCE.md`](P5-ACCEPTANCE.md). Earlier evidence remains in
+The dated P6 evidence is in [`P6-ACCEPTANCE.md`](P6-ACCEPTANCE.md). Earlier evidence remains in
+[`P5-ACCEPTANCE.md`](P5-ACCEPTANCE.md),
 [`P4-ACCEPTANCE.md`](P4-ACCEPTANCE.md),
 [`P3-ACCEPTANCE.md`](P3-ACCEPTANCE.md) and [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
 

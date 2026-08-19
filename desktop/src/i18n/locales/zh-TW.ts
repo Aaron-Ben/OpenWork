@@ -289,7 +289,14 @@ export const zhTW = {
       claimedBy: '認領人', releaseClaim: '強制取消認領', moveLeft: '向左移動',
       moveRight: '向右移動', done: '已完成',
     },
-    unavailable: { logs: '日誌將於 P6 提供' },
+    logs: {
+      title: '協作日誌', description: '依時間查看執行、triage 裁決與持久事件。',
+      allRooms: '全部房間', currentRoom: '目前房間', refresh: '重新整理', loading: '正在載入日誌…',
+      empty: '還沒有協作日誌。', payload: '記錄載荷',
+      actionable: '需要處理', notActionable: '無需處理',
+      tokenSummary: 'Token：輸入 {{input}} · 快取 {{cached}} · 輸出 {{output}}',
+      sources: { run: '執行', triage: 'Triage', event: '事件' },
+    },
   },
   tool: {
     mutation: {

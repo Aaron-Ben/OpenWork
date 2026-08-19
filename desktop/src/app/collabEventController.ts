@@ -12,6 +12,7 @@ export interface CollabEventDependencies {
   refreshPermissions: () => Promise<void>
   refreshBoards: (roomId: string) => Promise<void>
   refreshRoomTail: (roomId: string) => Promise<void>
+  refreshLogs: (roomId: string | null) => Promise<void>
   applyAgentActivity: (agentId: string, activity: CollabAgentActivity) => void
   recordHeld: (notice: HeldNotice) => void
 }
@@ -42,6 +43,9 @@ export function createCollabEventController(deps: CollabEventDependencies) {
           break
         case 'engine_changed':
           await deps.refreshPermissions()
+          break
+        case 'logs_changed':
+          await deps.refreshLogs(event.roomId)
           break
         case 'reply_held':
           deps.recordHeld({

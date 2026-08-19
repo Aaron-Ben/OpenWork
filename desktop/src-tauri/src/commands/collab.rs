@@ -1,8 +1,8 @@
 use openwork_collab::{
     daemon::IpcRequest,
     model::{
-        Agent, AgentInput, AgentView, Board, BoardColumn, CardInput, CardMutation, MessagePage,
-        MessagePageAnchor, Room, RoomSummary, SendMessageOutcome,
+        Agent, AgentInput, AgentView, Board, BoardColumn, CardInput, CardMutation, CollabLogEntry,
+        MessagePage, MessagePageAnchor, Room, RoomSummary, SendMessageOutcome,
     },
     opencode::PermissionReply,
     permission::PendingPermission,
@@ -168,6 +168,18 @@ pub async fn collab_permission_abort(
 ) -> Result<Value, CommandError> {
     client
         .call(&IpcRequest::AbortPermission { id })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_log_list(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: Option<String>,
+    limit: u32,
+) -> Result<Vec<CollabLogEntry>, CommandError> {
+    client
+        .call(&IpcRequest::ListLogs { room_id, limit })
         .await
         .map_err(CommandError::from)
 }

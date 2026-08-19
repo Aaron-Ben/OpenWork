@@ -5,12 +5,14 @@ import { createCollabEventController } from './collabEventController'
 
 type SimpleEventType = Extract<
   CollabEvent,
-  { type: 'rooms_changed' | 'boards_changed' | 'agents_changed' | 'permissions_changed' | 'engine_changed' }
+  { type: 'rooms_changed' | 'boards_changed' | 'agents_changed' | 'permissions_changed' | 'engine_changed' | 'logs_changed' }
 >['type']
 
 function event(sequence: number, type: SimpleEventType): CollabEvent {
   return type === 'rooms_changed' || type === 'boards_changed'
     ? { version: 1, sequence, type, roomId: 'general' }
+    : type === 'logs_changed'
+      ? { version: 1, sequence, type, roomId: 'general' }
     : { version: 1, sequence, type }
 }
 
@@ -25,6 +27,7 @@ describe('collab event controller', () => {
       refreshPermissions,
       refreshBoards: vi.fn(async () => undefined),
       refreshRoomTail: vi.fn(async () => undefined),
+      refreshLogs: vi.fn(async () => undefined),
       applyAgentActivity: vi.fn(),
       recordHeld: vi.fn(),
     })
@@ -46,6 +49,7 @@ describe('collab event controller', () => {
       refreshPermissions: vi.fn(async () => undefined),
       refreshBoards: vi.fn(async () => undefined),
       refreshRoomTail: vi.fn(async () => undefined),
+      refreshLogs: vi.fn(async () => undefined),
       applyAgentActivity: vi.fn(),
       recordHeld: vi.fn(),
     })
@@ -64,6 +68,7 @@ describe('collab event controller', () => {
       refreshPermissions: vi.fn(async () => undefined),
       refreshBoards: vi.fn(async () => undefined),
       refreshRoomTail,
+      refreshLogs: vi.fn(async () => undefined),
       applyAgentActivity,
       recordHeld,
     })
@@ -106,6 +111,7 @@ describe('collab event controller', () => {
       refreshPermissions: vi.fn(async () => undefined),
       refreshBoards,
       refreshRoomTail: vi.fn(async () => undefined),
+      refreshLogs: vi.fn(async () => undefined),
       applyAgentActivity: vi.fn(),
       recordHeld: vi.fn(),
     })
@@ -113,5 +119,22 @@ describe('collab event controller', () => {
     await controller.process(event(1, 'boards_changed'))
     expect(refreshBoards).toHaveBeenCalledWith('general')
     expect(refreshRooms).not.toHaveBeenCalled()
+  })
+
+  it('refreshes the durable flat feed when the observation worker commits', async () => {
+    const refreshLogs = vi.fn(async () => undefined)
+    const controller = createCollabEventController({
+      refreshAll: vi.fn(async () => undefined),
+      refreshRooms: vi.fn(async () => undefined),
+      refreshAgents: vi.fn(async () => undefined),
+      refreshPermissions: vi.fn(async () => undefined),
+      refreshBoards: vi.fn(async () => undefined),
+      refreshRoomTail: vi.fn(async () => undefined),
+      refreshLogs,
+      applyAgentActivity: vi.fn(),
+      recordHeld: vi.fn(),
+    })
+    await controller.process(event(1, 'logs_changed'))
+    expect(refreshLogs).toHaveBeenCalledOnce()
   })
 })

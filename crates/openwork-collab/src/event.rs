@@ -23,6 +23,9 @@ pub enum CollabEventKind {
     AgentsChanged,
     PermissionsChanged,
     EngineChanged,
+    LogsChanged {
+        room_id: Option<String>,
+    },
     ReplyHeld {
         agent_id: String,
         room_id: String,

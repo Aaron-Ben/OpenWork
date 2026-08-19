@@ -13,6 +13,9 @@ const P4_SQL: &str = include_str!("../migrations/202608190002_collab_p4.sql");
 const P5_VERSION: i64 = 202_608_190_003;
 const P5_DESCRIPTION: &str = "collab p5";
 const P5_SQL: &str = include_str!("../migrations/202608190003_collab_p5.sql");
+const P6_VERSION: i64 = 202_608_190_004;
+const P6_DESCRIPTION: &str = "collab p6";
+const P6_SQL: &str = include_str!("../migrations/202608190004_collab_p6.sql");
 
 pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
     let mut transaction = pool.begin().await?;
@@ -31,6 +34,7 @@ pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
         (P3_VERSION, P3_DESCRIPTION, P3_SQL),
         (P4_VERSION, P4_DESCRIPTION, P4_SQL),
         (P5_VERSION, P5_DESCRIPTION, P5_SQL),
+        (P6_VERSION, P6_DESCRIPTION, P6_SQL),
     ] {
         let applied: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM collab_schema_migrations WHERE version = $1)",
@@ -61,7 +65,7 @@ pub enum MigrationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{P1_SQL, P3_SQL, P4_SQL, P5_SQL};
+    use super::{P1_SQL, P3_SQL, P4_SQL, P5_SQL, P6_SQL};
 
     #[test]
     fn p1_schema_obeys_time_and_terminal_run_constraints() {
@@ -96,5 +100,14 @@ mod tests {
         assert!(!P5_SQL.contains("TIMESTAMP"));
         assert!(!P5_SQL.contains("fingerprint"));
         assert!(!P5_SQL.contains("decline"));
+    }
+
+    #[test]
+    fn p6_event_kind_remains_open_ended_and_time_is_local() {
+        assert!(!P6_SQL.contains("TIMESTAMP WITH TIME ZONE"));
+        assert!(!P6_SQL.contains("TIMESTAMPTZ"));
+        assert!(P6_SQL.contains("AT TIME ZONE 'Asia/Shanghai'"));
+        assert!(P6_SQL.contains("collab_events_payload_is_object"));
+        assert!(!P6_SQL.contains("collab_events_kind_valid"));
     }
 }

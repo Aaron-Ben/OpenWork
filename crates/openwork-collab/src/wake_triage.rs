@@ -3,6 +3,7 @@
 use crate::{
     mcp::MessageNotice,
     model::TriageRecordInput,
+    observation::{ObservationSink, record_triage},
     proactivity::{DmProgress, resolve_dm_progress, should_probe_agent_dm},
     storage::CollabStorage,
     triage::{
@@ -21,6 +22,7 @@ pub async fn evaluate(
     agent_id: &str,
     room_id: &str,
     batch: &[MessageNotice],
+    observations: &ObservationSink,
 ) -> WakeTriage {
     let Some(up_to_sequence) = batch.iter().map(|notice| notice.sequence).max() else {
         return WakeTriage {
@@ -83,6 +85,7 @@ pub async fn evaluate(
                             body: message.body,
                         })
                         .collect::<Vec<_>>(),
+                    observations,
                 },
             )
             .await;
@@ -155,6 +158,7 @@ pub async fn evaluate(
         input_tokens,
         output_tokens,
         started,
+        observations,
     )
     .await;
     WakeTriage {
@@ -170,6 +174,7 @@ struct AgentDmEvaluation<'a> {
     up_to_sequence: i64,
     must_probe: bool,
     messages: &'a [TriageMessage],
+    observations: &'a ObservationSink,
 }
 
 async fn evaluate_agent_dm(
@@ -260,6 +265,7 @@ async fn evaluate_agent_dm(
         input_tokens,
         output_tokens,
         started,
+        evaluation.observations,
     )
     .await;
     WakeTriage {
@@ -284,10 +290,13 @@ async fn record(
     input_tokens: Option<i64>,
     output_tokens: Option<i64>,
     started: std::time::Instant,
+    observations: &ObservationSink,
 ) {
     let latency_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-    if let Err(error) = storage
-        .record_triage(TriageRecordInput {
+    if let Err(error) = record_triage(
+        storage,
+        observations,
+        TriageRecordInput {
             agent_id,
             room_id,
             up_to_sequence,
@@ -301,8 +310,9 @@ async fn record(
             input_tokens,
             output_tokens,
             latency_ms,
-        })
-        .await
+        },
+    )
+    .await
     {
         eprintln!("failed to record triage for Agent {agent_id}: {error}");
     }
@@ -448,6 +458,7 @@ mod tests {
         .await
         .unwrap();
         let triage = TriageClient::with_credential_store(credential_store);
+        let observations = crate::observation::ObservationSink::discarding();
 
         let seventh = evaluate(
             &storage,
@@ -460,6 +471,7 @@ mod tests {
                 body: "loop step 7".to_string(),
                 sequence: 7,
             }],
+            &observations,
         )
         .await;
         assert!(seventh.actionable);
@@ -484,6 +496,7 @@ mod tests {
                 body: "loop step 8".to_string(),
                 sequence: 8,
             }],
+            &observations,
         )
         .await;
         assert!(!eighth.actionable);

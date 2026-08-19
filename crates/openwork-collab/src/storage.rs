@@ -17,7 +17,11 @@ use crate::{
 
 mod board;
 mod coordination;
+mod gc;
+mod observation;
 mod proactivity;
+
+pub use gc::{CollabGcOutcome, CollabGcPolicy};
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
 pub const MESSAGE_DEDUP_WINDOW: Duration = Duration::from_secs(3);

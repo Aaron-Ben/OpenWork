@@ -252,11 +252,15 @@ async fn actionable_stall_keeps_its_claim_until_dispatch_commits() {
     .unwrap();
 
     let hub = ProactivityHub::default();
-    let wake = AutonomyEngine::new(storage.clone(), hub.clone())
-        .sweep_agenda()
-        .await
-        .unwrap()
-        .expect("a missing cheap model fails open for a real stalled candidate");
+    let wake = AutonomyEngine::new(
+        storage.clone(),
+        hub.clone(),
+        openwork_collab::observation::ObservationSink::discarding(),
+    )
+    .sweep_agenda()
+    .await
+    .unwrap()
+    .expect("a missing cheap model fails open for a real stalled candidate");
     assert!(wake.stalled_claim);
     assert_eq!(
         hub.try_claim_stall("general", std::time::Instant::now())
@@ -308,10 +312,14 @@ async fn empty_agenda_records_the_reason_without_starting_a_main_run() {
     .await
     .unwrap();
 
-    let wake = AutonomyEngine::new(storage.clone(), ProactivityHub::default())
-        .sweep_agenda()
-        .await
-        .unwrap();
+    let wake = AutonomyEngine::new(
+        storage.clone(),
+        ProactivityHub::default(),
+        openwork_collab::observation::ObservationSink::discarding(),
+    )
+    .sweep_agenda()
+    .await
+    .unwrap();
     assert!(wake.is_none());
     let records = storage.triage_records(Some("general")).await.unwrap();
     assert_eq!(records.len(), 1);
@@ -396,11 +404,15 @@ async fn unfinished_assigned_card_produces_a_focused_agenda_wake() {
     .await
     .unwrap();
 
-    let wake = AutonomyEngine::new(storage.clone(), ProactivityHub::default())
-        .sweep_agenda()
-        .await
-        .unwrap()
-        .expect("agenda failures must not silence a real card candidate");
+    let wake = AutonomyEngine::new(
+        storage.clone(),
+        ProactivityHub::default(),
+        openwork_collab::observation::ObservationSink::discarding(),
+    )
+    .sweep_agenda()
+    .await
+    .unwrap()
+    .expect("agenda failures must not silence a real card candidate");
     assert_eq!(wake.agent_id, "alice");
     assert_eq!(wake.room_id, "general");
     assert_eq!(wake.trigger, "agenda");
@@ -507,7 +519,11 @@ async fn scanner_does_not_repeat_an_unchanged_cross_room_snapshot() {
     .execute(&pool)
     .await
     .unwrap();
-    let engine = AutonomyEngine::new(storage.clone(), ProactivityHub::default());
+    let engine = AutonomyEngine::new(
+        storage.clone(),
+        ProactivityHub::default(),
+        openwork_collab::observation::ObservationSink::discarding(),
+    );
 
     assert!(
         engine.sweep_scanner().await.unwrap().is_empty(),

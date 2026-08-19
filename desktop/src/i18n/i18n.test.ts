@@ -39,6 +39,29 @@ describe('i18n', () => {
     expect(keyPaths(enUS).sort()).toEqual(expected)
   })
 
+  it('localizes every collaboration log drawer label in all supported languages', () => {
+    const paths = [
+      'collab.logs.title',
+      'collab.logs.description',
+      'collab.logs.allRooms',
+      'collab.logs.currentRoom',
+      'collab.logs.refresh',
+      'collab.logs.loading',
+      'collab.logs.empty',
+      'collab.logs.payload',
+      'collab.logs.actionable',
+      'collab.logs.notActionable',
+      'collab.logs.tokenSummary',
+      'collab.logs.sources.run',
+      'collab.logs.sources.triage',
+      'collab.logs.sources.event',
+    ] as const
+    for (const language of supportedLanguages) {
+      const translate = i18n.getFixedT(language)
+      for (const path of paths) expect(translate(path)).not.toBe(path)
+    }
+  })
+
   it('localizes every trace attribute and detail section in all supported languages', () => {
     for (const language of supportedLanguages) {
       const translate = i18n.getFixedT(language)

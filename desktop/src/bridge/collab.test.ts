@@ -26,4 +26,13 @@ describe('collaboration command bridge', () => {
       limit: 40,
     })
   })
+
+  it('requests one bounded flat collaboration log timeline', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+    await collabCommands.listLogs('general', 300)
+    expect(invoke).toHaveBeenCalledWith('collab_log_list', {
+      roomId: 'general',
+      limit: 300,
+    })
+  })
 })

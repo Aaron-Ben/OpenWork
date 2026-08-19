@@ -294,7 +294,14 @@ export const enUS = {
       claimedBy: 'Claimed by', releaseClaim: 'Force release claim', moveLeft: 'Move left',
       moveRight: 'Move right', done: 'Done',
     },
-    unavailable: { logs: 'Logs arrive in P6' },
+    logs: {
+      title: 'Collaboration logs', description: 'Runs, triage decisions, and durable events in time order.',
+      allRooms: 'All rooms', currentRoom: 'Current room', refresh: 'Refresh', loading: 'Loading logs…',
+      empty: 'No collaboration logs yet.', payload: 'Recorded payload',
+      actionable: 'Actionable', notActionable: 'Not actionable',
+      tokenSummary: 'Tokens: input {{input}} · cached {{cached}} · output {{output}}',
+      sources: { run: 'Run', triage: 'Triage', event: 'Event' },
+    },
   },
   tool: {
     mutation: {

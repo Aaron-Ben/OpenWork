@@ -119,6 +119,17 @@ export interface CollabPendingPermission {
   patterns: string[]
 }
 
+export interface CollabLogEntry {
+  source: 'run' | 'triage' | 'event'
+  id: string
+  runId: string | null
+  agentId: string | null
+  roomId: string | null
+  kind: string
+  payload: Record<string, unknown>
+  createdAt: string
+}
+
 export type CollabPermissionReply = 'once' | 'always' | 'reject'
 
 export type CollabEvent =
@@ -127,6 +138,7 @@ export type CollabEvent =
   | { version: number; sequence: number; type: 'agents_changed' }
   | { version: number; sequence: number; type: 'permissions_changed' }
   | { version: number; sequence: number; type: 'engine_changed' }
+  | { version: number; sequence: number; type: 'logs_changed'; roomId: string | null }
   | {
       version: number
       sequence: number
@@ -178,6 +190,8 @@ export const collabCommands = {
   ): Promise<unknown> => invoke('collab_permission_reply', { id, reply, message }),
   abortPermission: (id: string): Promise<unknown> =>
     invoke('collab_permission_abort', { id }),
+  listLogs: (roomId: string | null, limit = 300): Promise<CollabLogEntry[]> =>
+    invoke('collab_log_list', { roomId, limit }),
   listBoards: (roomId: string): Promise<CollabBoard[]> =>
     invoke('collab_board_list', { roomId }),
   createBoard: (id: string, roomId: string, title: string): Promise<CollabBoard> =>

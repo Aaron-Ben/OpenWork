@@ -24,6 +24,7 @@ use crate::{
     coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
     model::{AgentReplyOutcome, CardClaimOutcome, CardInput, CardMutation},
+    observation::{ObservationSink, OwnedObservation},
     storage::CollabStorage,
 };
 
@@ -133,6 +134,7 @@ struct CollaborationMcp {
     notices: mpsc::UnboundedSender<MessageNotice>,
     coordination: CoordinationHub,
     events: CollabEventPublisher,
+    observations: ObservationSink,
 }
 
 #[tool_router(server_handler)]
@@ -170,11 +172,21 @@ impl CollaborationMcp {
             AgentReplyOutcome::Published(outcome) => {
                 if !outcome.deduplicated {
                     let _ = self.notices.send(MessageNotice {
-                        room_id: request.room_id,
-                        author_id: agent_id,
+                        room_id: request.room_id.clone(),
+                        author_id: agent_id.clone(),
                         body: request.body,
                         sequence: outcome.message.sequence,
                     });
+                    self.observations.record(OwnedObservation::for_active_run(
+                        &agent_id,
+                        Some(&request.room_id),
+                        "speech.published",
+                        serde_json::json!({
+                            "messageId": outcome.message.id,
+                            "sequence": outcome.message.sequence,
+                            "authorId": agent_id,
+                        }),
+                    ));
                 }
                 serde_json::to_string(&AgentReplyOutcome::Published(outcome))
                     .map_err(|error| error.to_string())
@@ -415,6 +427,7 @@ pub async fn start_server(
     notices: mpsc::UnboundedSender<MessageNotice>,
     coordination: CoordinationHub,
     events: CollabEventPublisher,
+    observations: ObservationSink,
     cancel: CancellationToken,
 ) -> Result<McpServerHandle, io::Error> {
     let handler = CollaborationMcp {
@@ -423,6 +436,7 @@ pub async fn start_server(
         notices,
         coordination,
         events,
+        observations,
     };
     let service: StreamableHttpService<CollaborationMcp, LocalSessionManager> =
         StreamableHttpService::new(

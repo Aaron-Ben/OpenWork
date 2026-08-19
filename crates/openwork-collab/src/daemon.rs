@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    env,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -25,40 +24,14 @@ use crate::{
     home::{HomeError, HomeManager},
     mcp::{IdentityRegistry, MessageNotice, start_server},
     model::{AgentInput, AgentView, CardInput, MessagePageAnchor, MessagePageQuery},
+    observation,
     opencode::{OpenCodeError, OpenCodeSupervisor, PermissionReply},
     permission::PermissionTracker,
     scheduler::{AgentTokens, start as start_scheduler},
     storage::{CollabStorage, StorageError},
 };
 
-pub const COLLAB_HOME_ENV: &str = "OPENWORK_COLLAB_HOME";
-
-#[derive(Debug, Clone)]
-pub struct DaemonConfig {
-    pub root: PathBuf,
-    pub database_url: Option<String>,
-}
-
-impl DaemonConfig {
-    pub fn from_env() -> Result<Self, DaemonError> {
-        let _ = dotenvy::dotenv();
-        let root = match env::var_os(COLLAB_HOME_ENV) {
-            Some(path) => PathBuf::from(path),
-            None => env::var_os("HOME")
-                .map(PathBuf::from)
-                .ok_or(DaemonError::MissingHome)?
-                .join(".openwork/collab"),
-        };
-        Ok(Self {
-            root,
-            database_url: env::var("DATABASE_URL").ok(),
-        })
-    }
-
-    pub fn socket_path(&self) -> PathBuf {
-        self.root.join("daemon.sock")
-    }
-}
+pub use crate::daemon_config::{COLLAB_HOME_ENV, DaemonConfig};
 
 pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
     tokio::fs::create_dir_all(&config.root).await?;
@@ -79,6 +52,9 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
     }
 
     let cancel = CancellationToken::new();
+    let (observations, observation_worker) =
+        observation::start(storage.clone(), events.clone(), cancel.clone());
+    let gc_worker = crate::gc::start(storage.clone(), config.gc_policy, cancel.clone());
     let identities = IdentityRegistry::default();
     let tokens: AgentTokens = Arc::new(RwLock::new(HashMap::new()));
     let (notice_tx, notice_rx) = mpsc::unbounded_channel();
@@ -90,6 +66,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         notice_tx.clone(),
         coordination.clone(),
         events.clone(),
+        observations.clone(),
         cancel.clone(),
     )
     .await?;
@@ -125,6 +102,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         events.clone(),
         coordination,
         runtime.clone(),
+        observations,
         cancel.clone(),
     )
     .await?;
@@ -172,6 +150,8 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
     cancel.cancel();
     scheduler.shutdown().await;
     claim_reaper.shutdown().await;
+    gc_worker.shutdown().await;
+    observation_worker.shutdown().await;
     supervisor.shutdown().await;
     mcp.shutdown().await;
     drop(socket);
@@ -257,6 +237,10 @@ pub enum IpcRequest {
     },
     ListTriages {
         room_id: Option<String>,
+    },
+    ListLogs {
+        room_id: Option<String>,
+        limit: u32,
     },
     CreateBoard {
         id: String,
@@ -642,6 +626,12 @@ async fn handle_request_inner(
         IpcRequest::ListTriages { room_id } => Ok(IpcResponse::success(
             context.storage.triage_records(room_id.as_deref()).await?,
         )),
+        IpcRequest::ListLogs { room_id, limit } => Ok(IpcResponse::success(
+            context
+                .storage
+                .log_entries(room_id.as_deref(), limit)
+                .await?,
+        )),
         IpcRequest::CreateBoard { id, room_id, title } => Ok(IpcResponse::success(
             context.storage.create_board(&id, &room_id, &title).await?,
         )),
@@ -767,6 +757,12 @@ pub enum DaemonError {
     },
     #[error("HOME is unavailable; set {COLLAB_HOME_ENV} explicitly")]
     MissingHome,
+    #[error("invalid environment variable {name}={value:?}: {reason}")]
+    InvalidEnvironment {
+        name: &'static str,
+        value: String,
+        reason: String,
+    },
     #[error("invalid daemon request: {0}")]
     InvalidRequest(String),
     #[error("credential access failed: {0}")]

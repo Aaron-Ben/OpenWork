@@ -17,10 +17,12 @@ use crate::{
     autonomy::{self, AutonomousWake},
     coordination::CoordinationHub,
     event::{CollabEventKind, CollabEventPublisher},
+    global_events,
     home::HomeManager,
     mcp::MessageNotice,
     model::Agent,
-    opencode::{EngineConnection, GlobalEvent, OpenCodeClient},
+    observation::{ObservationSink, OwnedObservation, record_engine_observation},
+    opencode::{EngineConnection, OpenCodeClient},
     permission::PermissionTracker,
     proactivity::ProactivityHub,
     runtime_events::{self, InstanceEventSubscriptions},
@@ -145,6 +147,7 @@ struct DispatchServices<'a> {
     coordination: &'a CoordinationHub,
     runtime: &'a AgentRuntimeRegistry,
     subscriptions: &'a InstanceEventSubscriptions,
+    observations: &'a ObservationSink,
 }
 
 impl SchedulerHandle {
@@ -167,6 +170,7 @@ pub async fn start(
     published_events: CollabEventPublisher,
     coordination: CoordinationHub,
     runtime: AgentRuntimeRegistry,
+    observations: ObservationSink,
     cancel: CancellationToken,
 ) -> Result<SchedulerHandle, crate::storage::StorageError> {
     let agents = storage.agents().await?;
@@ -198,19 +202,20 @@ pub async fn start(
         }
     }
     let event_cancel = cancel.clone();
-    let global_events = tokio::spawn(forward_global_events(
+    let global_events = global_events::start(
         connections.clone(),
         event_tx,
         permissions,
         published_events.clone(),
         event_cancel,
-    ));
+    );
     let proactivity = ProactivityHub::default();
     let (autonomous_tx, mut autonomous_rx) = mpsc::unbounded_channel();
     let autonomy = autonomy::start(
         storage.clone(),
         proactivity.clone(),
         autonomous_tx,
+        observations.clone(),
         cancel.clone(),
     );
     let scheduler_cancel = cancel.clone();
@@ -259,6 +264,7 @@ pub async fn start(
                         coordination: &coordination,
                         runtime: &runtime,
                         subscriptions: &subscriptions,
+                        observations: &observations,
                     };
                     handle_autonomous(
                         &services,
@@ -270,6 +276,15 @@ pub async fn start(
                     ).await;
                 }
                 Some(event) = event_rx.recv() => {
+                    if let Some(session_id) = event.session_id()
+                        && let Some(agent_id) = sessions.get(session_id)
+                        && let Some(state) = states.get(agent_id)
+                        && let Some(run_id) = state.active_run_id.as_deref()
+                    {
+                        record_engine_observation(
+                            &observations, run_id, agent_id, state.room_id.as_deref(), &event,
+                        );
+                    }
                     if event.event_type() == Some("openwork.engine.restarted") {
                         let affected = states
                             .iter_mut()
@@ -280,7 +295,15 @@ pub async fn start(
                             })
                             .collect::<Vec<_>>();
                         for (agent_id, run_id) in affected {
+                            observations.set_active_run(&agent_id, None);
                             if let Some(run_id) = run_id {
+                                observations.record(OwnedObservation::linked(
+                                    Some(&run_id),
+                                    Some(&agent_id),
+                                    states.get(&agent_id).and_then(|state| state.room_id.as_deref()),
+                                    "prompt.interrupted",
+                                    json!({"reason": "opencode_restarted"}),
+                                ));
                                 let _ = storage.finish_run(
                                     &run_id,
                                     "interrupted",
@@ -295,6 +318,7 @@ pub async fn start(
                                 coordination: &coordination,
                                 runtime: &runtime,
                                 subscriptions: &subscriptions,
+                                observations: &observations,
                             };
                             handle_idle(&services, &mut states, &mut sessions, &agent_id).await;
                         }
@@ -313,6 +337,7 @@ pub async fn start(
                             coordination: &coordination,
                             runtime: &runtime,
                             subscriptions: &subscriptions,
+                            observations: &observations,
                         };
                         handle_idle(&services, &mut states, &mut sessions, &agent_id).await;
                     }
@@ -322,7 +347,15 @@ pub async fn start(
                         && let Some(state) = states.get_mut(agent_id)
                         && let Some(run_id) = state.active_run_id.take()
                     {
+                        observations.set_active_run(agent_id, None);
                         let message = event.payload.to_string();
+                        observations.record(OwnedObservation::linked(
+                            Some(&run_id),
+                            Some(agent_id),
+                            state.room_id.as_deref(),
+                            "prompt.failed",
+                            json!({"error": message}),
+                        ));
                         let _ = storage.finish_run(&run_id, "failed", Some(("opencode_session_error", &message))).await;
                     }
                 }
@@ -343,6 +376,7 @@ pub async fn start(
                             coordination: &coordination,
                             runtime: &runtime,
                             subscriptions: &subscriptions,
+                            observations: &observations,
                         };
                         let retry = handle_due(
                             &services,
@@ -402,6 +436,7 @@ async fn handle_autonomous(
     if state.wake.is_running() {
         autonomy::record_dispatch_short_circuit(
             services.storage,
+            services.observations,
             &wake,
             TriageSource::LoopCap,
             "Agent already owns an active turn token",
@@ -415,6 +450,7 @@ async fn handle_autonomous(
         Ok(false) => {
             autonomy::record_dispatch_short_circuit(
                 services.storage,
+                services.observations,
                 &wake,
                 TriageSource::RateLimited,
                 "Agent autonomous wake rate gate is cooling down",
@@ -497,7 +533,15 @@ async fn handle_due(
     else {
         return false;
     };
-    let triage = wake_triage::evaluate(services.storage, triage, agent_id, room_id, &batch).await;
+    let triage = wake_triage::evaluate(
+        services.storage,
+        triage,
+        agent_id,
+        room_id,
+        &batch,
+        services.observations,
+    )
+    .await;
     if !triage.actionable {
         return false;
     }
@@ -533,6 +577,14 @@ async fn handle_idle(
         return;
     };
     if let Some(run_id) = state.active_run_id.take() {
+        services.observations.set_active_run(agent_id, None);
+        services.observations.record(OwnedObservation::linked(
+            Some(&run_id),
+            Some(agent_id),
+            state.room_id.as_deref(),
+            "prompt.completed",
+            json!({"status": "completed"}),
+        ));
         let _ = services
             .storage
             .finish_run(&run_id, "completed", None)
@@ -671,6 +723,23 @@ async fn dispatch(
     } else {
         None
     };
+    if let Some(run_id) = run_id.as_deref() {
+        services.observations.record(OwnedObservation::linked(
+            Some(run_id),
+            Some(&agent.id),
+            room_id,
+            "prompt.started",
+            json!({"trigger": trigger, "sessionId": session_id}),
+        ));
+    } else if let Some(run_id) = state.active_run_id.as_deref() {
+        services.observations.record(OwnedObservation::linked(
+            Some(run_id),
+            Some(&agent.id),
+            room_id,
+            "prompt.injected",
+            json!({"trigger": trigger, "sessionId": session_id}),
+        ));
+    }
     if let Err(error) = connection
         .client
         .prompt_async(&home, &session_id, &agent, &prompt)
@@ -678,6 +747,13 @@ async fn dispatch(
     {
         if let Some(run_id) = &run_id {
             let message = error.to_string();
+            services.observations.record(OwnedObservation::linked(
+                Some(run_id),
+                Some(&agent.id),
+                room_id,
+                "prompt.failed",
+                json!({"error": message}),
+            ));
             let _ = services
                 .storage
                 .finish_run(run_id, "failed", Some(("prompt_async_failed", &message)))
@@ -686,6 +762,9 @@ async fn dispatch(
         return Err(error.to_string());
     }
     if let Some(run_id) = run_id {
+        services
+            .observations
+            .set_active_run(&agent.id, Some(&run_id));
         state.active_run_id = Some(run_id);
     }
     Ok(())
@@ -713,84 +792,4 @@ async fn ensure_session(
         .await
         .map_err(|error| crate::opencode::OpenCodeError::Persistence(error.to_string()))?;
     Ok(session.id)
-}
-
-async fn forward_global_events(
-    mut connections: watch::Receiver<Option<EngineConnection>>,
-    events: mpsc::UnboundedSender<GlobalEvent>,
-    permissions: PermissionTracker,
-    published_events: CollabEventPublisher,
-    cancel: CancellationToken,
-) {
-    loop {
-        if cancel.is_cancelled() {
-            return;
-        }
-        let Some(connection) = connections.borrow().clone() else {
-            tokio::select! {
-                _ = cancel.cancelled() => return,
-                changed = connections.changed() => {
-                    if changed.is_err() { return; }
-                    continue;
-                }
-            }
-        };
-        let generation = connection.generation;
-        let mut stream = match connection.client.global_events().await {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("failed to subscribe /global/event: {error}");
-                tokio::select! {
-                    _ = cancel.cancelled() => return,
-                    _ = tokio::time::sleep(Duration::from_millis(500)) => continue,
-                }
-            }
-        };
-        if generation > 1 {
-            let restarted = GlobalEvent {
-                directory: None,
-                project: None,
-                payload: json!({"type": "openwork.engine.restarted", "properties": {}}),
-            };
-            permissions.observe(&restarted).await;
-            published_events
-                .publish(CollabEventKind::EngineChanged)
-                .await;
-            published_events
-                .publish(CollabEventKind::PermissionsChanged)
-                .await;
-            if events.send(restarted).is_err() {
-                return;
-            }
-        }
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => return,
-                changed = connections.changed() => {
-                    if changed.is_err() { return; }
-                    if connections.borrow().as_ref().is_none_or(|current| current.generation != generation) {
-                        break;
-                    }
-                }
-                event = stream.next() => match event {
-                    Ok(event) => {
-                        let permissions_changed = matches!(
-                            event.event_type(),
-                            Some("permission.asked" | "permission.replied")
-                        );
-                        permissions.observe(&event).await;
-                        if permissions_changed {
-                            published_events
-                                .publish(CollabEventKind::PermissionsChanged)
-                                .await;
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!("/global/event disconnected: {error}");
-                        break;
-                    }
-                }
-            }
-        }
-    }
 }
