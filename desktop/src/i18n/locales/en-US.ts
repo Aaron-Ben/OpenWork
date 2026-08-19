@@ -269,7 +269,7 @@ export const enUS = {
     nav: { rooms: 'Rooms', agents: 'Teammates', boards: 'Boards', logs: 'Logs' },
     badges: { unread: '{{count}} unread', approvals: '{{count}} awaiting approval' },
     rooms: {
-      title: 'Rooms', create: 'New room', id: 'Room ID', name: 'Room name', empty: 'No rooms yet',
+      title: 'Rooms', create: 'New room', name: 'Room name', empty: 'No rooms yet',
       messages: 'Messages', older: 'Load older messages', newer: 'Load newer messages', loading: 'Loading…',
       messagePlaceholder: 'Message the room; use @ to name a teammate', send: 'Send', members: 'Teammates', addMember: 'Add to room',
       markRead: 'Mark read', noMessages: 'No messages yet', user: 'You', held: '{{agent}} yielded to a newer teammate message and is recomputing.',
@@ -278,6 +278,10 @@ export const enUS = {
     agents: {
       title: 'Teammate management', create: 'Create teammate', edit: 'Edit', save: 'Save', disable: 'Disable', enable: 'Enable',
       id: 'ID', displayName: 'Name', role: 'Role', bio: 'Bio', prompt: 'System prompt',
+      idPreview: 'Teammates will address it as (derived)',
+      idPreviewHint: 'The id is derived from the name and cannot change after creation; a short suffix is appended automatically if it is taken. It is also the home-directory name and the OpenCode agent name.',
+      idManual: 'English identifier', idManualHint: 'This name cannot derive an id; provide one (starting with a lowercase letter, digits and underscores allowed) — teammates will use it to address this teammate.',
+      idImmutable: 'The id is the home-directory name and the OpenCode agent name; it cannot change after creation.',
       provider: 'Provider ID', model: 'Model ID', enabled: 'Enabled', disabled: 'Disabled',
       scanner: 'Cross-room scanner', scannerHint: 'When explicitly enabled, this teammate watches cross-room changes and may spend model quota unattended.', scannerOn: 'Scanner on',
       idle: 'Idle', waitingApproval: 'Waiting for approval', noAgents: 'No teammates yet',

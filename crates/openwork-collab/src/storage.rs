@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::unread_count,
+    identity,
     migration::{self, MigrationError},
     model::{
         Agent, AgentInput, Inbox, Message, MessagePage, MessagePageAnchor, MessagePageQuery, Room,
@@ -76,12 +77,42 @@ impl CollabStorage {
 
     pub async fn create_agent(&self, input: &AgentInput) -> Result<Agent, StorageError> {
         validate_agent(input)?;
+        let id = match input
+            .id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            Some(id) => {
+                if !identity::is_valid_agent_id(id) {
+                    return Err(StorageError::InvalidInput(format!(
+                        "agent id {id:?} must match ^[a-z][a-z0-9_]{{0,{}}}$",
+                        identity::MAX_AGENT_ID_LEN - 1
+                    )));
+                }
+                id.to_string()
+            }
+            None => {
+                let taken: HashSet<String> =
+                    sqlx::query_scalar("SELECT id FROM collab_participants")
+                        .fetch_all(&self.pool)
+                        .await?
+                        .into_iter()
+                        .collect();
+                identity::derive_agent_id(&input.display_name, |id| taken.contains(id)).ok_or(
+                    StorageError::InvalidInput(format!(
+                        "display name {:?} yields no usable id; provide an explicit one",
+                        input.display_name
+                    )),
+                )?
+            }
+        };
         let mut transaction = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO collab_participants (id, kind, display_name)
              VALUES ($1, 'agent', $2)",
         )
-        .bind(&input.id)
+        .bind(&id)
         .bind(input.display_name.trim())
         .execute(&mut *transaction)
         .await?;
@@ -90,7 +121,7 @@ impl CollabStorage {
                 id, role, bio, system_prompt, provider_id, model_id, enabled, scanner_enabled
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
-        .bind(&input.id)
+        .bind(&id)
         .bind(input.role.as_deref())
         .bind(input.bio.as_deref())
         .bind(input.system_prompt.trim())
@@ -101,19 +132,27 @@ impl CollabStorage {
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
-        self.agent(&input.id)
+        self.agent(&id)
             .await?
-            .ok_or_else(|| StorageError::NotFound(format!("agent {}", input.id)))
+            .ok_or_else(|| StorageError::NotFound(format!("agent {id}")))
     }
 
     pub async fn update_agent(&self, input: &AgentInput) -> Result<Agent, StorageError> {
         validate_agent(input)?;
+        let id = input
+            .id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or(StorageError::InvalidInput(
+                "agent id is required when updating".to_string(),
+            ))?;
         let mut transaction = self.pool.begin().await?;
         let participant = sqlx::query(
             "UPDATE collab_participants SET display_name = $2
              WHERE id = $1 AND kind = 'agent'",
         )
-        .bind(&input.id)
+        .bind(id)
         .bind(input.display_name.trim())
         .execute(&mut *transaction)
         .await?;
@@ -124,7 +163,7 @@ impl CollabStorage {
                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
              WHERE id = $1",
         )
-        .bind(&input.id)
+        .bind(id)
         .bind(input.role.as_deref())
         .bind(input.bio.as_deref())
         .bind(input.system_prompt.trim())
@@ -135,12 +174,12 @@ impl CollabStorage {
         .execute(&mut *transaction)
         .await?;
         if participant.rows_affected() == 0 || agent.rows_affected() == 0 {
-            return Err(StorageError::NotFound(format!("agent {}", input.id)));
+            return Err(StorageError::NotFound(format!("agent {id}")));
         }
         transaction.commit().await?;
-        self.agent(&input.id)
+        self.agent(id)
             .await?
-            .ok_or_else(|| StorageError::NotFound(format!("agent {}", input.id)))
+            .ok_or_else(|| StorageError::NotFound(format!("agent {id}")))
     }
 
     pub async fn agent(&self, id: &str) -> Result<Option<Agent>, StorageError> {
@@ -195,18 +234,28 @@ impl CollabStorage {
         Ok(())
     }
 
-    pub async fn create_group_room(&self, id: &str, title: &str) -> Result<Room, StorageError> {
-        if id.trim().is_empty() || title.trim().is_empty() {
+    /// Group rooms get a `room_<uuid>` id unless an explicit one is provided
+    /// (CLI scripts); the id never comes from the Desktop form.
+    pub async fn create_group_room(
+        &self,
+        id: Option<&str>,
+        title: &str,
+    ) -> Result<Room, StorageError> {
+        if title.trim().is_empty() {
             return Err(StorageError::InvalidInput(
-                "room id and title must not be blank".to_string(),
+                "room title must not be blank".to_string(),
             ));
         }
+        let id = match id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => id.to_string(),
+            None => format!("room_{}", Uuid::new_v4().simple()),
+        };
         sqlx::query("INSERT INTO collab_rooms (id, kind, title) VALUES ($1, 'group', $2)")
-            .bind(id)
+            .bind(&id)
             .bind(title.trim())
             .execute(&self.pool)
             .await?;
-        self.room(id)
+        self.room(&id)
             .await?
             .ok_or_else(|| StorageError::NotFound(format!("room {id}")))
     }
@@ -598,7 +647,6 @@ impl CollabStorage {
 
 fn validate_agent(input: &AgentInput) -> Result<(), StorageError> {
     for (field, value) in [
-        ("id", input.id.as_str()),
         ("display_name", input.display_name.as_str()),
         ("system_prompt", input.system_prompt.as_str()),
         ("provider_id", input.provider_id.as_str()),

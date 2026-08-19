@@ -87,7 +87,7 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
     storage.migrate().await.unwrap();
     let agent = storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: Some("database specialist".to_string()),
             bio: None,

@@ -57,7 +57,7 @@ async fn p1_migration_and_message_invariants_work_from_an_empty_schema() {
 
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -70,7 +70,7 @@ async fn p1_migration_and_message_invariants_work_from_an_empty_schema() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     storage.add_member("general", "user").await.unwrap();
@@ -166,7 +166,7 @@ async fn concurrent_group_replies_hold_the_stale_writer_and_retry_without_duplic
     for id in ["alice", "bob"] {
         storage
             .create_agent(&AgentInput {
-                id: id.to_string(),
+                id: Some(id.to_string()),
                 display_name: id.to_string(),
                 role: None,
                 bio: None,
@@ -180,7 +180,7 @@ async fn concurrent_group_replies_hold_the_stale_writer_and_retry_without_duplic
             .unwrap();
     }
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for id in ["user", "alice", "bob"] {
@@ -254,7 +254,7 @@ async fn concurrent_group_replies_hold_the_stale_writer_and_retry_without_duplic
         1
     );
 
-    storage.create_group_room("duo", "Duo").await.unwrap();
+    storage.create_group_room(Some("duo"), "Duo").await.unwrap();
     storage.add_member("duo", "user").await.unwrap();
     storage.add_member("duo", "alice").await.unwrap();
     storage.send_message("duo", "user", "hello").await.unwrap();
@@ -328,7 +328,7 @@ async fn ten_thousand_message_room_opens_a_bounded_page_around_the_read_cursor()
     let storage = CollabStorage::from_pool(pool.clone());
     storage.migrate().await.unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     storage.add_member("general", "user").await.unwrap();
@@ -404,7 +404,7 @@ async fn room_summary_keeps_unread_separate_and_read_cursor_is_monotonic() {
     let storage = CollabStorage::from_pool(pool.clone());
     storage.migrate().await.unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     storage.add_member("general", "user").await.unwrap();
@@ -455,7 +455,7 @@ async fn disabling_an_agent_stops_triage_candidacy_without_erasing_room_identity
     let storage = CollabStorage::from_pool(pool.clone());
     storage.migrate().await.unwrap();
     let enabled = AgentInput {
-        id: "alice".to_string(),
+        id: Some("alice".to_string()),
         display_name: "Alice".to_string(),
         role: None,
         bio: None,
@@ -467,7 +467,7 @@ async fn disabling_an_agent_stops_triage_candidacy_without_erasing_room_identity
     };
     storage.create_agent(&enabled).await.unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     storage.add_member("general", "user").await.unwrap();
@@ -513,6 +513,115 @@ async fn disabling_an_agent_stops_triage_candidacy_without_erasing_room_identity
     assert_eq!(history[0].body, "historical answer");
 
     pool.close().await;
+    admin
+        .execute(format!("DROP SCHEMA {schema} CASCADE").as_str())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn create_agent_derives_ids_from_names_without_touching_explicit_ones() {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
+    let admin = PgPool::connect(&database_url).await.unwrap();
+    let schema = format!("collab_test_{}", Uuid::new_v4().simple());
+    admin
+        .execute(format!("CREATE SCHEMA {schema}").as_str())
+        .await
+        .unwrap();
+    let options = PgConnectOptions::from_str(&database_url)
+        .unwrap()
+        .options([("search_path", schema.as_str())]);
+    let pool = PgPoolOptions::new().connect_with(options).await.unwrap();
+    let storage = CollabStorage::from_pool(pool.clone());
+    storage.migrate().await.unwrap();
+
+    let derived_input = |display_name: &str| AgentInput {
+        id: None,
+        display_name: display_name.to_string(),
+        role: None,
+        bio: None,
+        system_prompt: "Answer clearly".to_string(),
+        provider_id: "opencode".to_string(),
+        model_id: "model".to_string(),
+        enabled: true,
+        scanner_enabled: false,
+    };
+
+    let first = storage.create_agent(&derived_input("Alice")).await.unwrap();
+    assert_eq!(first.id, "alice");
+
+    let second = storage.create_agent(&derived_input("Alice")).await.unwrap();
+    assert_ne!(second.id, "alice");
+    assert!(second.id.starts_with("alice_"));
+
+    let underivable = storage.create_agent(&derived_input("小艾")).await;
+    assert!(underivable.is_err());
+
+    let manual = storage
+        .create_agent(&AgentInput {
+            id: Some("iris".to_string()),
+            display_name: "小艾".to_string(),
+            role: None,
+            bio: None,
+            system_prompt: "Answer clearly".to_string(),
+            provider_id: "opencode".to_string(),
+            model_id: "model".to_string(),
+            enabled: true,
+            scanner_enabled: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(manual.id, "iris");
+
+    let invalid = storage
+        .create_agent(&AgentInput {
+            id: Some("Iris".to_string()),
+            ..derived_input("小艾")
+        })
+        .await;
+    assert!(invalid.is_err());
+
+    admin
+        .execute(format!("DROP SCHEMA {schema} CASCADE").as_str())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn group_rooms_get_uuid_ids_unless_an_explicit_one_is_provided() {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
+    let admin = PgPool::connect(&database_url).await.unwrap();
+    let schema = format!("collab_test_{}", Uuid::new_v4().simple());
+    admin
+        .execute(format!("CREATE SCHEMA {schema}").as_str())
+        .await
+        .unwrap();
+    let options = PgConnectOptions::from_str(&database_url)
+        .unwrap()
+        .options([("search_path", schema.as_str())]);
+    let pool = PgPoolOptions::new().connect_with(options).await.unwrap();
+    let storage = CollabStorage::from_pool(pool.clone());
+    storage.migrate().await.unwrap();
+
+    let first = storage.create_group_room(None, "Lounge").await.unwrap();
+    let second = storage.create_group_room(None, "Lounge").await.unwrap();
+    assert!(first.id.starts_with("room_"));
+    assert!(second.id.starts_with("room_"));
+    assert_ne!(first.id, second.id);
+
+    let explicit = storage
+        .create_group_room(Some("general"), "General")
+        .await
+        .unwrap();
+    assert_eq!(explicit.id, "general");
+
+    let blank = storage.create_group_room(None, "  ").await;
+    assert!(blank.is_err());
+
     admin
         .execute(format!("DROP SCHEMA {schema} CASCADE").as_str())
         .await

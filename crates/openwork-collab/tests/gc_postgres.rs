@@ -17,7 +17,7 @@ async fn gc_deletes_only_expired_events_and_triages_in_bounded_batches() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -30,7 +30,7 @@ async fn gc_deletes_only_expired_events_and_triages_in_bounded_batches() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {

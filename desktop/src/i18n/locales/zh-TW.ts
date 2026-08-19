@@ -264,7 +264,7 @@ export const zhTW = {
     nav: { rooms: '房間', agents: '同事', boards: '看板', logs: '日誌' },
     badges: { unread: '{{count}} 條未讀', approvals: '{{count}} 項待審批' },
     rooms: {
-      title: '房間', create: '新增房間', id: '房間 ID', name: '房間名稱', empty: '還沒有房間',
+      title: '房間', create: '新增房間', name: '房間名稱', empty: '還沒有房間',
       messages: '訊息', older: '載入更早訊息', newer: '載入更新訊息', loading: '正在載入…',
       messagePlaceholder: '發訊息，用 @ 點名同事', send: '發送', members: '同事名冊', addMember: '加入房間',
       markRead: '標為已讀', noMessages: '還沒有訊息', user: '你', held: '{{agent}} 因隊友的新訊息讓位，正在重算。',
@@ -273,6 +273,10 @@ export const zhTW = {
     agents: {
       title: '同事管理', create: '建立同事', edit: '編輯', save: '儲存', disable: '停用', enable: '啟用',
       id: 'ID', displayName: '名稱', role: '角色', bio: '簡介', prompt: 'System Prompt',
+      idPreview: '隊友稱呼（自動派生）',
+      idPreviewHint: 'id 由名稱自動派生，建立後不可修改；若被占用會自動追加短尾。它同時是 home 目錄名與 OpenCode agent 名。',
+      idManual: '英文標識', idManualHint: '這個名稱派生不出 id，請填一個英文標識（小寫字母開頭，可用數字與底線）——隊友將用它稱呼這位同事。',
+      idImmutable: 'id 同時是 home 目錄名與 OpenCode agent 名，建立後不可修改。',
       provider: 'Provider ID', model: 'Model ID', enabled: '已啟用', disabled: '已停用',
       scanner: '跨房間 Scanner', scannerHint: '明確開啟後，這位同事會觀察跨房間變化；可能在無人值守時消耗模型額度。', scannerOn: 'Scanner 已開啟',
       idle: '閒置', waitingApproval: '等待審批', noAgents: '還沒有同事',

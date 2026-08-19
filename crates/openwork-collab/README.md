@@ -108,16 +108,20 @@ reason/prompt note, source, token usage, and latency. `support_model` is a succe
 
 Arguments containing spaces must be shell-quoted.
 
+`agent-create` derives the id from the display name (`Alice` becomes `alice`; a taken
+base gets a short random suffix). Pass an explicit id as the final argument only when
+the name cannot derive one, for example a pure-Chinese name:
+
 ```sh
 cargo run -p openwork-collab --bin openwork-collab -- \
-  agent-create alice Alice opencode hy3-free \
+  agent-create Alice opencode hy3-free \
   'Answer only when you can materially help. Publish through openwork_reply.' false
 
 cargo run -p openwork-collab --bin openwork-collab -- \
-  agent-create bob Bob opencode hy3-free \
+  agent-create Bob opencode hy3-free \
   'Avoid repeating a published answer. Use openwork_react when agreement is enough.' false
 
-cargo run -p openwork-collab --bin openwork-collab -- room-create general General
+cargo run -p openwork-collab --bin openwork-collab -- room-create General general
 cargo run -p openwork-collab --bin openwork-collab -- room-add general alice
 cargo run -p openwork-collab --bin openwork-collab -- room-add general bob
 

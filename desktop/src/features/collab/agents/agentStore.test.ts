@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { collabCommands, type CollabAgentInput } from '@/bridge/collab'
+import { collabCommands, type CollabAgent, type CollabAgentInput } from '@/bridge/collab'
 import { useAgentStore } from './agentStore'
 
 vi.mock('@/bridge/collab', () => ({
@@ -13,6 +13,16 @@ const input: CollabAgentInput = {
   scannerEnabled: false,
 }
 
+function agent(overrides: Partial<CollabAgent> = {}): CollabAgent {
+  return {
+    ...input,
+    id: 'alice',
+    opencodeSessionId: null,
+    activity: { kind: 'idle' },
+    ...overrides,
+  }
+}
+
 describe('agentStore', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -20,16 +30,14 @@ describe('agentStore', () => {
   })
 
   it('keeps disabled definitions in canonical history while updating participation', async () => {
-    vi.mocked(collabCommands.updateAgent).mockResolvedValue({ ...input, opencodeSessionId: null, enabled: false, activity: { kind: 'idle' } })
-    vi.mocked(collabCommands.listAgents).mockResolvedValue([{ ...input, opencodeSessionId: null, enabled: false, activity: { kind: 'idle' } }])
+    vi.mocked(collabCommands.updateAgent).mockResolvedValue(agent({ enabled: false }))
+    vi.mocked(collabCommands.listAgents).mockResolvedValue([agent({ enabled: false })])
     await useAgentStore.getState().update({ ...input, enabled: false })
     expect(useAgentStore.getState().agents).toMatchObject([{ id: 'alice', enabled: false }])
   })
 
   it('applies daemon-normalized activity without knowing OpenCode event names', () => {
-    useAgentStore.setState({
-      agents: [{ ...input, opencodeSessionId: 'ses_1', activity: { kind: 'idle' } }],
-    })
+    useAgentStore.setState({ agents: [agent({ opencodeSessionId: 'ses_1' })] })
     useAgentStore.getState().applyActivity('alice', {
       kind: 'executing',
       detail: '$ cargo test',

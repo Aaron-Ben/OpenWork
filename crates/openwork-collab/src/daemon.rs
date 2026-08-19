@@ -187,7 +187,7 @@ pub enum IpcRequest {
     },
     ListAgents,
     CreateRoom {
-        id: String,
+        id: Option<String>,
         title: String,
     },
     CreateDirectRoom {
@@ -419,7 +419,10 @@ async fn handle_request_inner(
             Ok(IpcResponse::success(agents))
         }
         IpcRequest::CreateRoom { id, title } => {
-            let room = context.storage.create_group_room(&id, &title).await?;
+            let room = context
+                .storage
+                .create_group_room(id.as_deref(), &title)
+                .await?;
             context.storage.add_member(&room.id, "user").await?;
             context
                 .events

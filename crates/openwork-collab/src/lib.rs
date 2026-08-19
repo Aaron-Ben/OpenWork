@@ -12,6 +12,7 @@ pub mod event;
 pub mod gc;
 mod global_events;
 pub mod home;
+mod identity;
 pub mod mcp;
 pub mod migration;
 pub mod model;

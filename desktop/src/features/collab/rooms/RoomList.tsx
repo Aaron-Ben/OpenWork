@@ -10,20 +10,18 @@ interface RoomListProps {
   rooms: CollabRoomSummary[]
   activeRoomId: string | null
   onSelect: (roomId: string) => void
-  onCreate: (id: string, title: string) => Promise<void>
+  onCreate: (title: string) => Promise<void>
 }
 
 export function RoomList({ rooms, activeRoomId, onSelect, onCreate }: RoomListProps) {
   const { t } = useTranslation()
   const [creating, setCreating] = useState(false)
-  const [id, setId] = useState('')
   const [title, setTitle] = useState('')
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (!id.trim() || !title.trim()) return
-    await onCreate(id.trim(), title.trim())
-    setId('')
+    if (!title.trim()) return
+    await onCreate(title.trim())
     setTitle('')
     setCreating(false)
   }
@@ -38,8 +36,7 @@ export function RoomList({ rooms, activeRoomId, onSelect, onCreate }: RoomListPr
       </header>
       {creating ? (
         <form className="grid gap-2 border-y border-line p-3" onSubmit={submit}>
-          <Input value={id} pattern="[a-z][a-z0-9_]{0,47}" placeholder={t('collab.rooms.id')} aria-label={t('collab.rooms.id')} onChange={(event) => setId(event.target.value)} />
-          <Input value={title} placeholder={t('collab.rooms.name')} aria-label={t('collab.rooms.name')} onChange={(event) => setTitle(event.target.value)} />
+          <Input required value={title} placeholder={t('collab.rooms.name')} aria-label={t('collab.rooms.name')} onChange={(event) => setTitle(event.target.value)} />
           <Button type="submit" size="sm">{t('collab.rooms.create')}</Button>
         </form>
       ) : null}

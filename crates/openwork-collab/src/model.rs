@@ -50,10 +50,13 @@ pub struct Agent {
     pub scanner_enabled: bool,
 }
 
+/// Create/update payload. `id` is `None` on create when the daemon should
+/// derive it from `display_name`; it must be `Some` for updates, which never
+/// re-derive an existing Agent's id (docs/collaboration.md §3.1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentInput {
-    pub id: String,
+    pub id: Option<String>,
     pub display_name: String,
     pub role: Option<String>,
     pub bio: Option<String>,

@@ -37,7 +37,7 @@ export function CollabRail({
   ]
 
   return (
-    <aside className="flex h-full w-16 shrink-0 flex-col border-r border-line bg-paper-hover">
+    <aside className="flex h-full w-20 shrink-0 flex-col border-r border-line bg-paper-hover">
       <div
         data-tauri-drag-region={macOS ? 'deep' : undefined}
         data-macos-traffic-light-inset={macOS || undefined}
@@ -67,7 +67,7 @@ export function CollabRail({
           </div>
         ))}
       </div>
-      <div className="border-t border-line p-2">
+      <div className="flex justify-center border-t border-line p-2">
         <Button
           type="button"
           variant="ghost"

@@ -401,7 +401,7 @@ mod tests {
         for id in ["alice", "bob"] {
             storage
                 .create_agent(&AgentInput {
-                    id: id.to_string(),
+                    id: Some(id.to_string()),
                     display_name: id.to_string(),
                     role: None,
                     bio: None,

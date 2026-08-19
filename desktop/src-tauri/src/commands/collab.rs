@@ -66,8 +66,8 @@ pub async fn collab_room_list(
 #[tauri::command]
 pub async fn collab_room_create(
     client: tauri::State<'_, CollabDaemonClient>,
-    id: String,
     title: String,
+    id: Option<String>,
 ) -> Result<Room, CommandError> {
     client
         .call(&IpcRequest::CreateRoom { id, title })

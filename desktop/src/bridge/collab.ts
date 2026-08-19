@@ -15,7 +15,11 @@ export interface CollabAgent {
   activity: CollabAgentActivity
 }
 
-export type CollabAgentInput = Omit<CollabAgent, 'opencodeSessionId' | 'activity'>
+/** `id` is null on create when the daemon should derive it from the name; it is
+ *  the existing agent's id on update, which never re-derives. */
+export type CollabAgentInput = Omit<CollabAgent, 'id' | 'opencodeSessionId' | 'activity'> & {
+  id: string | null
+}
 
 export type CollabAgentActivity =
   | { kind: 'idle' }
@@ -167,8 +171,8 @@ export const collabCommands = {
   updateAgent: (agent: CollabAgentInput): Promise<CollabAgent> =>
     invoke('collab_agent_update', { agent }),
   listRooms: (): Promise<CollabRoomSummary[]> => invoke('collab_room_list'),
-  createRoom: (id: string, title: string): Promise<unknown> =>
-    invoke('collab_room_create', { id, title }),
+  createRoom: (title: string, id?: string | null): Promise<unknown> =>
+    invoke('collab_room_create', { title, id: id ?? null }),
   addMember: (roomId: string, participantId: string): Promise<unknown> =>
     invoke('collab_room_add_member', { roomId, participantId }),
   sendMessage: (roomId: string, body: string): Promise<unknown> =>

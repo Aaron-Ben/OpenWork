@@ -12,7 +12,7 @@ interface RoomStoreState {
   loading: boolean
   error: string | null
   fetchAll: () => Promise<void>
-  create: (id: string, title: string) => Promise<void>
+  create: (title: string) => Promise<void>
   addMember: (roomId: string, participantId: string) => Promise<void>
   markRead: (roomId: string, throughSequence: number) => Promise<void>
 }
@@ -29,8 +29,8 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
       set({ error: resolveErrorMessage(error), loading: false })
     }
   },
-  create: async (id, title) => {
-    await collabCommands.createRoom(id, title)
+  create: async (title) => {
+    await collabCommands.createRoom(title)
     await get().fetchAll()
   },
   addMember: async (roomId, participantId) => {

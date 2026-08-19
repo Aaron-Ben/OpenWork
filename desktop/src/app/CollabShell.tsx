@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AgentManager } from '@/features/collab/agents/AgentManager'
@@ -23,6 +23,7 @@ export function CollabShell() {
   const agents = useAgentStore((state) => state.agents)
   const permissionCount = usePermissionStore((state) => state.pending.length)
   const activeRoom = rooms.find((room) => room.id === activeRoomId) ?? null
+  const [rosterOpen, setRosterOpen] = useState(true)
 
   useEffect(() => {
     if (!activeRoomId && rooms[0]) selectRoom(rooms[0].id)
@@ -40,8 +41,12 @@ export function CollabShell() {
           <RoomList rooms={rooms} activeRoomId={activeRoomId} onSelect={selectRoom} onCreate={createRoom} />
           {activeRoom ? (
             <>
-              <MessagePane room={activeRoom} />
-              <Roster room={activeRoom} agents={agents} />
+              <MessagePane
+                room={activeRoom}
+                rosterOpen={rosterOpen}
+                onToggleRoster={() => setRosterOpen((open) => !open)}
+              />
+              <Roster room={activeRoom} agents={agents} open={rosterOpen} />
             </>
           ) : (
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>

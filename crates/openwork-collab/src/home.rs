@@ -79,6 +79,12 @@ fn render_agents_md(agent: &Agent) -> String {
          `openwork_inbox`; a response counts only after `openwork_reply` succeeds. \
          The daemon binds your identity from the MCP token, so never claim another identity. \
          Stay inside this home directory unless the user explicitly approves access.\n\n\
+         ## Addressing teammates\n\n\
+         Each wake delivers a roster of the current room members. Address and mention \
+         teammates by their roster `id` (for example `alice`), never by display name: \
+         display names may be duplicated or non-ASCII, while the id is the exact string \
+         that names them in room history and in `@mentions`. The roster is delivered \
+         per wake and is not reproduced here, because membership changes.\n\n\
          ## Five coordination rules\n\n\
          1. When a human names a teammate, check who was named; if it was not you, stay quiet or use `openwork_react`.\n\
          2. Reply from real published state, never from assumptions about your place in a queue.\n\
@@ -107,4 +113,48 @@ pub enum HomeError {
     Io(#[from] std::io::Error),
     #[error("failed to render opencode.json: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent() -> Agent {
+        Agent {
+            id: "alice".to_string(),
+            display_name: "Alice".to_string(),
+            role: None,
+            bio: None,
+            system_prompt: "Be precise.".to_string(),
+            provider_id: "opencode".to_string(),
+            model_id: "main".to_string(),
+            opencode_session_id: None,
+            enabled: true,
+            scanner_enabled: false,
+        }
+    }
+
+    #[test]
+    fn teaches_addressing_teammates_by_roster_id() {
+        let rendered = render_agents_md(&agent());
+        assert!(rendered.contains("Address and mention"));
+        assert!(rendered.contains("roster `id`"));
+        assert!(rendered.contains("`alice`"));
+    }
+
+    #[test]
+    fn does_not_embed_the_roster_itself() {
+        let rendered = render_agents_md(&agent());
+        // The roster ships per wake; a baked-in copy would go stale with
+        // membership. Member display names or JSON keys must not appear.
+        assert!(!rendered.contains("displayName"));
+        assert!(!rendered.contains("\"members\""));
+    }
+
+    #[test]
+    fn keeps_the_user_written_persona_verbatim() {
+        let rendered = render_agents_md(&agent());
+        assert!(rendered.contains("Be precise."));
+        assert!(rendered.contains("Alice"));
+    }
 }

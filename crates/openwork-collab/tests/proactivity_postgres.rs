@@ -19,7 +19,7 @@ async fn agenda_reads_only_explicitly_incomplete_cards_for_the_agent() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -32,7 +32,7 @@ async fn agenda_reads_only_explicitly_incomplete_cards_for_the_agent() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {
@@ -91,7 +91,7 @@ async fn scanner_candidates_are_explicitly_opted_in() {
     for (id, scanner_enabled) in [("alice", false), ("bob", true)] {
         storage
             .create_agent(&AgentInput {
-                id: id.to_string(),
+                id: Some(id.to_string()),
                 display_name: id.to_string(),
                 role: None,
                 bio: None,
@@ -124,7 +124,7 @@ async fn concurrent_stall_sweeps_have_one_in_memory_pusher_for_a_real_room() {
     for id in ["alice", "bob"] {
         storage
             .create_agent(&AgentInput {
-                id: id.to_string(),
+                id: Some(id.to_string()),
                 display_name: id.to_string(),
                 role: None,
                 bio: None,
@@ -138,7 +138,7 @@ async fn concurrent_stall_sweeps_have_one_in_memory_pusher_for_a_real_room() {
             .unwrap();
     }
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice", "bob"] {
@@ -211,7 +211,7 @@ async fn actionable_stall_keeps_its_claim_until_dispatch_commits() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -224,7 +224,7 @@ async fn actionable_stall_keeps_its_claim_until_dispatch_commits() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {
@@ -284,7 +284,7 @@ async fn empty_agenda_records_the_reason_without_starting_a_main_run() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -297,7 +297,7 @@ async fn empty_agenda_records_the_reason_without_starting_a_main_run() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {
@@ -354,7 +354,7 @@ async fn unfinished_assigned_card_produces_a_focused_agenda_wake() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: Some("implementer".to_string()),
             bio: None,
@@ -367,7 +367,7 @@ async fn unfinished_assigned_card_produces_a_focused_agenda_wake() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {
@@ -446,7 +446,7 @@ async fn agent_dm_is_reused_by_its_member_set_for_loop_detection() {
     for id in ["alice", "bob"] {
         storage
             .create_agent(&AgentInput {
-                id: id.to_string(),
+                id: Some(id.to_string()),
                 display_name: id.to_string(),
                 role: None,
                 bio: None,
@@ -486,7 +486,7 @@ async fn scanner_does_not_repeat_an_unchanged_cross_room_snapshot() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -499,7 +499,7 @@ async fn scanner_does_not_repeat_an_unchanged_cross_room_snapshot() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {

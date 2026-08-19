@@ -18,7 +18,7 @@ async fn flat_log_timeline_combines_runs_triages_and_open_ended_events() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -31,7 +31,7 @@ async fn flat_log_timeline_combines_runs_triages_and_open_ended_events() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {

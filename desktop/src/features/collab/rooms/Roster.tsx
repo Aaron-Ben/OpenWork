@@ -7,7 +7,7 @@ import { ApprovalCard } from '@/features/collab/permissions/ApprovalCard'
 import { usePermissionStore } from '@/features/collab/permissions/permissionStore'
 import { useRoomStore } from './roomStore'
 
-export function Roster({ room, agents }: { room: CollabRoomSummary; agents: CollabAgent[] }) {
+export function Roster({ room, agents, open }: { room: CollabRoomSummary; agents: CollabAgent[]; open: boolean }) {
   const { t } = useTranslation()
   const pending = usePermissionStore((state) => state.pending)
   const addMember = useRoomStore((state) => state.addMember)
@@ -16,8 +16,15 @@ export function Roster({ room, agents }: { room: CollabRoomSummary; agents: Coll
   const roster = room.members.filter((member) => member.kind === 'agent' && member.enabled)
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col overflow-y-auto border-l border-line bg-paper-hover p-3">
-      {pending.length > 0 ? (
+    <aside
+      className={`h-full shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out ${open ? 'w-72' : 'w-0'}`}
+      aria-hidden={!open}
+      inert={!open}
+    >
+      <div
+        className={`flex h-full w-72 flex-col overflow-y-auto border-l border-line bg-paper-hover p-3 transition-opacity duration-200 ${open ? 'opacity-100 delay-100' : 'opacity-0'}`}
+      >
+        {pending.length > 0 ? (
         <section className="mb-5 grid gap-2">
           <h2 className="flex items-center gap-2 px-1 text-sm font-semibold text-red-700"><ShieldAlert size={16} />{t('collab.approvals.title')}</h2>
           {pending.map((permission) => (
@@ -58,6 +65,7 @@ export function Roster({ room, agents }: { room: CollabRoomSummary; agents: Coll
           ))}
         </div>
       ) : null}
+      </div>
     </aside>
   )
 }

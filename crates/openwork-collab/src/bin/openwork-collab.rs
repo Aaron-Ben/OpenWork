@@ -32,16 +32,19 @@ async fn run_cli() -> CliResult<()> {
         "status" => IpcRequest::Status,
         "shutdown" => IpcRequest::Shutdown,
         "agent-create" => IpcRequest::CreateAgent {
-            agent: agent_input(&mut args)?,
+            agent: agent_create_input(&mut args)?,
         },
         "agent-update" => IpcRequest::UpdateAgent {
-            agent: agent_input(&mut args)?,
+            agent: agent_update_input(&mut args)?,
         },
         "agent-list" => IpcRequest::ListAgents,
-        "room-create" => IpcRequest::CreateRoom {
-            id: required(&mut args, "room id")?,
-            title: required(&mut args, "room title")?,
-        },
+        "room-create" => {
+            let title = required(&mut args, "room title")?;
+            IpcRequest::CreateRoom {
+                id: args.next(),
+                title,
+            }
+        }
         "dm-create" => IpcRequest::CreateDirectRoom {
             first_participant: required(&mut args, "first participant id")?,
             second_participant: required(&mut args, "second participant id")?,
@@ -143,9 +146,33 @@ async fn run_cli() -> CliResult<()> {
     Ok(())
 }
 
-fn agent_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput> {
+/// `agent-create <display-name> <provider-id> <model-id> <system-prompt>
+///  <scanner-enabled> [explicit-id]` — the id is derived from the display name;
+/// the trailing explicit id is only for names that cannot derive one.
+fn agent_create_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput> {
+    let display_name = required(args, "display name")?;
+    let provider_id = required(args, "provider id")?;
+    let model_id = required(args, "model id")?;
+    let system_prompt = required(args, "system prompt")?;
+    let scanner_enabled = parse_bool(&required(args, "scanner enabled")?, "scanner enabled")?;
     Ok(AgentInput {
-        id: required(args, "agent id")?,
+        id: args.next(),
+        display_name,
+        provider_id,
+        model_id,
+        system_prompt,
+        role: None,
+        bio: None,
+        enabled: true,
+        scanner_enabled,
+    })
+}
+
+/// `agent-update <id> <display-name> <provider-id> <model-id>
+///  <system-prompt> <scanner-enabled>` — updates never re-derive the id.
+fn agent_update_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput> {
+    Ok(AgentInput {
+        id: Some(required(args, "agent id")?),
         display_name: required(args, "display name")?,
         provider_id: required(args, "provider id")?,
         model_id: required(args, "model id")?,
@@ -204,9 +231,9 @@ fn print_usage() {
            openwork-collab status | shutdown | agent-list | permissions\n\
            openwork-collab permission-reply <permission-id> <once|always|reject> [message]\n\
            openwork-collab permission-abort <permission-id>\n\
-           openwork-collab agent-create <id> <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled>\n\
+           openwork-collab agent-create <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled> [explicit-id]\n\
            openwork-collab agent-update <id> <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled>\n\
-           openwork-collab room-create <id> <title>\n\
+           openwork-collab room-create <title> [id]\n\
            openwork-collab dm-create <first-participant-id> <second-participant-id>\n\
            openwork-collab room-add <room-id> <participant-id>\n\
            openwork-collab send <room-id> <author-id> <body>\n\

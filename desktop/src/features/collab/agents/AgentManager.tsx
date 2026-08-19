@@ -6,10 +6,11 @@ import type { CollabAgent, CollabAgentInput } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { deriveAgentSlug } from './agentId'
 import { useAgentStore } from './agentStore'
 
 const emptyAgent: CollabAgentInput = {
-  id: '',
+  id: null,
   displayName: '',
   role: null,
   bio: null,
@@ -37,14 +38,23 @@ export function AgentManager() {
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (!form) return
-    if (editing) await update(form)
-    else await create(form)
+    if (editing) {
+      await update(form)
+    } else {
+      const slug = deriveAgentSlug(form.displayName)
+      await create(slug ? { ...form, id: null } : form)
+    }
     setForm(null)
   }
 
   function patch(values: Partial<CollabAgentInput>) {
     setForm((current) => current ? { ...current, ...values } : current)
   }
+
+  // Creation derives the id from the name (docs/collaboration.md §3.1); a
+  // manual id is only asked for when derivation fails, e.g. pure-Chinese names.
+  const slug = !editing && form ? deriveAgentSlug(form.displayName) : null
+  const needsManualId = !editing && form !== null && form.displayName.trim().length > 0 && slug === null
 
   return (
     <section className="min-w-0 flex-1 overflow-y-auto bg-paper">
@@ -71,8 +81,20 @@ export function AgentManager() {
         <div className="absolute inset-0 z-30 grid place-items-center bg-black/30 p-6" role="dialog" aria-modal="true">
           <form className="grid max-h-full w-full max-w-xl gap-3 overflow-y-auto rounded-3xl bg-paper p-6 shadow-xl" onSubmit={submit}>
             <h2 className="font-serif text-xl font-semibold">{editing ? t('collab.agents.edit') : t('collab.agents.create')}</h2>
-            <Field label={t('collab.agents.id')}><Input required disabled={editing} pattern="[a-z][a-z0-9_]{0,47}" value={form.id} onChange={(event) => patch({ id: event.target.value })} /></Field>
             <Field label={t('collab.agents.displayName')}><Input required value={form.displayName} onChange={(event) => patch({ displayName: event.target.value })} /></Field>
+            {editing ? (
+              <Field label={t('collab.agents.id')} hint={t('collab.agents.idImmutable')}>
+                <Input disabled value={form.id ?? ''} readOnly />
+              </Field>
+            ) : slug ? (
+              <Field label={t('collab.agents.idPreview')} hint={t('collab.agents.idPreviewHint')}>
+                <Input disabled value={`@${slug}`} readOnly />
+              </Field>
+            ) : needsManualId ? (
+              <Field label={t('collab.agents.idManual')} hint={t('collab.agents.idManualHint')}>
+                <Input required pattern="[a-z][a-z0-9_]{0,47}" value={form.id ?? ''} onChange={(event) => patch({ id: event.target.value })} />
+              </Field>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               <Field label={t('collab.agents.role')}><Input value={form.role ?? ''} onChange={(event) => patch({ role: event.target.value || null })} /></Field>
               <Field label={t('collab.agents.bio')}><Input value={form.bio ?? ''} onChange={(event) => patch({ bio: event.target.value || null })} /></Field>
@@ -97,6 +119,12 @@ export function AgentManager() {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="grid gap-1 text-xs font-medium text-ink-muted"><span>{label}</span>{children}</label>
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="grid gap-1 text-xs font-medium text-ink-muted">
+      <span>{label}</span>
+      {children}
+      {hint ? <span className="text-xs font-normal text-ink-faint">{hint}</span> : null}
+    </label>
+  )
 }

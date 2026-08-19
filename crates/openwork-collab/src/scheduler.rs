@@ -20,7 +20,7 @@ use crate::{
     global_events,
     home::HomeManager,
     mcp::MessageNotice,
-    model::Agent,
+    model::{Agent, Inbox, RoomGlance, RoomMember},
     observation::{ObservationSink, OwnedObservation, record_engine_observation},
     opencode::{EngineConnection, OpenCodeClient},
     permission::PermissionTracker,
@@ -680,38 +680,16 @@ async fn dispatch(
     let memory = tokio::fs::read_to_string(home.join("memory/MEMORY.md"))
         .await
         .map_err(|error| error.to_string())?;
-    let proactive = state.proactive.take();
-    let prompt = proactive.as_ref().map_or_else(
-        || {
-            json!({
-                "instruction": "Triage found this room update actionable for you. Read the published state, decide independently whether speaking still adds value, then use openwork_reply or openwork_react. Natural-language output without a successful tool call does not publish a response.",
-                "roomId": room_id,
-                "unread": inbox,
-                "recentPublishedState": glance,
-                "roster": roster,
-                "memory": memory,
-                "triagePromptNote": state.prompt_note.as_deref(),
-                "delivery": "Unread is authoritative. This prompt and its seen coordination cursor do not clear or update last_read_seq."
-            })
-            .to_string()
-        },
-        |proactive| {
-            json!({
-                "instruction": "This is an explicitly autonomous collaboration turn. Execute the focused brief using the published state and collaboration tools. Do not spend the turn merely deciding whether work exists; the cheap agenda gate already did that. Natural-language output without a successful tool call does not publish a response.",
-                "trigger": trigger,
-                "reason": proactive.reason,
-                "focusedContext": proactive.context,
-                "roomId": room_id,
-                "unread": inbox,
-                "recentPublishedState": glance,
-                "roster": roster,
-                "memory": memory,
-                "triagePromptNote": state.prompt_note.as_deref(),
-                "delivery": "Unread is authoritative. Autonomous dispatch and seen coordination never update last_read_seq."
-            })
-            .to_string()
-        },
-    );
+    let prompt = build_wake_prompt(WakePromptParts {
+        room_id,
+        inbox: &inbox,
+        glance: glance.as_ref(),
+        roster: roster.as_deref(),
+        memory: &memory,
+        prompt_note: state.prompt_note.as_deref(),
+        proactive: state.proactive.take(),
+        trigger,
+    });
     let run_id = if start_run {
         Some(
             services
@@ -792,4 +770,130 @@ async fn ensure_session(
         .await
         .map_err(|error| crate::opencode::OpenCodeError::Persistence(error.to_string()))?;
     Ok(session.id)
+}
+
+struct WakePromptParts<'a> {
+    room_id: Option<&'a str>,
+    inbox: &'a Inbox,
+    glance: Option<&'a RoomGlance>,
+    roster: Option<&'a [RoomMember]>,
+    memory: &'a str,
+    prompt_note: Option<&'a str>,
+    proactive: Option<ProactivePrompt>,
+    trigger: &'a str,
+}
+
+/// Assemble the JSON prompt injected with `prompt_async`. The roster carries
+/// each member's `id` — the standing prompt (AGENTS.md) tells the Agent to
+/// address teammates by that id, so the two must stay in sync.
+fn build_wake_prompt(parts: WakePromptParts<'_>) -> String {
+    let WakePromptParts {
+        room_id,
+        inbox,
+        glance,
+        roster,
+        memory,
+        prompt_note,
+        proactive,
+        trigger,
+    } = parts;
+    proactive.map_or_else(
+        || {
+            json!({
+                "instruction": "Triage found this room update actionable for you. Read the published state, decide independently whether speaking still adds value, then use openwork_reply or openwork_react. Natural-language output without a successful tool call does not publish a response.",
+                "roomId": room_id,
+                "unread": inbox,
+                "recentPublishedState": glance,
+                "roster": roster,
+                "memory": memory,
+                "triagePromptNote": prompt_note,
+                "delivery": "Unread is authoritative. This prompt and its seen coordination cursor do not clear or update last_read_seq."
+            })
+            .to_string()
+        },
+        |proactive| {
+            json!({
+                "instruction": "This is an explicitly autonomous collaboration turn. Execute the focused brief using the published state and collaboration tools. Do not spend the turn merely deciding whether work exists; the cheap agenda gate already did that. Natural-language output without a successful tool call does not publish a response.",
+                "trigger": trigger,
+                "reason": proactive.reason,
+                "focusedContext": proactive.context,
+                "roomId": room_id,
+                "unread": inbox,
+                "recentPublishedState": glance,
+                "roster": roster,
+                "memory": memory,
+                "triagePromptNote": prompt_note,
+                "delivery": "Unread is authoritative. Autonomous dispatch and seen coordination never update last_read_seq."
+            })
+            .to_string()
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(id: &str, display_name: &str) -> RoomMember {
+        RoomMember {
+            id: id.to_string(),
+            display_name: display_name.to_string(),
+            kind: "agent".to_string(),
+            enabled: true,
+        }
+    }
+
+    fn parts<'a>(roster: Option<&'a [RoomMember]>, inbox: &'a Inbox) -> WakePromptParts<'a> {
+        WakePromptParts {
+            room_id: Some("general"),
+            inbox,
+            glance: None,
+            roster,
+            memory: "# Memory",
+            prompt_note: None,
+            proactive: None,
+            trigger: "room_message",
+        }
+    }
+
+    #[test]
+    fn wake_prompt_roster_carries_member_ids() {
+        let roster = [
+            member("user", "你"),
+            member("alice", "小艾"),
+            member("code_review", "Code Review"),
+        ];
+        let inbox = Inbox {
+            messages: Vec::new(),
+            unread_count: 0,
+        };
+        let prompt: serde_json::Value =
+            serde_json::from_str(&build_wake_prompt(parts(Some(&roster), &inbox))).unwrap();
+        let roster = prompt["roster"].as_array().unwrap();
+        let ids: Vec<&str> = roster
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["user", "alice", "code_review"]);
+        assert_eq!(roster[1]["displayName"].as_str().unwrap(), "小艾");
+    }
+
+    #[test]
+    fn proactive_wake_prompt_keeps_the_roster_and_ids() {
+        let roster = [member("bob", "Bob")];
+        let inbox = Inbox {
+            messages: Vec::new(),
+            unread_count: 0,
+        };
+        let prompt: serde_json::Value = serde_json::from_str(&build_wake_prompt(WakePromptParts {
+            proactive: Some(ProactivePrompt {
+                reason: "stalled room".to_string(),
+                context: serde_json::json!({"roomId": "general"}),
+            }),
+            ..parts(Some(&roster), &inbox)
+        }))
+        .unwrap();
+        assert_eq!(prompt["roster"][0]["id"].as_str().unwrap(), "bob");
+        assert_eq!(prompt["trigger"].as_str().unwrap(), "room_message");
+    }
 }

@@ -18,7 +18,7 @@ async fn concurrent_card_claim_has_exactly_one_winner() {
     for id in ["alice", "bob"] {
         storage
             .create_agent(&AgentInput {
-                id: id.to_string(),
+                id: Some(id.to_string()),
                 display_name: id.to_string(),
                 role: None,
                 bio: None,
@@ -32,7 +32,7 @@ async fn concurrent_card_claim_has_exactly_one_winner() {
             .unwrap();
     }
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for id in ["user", "alice", "bob"] {

@@ -21,7 +21,7 @@ async fn sideband_worker_persists_triage_and_deduplicated_message_usage() {
     };
     storage
         .create_agent(&AgentInput {
-            id: "alice".to_string(),
+            id: Some("alice".to_string()),
             display_name: "Alice".to_string(),
             role: None,
             bio: None,
@@ -34,7 +34,7 @@ async fn sideband_worker_persists_triage_and_deduplicated_message_usage() {
         .await
         .unwrap();
     storage
-        .create_group_room("general", "General")
+        .create_group_room(Some("general"), "General")
         .await
         .unwrap();
     for participant in ["user", "alice"] {
