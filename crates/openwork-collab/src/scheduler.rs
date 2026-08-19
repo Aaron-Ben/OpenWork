@@ -13,6 +13,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    event::{CollabEventKind, CollabEventPublisher},
     home::HomeManager,
     mcp::MessageNotice,
     model::Agent,
@@ -131,6 +132,7 @@ pub async fn start(
     connections: watch::Receiver<Option<EngineConnection>>,
     mut notices: mpsc::UnboundedReceiver<MessageNotice>,
     permissions: PermissionTracker,
+    published_events: CollabEventPublisher,
     cancel: CancellationToken,
 ) -> Result<SchedulerHandle, crate::storage::StorageError> {
     let agents = storage.agents().await?;
@@ -148,6 +150,7 @@ pub async fn start(
         connections.clone(),
         event_tx,
         permissions,
+        published_events.clone(),
         event_cancel,
     ));
     let scheduler_cancel = cancel.clone();
@@ -158,6 +161,11 @@ pub async fn start(
             tokio::select! {
                 _ = scheduler_cancel.cancelled() => return,
                 Some(notice) = notices.recv() => {
+                    published_events
+                        .publish(CollabEventKind::RoomsChanged {
+                            room_id: notice.room_id.clone(),
+                        })
+                        .await;
                     match storage.mentioned_agents(&notice.room_id, &notice.body).await {
                         Ok(mentioned) => {
                             for agent in mentioned.into_iter().filter(|agent| agent.id != notice.author_id) {
@@ -429,6 +437,7 @@ async fn forward_global_events(
     mut connections: watch::Receiver<Option<EngineConnection>>,
     events: mpsc::UnboundedSender<GlobalEvent>,
     permissions: PermissionTracker,
+    published_events: CollabEventPublisher,
     cancel: CancellationToken,
 ) {
     loop {
@@ -462,6 +471,12 @@ async fn forward_global_events(
                 payload: json!({"type": "openwork.engine.restarted", "properties": {}}),
             };
             permissions.observe(&restarted).await;
+            published_events
+                .publish(CollabEventKind::EngineChanged)
+                .await;
+            published_events
+                .publish(CollabEventKind::PermissionsChanged)
+                .await;
             if events.send(restarted).is_err() {
                 return;
             }
@@ -477,7 +492,16 @@ async fn forward_global_events(
                 }
                 event = stream.next() => match event {
                     Ok(event) => {
+                        let permissions_changed = matches!(
+                            event.event_type(),
+                            Some("permission.asked" | "permission.replied")
+                        );
                         permissions.observe(&event).await;
+                        if permissions_changed {
+                            published_events
+                                .publish(CollabEventKind::PermissionsChanged)
+                                .await;
+                        }
                         if events.send(event).is_err() { return; }
                     }
                     Err(error) => {

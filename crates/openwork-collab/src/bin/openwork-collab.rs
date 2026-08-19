@@ -3,6 +3,7 @@ use std::{env, error::Error, io};
 use openwork_collab::{
     daemon::{DaemonConfig, IpcRequest, request, run},
     model::AgentInput,
+    opencode::PermissionReply,
 };
 
 type CliResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -54,6 +55,14 @@ async fn run_cli() -> CliResult<()> {
             room_id: required(&mut args, "room id")?,
         },
         "permissions" => IpcRequest::Permissions,
+        "permission-reply" => IpcRequest::ReplyPermission {
+            id: required(&mut args, "permission id")?,
+            reply: permission_reply(&required(&mut args, "reply")?)?,
+            message: args.next(),
+        },
+        "permission-abort" => IpcRequest::AbortPermission {
+            id: required(&mut args, "permission id")?,
+        },
         "credential-check" => IpcRequest::CredentialCheck {
             provider_id: required(&mut args, "provider id")?,
         },
@@ -98,6 +107,19 @@ fn agent_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput>
     })
 }
 
+fn permission_reply(value: &str) -> CliResult<PermissionReply> {
+    match value {
+        "once" => Ok(PermissionReply::Once),
+        "always" => Ok(PermissionReply::Always),
+        "reject" => Ok(PermissionReply::Reject),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "permission reply must be once, always, or reject",
+        )
+        .into()),
+    }
+}
+
 fn required(args: &mut impl Iterator<Item = String>, name: &'static str) -> CliResult<String> {
     args.next().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, format!("missing {name}")).into()
@@ -106,10 +128,12 @@ fn required(args: &mut impl Iterator<Item = String>, name: &'static str) -> CliR
 
 fn print_usage() {
     println!(
-        "OpenWork collaboration P1\n\n\
+        "OpenWork collaboration\n\n\
          Usage:\n\
            openwork-collab daemon\n\
            openwork-collab status | shutdown | agent-list | permissions\n\
+           openwork-collab permission-reply <permission-id> <once|always|reject> [message]\n\
+           openwork-collab permission-abort <permission-id>\n\
            openwork-collab agent-create <id> <display-name> <provider-id> <model-id> <system-prompt>\n\
            openwork-collab agent-update <id> <display-name> <provider-id> <model-id> <system-prompt>\n\
            openwork-collab room-create <id> <title>\n\

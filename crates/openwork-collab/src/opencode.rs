@@ -185,6 +185,24 @@ impl OpenCodeClient {
         .await
     }
 
+    pub async fn reply_permission(
+        &self,
+        directory: &Path,
+        request_id: &str,
+        reply: PermissionReply,
+        message: Option<&str>,
+    ) -> Result<bool, OpenCodeError> {
+        self.json(
+            self.for_directory(
+                self.http
+                    .post(self.url(&format!("/permission/{request_id}/reply"))),
+                directory,
+            )
+            .json(&json!({"reply": reply, "message": message})),
+        )
+        .await
+    }
+
     pub async fn global_events(&self) -> Result<GlobalEventStream, OpenCodeError> {
         let response = self
             .authenticated(
@@ -237,6 +255,14 @@ pub struct Session {
     pub id: String,
     pub directory: String,
     pub version: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionReply {
+    Once,
+    Always,
+    Reject,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -264,6 +264,28 @@ export const enUS = {
       simplifiedChinese: '简体中文', traditionalChinese: '繁體中文', english: 'English',
     },
   },
+  collab: {
+    switchTo: 'Collaboration', backToWorkbench: 'Back to Workbench', brand: 'Collab',
+    nav: { rooms: 'Rooms', agents: 'Teammates', boards: 'Boards', logs: 'Logs' },
+    badges: { unread: '{{count}} unread', approvals: '{{count}} awaiting approval' },
+    rooms: {
+      title: 'Rooms', create: 'New room', id: 'Room ID', name: 'Room name', empty: 'No rooms yet',
+      messages: 'Messages', older: 'Load older messages', newer: 'Load newer messages', loading: 'Loading…',
+      messagePlaceholder: 'Message the room; use @ to wake a teammate', send: 'Send', members: 'Teammates', addMember: 'Add to room',
+      markRead: 'Mark read', noMessages: 'No messages yet', user: 'You',
+    },
+    agents: {
+      title: 'Teammate management', create: 'Create teammate', edit: 'Edit', save: 'Save', disable: 'Disable', enable: 'Enable',
+      id: 'ID', displayName: 'Name', role: 'Role', bio: 'Bio', prompt: 'System prompt',
+      provider: 'Provider ID', model: 'Model ID', enabled: 'Enabled', disabled: 'Disabled',
+      idle: 'Idle', waitingApproval: 'Waiting for approval', noAgents: 'No teammates yet',
+    },
+    approvals: {
+      title: 'Waiting for your approval', request: '{{agent}} requests {{permission}}', paths: 'Affected scope',
+      once: 'Allow once', always: 'Always allow', reject: 'Reject', reason: 'Tell the teammate why', abort: 'Abort run',
+    },
+    unavailable: { boards: 'Boards arrive in P4', logs: 'Logs arrive in P6' },
+  },
   tool: {
     mutation: {
       createAction: 'Create', editAction: 'Edit', writeAction: 'Write',

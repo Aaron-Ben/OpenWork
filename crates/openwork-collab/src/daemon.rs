@@ -13,15 +13,16 @@ use thiserror::Error;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
-    sync::mpsc,
+    sync::{broadcast, mpsc},
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    event::{CollabEventKind, CollabEventPublisher},
     home::{HomeError, HomeManager},
     mcp::{IdentityRegistry, MessageNotice, start_server},
-    model::AgentInput,
-    opencode::{OpenCodeError, OpenCodeSupervisor},
+    model::{AgentInput, MessagePageAnchor, MessagePageQuery},
+    opencode::{OpenCodeError, OpenCodeSupervisor, PermissionReply},
     permission::PermissionTracker,
     scheduler::{AgentTokens, start as start_scheduler},
     storage::{CollabStorage, StorageError},
@@ -99,6 +100,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         initial.generation
     );
     let permissions = PermissionTracker::default();
+    let events = CollabEventPublisher::default();
     let scheduler = start_scheduler(
         storage.clone(),
         homes.clone(),
@@ -106,6 +108,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         supervisor.subscribe(),
         notice_rx,
         permissions.clone(),
+        events.clone(),
         cancel.clone(),
     )
     .await?;
@@ -116,6 +119,7 @@ pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
         tokens,
         notices: notice_tx,
         permissions,
+        events,
         engine: supervisor.subscribe(),
         cancel: cancel.clone(),
     };
@@ -157,6 +161,7 @@ struct DaemonContext {
     tokens: AgentTokens,
     notices: mpsc::UnboundedSender<MessageNotice>,
     permissions: PermissionTracker,
+    events: CollabEventPublisher,
     engine: tokio::sync::watch::Receiver<Option<crate::opencode::EngineConnection>>,
     cancel: CancellationToken,
 }
@@ -190,7 +195,28 @@ pub enum IpcRequest {
     Messages {
         room_id: String,
     },
+    ListRooms,
+    MessagePage {
+        room_id: String,
+        anchor: Option<MessagePageAnchor>,
+        limit: u32,
+    },
+    MarkRead {
+        room_id: String,
+        through_sequence: i64,
+    },
     Permissions,
+    ReplyPermission {
+        id: String,
+        reply: PermissionReply,
+        message: Option<String>,
+    },
+    AbortPermission {
+        id: String,
+    },
+    SubscribeEvents {
+        after_sequence: u64,
+    },
     CredentialCheck {
         provider_id: String,
     },
@@ -234,10 +260,44 @@ async fn serve_connection(stream: UnixStream, context: DaemonContext) -> Result<
         return Ok(());
     }
     let response = match serde_json::from_str::<IpcRequest>(&line) {
+        Ok(IpcRequest::SubscribeEvents { after_sequence }) => {
+            return serve_event_subscription(&mut write, &context, after_sequence).await;
+        }
         Ok(request) => handle_request(request, &context).await,
         Err(error) => IpcResponse::failure(format!("invalid IPC request: {error}")),
     };
     let mut encoded = serde_json::to_vec(&response)?;
+    encoded.push(b'\n');
+    write.write_all(&encoded).await?;
+    Ok(())
+}
+
+async fn serve_event_subscription(
+    write: &mut tokio::net::unix::OwnedWriteHalf,
+    context: &DaemonContext,
+    after_sequence: u64,
+) -> Result<(), DaemonError> {
+    let mut subscription = context.events.subscribe(after_sequence).await;
+    for event in subscription.replay {
+        write_json_line(write, &event).await?;
+    }
+    loop {
+        tokio::select! {
+            _ = context.cancel.cancelled() => return Ok(()),
+            event = subscription.receiver.recv() => match event {
+                Ok(event) => write_json_line(write, &event).await?,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            }
+        }
+    }
+}
+
+async fn write_json_line(
+    write: &mut tokio::net::unix::OwnedWriteHalf,
+    value: &impl Serialize,
+) -> Result<(), DaemonError> {
+    let mut encoded = serde_json::to_vec(value)?;
     encoded.push(b'\n');
     write.write_all(&encoded).await?;
     Ok(())
@@ -283,6 +343,7 @@ async fn handle_request_inner(
                 .map_err(|_| DaemonError::Identity("Agent token lock is poisoned".to_string()))?
                 .insert(created.id.clone(), token.clone());
             context.homes.repair(&created, &token).await?;
+            context.events.publish(CollabEventKind::AgentsChanged).await;
             Ok(IpcResponse::success(created))
         }
         IpcRequest::UpdateAgent { agent } => {
@@ -297,12 +358,21 @@ async fn handle_request_inner(
                     DaemonError::Identity(format!("Agent {} has no token", updated.id))
                 })?;
             context.homes.repair(&updated, &token).await?;
+            context.events.publish(CollabEventKind::AgentsChanged).await;
             Ok(IpcResponse::success(updated))
         }
         IpcRequest::ListAgents => Ok(IpcResponse::success(context.storage.agents().await?)),
-        IpcRequest::CreateRoom { id, title } => Ok(IpcResponse::success(
-            context.storage.create_group_room(&id, &title).await?,
-        )),
+        IpcRequest::CreateRoom { id, title } => {
+            let room = context.storage.create_group_room(&id, &title).await?;
+            context.storage.add_member(&room.id, "user").await?;
+            context
+                .events
+                .publish(CollabEventKind::RoomsChanged {
+                    room_id: room.id.clone(),
+                })
+                .await;
+            Ok(IpcResponse::success(room))
+        }
         IpcRequest::AddMember {
             room_id,
             participant_id,
@@ -311,6 +381,10 @@ async fn handle_request_inner(
                 .storage
                 .add_member(&room_id, &participant_id)
                 .await?;
+            context
+                .events
+                .publish(CollabEventKind::RoomsChanged { room_id })
+                .await;
             Ok(IpcResponse::success(json!({"added": true})))
         }
         IpcRequest::SendMessage {
@@ -339,7 +413,109 @@ async fn handle_request_inner(
         IpcRequest::Messages { room_id } => Ok(IpcResponse::success(
             context.storage.room_messages(&room_id).await?,
         )),
+        IpcRequest::ListRooms => Ok(IpcResponse::success(
+            context.storage.room_summaries("user").await?,
+        )),
+        IpcRequest::MessagePage {
+            room_id,
+            anchor,
+            limit,
+        } => {
+            let anchor = match anchor {
+                Some(anchor) => anchor,
+                None => {
+                    let summary = context
+                        .storage
+                        .room_summaries("user")
+                        .await?
+                        .into_iter()
+                        .find(|room| room.id == room_id)
+                        .ok_or_else(|| {
+                            DaemonError::InvalidRequest(format!(
+                                "user is not a member of room {room_id}"
+                            ))
+                        })?;
+                    MessagePageAnchor::Around(summary.last_read_sequence.max(1))
+                }
+            };
+            Ok(IpcResponse::success(
+                context
+                    .storage
+                    .message_page(&room_id, MessagePageQuery { anchor, limit })
+                    .await?,
+            ))
+        }
+        IpcRequest::MarkRead {
+            room_id,
+            through_sequence,
+        } => {
+            let sequence = context
+                .storage
+                .mark_user_read(&room_id, through_sequence)
+                .await?;
+            context
+                .events
+                .publish(CollabEventKind::RoomsChanged { room_id })
+                .await;
+            Ok(IpcResponse::success(json!({"lastReadSequence": sequence})))
+        }
         IpcRequest::Permissions => Ok(IpcResponse::success(context.permissions.snapshot().await)),
+        IpcRequest::ReplyPermission { id, reply, message } => {
+            let pending = context.permissions.get(&id).await.ok_or_else(|| {
+                DaemonError::InvalidRequest(format!("permission {id} is no longer pending"))
+            })?;
+            let directory = pending.directory.as_deref().ok_or_else(|| {
+                DaemonError::InvalidRequest(format!("permission {id} has no Agent directory"))
+            })?;
+            let connection = context
+                .engine
+                .borrow()
+                .clone()
+                .ok_or(OpenCodeError::Unavailable)?;
+            let accepted = connection
+                .client
+                .reply_permission(Path::new(directory), &id, reply, message.as_deref())
+                .await?;
+            if accepted {
+                context.permissions.remove(&id).await;
+                context
+                    .events
+                    .publish(CollabEventKind::PermissionsChanged)
+                    .await;
+            }
+            Ok(IpcResponse::success(json!({"accepted": accepted})))
+        }
+        IpcRequest::AbortPermission { id } => {
+            let pending = context.permissions.get(&id).await.ok_or_else(|| {
+                DaemonError::InvalidRequest(format!("permission {id} is no longer pending"))
+            })?;
+            let directory = pending.directory.as_deref().ok_or_else(|| {
+                DaemonError::InvalidRequest(format!("permission {id} has no Agent directory"))
+            })?;
+            let connection = context
+                .engine
+                .borrow()
+                .clone()
+                .ok_or(OpenCodeError::Unavailable)?;
+            let aborted = connection
+                .client
+                .abort(Path::new(directory), &pending.session_id)
+                .await?;
+            if aborted {
+                context
+                    .permissions
+                    .remove_session(&pending.session_id)
+                    .await;
+                context
+                    .events
+                    .publish(CollabEventKind::PermissionsChanged)
+                    .await;
+            }
+            Ok(IpcResponse::success(json!({"aborted": aborted})))
+        }
+        IpcRequest::SubscribeEvents { .. } => Err(DaemonError::InvalidRequest(
+            "event subscriptions must use a streaming connection".to_string(),
+        )),
         IpcRequest::CredentialCheck { provider_id } => {
             let store = PostgresCredentialStore::from_env(context.storage.pool().clone())
                 .map_err(|error| DaemonError::Credential(error.to_string()))?;

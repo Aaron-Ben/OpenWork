@@ -12,6 +12,8 @@ const buttonVariants = cva(
         default: 'bg-ink text-paper hover:bg-ink/85',
         /** clay 是全局唯一的 accent，留给"提交"这一类主动作。 */
         accent: 'bg-clay text-paper hover:bg-clay/88',
+        outline: 'border border-line bg-paper text-ink hover:bg-paper-hover',
+        destructive: 'bg-red-600 text-white hover:bg-red-700',
         ghost: 'bg-transparent text-ink-faint hover:bg-paper-hover hover:text-ink',
       },
       size: {

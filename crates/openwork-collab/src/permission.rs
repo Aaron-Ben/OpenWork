@@ -10,9 +10,11 @@ use crate::opencode::GlobalEvent;
 pub struct PendingPermission {
     pub id: String,
     pub session_id: String,
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing)]
     pub directory: Option<String>,
     pub permission: String,
-    pub payload: serde_json::Value,
+    pub patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -47,12 +49,26 @@ impl PermissionTracker {
                     PendingPermission {
                         id: id.to_string(),
                         session_id: session_id.to_string(),
+                        agent_id: event
+                            .directory
+                            .as_deref()
+                            .and_then(std::path::Path::file_name)
+                            .and_then(std::ffi::OsStr::to_str)
+                            .map(str::to_string),
                         directory: event
                             .directory
                             .as_ref()
                             .map(|path| path.to_string_lossy().into_owned()),
                         permission: permission.to_string(),
-                        payload: event.payload.clone(),
+                        patterns: event
+                            .payload
+                            .pointer("/properties/patterns")
+                            .and_then(serde_json::Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect(),
                     },
                 );
             }
@@ -71,6 +87,21 @@ impl PermissionTracker {
 
     pub async fn snapshot(&self) -> Vec<PendingPermission> {
         self.pending.read().await.values().cloned().collect()
+    }
+
+    pub async fn get(&self, id: &str) -> Option<PendingPermission> {
+        self.pending.read().await.get(id).cloned()
+    }
+
+    pub async fn remove(&self, id: &str) -> Option<PendingPermission> {
+        self.pending.write().await.remove(id)
+    }
+
+    pub async fn remove_session(&self, session_id: &str) -> usize {
+        let mut pending = self.pending.write().await;
+        let before = pending.len();
+        pending.retain(|_, permission| permission.session_id != session_id);
+        before - pending.len()
     }
 }
 

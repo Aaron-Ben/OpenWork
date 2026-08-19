@@ -259,6 +259,28 @@ export const zhTW = {
       simplifiedChinese: '简体中文', traditionalChinese: '繁體中文', english: 'English',
     },
   },
+  collab: {
+    switchTo: '協作模式', backToWorkbench: '返回工作臺', brand: '協作',
+    nav: { rooms: '房間', agents: '同事', boards: '看板', logs: '日誌' },
+    badges: { unread: '{{count}} 條未讀', approvals: '{{count}} 項待審批' },
+    rooms: {
+      title: '房間', create: '新增房間', id: '房間 ID', name: '房間名稱', empty: '還沒有房間',
+      messages: '訊息', older: '載入更早訊息', newer: '載入更新訊息', loading: '正在載入…',
+      messagePlaceholder: '發訊息，用 @ 喚醒同事', send: '發送', members: '同事名冊', addMember: '加入房間',
+      markRead: '標為已讀', noMessages: '還沒有訊息', user: '你',
+    },
+    agents: {
+      title: '同事管理', create: '建立同事', edit: '編輯', save: '儲存', disable: '停用', enable: '啟用',
+      id: 'ID', displayName: '名稱', role: '角色', bio: '簡介', prompt: 'System Prompt',
+      provider: 'Provider ID', model: 'Model ID', enabled: '已啟用', disabled: '已停用',
+      idle: '閒置', waitingApproval: '等待審批', noAgents: '還沒有同事',
+    },
+    approvals: {
+      title: '等待你的審批', request: '{{agent}} 請求 {{permission}}', paths: '涉及範圍',
+      once: '允許一次', always: '始終允許', reject: '拒絕', reason: '告訴同事拒絕原因', abort: '終止本輪',
+    },
+    unavailable: { boards: '看板將於 P4 提供', logs: '日誌將於 P6 提供' },
+  },
   tool: {
     mutation: {
       createAction: '新增', editAction: '修改', writeAction: '寫入',

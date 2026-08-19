@@ -2,6 +2,7 @@
 
 pub mod daemon;
 pub mod domain;
+pub mod event;
 pub mod home;
 pub mod mcp;
 pub mod migration;

@@ -1,8 +1,9 @@
 # OpenWork collaboration daemon
 
-`openwork-collab` is the persistent backend for collaboration mode. P1 provides the one-way path
-from a room `@mention` to an OpenCode session and back through the authenticated `reply` MCP tool.
-The daemon is the only writer of `collab_*` data; every CLI command below talks to its Unix socket.
+`openwork-collab` is the persistent backend for collaboration mode. It carries room messages from
+the Desktop or CLI to an `@mentioned` OpenCode Agent and publishes the Agent's authenticated MCP
+reply back into the room. The daemon is the only writer of `collab_*` data; Desktop and every CLI
+command below talk to its Unix socket.
 
 ## Prerequisites
 
@@ -40,7 +41,39 @@ cargo run -p openwork-collab --bin openwork-collab -- shutdown
 `shutdown` is graceful: it cancels scheduling, stops `opencode serve` and MCP, closes the socket,
 and waits for the workers. Closing Desktop is not a shutdown operation.
 
-## Create two Agents and verify the P1 path
+## Connect from Desktop
+
+Run the Tauri app normally:
+
+```sh
+npm --prefix desktop run tauri dev
+```
+
+`src-tauri` first pings `OPENWORK_COLLAB_HOME/daemon.sock`. If no live daemon owns the socket, it
+starts the same Desktop executable in daemon-only mode and waits for the socket to answer. The
+daemon is a separate process: closing Desktop deliberately leaves it running. Use the CLI
+`shutdown` command when you actually want to stop it.
+
+All WebView reads and writes are Tauri commands; the WebView never opens the Unix socket or reads
+`collab_*` tables. A long-lived host task subscribes to the daemon's versioned event stream and
+emits `openwork://collab-event` (or an ordered batch) to the root-level collaboration bridge.
+That bridge remains mounted in both modes, which is why the workbench sidebar can show room unread
+and pending-approval badges while the collaboration Shell is not visible.
+
+Use the workbench sidebar's **Collaboration** button to enter the second Shell. From there:
+
+1. create a room and Agents in the **Teammates** destination;
+2. add enabled Agents from the room roster;
+3. send `@agent_id ...` in the room input;
+4. handle permanent OpenCode asks in the red approval cards with **Allow once**, **Always allow**,
+   **Reject** plus a reason, or **Abort run**.
+
+Room history opens through a bounded `sequence` page around the human user's persisted
+`last_read_seq`; **Load older** and **Load newer** extend only the in-memory window. The Mark read
+button is the only Desktop action that advances that human cursor. Agent inbox delivery never uses
+it.
+
+## Create two Agents and verify the backend path
 
 Arguments containing spaces must be shell-quoted.
 
@@ -54,7 +87,6 @@ cargo run -p openwork-collab --bin openwork-collab -- \
   'When explicitly mentioned, answer through openwork_reply.'
 
 cargo run -p openwork-collab --bin openwork-collab -- room-create general General
-cargo run -p openwork-collab --bin openwork-collab -- room-add general user
 cargo run -p openwork-collab --bin openwork-collab -- room-add general alice
 cargo run -p openwork-collab --bin openwork-collab -- room-add general bob
 
@@ -115,6 +147,8 @@ TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
 Repository acceptance checks:
 
 ```sh
+npm --prefix desktop run typecheck
+npm --prefix desktop test
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork cargo test --workspace
@@ -128,6 +162,8 @@ two invariants a single writer is supposed to guarantee — were never exercised
 The dependency tree may contain only the two approved OpenWork dependencies:
 `openwork-models` and `openwork-credentials`; it must not contain `openwork-core`,
 `openwork-agent`, `openwork-chat-state`, or `openwork-tools`.
+
+The dated manual and automated P2 evidence is in [`P2-ACCEPTANCE.md`](P2-ACCEPTANCE.md).
 
 ## Where the P0/P1 findings live
 

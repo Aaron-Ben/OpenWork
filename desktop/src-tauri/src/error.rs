@@ -16,6 +16,7 @@ pub enum CommandErrorCode {
     OperationConflict,
     SkillUnavailable,
     ModelRequestFailed,
+    CollaborationUnavailable,
     InternalError,
 }
 
@@ -214,6 +215,15 @@ impl From<OpenWorkCoreError> for CommandError {
                 Self::new(CommandErrorCode::ConfigurationInvalid, error.to_string())
             }
         }
+    }
+}
+
+impl From<crate::collab_client::CollabClientError> for CommandError {
+    fn from(error: crate::collab_client::CollabClientError) -> Self {
+        Self::new(
+            CommandErrorCode::CollaborationUnavailable,
+            error.to_string(),
+        )
     }
 }
 

@@ -328,6 +328,28 @@ export const zhCN = {
       english: 'English',
     },
   },
+  collab: {
+    switchTo: '协作模式', backToWorkbench: '返回工作台', brand: '协作',
+    nav: { rooms: '房间', agents: '同事', boards: '看板', logs: '日志' },
+    badges: { unread: '{{count}} 条未读', approvals: '{{count}} 项待审批' },
+    rooms: {
+      title: '房间', create: '新建房间', id: '房间 ID', name: '房间名称', empty: '还没有房间',
+      messages: '消息', older: '加载更早消息', newer: '加载更新消息', loading: '正在加载…',
+      messagePlaceholder: '发消息，用 @ 唤醒同事', send: '发送', members: '同事名册', addMember: '加入房间',
+      markRead: '标为已读', noMessages: '还没有消息', user: '你',
+    },
+    agents: {
+      title: '同事管理', create: '创建同事', edit: '编辑', save: '保存', disable: '停用', enable: '启用',
+      id: 'ID', displayName: '名称', role: '角色', bio: '简介', prompt: 'System Prompt',
+      provider: 'Provider ID', model: 'Model ID', enabled: '已启用', disabled: '已停用',
+      idle: '空闲', waitingApproval: '等待审批', noAgents: '还没有同事',
+    },
+    approvals: {
+      title: '等待你的审批', request: '{{agent}} 请求 {{permission}}', paths: '涉及范围',
+      once: '允许一次', always: '始终允许', reject: '拒绝', reason: '告诉同事拒绝原因', abort: '终止本轮',
+    },
+    unavailable: { boards: '看板将在 P4 提供', logs: '日志将在 P6 提供' },
+  },
   tool: {
     mutation: {
       createAction: '新建', editAction: '修改', writeAction: '写入',

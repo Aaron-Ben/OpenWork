@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 
 import { GeneralSettings } from '@/features/settings/components/GeneralSettings'
 import { SkillSettings } from '@/features/settings/components/SkillSettings'
-import { useCoreEventBridge } from '@/app/useCoreEventBridge'
 import {
   shouldCollapseAgentRail,
   shouldCollapseSidebar,
@@ -32,7 +31,17 @@ import { Sidebar } from './Sidebar'
 
 const TracePage = lazy(() => import('@/features/traces/TracePage'))
 
-export function AppShell() {
+interface AppShellProps {
+  collabUnreadCount: number
+  collabPermissionCount: number
+  onOpenCollab: () => void
+}
+
+export function AppShell({
+  collabUnreadCount,
+  collabPermissionCount,
+  onOpenCollab,
+}: AppShellProps) {
   const { t } = useTranslation()
   const view = useNavigationStore((state) => state.view)
   const sidebarOpen = useNavigationStore((state) => state.sidebarExpanded)
@@ -60,8 +69,6 @@ export function AppShell() {
   )
   const runtimeBySession = useRuntimeStore((state) => state.bySession)
   const subAgents = useSubAgents(view === 'chat' ? activeSessionId : null)
-
-  useCoreEventBridge()
 
   useEffect(() => {
     function collapsePanelsForNarrowWindow() {
@@ -144,6 +151,9 @@ export function AppShell() {
         expanded={sidebarOpen}
         onToggleExpanded={toggleSidebar}
         onNavigate={navigate}
+        collabUnreadCount={collabUnreadCount}
+        collabPermissionCount={collabPermissionCount}
+        onOpenCollab={onOpenCollab}
       />
       <section className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
         {view === 'chat' && focusedItem ? (

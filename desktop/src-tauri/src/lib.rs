@@ -1,3 +1,4 @@
+mod collab_client;
 mod commands;
 mod error;
 mod event_bridge;
@@ -22,10 +23,28 @@ pub fn run() {
                 app.handle().clone(),
                 core.subscribe_updates(),
             );
+            let collab = tauri::async_runtime::block_on(
+                collab_client::CollabDaemonClient::discover_or_start(),
+            )?;
+            event_bridge::spawn_collab_event_bridge(app.handle().clone(), collab.clone());
+            app.manage(collab);
             app.manage(core);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::collab::collab_status,
+            commands::collab::collab_agent_list,
+            commands::collab::collab_agent_create,
+            commands::collab::collab_agent_update,
+            commands::collab::collab_room_list,
+            commands::collab::collab_room_create,
+            commands::collab::collab_room_add_member,
+            commands::collab::collab_message_send,
+            commands::collab::collab_message_page,
+            commands::collab::collab_room_mark_read,
+            commands::collab::collab_permission_list,
+            commands::collab::collab_permission_reply,
+            commands::collab::collab_permission_abort,
             commands::skills::list_skills,
             commands::skills::set_skill_disabled,
             commands::skills::read_skill,

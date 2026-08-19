@@ -8,7 +8,10 @@ use uuid::Uuid;
 use crate::{
     domain::unread_count,
     migration::{self, MigrationError},
-    model::{Agent, AgentInput, Inbox, Message, Room, SendMessageOutcome},
+    model::{
+        Agent, AgentInput, Inbox, Message, MessagePage, MessagePageAnchor, MessagePageQuery, Room,
+        RoomMember, RoomSummary, SendMessageOutcome,
+    },
     time::{china_now, format_china},
 };
 
@@ -206,6 +209,80 @@ impl CollabStorage {
         .map(RoomRow::into_room))
     }
 
+    pub async fn room_summaries(
+        &self,
+        participant_id: &str,
+    ) -> Result<Vec<RoomSummary>, StorageError> {
+        let rooms = sqlx::query_as::<_, RoomSummaryRow>(
+            "SELECT r.id, r.kind, r.title, r.next_seq,
+                    rm.last_read_seq, rm.muted
+               FROM collab_room_members rm
+               JOIN collab_rooms r ON r.id = rm.room_id
+              WHERE rm.participant_id = $1
+              ORDER BY r.last_message_at DESC NULLS LAST, r.created_at, r.id",
+        )
+        .bind(participant_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut summaries = Vec::with_capacity(rooms.len());
+        for room in rooms {
+            let members = sqlx::query_as::<_, RoomMemberRow>(
+                "SELECT p.id, p.display_name, p.kind, COALESCE(a.enabled, TRUE) AS enabled
+                   FROM collab_room_members rm
+                   JOIN collab_participants p ON p.id = rm.participant_id
+                   LEFT JOIN collab_agents a ON a.id = p.id
+                  WHERE rm.room_id = $1
+                  ORDER BY p.created_at, p.id",
+            )
+            .bind(&room.id)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(RoomMemberRow::into_member)
+            .collect();
+            summaries.push(RoomSummary {
+                id: room.id,
+                kind: room.kind,
+                title: room.title,
+                next_sequence: room.next_seq,
+                last_read_sequence: room.last_read_seq,
+                unread_count: unread_count(room.last_read_seq, room.next_seq),
+                muted: room.muted,
+                members,
+            });
+        }
+        Ok(summaries)
+    }
+
+    /// Advances only the human user's persisted read cursor.
+    ///
+    /// Agent delivery uses its own unread cursor and must never call this method.
+    pub async fn mark_user_read(
+        &self,
+        room_id: &str,
+        through_sequence: i64,
+    ) -> Result<i64, StorageError> {
+        if through_sequence < 0 {
+            return Err(StorageError::InvalidInput(
+                "read sequence must not be negative".to_string(),
+            ));
+        }
+        sqlx::query_scalar::<_, i64>(
+            "UPDATE collab_room_members rm
+                SET last_read_seq = GREATEST(
+                    rm.last_read_seq,
+                    LEAST($2, (SELECT next_seq FROM collab_rooms WHERE id = $1))
+                )
+              WHERE rm.room_id = $1 AND rm.participant_id = 'user'
+              RETURNING rm.last_read_seq",
+        )
+        .bind(room_id)
+        .bind(through_sequence)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| StorageError::NotFound(format!("user membership in room {room_id}")))
+    }
+
     pub async fn add_member(
         &self,
         room_id: &str,
@@ -333,6 +410,85 @@ impl CollabStorage {
             .fetch_all(&self.pool)
             .await?,
         )
+    }
+
+    pub async fn message_page(
+        &self,
+        room_id: &str,
+        query: MessagePageQuery,
+    ) -> Result<MessagePage, StorageError> {
+        if !(1..=100).contains(&query.limit) {
+            return Err(StorageError::InvalidInput(
+                "message page limit must be between 1 and 100".to_string(),
+            ));
+        }
+        let limit = i64::from(query.limit);
+        let records = match query.anchor {
+            MessagePageAnchor::Around(sequence) => {
+                sqlx::query_as::<_, MessageRow>(
+                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                       FROM (
+                            SELECT id, room_id, sequence, author_id, kind, body, created_at
+                              FROM collab_messages
+                             WHERE room_id = $1
+                             ORDER BY ABS(sequence - $2), sequence
+                             LIMIT $3
+                       ) nearest
+                      ORDER BY sequence",
+                )
+                .bind(room_id)
+                .bind(sequence)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            MessagePageAnchor::Before(sequence) => {
+                sqlx::query_as::<_, MessageRow>(
+                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                       FROM (
+                            SELECT id, room_id, sequence, author_id, kind, body, created_at
+                              FROM collab_messages
+                             WHERE room_id = $1 AND sequence < $2
+                             ORDER BY sequence DESC
+                             LIMIT $3
+                       ) previous
+                      ORDER BY sequence",
+                )
+                .bind(room_id)
+                .bind(sequence)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            MessagePageAnchor::After(sequence) => {
+                sqlx::query_as::<_, MessageRow>(
+                    "SELECT id, room_id, sequence, author_id, kind, body, created_at
+                       FROM collab_messages
+                      WHERE room_id = $1 AND sequence > $2
+                      ORDER BY sequence
+                      LIMIT $3",
+                )
+                .bind(room_id)
+                .bind(sequence)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        let room = self
+            .room(room_id)
+            .await?
+            .ok_or_else(|| StorageError::NotFound(format!("room {room_id}")))?;
+        let messages = records_to_messages(records)?;
+        let has_older = messages.first().is_some_and(|message| message.sequence > 1);
+        let has_newer = messages
+            .last()
+            .is_some_and(|message| message.sequence < room.next_sequence);
+        Ok(MessagePage {
+            messages,
+            has_older,
+            has_newer,
+        })
     }
 
     pub async fn inbox(&self, participant_id: &str) -> Result<Inbox, StorageError> {
@@ -513,6 +669,35 @@ struct RoomRow {
     kind: String,
     title: Option<String>,
     next_seq: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RoomSummaryRow {
+    id: String,
+    kind: String,
+    title: Option<String>,
+    next_seq: i64,
+    last_read_seq: i64,
+    muted: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RoomMemberRow {
+    id: String,
+    display_name: String,
+    kind: String,
+    enabled: bool,
+}
+
+impl RoomMemberRow {
+    fn into_member(self) -> RoomMember {
+        RoomMember {
+            id: self.id,
+            display_name: self.display_name,
+            kind: self.kind,
+            enabled: self.enabled,
+        }
+    }
 }
 
 impl RoomRow {

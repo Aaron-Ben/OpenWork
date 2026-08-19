@@ -22,6 +22,7 @@ openwork-models = { path = "crates/openwork-models" }
 openwork-tools = { path = "crates/openwork-tools" }
 openwork-core = { path = "crates/openwork-core" }
 openwork-credentials = { path = "crates/openwork-credentials" }
+openwork-collab = { path = "crates/openwork-collab" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }
 base64 = "0.22"
