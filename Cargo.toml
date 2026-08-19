@@ -3,6 +3,7 @@ members = [
   "crates/openwork-agent",
   "crates/openwork-chat-state",
   "crates/openwork-collab",
+  "crates/openwork-credentials",
   "crates/openwork-models",
   "crates/openwork-tools",
   "crates/openwork-core",
@@ -20,6 +21,7 @@ openwork-chat-state = { path = "crates/openwork-chat-state" }
 openwork-models = { path = "crates/openwork-models" }
 openwork-tools = { path = "crates/openwork-tools" }
 openwork-core = { path = "crates/openwork-core" }
+openwork-credentials = { path = "crates/openwork-credentials" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }
 base64 = "0.22"

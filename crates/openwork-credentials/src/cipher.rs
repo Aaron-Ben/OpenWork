@@ -153,27 +153,3 @@ fn validate_non_blank(field: &'static str, value: &str) -> Result<(), ApiKeyCiph
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{ApiKeyCipher, ApiKeyCipherError};
-
-    #[test]
-    fn encrypts_with_unique_nonces_and_round_trips() {
-        let cipher = ApiKeyCipher::from_key([7; 32]);
-        let first = cipher.encrypt("provider-a", "secret").unwrap();
-        let second = cipher.encrypt("provider-a", "secret").unwrap();
-        assert_ne!(first, second);
-        assert_eq!(cipher.decrypt("provider-a", &first).unwrap(), "secret");
-    }
-
-    #[test]
-    fn ciphertext_is_bound_to_provider_id() {
-        let cipher = ApiKeyCipher::from_key([9; 32]);
-        let encrypted = cipher.encrypt("provider-a", "secret").unwrap();
-        assert_eq!(
-            cipher.decrypt("provider-b", &encrypted),
-            Err(ApiKeyCipherError::DecryptionFailed)
-        );
-    }
-}

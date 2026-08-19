@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
+use openwork_credentials::{
+    PostgresCredentialStore, ProviderCredentialInput, ProviderCredentialRecord,
+    ProviderCredentialStoreError,
+};
 use openwork_models::model::ModelCapabilities;
 use openwork_models::provider::{
     ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
@@ -11,20 +15,6 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::{ApiKeyCipher, ApiKeyCipherError};
-
-const PROVIDER_COLUMNS: &str =
-    "provider_id, display_name, provider_kind, base_url, api_key_encrypted, enabled, config";
-
-#[derive(Debug, sqlx::FromRow)]
-struct ProviderCredentialRecord {
-    provider_id: String,
-    display_name: String,
-    provider_kind: String,
-    base_url: String,
-    api_key_encrypted: String,
-    enabled: bool,
-    config: Value,
-}
 
 #[derive(Debug, sqlx::FromRow)]
 struct ProviderModelRecord {
@@ -46,15 +36,13 @@ struct ProviderOwnedModelRecord {
 #[derive(Clone)]
 pub struct PostgresProviderRepository {
     pool: PgPool,
-    api_key_cipher: ApiKeyCipher,
+    credentials: PostgresCredentialStore,
 }
 
 impl PostgresProviderRepository {
     pub fn new(pool: PgPool, api_key_cipher: ApiKeyCipher) -> Self {
-        Self {
-            pool,
-            api_key_cipher,
-        }
+        let credentials = PostgresCredentialStore::new(pool.clone(), api_key_cipher);
+        Self { pool, credentials }
     }
 
     pub fn from_env(pool: PgPool) -> Result<Self, ApiKeyCipherError> {
@@ -65,13 +53,10 @@ impl PostgresProviderRepository {
         &self,
         provider_id: &str,
     ) -> Result<Option<ProviderCredentialRecord>, ProviderRepositoryError> {
-        let sql =
-            format!("SELECT {PROVIDER_COLUMNS} FROM provider_credentials WHERE provider_id = $1");
-        sqlx::query_as(&sql)
-            .bind(provider_id)
-            .fetch_optional(&self.pool)
+        self.credentials
+            .get(provider_id)
             .await
-            .map_err(persistence_error)
+            .map_err(|error| credential_store_error("read", error))
     }
 
     async fn models_for(
@@ -131,13 +116,11 @@ impl PostgresProviderRepository {
 #[async_trait]
 impl ProviderRepository for PostgresProviderRepository {
     async fn list_profiles(&self) -> Result<Vec<ProviderProfile>, ProviderRepositoryError> {
-        let sql = format!(
-            "SELECT {PROVIDER_COLUMNS} FROM provider_credentials ORDER BY created_at, provider_id"
-        );
-        let records = sqlx::query_as::<_, ProviderCredentialRecord>(&sql)
-            .fetch_all(&self.pool)
+        let records = self
+            .credentials
+            .list()
             .await
-            .map_err(persistence_error)?;
+            .map_err(|error| credential_store_error("list", error))?;
         let mut models = self.all_models().await?;
         records
             .into_iter()
@@ -165,9 +148,11 @@ impl ProviderRepository for PostgresProviderRepository {
         match self.credential_record(id).await? {
             Some(record) => {
                 let credential = ApiCredential::new(
-                    self.api_key_cipher
-                        .decrypt(id, &record.api_key_encrypted)
-                        .map_err(|error| credential_error("decrypt", error))?,
+                    self.credentials
+                        .decrypt_record(record.clone())
+                        .map_err(|error| credential_store_error("decrypt", error))?
+                        .api_key()
+                        .to_string(),
                 );
                 let adapter_options = extra_body(&record.config);
                 let profile = record_to_profile(record, self.models_for(id).await?)?;
@@ -188,27 +173,23 @@ impl ProviderRepository for PostgresProviderRepository {
         validate_input(&input, true)?;
         let normalized_models = normalize_models(&input.models);
         let provider_id = format!("prov-{}", Uuid::new_v4().simple());
-        let encrypted = self
-            .api_key_cipher
-            .encrypt(&provider_id, &input.api_key)
-            .map_err(|error| credential_error("encrypt", error))?;
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-        sqlx::query(
-            "INSERT INTO provider_credentials (
-                provider_id, display_name, provider_kind, base_url,
-                api_key_encrypted, enabled, config
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        )
-        .bind(&provider_id)
-        .bind(input.name.trim())
-        .bind(input.kind.as_str())
-        .bind(input.base_url.trim())
-        .bind(encrypted)
-        .bind(input.enabled)
-        .bind(provider_config(input.extra_body.as_ref()))
-        .execute(&mut *transaction)
-        .await
-        .map_err(persistence_error)?;
+        let config = provider_config(input.extra_body.as_ref());
+        self.credentials
+            .insert(
+                &mut transaction,
+                ProviderCredentialInput {
+                    provider_id: &provider_id,
+                    display_name: input.name.trim(),
+                    provider_kind: input.kind.as_str(),
+                    base_url: input.base_url.trim(),
+                    api_key: Some(&input.api_key),
+                    enabled: input.enabled,
+                    config: &config,
+                },
+            )
+            .await
+            .map_err(|error| credential_store_error("encrypt/create", error))?;
         replace_models(&mut transaction, &provider_id, &input, &normalized_models).await?;
         transaction.commit().await.map_err(persistence_error)?;
         self.get_profile(&provider_id)
@@ -231,38 +212,26 @@ impl ProviderRepository for PostgresProviderRepository {
         }
         validate_input(&input, false)?;
         let normalized_models = normalize_models(&input.models);
-        let encrypted = if input.api_key.trim().is_empty() {
-            None
-        } else {
-            Some(
-                self.api_key_cipher
-                    .encrypt(id, &input.api_key)
-                    .map_err(|error| credential_error("encrypt", error))?,
-            )
-        };
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-        let result = sqlx::query(
-            "UPDATE provider_credentials SET
-                display_name = $2,
-                provider_kind = $3,
-                base_url = $4,
-                api_key_encrypted = COALESCE($5, api_key_encrypted),
-                enabled = $6,
-                config = $7,
-                updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-             WHERE provider_id = $1",
-        )
-        .bind(id)
-        .bind(input.name.trim())
-        .bind(input.kind.as_str())
-        .bind(input.base_url.trim())
-        .bind(encrypted)
-        .bind(input.enabled)
-        .bind(provider_config(input.extra_body.as_ref()))
-        .execute(&mut *transaction)
-        .await
-        .map_err(persistence_error)?;
-        if result.rows_affected() == 0 {
+        let config = provider_config(input.extra_body.as_ref());
+        let api_key = (!input.api_key.trim().is_empty()).then_some(input.api_key.as_str());
+        let rows_affected = self
+            .credentials
+            .update(
+                &mut transaction,
+                ProviderCredentialInput {
+                    provider_id: id,
+                    display_name: input.name.trim(),
+                    provider_kind: input.kind.as_str(),
+                    base_url: input.base_url.trim(),
+                    api_key,
+                    enabled: input.enabled,
+                    config: &config,
+                },
+            )
+            .await
+            .map_err(|error| credential_store_error("encrypt/update", error))?;
+        if rows_affected == 0 {
             return Err(ProviderRepositoryError::NotFound { id: id.to_string() });
         }
         replace_models(&mut transaction, id, &input, &normalized_models).await?;
@@ -274,24 +243,23 @@ impl ProviderRepository for PostgresProviderRepository {
 
     async fn delete(&self, id: &str) -> Result<(), ProviderRepositoryError> {
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
-        let provider_id: Option<String> = sqlx::query_scalar(
-            "SELECT provider_id FROM provider_credentials WHERE provider_id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(&mut *transaction)
-        .await
-        .map_err(persistence_error)?;
-        provider_id.ok_or_else(|| ProviderRepositoryError::NotFound { id: id.to_string() })?;
+        let exists = self
+            .credentials
+            .lock_exists(&mut transaction, id)
+            .await
+            .map_err(|error| credential_store_error("delete", error))?;
+        if !exists {
+            return Err(ProviderRepositoryError::NotFound { id: id.to_string() });
+        }
         sqlx::query("DELETE FROM models WHERE credential_ref = $1")
             .bind(credential_ref(id))
             .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;
-        sqlx::query("DELETE FROM provider_credentials WHERE provider_id = $1")
-            .bind(id)
-            .execute(&mut *transaction)
+        self.credentials
+            .delete(&mut transaction, id)
             .await
-            .map_err(persistence_error)?;
+            .map_err(|error| credential_store_error("delete", error))?;
         transaction.commit().await.map_err(persistence_error)?;
         Ok(())
     }
@@ -517,6 +485,16 @@ fn credential_error(operation: &'static str, error: ApiKeyCipherError) -> Provid
     ProviderRepositoryError::CredentialEncryption {
         operation,
         message: error.to_string(),
+    }
+}
+
+fn credential_store_error(
+    operation: &'static str,
+    error: ProviderCredentialStoreError,
+) -> ProviderRepositoryError {
+    match error {
+        ProviderCredentialStoreError::Cipher(error) => credential_error(operation, error),
+        ProviderCredentialStoreError::Persistence(error) => persistence_error(error),
     }
 }
 
