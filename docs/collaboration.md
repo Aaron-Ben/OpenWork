@@ -136,11 +136,26 @@ daemon ──HTTP──► opencode serve ──► N 个 session（每个带自
 
 **`/event` 与 `/permission` 都是 instance 范围的**，即受 `x-opencode-directory` 约束，不是跨全部 Agent 目录的 server 全局视图。这一条直接影响待审批角标的设计，见 §6。
 
-### 4.2 版本闸
+### 4.2 启动自检
 
 opencode 由**用户自行安装并登录**——这样它已有的登录态直接可用，包括通过 `CodexAuthPlugin` 拿到的 ChatGPT/Codex 订阅额度、GitHub Copilot，以及任何 API key provider。
 
-daemon 启动时读版本，**不在声明的支持区间内就拒绝启动并给出可读诊断**，而不是跑到一半报 404。OpenCode 演进很快（`sdk` 与 `sdk-next`、`/session/*` 与 `/api/session/*` 两套路径并存说明 API 正在迁移），版本漂移是必然而不是可能。
+代价是 OpenWork 依赖一个自己不控制、且演进很快的外部 HTTP 表面（`/session/*` 与 `/api/session/*` 两套路径并存，说明 API 正在迁移）。**没有任何检查时，opencode 改掉我们依赖的东西，表现是"某个 Agent 半夜起莫名其妙不回话"**——在一个常驻、异步、无人值守的系统里，这是最难查的一类失败。
+
+**不比版本号。** 版本相等不保证行为相同（配置与插件都能改变行为），版本不同也不意味着不兼容；用等号近似"兼容"两边都会错。**版本号只进诊断信息，不作判据。**
+
+改为在启动时探真正依赖的行为，四次 HTTP、零 token：
+
+| 探测 | 守住什么 |
+|---|---|
+| `GET /global/health` 返回 200 且版本是合法 semver | 服务活着，且 health 契约没变 |
+| `GET /session?limit=1` 返回 200 且**是数组** | v1 路径族还在——v2 的 `/api/session` 返回 `{data, cursor}`，形状不同；而 `prompt_async` 只存在于 v1 |
+| `GET /agent` 返回 200 且是数组 | Agent 定义接口还在 |
+| `GET /global/event` 能建立 SSE | 跨 instance 汇总待审批的唯一廉价通路还在（§6） |
+
+任一不满足即**拒绝启动**，诊断指名是哪一条、实际收到什么、opencode 版本是多少。
+
+**探不了的部分靠严格解析兜底。** 事件载荷形状与审批流没法在不烧 token 的前提下预探，因此它们在首次使用时必须**响亮失败**——缺字段就报"`/global/event` 的 payload 缺少 `directory` 字段，opencode 版本 X"，绝不 `unwrap_or_default()` 之后静默走错路。
 
 ### 4.3 OpenCode 原生提供的，我们不重做
 
@@ -193,14 +208,15 @@ doom_loop: "ask"
 
 每个 Agent 一个 session，所以卡住的只有它自己，不影响其他同事。
 
-**角标的数据来源尚未确定。** P0 实测发现 `GET /permission` 是 **instance 范围**的——它只返回 `x-opencode-directory` 指向的那个目录下的待决审批，而每个 Agent 一个 home，所以它给不出跨 Agent 的全局列表。两条候选路径：
+**角标的数据来源：单条 `GET /global/event`。** P0 发现 `GET /permission` 是 **instance 范围**的——它只返回 `x-opencode-directory` 指向的那个目录下的待决审批，而每个 Agent 一个 home，所以它给不出跨 Agent 的全局列表。V4 实测确认了替代路径：
 
-| 方案 | 状态 |
-|---|---|
-| 订阅 `GET /global/event`，从中筛 `permission.asked` / `permission.replied` | 它的 schema 含全部事件类型，**但"是否真的跨 instance"未经实测**——这是 P1 要补的第一个验证 |
-| 每个 Agent 目录各订一份 `/event`，daemon 侧汇总 | 一定可行，代价是 N 条连接与 N 份状态；N 是同事数量，实际很小 |
+**`GET /global/event` 跨 instance 送达 `permission.asked`。** 证明不在于"它和 `/event` 收到了同一条事件"，而在于：**全局流没有带 `x-opencode-directory`**，而 OpenCode 在无此请求头时默认取 `process.cwd()`；它却收到了一个临时目录的事件——**全局流看到了它从未指名的 directory**。事件外面还包着一层 `{ directory, payload }`，`directory` 正是触发审批的那个 home。
 
-无论走哪条，**汇总在 daemon 侧完成**，Desktop 只拿一个数字和一个列表——前端不该知道 instance 这个概念。
+因此 daemon 用**一条**全局 SSE 连接维护 server 范围的待决集合，不需要为每个 Agent 各开一条 `/event` 只为审批。被否决的方案是"每个 Agent 目录各订一份"——它一定可行，但 N 条连接换不到任何东西。
+
+`GET /permission` 仍然有用，但只用于**按 Agent 查它自己的待决**，不用于全局汇总。
+
+**汇总在 daemon 侧完成**，Desktop 只拿一个数字和一个列表——前端不该知道 instance 这个概念。
 
 ## 7. 房间与消息
 
@@ -404,9 +420,9 @@ Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉�
 | ~~V1~~ | Rust 驱动 `opencode serve` | **P0 已验证**（1.18.18）：建 session → `prompt_async`(204) → `/event` 收文本与 usage |
 | ~~V2~~ | 忙时发 prompt | **P0 已验证**：被运行中的循环接住；代价是进行中那一轮的结论可能被吞，见 §8.1 |
 | ~~V3~~ | MCP 回连与审批链路 | **P0 已验证**：Agent 可见并调用工具、token 随请求到达；`permission.asked` 可收，`once` / `reject + message` 均生效且 message 被模型看到 |
-| **V4** | `GET /global/event` 是否跨 instance | 全局待审批角标的两条候选路径之一，**未经实测**。P1 第一件事（§6） |
-| **R-N1** | 依赖面从一个二进制一条协议变成 162 个端点 | `/session/*`(v1) 与 `/api/session/*`(v2) 并存说明 API 正在迁移，而 `prompt_async` **只在 v1**。统一走 v1、只用非 `/experimental/` 端点、启动版本闸（§4.1、§4.2） |
-| **R-N6** | 全局待审批没有现成端点 | `GET /permission` 是 instance 范围。两条候选路径见 §6，选哪条取决于 V4 |
+| ~~V4~~ | `GET /global/event` 是否跨 instance | **P1 已验证**：跨 instance 送达 `permission.asked`；全局流未带 directory 头却收到临时目录的事件，且外层包 `{directory, payload}`（§6） |
+| **R-N1** | 依赖面从一个二进制一条协议变成 162 个端点 | `/session/*`(v1) 与 `/api/session/*`(v2) 并存说明 API 正在迁移，而 `prompt_async` **只在 v1**。统一走 v1、只用非 `/experimental/` 端点、**启动自检 + 严格解析**（§4.1、§4.2） |
+| ~~R-N6~~ | 全局待审批没有现成端点 | **已解决**：单条 `GET /global/event` 汇总，`GET /permission` 退为按 Agent 查询（§6） |
 | **R-N7** | 注入会吞掉进行中那一轮的结论 | 见 §8.1。缓解是 debounce 合并 + 未读不因注入而清除；**不做的话表现为"它答了后一个问题，前一个石沉大海"** |
 | **R-N2** | **审批永久挂起** | 无人值守时一个 ask 会把该 Agent 占到用户回来，期间它对房间里的一切都不响应。缓解：全局待审批角标 + `abort` 逃生口（§6），两者都必须做 |
 | **R-N3** | **两套任务系统** | OpenCode session todo 与共享看板并存，agenda 只扫看板（§10） |
@@ -436,9 +452,9 @@ Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉�
 
 ### P1 — 后端单向通路（无 UI）
 
-`openwork-credentials` 下沉；collab migrations；daemon 骨架与单实例锁；OpenCode 客户端与版本闸；MCP 服务端与 `reply` / `inbox`；房间、消息、sequence 原子分配、逐字去重；`@` 唤醒 + 2.5s debounce + pending rerun。**这一期不做 triage**，@ 到谁谁醒。
+`openwork-credentials` 下沉；collab migrations；daemon 骨架与单实例锁；OpenCode 客户端与启动自检；MCP 服务端与 `reply` / `inbox`；房间、消息、sequence 原子分配、逐字去重；`@` 唤醒 + 2.5s debounce + pending rerun。**这一期不做 triage**，@ 到谁谁醒。
 
-6. **先验 V4**：`GET /global/event` 是否跨 instance 送达 `permission.asked`——结论决定 §6 走哪条路径；
+6. daemon 用**单条** `GET /global/event` 汇总跨 Agent 的待决审批——不为每个 Agent 各开一条 `/event` 只为审批（§6）；
 7. `openwork-core` 与 `openwork-collab` 都能读到同一份凭证，现有测试全绿；
 8. daemon 二次启动因 socket 已占用而拒绝，并给出可读提示；
 9. opencode 版本不在支持区间时**拒绝启动**并给出可读诊断，而不是运行中报 404；
