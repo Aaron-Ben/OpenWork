@@ -36,6 +36,12 @@ const MAX_INJECTIONS_PER_RUN: u8 = 4;
 const MEMORY_MAX_CHARS: usize = 16_000;
 pub type AgentTokens = Arc<RwLock<HashMap<String, String>>>;
 
+fn arm_debounce(deadlines: &mut HashMap<String, Instant>, agent_id: &str, now: Instant) {
+    deadlines
+        .entry(agent_id.to_string())
+        .or_insert(now + DEBOUNCE);
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WakeState {
     running: bool,
@@ -268,9 +274,7 @@ pub async fn start(
                                     .entry(notice.room_id.clone())
                                     .or_default()
                                     .push(notice.clone());
-                                deadlines
-                                    .entry(agent.id)
-                                    .or_insert_with(|| Instant::now() + DEBOUNCE);
+                                arm_debounce(&mut deadlines, &agent.id, Instant::now());
                             }
                         }
                         Err(error) => eprintln!("failed to resolve collaboration candidates: {error}"),
@@ -668,7 +672,15 @@ async fn handle_idle(
         let evidence = services.observations.take_run_evidence(&run_id);
         let outcome = evidence.outcome();
         let delivered_sequences = std::mem::take(&mut state.delivered_sequences);
-        settle_read_cursor(services, agent_id, &run_id, &evidence, &delivered_sequences).await;
+        settle_read_cursor(
+            services.storage,
+            services.observations,
+            agent_id,
+            &run_id,
+            &evidence,
+            &delivered_sequences,
+        )
+        .await;
         services.observations.record(OwnedObservation::linked(
             Some(&run_id),
             Some(agent_id),
@@ -708,7 +720,8 @@ async fn handle_idle(
 /// are driven by message arrival, so an unanswered room costs nothing until
 /// something new is actually said in it.
 async fn settle_read_cursor(
-    services: &DispatchServices<'_>,
+    storage: &CollabStorage,
+    observations: &ObservationSink,
     agent_id: &str,
     run_id: &str,
     evidence: &crate::observation::RunEvidence,
@@ -725,18 +738,14 @@ async fn settle_read_cursor(
             carried.push(room_id.clone());
             continue;
         }
-        match services
-            .storage
-            .mark_read(room_id, agent_id, *sequence)
-            .await
-        {
+        match storage.mark_read(room_id, agent_id, *sequence).await {
             Ok(_) => advanced.push(room_id.clone()),
             Err(error) => eprintln!(
                 "failed to advance inbox cursor for Agent {agent_id} in room {room_id}: {error}"
             ),
         }
     }
-    services.observations.record(OwnedObservation::linked(
+    observations.record(OwnedObservation::linked(
         Some(run_id),
         Some(agent_id),
         None,
@@ -1120,7 +1129,16 @@ fn prompt_rooms(inbox: &Inbox, rooms: &[WakeRoom]) -> Vec<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use sqlx::{
+        Executor, PgPool,
+        postgres::{PgConnectOptions, PgPoolOptions},
+    };
+    use uuid::Uuid;
+
     use super::*;
+    use crate::model::AgentInput;
 
     fn member(id: &str, display_name: &str) -> RoomMember {
         RoomMember {
@@ -1196,6 +1214,173 @@ mod tests {
             omitted_count: 0,
             omission_notice: None,
         }
+    }
+
+    async fn postgres_storage(prefix: &str) -> Option<(PgPool, PgPool, String, CollabStorage)> {
+        let database_url = std::env::var("TEST_DATABASE_URL").ok()?;
+        let admin = PgPool::connect(&database_url).await.unwrap();
+        let schema = format!("{prefix}_{}", Uuid::new_v4().simple());
+        admin
+            .execute(format!("CREATE SCHEMA {schema}").as_str())
+            .await
+            .unwrap();
+        let options = PgConnectOptions::from_str(&database_url)
+            .unwrap()
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let storage = CollabStorage::from_pool(pool.clone());
+        storage.migrate().await.unwrap();
+        Some((admin, pool, schema, storage))
+    }
+
+    async fn drop_postgres_schema(admin: PgPool, pool: PgPool, schema: String) {
+        pool.close().await;
+        admin
+            .execute(format!("DROP SCHEMA {schema} CASCADE").as_str())
+            .await
+            .unwrap();
+    }
+
+    async fn two_room_inbox(storage: &CollabStorage) -> HashMap<String, i64> {
+        storage
+            .create_agent(&AgentInput {
+                id: Some("alice".to_string()),
+                display_name: "Alice".to_string(),
+                role: None,
+                bio: None,
+                system_prompt: "Handle collaboration rooms".to_string(),
+                provider_id: "opencode".to_string(),
+                model_id: "main".to_string(),
+                enabled: true,
+                scanner_enabled: false,
+            })
+            .await
+            .unwrap();
+        for room_id in ["alpha", "beta"] {
+            storage
+                .create_group_room(Some(room_id), room_id)
+                .await
+                .unwrap();
+            storage.add_member(room_id, "user").await.unwrap();
+            storage.add_member(room_id, "alice").await.unwrap();
+            storage
+                .send_message(room_id, "user", &format!("{room_id} first"))
+                .await
+                .unwrap();
+            storage
+                .send_message(room_id, "user", &format!("{room_id} second"))
+                .await
+                .unwrap();
+        }
+
+        let inbox = storage.inbox("alice").await.unwrap();
+        let mut delivered_sequences = HashMap::new();
+        for message in inbox.messages {
+            delivered_sequences
+                .entry(message.room_id)
+                .and_modify(|sequence: &mut i64| *sequence = (*sequence).max(message.sequence))
+                .or_insert(message.sequence);
+        }
+        delivered_sequences
+    }
+
+    async fn read_cursors(storage: &CollabStorage) -> HashMap<String, i64> {
+        storage
+            .room_summaries("alice")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|room| (room.id, room.last_read_sequence))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn settling_a_reply_in_alpha_keeps_beta_unread_for_the_next_wake() {
+        let Some((admin, pool, schema, storage)) =
+            postgres_storage("collab_settle_reply_test").await
+        else {
+            return;
+        };
+        let delivered_sequences = two_room_inbox(&storage).await;
+        let before = read_cursors(&storage).await;
+        let first_inbox = storage.inbox("alice").await.unwrap();
+        let beta_messages = first_inbox
+            .messages
+            .iter()
+            .filter(|message| message.room_id == "beta")
+            .map(|message| (message.sequence, message.body.clone()))
+            .collect::<Vec<_>>();
+
+        let observations = ObservationSink::discarding();
+        observations.set_active_run("alice", Some("run_reply_alpha"));
+        observations.mark_action("alice", "alpha");
+        let evidence = observations.take_run_evidence("run_reply_alpha");
+        settle_read_cursor(
+            &storage,
+            &observations,
+            "alice",
+            "run_reply_alpha",
+            &evidence,
+            &delivered_sequences,
+        )
+        .await;
+
+        let after = read_cursors(&storage).await;
+        assert_eq!(after["alpha"], delivered_sequences["alpha"]);
+        assert_eq!(after["beta"], before["beta"]);
+        let next_inbox = storage.inbox("alice").await.unwrap();
+        assert_eq!(
+            next_inbox
+                .messages
+                .iter()
+                .filter(|message| message.room_id == "beta")
+                .map(|message| (message.sequence, message.body.clone()))
+                .collect::<Vec<_>>(),
+            beta_messages
+        );
+        assert!(
+            next_inbox
+                .messages
+                .iter()
+                .all(|message| message.room_id != "alpha")
+        );
+
+        drop_postgres_schema(admin, pool, schema).await;
+    }
+
+    #[tokio::test]
+    async fn acknowledging_beta_settles_it_without_turning_the_run_into_action() {
+        let Some((admin, pool, schema, storage)) = postgres_storage("collab_settle_ack_test").await
+        else {
+            return;
+        };
+        let delivered_sequences = two_room_inbox(&storage).await;
+        let before = read_cursors(&storage).await;
+        let observations = ObservationSink::discarding();
+        observations.set_active_run("alice", Some("run_ack_beta"));
+        observations.mark_ack("alice", "beta");
+        let evidence = observations.take_run_evidence("run_ack_beta");
+
+        assert_eq!(evidence.outcome(), crate::model::RunOutcome::Silent);
+        settle_read_cursor(
+            &storage,
+            &observations,
+            "alice",
+            "run_ack_beta",
+            &evidence,
+            &delivered_sequences,
+        )
+        .await;
+
+        let after = read_cursors(&storage).await;
+        assert_eq!(after["alpha"], before["alpha"]);
+        assert_eq!(after["beta"], delivered_sequences["beta"]);
+
+        drop_postgres_schema(admin, pool, schema).await;
     }
 
     #[test]
@@ -1367,5 +1552,43 @@ mod tests {
         let states = HashMap::from([("bob".to_string(), runtime("bob", "other"))]);
         let batches = HashMap::from([("general".to_string(), vec![notice("general", "user", 1)])]);
         assert!(active_teammates(&states, "dave", &batches).is_empty());
+    }
+
+    #[test]
+    fn later_messages_do_not_extend_an_agents_debounce_window() {
+        let mut deadlines = HashMap::new();
+        let first = Instant::now();
+
+        arm_debounce(&mut deadlines, "alice", first);
+        arm_debounce(&mut deadlines, "alice", first + Duration::from_millis(400));
+        arm_debounce(&mut deadlines, "alice", first + Duration::from_millis(900));
+
+        assert_eq!(deadlines["alice"], first + DEBOUNCE);
+    }
+
+    #[test]
+    fn debounce_windows_are_independent_per_agent() {
+        let mut deadlines = HashMap::new();
+        let alice_now = Instant::now();
+        let bob_now = alice_now + Duration::from_millis(600);
+
+        arm_debounce(&mut deadlines, "alice", alice_now);
+        arm_debounce(&mut deadlines, "bob", bob_now);
+
+        assert_eq!(deadlines["alice"], alice_now + DEBOUNCE);
+        assert_eq!(deadlines["bob"], bob_now + DEBOUNCE);
+    }
+
+    #[test]
+    fn removed_debounce_window_rearms_from_the_new_message() {
+        let mut deadlines = HashMap::new();
+        let first = Instant::now();
+        arm_debounce(&mut deadlines, "alice", first);
+        assert_eq!(deadlines.remove("alice"), Some(first + DEBOUNCE));
+
+        let next = first + Duration::from_secs(5);
+        arm_debounce(&mut deadlines, "alice", next);
+
+        assert_eq!(deadlines["alice"], next + DEBOUNCE);
     }
 }

@@ -211,6 +211,132 @@ fn an_ack_settles_its_room_without_being_recorded_as_a_response() {
     );
 }
 
+#[test]
+fn an_ack_with_assistant_text_is_still_silent() {
+    let sink = ObservationSink::discarding();
+    sink.set_active_run("alice", Some("run_ack_with_text"));
+    sink.mark_ack("alice", "quiet_room");
+    sink.observe_assistant_text(
+        "run_ack_with_text",
+        &event(json!({
+            "type": "message.updated",
+            "properties": {"info": {"id": "msg_assistant", "role": "assistant"}}
+        })),
+    );
+    sink.observe_assistant_text(
+        "run_ack_with_text",
+        &event(json!({
+            "type": "message.part.updated",
+            "properties": {"part": {
+                "id": "prt_ack", "messageID": "msg_assistant", "type": "text",
+                "text": "我已经看过这个房间，这件事明确交给 Bob 处理，我这轮不再重复回复。"
+            }}
+        })),
+    );
+
+    assert_eq!(
+        sink.take_run_evidence("run_ack_with_text").outcome(),
+        RunOutcome::Silent
+    );
+}
+
+#[test]
+fn run_outcome_classification_covers_every_tool_and_text_combination() {
+    struct Case {
+        name: &'static str,
+        acted: bool,
+        acked: bool,
+        has_long_text: bool,
+        expected: RunOutcome,
+    }
+
+    let cases = [
+        Case {
+            name: "a publishing action is acted",
+            acted: true,
+            acked: false,
+            has_long_text: false,
+            expected: RunOutcome::Acted,
+        },
+        Case {
+            name: "ack without text is silent",
+            acted: false,
+            acked: true,
+            has_long_text: false,
+            expected: RunOutcome::Silent,
+        },
+        Case {
+            name: "ack with explanatory text is silent",
+            acted: false,
+            acked: true,
+            has_long_text: true,
+            expected: RunOutcome::Silent,
+        },
+        Case {
+            name: "a publishing action wins over ack",
+            acted: true,
+            acked: true,
+            has_long_text: true,
+            expected: RunOutcome::Acted,
+        },
+        Case {
+            name: "long text without a settling tool is unpublished",
+            acted: false,
+            acked: false,
+            has_long_text: true,
+            expected: RunOutcome::Unpublished,
+        },
+        Case {
+            name: "no settling tool and no text is silent",
+            acted: false,
+            acked: false,
+            has_long_text: false,
+            expected: RunOutcome::Silent,
+        },
+    ];
+
+    for (index, case) in cases.iter().enumerate() {
+        let sink = ObservationSink::discarding();
+        let run_id = format!("run_outcome_{index}");
+        let message_id = format!("msg_outcome_{index}");
+        sink.set_active_run("alice", Some(&run_id));
+        if case.acted {
+            sink.mark_action("alice", "published_room");
+        }
+        if case.acked {
+            sink.mark_ack("alice", "acked_room");
+        }
+        if case.has_long_text {
+            sink.observe_assistant_text(
+                &run_id,
+                &event(json!({
+                    "type": "message.updated",
+                    "properties": {"info": {"id": message_id, "role": "assistant"}}
+                })),
+            );
+            sink.observe_assistant_text(
+                &run_id,
+                &event(json!({
+                    "type": "message.part.updated",
+                    "properties": {"part": {
+                        "id": format!("prt_outcome_{index}"),
+                        "messageID": message_id,
+                        "type": "text",
+                        "text": "这是一段真实长度的 assistant 正文，用来确认分类器不会遗漏工具与正文的组合。"
+                    }}
+                })),
+            );
+        }
+
+        assert_eq!(
+            sink.take_run_evidence(&run_id).outcome(),
+            case.expected,
+            "{}",
+            case.name
+        );
+    }
+}
+
 /// Rooms shown to the engine but neither answered nor acked must NOT settle —
 /// that is the whole reason settlement is per room rather than per run.
 #[test]

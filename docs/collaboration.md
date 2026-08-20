@@ -446,14 +446,24 @@ cumora 喂给 triage 的对应信号是会话级 worklog claim，**这条抄不�
 | 判据 | 结果 | 含义 |
 |---|---|---|
 | 调过 `reply` / `react` / `card` | `acted` | 正常 |
-| 无工具调用，正文近乎为空 | `silent` | 主动闭嘴，或 triage 醒错了人 |
-| 无工具调用，却吐了大段正文 | `unpublished` | **异常**：话说进了真空 |
+| 未调上述发布工具，但调过 `ack`（无论有没有正文） | `silent` | 显式站下，且已结算对应房间 |
+| 未调 `reply` / `react` / `card` / `ack`，正文近乎为空 | `silent` | 主动闭嘴，或 triage 醒错了人 |
+| 未调 `reply` / `react` / `card` / `ack`，却吐了大段正文 | `unpublished` | **异常**：话说进了真空 |
 
 `unpublished` 的计数就是 R-N7 与"忘了调工具"的检出器。轮次结果与逐房间的游标结算在 run 收尾处**一次算完**：本轮每个房间投递到的最高 seq 在 dispatch 时记进运行态，收尾时与"哪些房间被结算过"（§7.3）比对。落库形态见 [collaboration-data-model.md](collaboration-data-model.md)。
 
 **`ack` 不算发布。** 只调了 `ack` 的一轮结算了那些房间，但轮次结果仍是 `silent`——它确实什么都没说。两件事分开记：`outcome` 说"这一轮有没有产出"，逐房间的结算说"哪些房间可以往前翻篇"。
 
-**不加显式 `pass` 工具。** 它确实能把第 1 类与 2/3 类彻底分开，但模型漏调 `pass` 是必然的，于是"`pass` 缺失"又成了一个既可能是忘了、也可能是被吞了的模糊信号——模糊没有被消除，只是换了个位置，代价是 §5 的"一个不多"破了。
+结算本身要留痕，否则"为什么这个房间又来了一遍"在事后无从回答：
+
+| 事件 | 何时 | 载荷 |
+|---|---|---|
+| `inbox.settled` | 每轮收尾各一条 | `advanced`（推进了的房间）、`carriedOver`（留到下一轮的）、`ackedRooms` |
+| `inbox.acked` | 每次 `ack` 调用 | `roomId` |
+
+`carriedOver` 是这套设计最该被盯住的数字。它长期非空且总是同一批房间，说明模型系统性地不调 `ack`（R-N10）——那时该改 standing prompt，不是加自动结算。
+
+**不加显式 `pass` 工具。** 它确实能把第 1 类与 2/3 类彻底分开，但模型漏调 `pass` 是必然的，于是"`pass` 缺失"又成了一个既可能是忘了、也可能是被吞了的模糊信号——模糊没有被消除，只是换了个位置——而 §5 要求每条工具都承载一个服务端拿不到的事实，`pass` 不满足这一条。
 
 **不做 cumora 的 auto-relay 兜底**（把那段正文替 Agent 发出去）。理由不是它错——cumora 是让模型显式声明目标房间、再走同一个 reply 通道，没破自己的不变量。理由是先测再修：cumora 的 Agent 靠在 bash 里敲命令说话，忘记是高频的；这里的 Agent 面前摆着一个带 schema 的工具，忘记应当罕见得多。先让 `unpublished` 跑一周，是个位数就不值得为它建一条恢复路径。
 
@@ -527,7 +537,7 @@ HELD token 是**确认**不是通行证：短 TTL（120s），并携带 HELD 当
 |---|---|
 | triage 非对称失败 | 纯 Agent 场景 fail CLOSED（见 §8.2） |
 | DM 死循环探测 | Agent↔Agent DM **默认参与**，但每 8 条强制跑一次 triage 专门找没有进展的来回，找到就掐断 |
-| loop-cap / rate gate | 每 Agent 的 turn token 与速率闸、突发合并；裁决 source 记 `loop-cap` / `rate-limited` |
+| loop-cap / rate gate | **只作用于主动性唤醒**：每 Agent 的 turn token 与速率闸，裁决 source 记 `loop_cap` / `rate_limited`。消息驱动的唤醒不设速率闸——那会丢掉人真的说的话——它那一侧的约束是 2.5s 突发合并与每轮 4 次的注入预算（§8.1） |
 
 后两者是**服务端在调用模型之前的短路**，不是模型判断的结果。
 
@@ -704,7 +714,7 @@ triage 小脑（廉价 provider API）+ 非对称失败；seen 游标（内存�
 
 46. 同一房间连续两次唤醒，第二次的 prompt **不随房间历史增长**；用日志抽屉对比修复前后同一房间的 token 用量，留下证据；
 47. Agent 的 `last_read_seq` 在 run 完成时推进，推进值**不含本轮注入进去的消息**；`interrupted` / `failed` / `unpublished` 不推进；
-48. 同一批未读连续 2 次 `unpublished` 后强制推进，并留下一条 `inbox.force_advanced`；
+48. 一轮结束时留下一条 `inbox.settled`，写明哪些房间推进了、哪些被留到下一轮；`ack` 另留一条 `inbox.acked`；
 49. 新成员入房后的首次唤醒，未读**不含**入房前的房间历史；
 50. `inbox` 有 LIMIT，投递的是每房间**最旧**的未读且为连续前缀，省略标记出现在 prompt 正文里；构造一个超过 LIMIT 的积压，跨多轮排空后**一条不丢**；截断按字符边界，超长与含多字节字符的正文不 panic；
 51. 一轮无工具调用且正文近乎为空记 `silent`，无工具调用但有大段正文记 `unpublished`，两者在日志抽屉里可区分；

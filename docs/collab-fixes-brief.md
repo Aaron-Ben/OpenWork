@@ -30,13 +30,13 @@
 
 **b. daemon 在 run 收尾时推进 Agent 的游标。** 位置在 `scheduler.rs` 的 `handle_idle`（现在 `finish_run(&run_id, "completed", ...)` 在 `scheduler.rs:590`）。与 F2 的 outcome 派生**在同一处一次结算**。
 
+> **这一段已被逐房间结算取代**，见 [collaboration.md §7.3](collaboration.md)。推进与否现在取决于**这个房间**有没有被发布或 `ack`，而不是整轮的 outcome；原先"连续 2 次 `unpublished` 强制推进"随之删除——它会推进一个 Agent 从未处理过的房间，正是这份 brief 要修的那类错误。下表保留作为当时的决定记录。
+
 | run 结果 | 推进 |
 |---|---|
 | `acted` / `silent` | 推进到本轮投递过的最高 seq |
 | `interrupted` / `failed` | 不推进 |
-| `unpublished` | 不推进；同一批未读连续 2 次之后强制推进并记 `inbox.force_advanced` 事件 |
-
-"同一批"按未读最高 seq 相等识别，计数放 daemon 内存，重启清零（最坏多一次重试，良性）。
+| `unpublished` | 不推进；同一批未读连续 2 次之后强制推进 |
 
 **c. "投递过"不含注入。** 只有本轮 wake prompt 里实际带出去的消息算投递。运行中注入进去的消息**保持未读**，由下一轮的 wake prompt 投递、由那一轮的完成来推进。本轮投递的最高 seq 在 dispatch 时记进 `RuntimeState`。
 
@@ -52,8 +52,8 @@
 
 - 同一房间连续两次唤醒，第二次的 prompt 不随房间历史增长；
 - Agent 的 `last_read_seq` 在 run 完成后推进，且推进值不含本轮注入的消息；
-- `interrupted` / `failed` / `unpublished` 不推进；
-- 同一批未读连续 2 次 `unpublished` 后强制推进并留下 `inbox.force_advanced`；
+- `interrupted` / `failed` 不推进；未被发布也未被 `ack` 的房间不推进；
+- 一轮结束留下一条 `inbox.settled`，写明哪些房间推进了、哪些留到下一轮；
 - 新成员入房后的首次唤醒，未读不含入房前的历史。
 
 ### 验证任务（请留证据）

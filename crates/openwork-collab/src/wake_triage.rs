@@ -455,6 +455,173 @@ mod tests {
             .unwrap()
     }
 
+    async fn actionable(Json(_body): Json<Value>) -> Response<Body> {
+        let event = json!({
+            "id": "cross-room-response",
+            "model": "cheap-model",
+            "choices": [{
+                "delta": {"content": "{\"actionable\":true,\"responseMode\":\"one-of-us\",\"reason\":\"the inbox needs attention\",\"promptNote\":\"engage\"}"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 23, "completion_tokens": 7, "total_tokens": 30}
+        });
+        Response::builder()
+            .status(200)
+            .header(CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(format!("data: {event}\n\ndata: [DONE]\n\n")))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn one_cross_room_decision_records_each_rooms_own_highest_sequence() {
+        let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+            return;
+        };
+        let admin = PgPool::connect(&database_url).await.unwrap();
+        let schema = format!("collab_cross_room_triage_test_{}", Uuid::new_v4().simple());
+        admin
+            .execute(format!("CREATE SCHEMA {schema}").as_str())
+            .await
+            .unwrap();
+        let options = PgConnectOptions::from_str(&database_url)
+            .unwrap()
+            .options([("search_path", schema.as_str())]);
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await
+            .unwrap();
+        pool.execute(
+            "CREATE TABLE provider_credentials (
+                provider_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+                provider_kind TEXT NOT NULL, base_url TEXT NOT NULL,
+                api_key_encrypted TEXT NOT NULL, enabled BOOLEAN NOT NULL,
+                config JSONB NOT NULL, created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL
+                    DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'),
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL
+                    DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+            )",
+        )
+        .await
+        .unwrap();
+        let storage = CollabStorage::from_pool(pool.clone());
+        storage.migrate().await.unwrap();
+        storage
+            .create_agent(&AgentInput {
+                id: Some("alice".to_string()),
+                display_name: "Alice".to_string(),
+                role: None,
+                bio: None,
+                system_prompt: "Help when relevant".to_string(),
+                provider_id: "opencode".to_string(),
+                model_id: "main".to_string(),
+                enabled: true,
+                scanner_enabled: false,
+            })
+            .await
+            .unwrap();
+        for room_id in ["alpha", "beta"] {
+            storage
+                .create_group_room(Some(room_id), room_id)
+                .await
+                .unwrap();
+        }
+
+        let app = Router::new().route("/chat/completions", post(actionable));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let credential_store =
+            PostgresCredentialStore::new(pool.clone(), ApiKeyCipher::from_key([8; 32]));
+        let mut transaction = pool.begin().await.unwrap();
+        credential_store
+            .insert(
+                &mut transaction,
+                ProviderCredentialInput {
+                    provider_id: "cheap",
+                    display_name: "Cheap support",
+                    provider_kind: "deepseek",
+                    base_url: &format!("http://{address}"),
+                    api_key: Some("test-secret"),
+                    enabled: true,
+                    config: &json!({}),
+                },
+            )
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        sqlx::query(
+            "UPDATE collab_settings
+                SET triage_provider_id = 'cheap', triage_model_id = 'cheap-model'
+              WHERE id = 'singleton'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let triage = TriageClient::with_credential_store(credential_store);
+        let observations = crate::observation::ObservationSink::discarding();
+        let batches = HashMap::from([
+            (
+                "alpha".to_string(),
+                vec![
+                    MessageNotice {
+                        room_id: "alpha".to_string(),
+                        author_id: "user".to_string(),
+                        body: "alpha earlier".to_string(),
+                        sequence: 3,
+                    },
+                    MessageNotice {
+                        room_id: "alpha".to_string(),
+                        author_id: "user".to_string(),
+                        body: "alpha latest".to_string(),
+                        sequence: 8,
+                    },
+                ],
+            ),
+            (
+                "beta".to_string(),
+                vec![MessageNotice {
+                    room_id: "beta".to_string(),
+                    author_id: "user".to_string(),
+                    body: "beta latest".to_string(),
+                    sequence: 5,
+                }],
+            ),
+        ]);
+
+        let verdict = evaluate(
+            &storage,
+            &triage,
+            "alice",
+            &batches,
+            &HashMap::new(),
+            &observations,
+        )
+        .await;
+
+        assert!(verdict.actionable);
+        let records = storage.triage_records(None).await.unwrap();
+        assert_eq!(records.len(), 2);
+        let by_room = records
+            .into_iter()
+            .map(|record| (record.room_id.clone(), record))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_room["alpha"].up_to_sequence, 8);
+        assert_eq!(by_room["beta"].up_to_sequence, 5);
+        assert!(
+            by_room
+                .values()
+                .all(|record| record.source == "support_model")
+        );
+
+        server.abort();
+        pool.close().await;
+        admin
+            .execute(format!("DROP SCHEMA {schema} CASCADE").as_str())
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn agent_dm_defaults_to_engage_then_stops_at_the_eighth_no_progress_message() {
         let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {

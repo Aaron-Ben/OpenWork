@@ -33,6 +33,8 @@ impl RunEvidence {
     pub fn outcome(&self) -> RunOutcome {
         if !self.acted_rooms.is_empty() {
             RunOutcome::Acted
+        } else if !self.acked_rooms.is_empty() {
+            RunOutcome::Silent
         } else if self.text_parts.values().sum::<usize>() > MAX_SILENT_ASSISTANT_CHARS {
             RunOutcome::Unpublished
         } else {
