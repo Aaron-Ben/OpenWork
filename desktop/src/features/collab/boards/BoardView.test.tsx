@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import type { CollabBoard, CollabRoomSummary } from '@/bridge/collab'
-import { BoardCard } from './BoardView'
+import { BoardActions, BoardCard, BoardEmptyState } from './BoardView'
 
 const room: CollabRoomSummary = {
   id: 'general', kind: 'group', title: 'General', nextSequence: 0,
@@ -28,6 +28,26 @@ const board: CollabBoard = {
 }
 
 describe('BoardView', () => {
+  it('offers board creation when the selected room is empty', () => {
+    const html = renderToStaticMarkup(<BoardEmptyState onCreate={() => undefined} />)
+
+    expect(html).toContain('data-collab-create-board="true"')
+  })
+
+  it('offers explicit column creation before cards can be created', () => {
+    const html = renderToStaticMarkup(
+      <BoardActions
+        boardId="work"
+        hasColumns={false}
+        onCreateColumn={() => undefined}
+        onCreateCard={() => undefined}
+      />,
+    )
+
+    expect(html).toContain('data-collab-create-column="work"')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-collab-create-card="work"/)
+  })
+
   it('shows assignment and the current claimant', () => {
     const html = renderToStaticMarkup(
       <BoardCard

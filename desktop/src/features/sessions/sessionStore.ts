@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 import { coreCommands } from '@/bridge/commands'
-import type { ProviderConfig } from '@/features/models/contracts'
+import type { ProviderConfig } from '@/bridge/providerContracts'
 import type {
   RuntimeSessionRecord,
   RuntimeStoredMessage,

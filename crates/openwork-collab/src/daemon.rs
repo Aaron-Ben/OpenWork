@@ -33,6 +33,10 @@ use crate::{
 
 pub use crate::daemon_config::{COLLAB_HOME_ENV, DaemonConfig};
 
+/// Bump whenever a Desktop/daemon IPC shape changes incompatibly. Desktop
+/// replaces a still-running daemon whose handshake reports another version.
+pub const COLLAB_PROTOCOL_VERSION: u32 = 1;
+
 pub async fn run(config: DaemonConfig) -> Result<(), DaemonError> {
     tokio::fs::create_dir_all(&config.root).await?;
     let socket = bind_single_instance(&config.socket_path()).await?;
@@ -244,6 +248,7 @@ pub enum IpcRequest {
         provider_id: String,
         model_id: String,
     },
+    TriageSettings,
     ListTriages {
         room_id: Option<String>,
     },
@@ -373,7 +378,10 @@ async fn handle_request_inner(
     context: &DaemonContext,
 ) -> Result<IpcResponse, DaemonError> {
     match request {
-        IpcRequest::Ping => Ok(IpcResponse::success(json!({"pong": true}))),
+        IpcRequest::Ping => Ok(IpcResponse::success(json!({
+            "pong": true,
+            "protocolVersion": COLLAB_PROTOCOL_VERSION,
+        }))),
         IpcRequest::Status => {
             let engine = context.engine.borrow().clone();
             Ok(IpcResponse::success(json!({
@@ -668,6 +676,9 @@ async fn handle_request_inner(
                 .storage
                 .configure_triage(&provider_id, &model_id)
                 .await?,
+        )),
+        IpcRequest::TriageSettings => Ok(IpcResponse::success(
+            context.storage.triage_settings().await?,
         )),
         IpcRequest::ListTriages { room_id } => Ok(IpcResponse::success(
             context.storage.triage_records(room_id.as_deref()).await?,

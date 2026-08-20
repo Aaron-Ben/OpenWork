@@ -48,6 +48,8 @@ pub fn run() {
             commands::collab::collab_permission_reply,
             commands::collab::collab_permission_abort,
             commands::collab::collab_log_list,
+            commands::collab::collab_triage_settings,
+            commands::collab::collab_triage_configure,
             commands::collab::collab_board_list,
             commands::collab::collab_board_create,
             commands::collab::collab_board_column_create,

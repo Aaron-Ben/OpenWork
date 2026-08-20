@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { ProviderModel } from '@/features/models/contracts'
+import type { ProviderModel } from '@/bridge/providerContracts'
 import type {
   RuntimePermissionMode,
   RuntimeSkillInput,

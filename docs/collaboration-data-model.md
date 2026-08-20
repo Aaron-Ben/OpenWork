@@ -51,13 +51,15 @@ CREATE TABLE collab_agents (
     -- 可写空间，放进去它自己就能改。见 collaboration.md §3.1。
     opencode_session_id TEXT,
     enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+    scanner_enabled     BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
                         DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'),
     updated_at          TIMESTAMP WITHOUT TIME ZONE NOT NULL
-                        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'),
-    CONSTRAINT collab_agents_prompt_not_blank CHECK (btrim(system_prompt) <> '')
+                        DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
 );
 ```
+
+`system_prompt` 可以是空字符串；共享人格底座依然会被渲染进 `AGENTS.md`，所以空人格不会退化成没有协作约束的引擎默认助手（[collaboration.md §3.4](collaboration.md)）。`scanner_enabled` 默认关闭，只能由用户显式开启。
 
 **Agent 只停用不删除。** `enabled = FALSE` 让它退出所有唤醒候选，而历史消息与身份完好。真要删除时，下面所有指向 participants 的外键都是 `RESTRICT` 或 `SET NULL`，数据库会拦住会造成"消息没有作者"的删除。
 
@@ -274,9 +276,9 @@ CREATE INDEX idx_collab_runs_agent_started ON collab_runs(agent_id, started_at D
 
 **usage 落差量不落累计值。** 引擎报的是会话累计，每轮取差；直接存累计会让"这一轮花了多少"永远算不出来。
 
-**`outcome` 由 daemon 派生，不由 Agent 上报。** 语义与理由见 [collaboration.md §8.3](collaboration.md)：`acted` 调过工具，`silent` 无工具调用且正文近乎为空，`unpublished` 无工具调用却吐了大段正文。判据是 daemon 的一手事实——它既是全部 MCP 调用的接收方，也在消费事件流里的 assistant 正文——所以这一列不花任何 token。
+**`outcome` 由 daemon 派生，不由 Agent 上报。** 语义与理由见 [collaboration.md §8.3](collaboration.md)：调过 `reply` / `react` / `card` 是 `acted`；未发布但调过 `ack` 是 `silent`；一个结算工具都没调时，正文近乎为空是 `silent`，吐了大段正文才是 `unpublished`。判据是 daemon 的一手事实——它既是全部 MCP 调用的接收方，也在消费事件流里的 assistant 正文——所以这一列不花任何 token。
 
-`unknown` 只出现在**本列加入之前**建的行上。加列的迁移必须把既有的 `status = 'completed'` 行回填成 `unknown` 再加 `collab_runs_outcome_scope`，否则约束在历史数据上直接失败；把它们编成 `acted` 或 `silent` 是凭空造事实——那些轮次当时没有记录判据，事后判不出来。新写入的行不允许 `unknown`。
+`unknown` 只用于缺少 outcome 证据的旧完成轮次；把它们编成 `acted` 或 `silent` 是凭空造事实。新写入的行不允许 `unknown`。
 
 ```sql
 CREATE TABLE collab_triages (
@@ -405,7 +407,8 @@ daemon 启动时，除释放认领外还要把所有 `status = 'running'` 的 `c
 | **P1** | `collab_participants` `collab_agents` `collab_rooms` `collab_room_members` `collab_messages` `collab_settings` `collab_runs` |
 | **P3** | `collab_triages` `collab_reactions` |
 | **P4** | `collab_boards` `collab_board_columns` `collab_cards` |
+| **P5** | 不建新表；`collab_agents` 加 `scanner_enabled` 列 |
 | **P6** | `collab_events` |
-| **修正项** | 不建新表；`collab_runs` 加 `outcome` 列（回填 + 两条 CHECK） |
+| **横切验收** | 不建新表；`collab_runs` 加 `outcome` 列（回填 + 两条 CHECK） |
 
 每个迁移必须能在**空库**上从头跑通，不依赖任何手工修复过的状态。

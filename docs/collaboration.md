@@ -91,7 +91,7 @@ Agent 定义存 `collab_agents`，由用户在 Desktop 创建编辑。id 稳定�
 
 **派生不出时才向用户要一个英文标识**，而不是自动生成 `agent_7f3a` 这类无信息的串。理由：这个 id 会出现在每一次唤醒的 roster 里，也会出现在 Agent 互相称呼的文本里；一屋子 `agent_7f3a` / `agent_2b81` 会让模型每次都得回查映射，而中文名产品里这会是常态而非例外。
 
-**库表是唯一事实源。** daemon 把它渲染成 OpenCode 的 agent 定义（`prompt` + `permission` + `model` + `mode`），一次下发同时解决人格与权限，Desktop 改完下一轮生效。
+**库表是唯一事实源。** daemon 把它渲染成 OpenCode 的 agent 定义（`prompt` + `model` + `mode`），Desktop 修改人格或模型后下一轮生效。`permission` 保持空映射，即使用 OpenCode 的默认能力面；本设计不提供按 Agent 编辑权限的产品面（§4.3）。
 
 **定义不放在 home 里。** home 是 Agent 自己的可写空间，放进去的东西它自己就能改——人格可被静默改写且不留痕迹。同理 `opencode_session_id` 也在库里，不落 home。
 
@@ -547,7 +547,7 @@ HELD token 是**确认**不是通行证：短 TTL（120s），并携带 HELD 当
 
 ## 12. Desktop
 
-Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉起；关闭时**不停止** daemon。前端跑在 WebView 里连不了 Unix socket，因此读写与事件一律经 `src-tauri` 中转。
+Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉起；关闭时**不停止** daemon。`ping` 握手同时携带 IPC 协议版本；socket 虽可连接但版本缺失或不一致时，Desktop 先让不兼容的 daemon 正常退出，再用当前二进制替换，不能把“能 ping”当成“协议兼容”。前端跑在 WebView 里连不了 Unix socket，因此读写与事件一律经 `src-tauri` 中转。
 
 界面四块：房间、Agent 管理、看板、日志与事件流抽屉，外加一个**全局待审批角标**（由 daemon 从单条 `GET /global/event` 维护的全局集合给出，见 §6）——审批永久挂起，所以“有人在等你”必须永远可见。**不做第二套 Trace UI**——[trace.md](trace.md) 的 Span 树与完整度派生建立在"OpenWork 组装了这次请求"之上，而这里请求由 OpenCode 自己组装，口径对不上；协作提供的是 `collab_runs` / `collab_triages` / `collab_events` 三张平表的时间序视图。
 
@@ -612,7 +612,7 @@ Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉�
 | **R-N4** | `task` 子 Agent 全开 + 无额度闸 | token 消耗是无上限的乘法。V1 不缓解 |
 | **R-N5** | 单点 | 一个 `opencode serve` 挂了全体 Agent 停止。daemon 须能检出并重启它，且重启后按 `opencode_session_id` 恢复 |
 | **R2** | 无额度闸 | 主动性可能在无人值守时烧光订阅额度，直接影响用户自己的开发。V1 不缓解 |
-| **R3** | 不变量措辞 | [architecture.md §3](architecture.md) #2 需明确为 OpenWork 自身的 Agent Loop 只有一处 |
+| ~~R3~~ | 不变量措辞 | **已解决**：[architecture.md §3](architecture.md) #2 已明确为 OpenWork 自身的 Agent Loop 只有一处 |
 | **R4** | 看板无参照实现 | 是 V1 唯一从零设计的产品面 |
 
 **相对上一版消解的风险**：协议从未文档化变成 OpenAPI；home 约束从 prompt 约定变成 `external_directory: ask` 的实际拦截；`.env` 读取默认需要审批；shim 冷启动与 shell 改坏正文两类问题随 MCP 一起消失。
@@ -622,6 +622,13 @@ Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉�
 八期，外加一组横切 P1–P6 的验收项。前端不独立排期，与后端同一条竖切；前端的细化验收见 [collaboration-desktop.md §12](collaboration-desktop.md)。
 
 顺序上不能换的只有三处：P0 在最前（尖刺不过整个方案作废）；**P5 必须在 P4 之后**（agenda 没有卡片就没有信号，退化成通用唤醒）；P2 必须在 P1 之后（前端没有可连的 daemon）。P3 与 P4 之间没有硬依赖。
+
+### 剩余未验收 / 未实施
+
+| 阶段 | 当前状态 | 仍缺 |
+|---|---|---|
+| P6 | 日志、GC worker 与三语实现已完成 | §16 #39 的“连续运行一周”尚未执行；现有证据只覆盖受控运行和过期边界测试 |
+| P7 | 未实现 | 定参证据、详细设计和服务端额度闸 |
 
 ### P0 — 尖刺
 
@@ -640,9 +647,9 @@ Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉�
 6. daemon 用**单条** `GET /global/event` 汇总跨 Agent 的待决审批——不为每个 Agent 各开一条 `/event` 只为审批（§6）；
 7. `openwork-core` 与 `openwork-collab` 都能读到同一份凭证，现有测试全绿；
 8. daemon 二次启动因 socket 已占用而拒绝，并给出可读提示；
-9. opencode 版本不在支持区间时**拒绝启动**并给出可读诊断，而不是运行中报 404；
+9. daemon 启动时通过 §4.2 的四项行为自检确认 OpenCode 契约；任一探测不通过就**拒绝启动**并指名实际响应，版本号只进诊断、不作区间判定；
 10. 命令行建两个 Agent，`@` 其中一个，它通过 `reply` 工具回话并落库；
-11. Agent 定义修改后，下一轮使用新的 prompt 与权限；
+11. Agent 定义修改后，下一轮使用新的 prompt 与 model；
 12. 手工改坏 home 里的 `opencode.json` / `AGENTS.md`，下次启动被 daemon 覆盖回正确内容；
 13. `opencode serve` 被杀掉后 daemon 能检出并重启它，按 `opencode_session_id` 恢复各 Agent 的上下文。
 
@@ -660,7 +667,7 @@ Desktop 是 daemon 的**客户端**：启动时发现 socket，未运行则拉�
 
 ### P3 — 多 Agent 协调
 
-triage 小脑（廉价 provider API）+ 非对称失败；seen 游标（内存，与 inbox 游标严格分离）；HELD 预检与 token；`glance` / `react` 工具；glance 五条进 `AGENTS.md`；OpenCode 事件驱动的实时状态名册。
+triage 小脑（廉价 provider API）+ 非对称失败；Desktop 从已启用的 OpenWork provider / model 中选择 triage 模型，保存后无需重启；seen 游标（内存，与 inbox 游标严格分离）；HELD 预检与 token；`glance` / `react` 工具；glance 五条进 `AGENTS.md`；OpenCode 事件驱动的实时状态名册。
 
 21. 与该 Agent 无关的消息不唤醒它，且 `collab_triages` 有一条 `actionable=false` 记录；
 22. 纯 Agent 场景下 triage 失败时**不唤醒**；有人类在等时 triage 失败**照常唤醒**；
@@ -677,7 +684,7 @@ triage 小脑（廉价 provider API）+ 非对称失败；seen 游标（内存�
 
 29. 卡片创建 / 移动产生房间 `system` 消息并进入唤醒流程；
 30. 两个 Agent 争抢同一张卡，只有一个 `claim` 成功，另一个收到明确失败并转向其他工作；
-31. 用户在 Desktop 建卡并指派给某个 Agent，该 Agent 被唤醒并开始处理；
+31. 用户在 Desktop 从空房间创建看板、创建显式标记 `is_done` 的列，再建卡并指派给某个 Agent；该 Agent 被唤醒并开始处理；
 32. daemon 重启后，此前被引擎持有的认领全部释放。
 
 ### P5 — 主动性与防死循环
@@ -717,7 +724,7 @@ triage 小脑（廉价 provider API）+ 非对称失败；seen 游标（内存�
 48. 一轮结束时留下一条 `inbox.settled`，写明哪些房间推进了、哪些被留到下一轮；`ack` 另留一条 `inbox.acked`；
 49. 新成员入房后的首次唤醒，未读**不含**入房前的房间历史；
 50. `inbox` 有 LIMIT，投递的是每房间**最旧**的未读且为连续前缀，省略标记出现在 prompt 正文里；构造一个超过 LIMIT 的积压，跨多轮排空后**一条不丢**；截断按字符边界，超长与含多字节字符的正文不 panic；
-51. 一轮无工具调用且正文近乎为空记 `silent`，无工具调用但有大段正文记 `unpublished`，两者在日志抽屉里可区分；
+51. 一轮只调 `ack`（无论有没有 assistant 正文）记 `silent`；一个结算工具都没调时，正文近乎为空记 `silent`，大段正文记 `unpublished`，三种输入在日志抽屉里可区分；
 52. `session.compacted` 之后的第一次唤醒补发全量房间近况与 `MEMORY.md`，其余唤醒不发；`MEMORY.md` 超过上限时被截断并带标记；
 53. 一轮被注入 4 次后不再注入，溢出的消息由 pending rerun 的那一轮完整拿到；
 54. 有人类在等时，triage prompt 与不带"谁醒着"信号时**逐字相同**；该信号只含活跃 run 归属于本房间的队友，且不含消息作者；

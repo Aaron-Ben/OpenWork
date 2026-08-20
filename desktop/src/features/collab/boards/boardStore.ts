@@ -8,12 +8,24 @@ interface BoardStoreState {
   loading: boolean
   error: string | null
   fetchRoom: (roomId: string) => Promise<void>
-  create: (roomId: string, card: CollabCardInput) => Promise<void>
+  createBoard: (roomId: string, title: string) => Promise<boolean>
+  createColumn: (
+    roomId: string,
+    boardId: string,
+    title: string,
+    position: number,
+    isDone: boolean,
+  ) => Promise<boolean>
+  createCard: (roomId: string, card: CollabCardInput) => Promise<void>
   move: (roomId: string, cardId: string, columnId: string, position: number) => Promise<void>
   releaseClaim: (roomId: string, cardId: string, claimedBy: string) => Promise<void>
 }
 
 const EMPTY_BOARDS: readonly CollabBoard[] = Object.freeze([])
+
+function newEntityId(prefix: 'board' | 'column'): string {
+  return `${prefix}_${crypto.randomUUID().split('-').join('')}`
+}
 
 export function selectRoomBoards(
   byRoom: Readonly<Record<string, CollabBoard[]>>,
@@ -35,7 +47,35 @@ export const useBoardStore = create<BoardStoreState>((set, get) => ({
       set({ error: resolveErrorMessage(error), loading: false })
     }
   },
-  create: async (roomId, card) => {
+  createBoard: async (roomId, title) => {
+    set({ error: null })
+    try {
+      await collabCommands.createBoard(newEntityId('board'), roomId, title)
+      await get().fetchRoom(roomId)
+      return true
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
+      return false
+    }
+  },
+  createColumn: async (roomId, boardId, title, position, isDone) => {
+    set({ error: null })
+    try {
+      await collabCommands.createBoardColumn(
+        newEntityId('column'),
+        boardId,
+        title,
+        position,
+        isDone,
+      )
+      await get().fetchRoom(roomId)
+      return true
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
+      return false
+    }
+  },
+  createCard: async (roomId, card) => {
     await collabCommands.createCard(card)
     await get().fetchRoom(roomId)
   },

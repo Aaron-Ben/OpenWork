@@ -2,7 +2,7 @@ use openwork_collab::{
     daemon::IpcRequest,
     model::{
         Agent, AgentInput, AgentView, Board, BoardColumn, CardInput, CardMutation, CollabLogEntry,
-        MessagePage, MessagePageAnchor, Room, RoomSummary, SendMessageOutcome,
+        MessagePage, MessagePageAnchor, Room, RoomSummary, SendMessageOutcome, TriageSettings,
     },
     opencode::PermissionReply,
     permission::PendingPermission,
@@ -212,6 +212,31 @@ pub async fn collab_log_list(
 ) -> Result<Vec<CollabLogEntry>, CommandError> {
     client
         .call(&IpcRequest::ListLogs { room_id, limit })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_triage_settings(
+    client: tauri::State<'_, CollabDaemonClient>,
+) -> Result<Option<TriageSettings>, CommandError> {
+    client
+        .call(&IpcRequest::TriageSettings)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_triage_configure(
+    client: tauri::State<'_, CollabDaemonClient>,
+    provider_id: String,
+    model_id: String,
+) -> Result<TriageSettings, CommandError> {
+    client
+        .call(&IpcRequest::ConfigureTriage {
+            provider_id,
+            model_id,
+        })
         .await
         .map_err(CommandError::from)
 }

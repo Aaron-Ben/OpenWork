@@ -9,7 +9,7 @@ import type {
   ProviderModel,
   ProviderPreset,
   TestResult,
-} from './contracts'
+} from '@/bridge/providerContracts'
 
 export interface SelectedModel {
   provider: ProviderConfig

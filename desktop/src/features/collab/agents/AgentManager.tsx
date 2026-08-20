@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { deriveAgentSlug } from './agentId'
 import { useAgentStore } from './agentStore'
+import { TriageSettingsPanel } from './TriageSettingsPanel'
 
 const emptyAgent: CollabAgentInput = {
   id: null,
@@ -63,6 +64,7 @@ export function AgentManager() {
         <Button type="button" size="sm" onClick={() => { setEditing(false); setForm(emptyAgent) }}><Plus size={15} />{t('collab.agents.create')}</Button>
       </header>
       <div className="mx-auto grid max-w-4xl gap-3 p-6">
+        <TriageSettingsPanel />
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {agents.map((agent) => (
           <article key={agent.id} className="flex items-center gap-4 rounded-2xl border border-line bg-paper-hover p-4">

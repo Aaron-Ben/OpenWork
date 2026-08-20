@@ -3,7 +3,7 @@ import { Bot, Check, Loader2, Pencil, Plus, Trash2, X, Zap } from "lucide-react"
 import { useTranslation } from "react-i18next";
 
 import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
-import type { ProviderConfig, TestResult } from "../contracts";
+import type { ProviderConfig, TestResult } from "@/bridge/providerContracts";
 import { useModelStore } from "../modelStore";
 import { providerTestResultStyle, ProviderFormModal } from "./ProviderFormModal";
 

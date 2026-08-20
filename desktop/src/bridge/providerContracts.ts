@@ -1,4 +1,5 @@
-// 镜像 openwork-providers 的 serde 输出(camelCase)。仅云端 API-key provider —— 无本地模型、无登录。
+// Mirrors the camelCase serde output from openwork-providers. These are
+// transport contracts shared by the workbench and collaboration shells.
 
 export type ProviderKind =
   | 'openai'

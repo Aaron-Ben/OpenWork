@@ -35,4 +35,19 @@ describe('collaboration command bridge', () => {
       limit: 300,
     })
   })
+
+  it('reads and updates the collaboration triage model without restarting the daemon', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ providerId: 'openai-main', modelId: 'gpt-5-mini' })
+
+    await collabCommands.getTriageSettings()
+    await collabCommands.configureTriage('openai-main', 'gpt-5-mini')
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'collab_triage_settings')
+    expect(invoke).toHaveBeenNthCalledWith(2, 'collab_triage_configure', {
+      providerId: 'openai-main',
+      modelId: 'gpt-5-mini',
+    })
+  })
 })

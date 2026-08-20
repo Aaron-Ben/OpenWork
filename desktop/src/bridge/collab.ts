@@ -135,6 +135,11 @@ export interface CollabLogEntry {
   createdAt: string
 }
 
+export interface CollabTriageSettings {
+  providerId: string
+  modelId: string
+}
+
 export type CollabPermissionReply = 'once' | 'always' | 'reject'
 
 export type CollabEvent =
@@ -201,6 +206,10 @@ export const collabCommands = {
     invoke('collab_permission_abort', { id }),
   listLogs: (roomId: string | null, limit = 300): Promise<CollabLogEntry[]> =>
     invoke('collab_log_list', { roomId, limit }),
+  getTriageSettings: (): Promise<CollabTriageSettings | null> =>
+    invoke('collab_triage_settings'),
+  configureTriage: (providerId: string, modelId: string): Promise<CollabTriageSettings> =>
+    invoke('collab_triage_configure', { providerId, modelId }),
   listBoards: (roomId: string): Promise<CollabBoard[]> =>
     invoke('collab_board_list', { roomId }),
   createBoard: (id: string, roomId: string, title: string): Promise<CollabBoard> =>

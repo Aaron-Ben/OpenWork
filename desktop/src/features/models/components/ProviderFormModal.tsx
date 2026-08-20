@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { providersApi } from "@/bridge/providers";
 import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
-import type { ModelCapabilities, ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "../contracts";
+import type { ModelCapabilities, ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "@/bridge/providerContracts";
 import { useModelStore } from "../modelStore";
 
 const inputClass =
