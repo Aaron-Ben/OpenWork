@@ -92,6 +92,12 @@ struct ReactRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AckRequest {
+    #[schemars(description = "Room id whose delivered messages you have finished with")]
+    room_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct DmRequest {
     #[schemars(description = "Participant id to open or reuse a direct room with")]
     participant_id: String,
@@ -154,7 +160,6 @@ impl CollaborationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<String, String> {
         let agent_id = self.authenticated_agent(&context)?;
-        self.observations.mark_action(&agent_id);
         if !self
             .storage
             .is_member(&request.room_id, &agent_id)
@@ -177,6 +182,10 @@ impl CollaborationMcp {
             .map_err(|error| error.to_string())?;
         match outcome {
             AgentReplyOutcome::Published(outcome) => {
+                // Only a published reply settles the room. A HELD reply is a
+                // rejected write: counting it would advance the read cursor for
+                // a room where nothing was said.
+                self.observations.mark_action(&agent_id, &request.room_id);
                 if !outcome.deduplicated {
                     let _ = self.notices.send(MessageNotice {
                         room_id: request.room_id.clone(),
@@ -279,13 +288,44 @@ impl CollaborationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<String, String> {
         let agent_id = self.authenticated_agent(&context)?;
-        self.observations.mark_action(&agent_id);
         let reaction = self
             .storage
             .add_reaction(&request.message_id, &agent_id, &request.emoji)
             .await
             .map_err(|error| error.to_string())?;
+        if let Some(room_id) = self
+            .storage
+            .message_room(&request.message_id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            self.observations.mark_action(&agent_id, &room_id);
+        }
         serde_json::to_string(&reaction).map_err(|error| error.to_string())
+    }
+
+    #[tool(
+        description = "Stand down on one room: you have read everything delivered for it this turn and are deliberately not replying. Only openwork_reply, openwork_react, openwork_card, and this tool clear a room's delivery; a room you neither answer nor ack stays unread and will be brought back to you."
+    )]
+    async fn ack(
+        &self,
+        Parameters(request): Parameters<AckRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<String, String> {
+        let agent_id = self.authenticated_agent(&context)?;
+        self.require_membership(&request.room_id, &agent_id).await?;
+        self.observations.mark_ack(&agent_id, &request.room_id);
+        self.observations.record(OwnedObservation::for_active_run(
+            &agent_id,
+            Some(&request.room_id),
+            "inbox.acked",
+            serde_json::json!({"roomId": request.room_id}),
+        ));
+        serde_json::to_string(&serde_json::json!({
+            "status": "acked",
+            "roomId": request.room_id,
+        }))
+        .map_err(|error| error.to_string())
     }
 
     #[tool(
@@ -319,7 +359,6 @@ impl CollaborationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<String, String> {
         let agent_id = self.authenticated_agent(&context)?;
-        self.observations.mark_action(&agent_id);
         match request.action {
             CardAction::List => {
                 let room_id = required_parameter(request.room_id, "room_id", "list")?;
@@ -417,6 +456,8 @@ impl CollaborationMcp {
     }
 
     async fn publish_card_mutation(&self, mutation: &CardMutation) {
+        self.observations
+            .mark_action(&mutation.message.author_id, &mutation.message.room_id);
         let _ = self.notices.send(MessageNotice {
             room_id: mutation.message.room_id.clone(),
             author_id: mutation.message.author_id.clone(),
@@ -491,7 +532,7 @@ pub async fn start_server(
 
 #[cfg(test)]
 mod tests {
-    use super::{CardRequest, DmRequest, IdentityRegistry};
+    use super::{AckRequest, CardRequest, DmRequest, IdentityRegistry};
 
     #[test]
     fn issued_token_binds_one_agent_without_accepting_an_agent_parameter() {
@@ -509,6 +550,16 @@ mod tests {
             value.get("type").and_then(serde_json::Value::as_str),
             Some("object")
         );
+    }
+
+    #[test]
+    fn ack_tool_schema_takes_a_room_and_never_an_identity() {
+        let schema = rmcp::schemars::schema_for!(AckRequest);
+        let value = serde_json::to_value(schema).unwrap();
+        let properties = value["properties"].as_object().unwrap();
+        assert!(properties.contains_key("room_id"));
+        assert!(!properties.contains_key("agent_id"));
+        assert_eq!(properties.len(), 1);
     }
 
     #[test]

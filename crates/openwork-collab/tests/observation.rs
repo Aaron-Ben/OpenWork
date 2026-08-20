@@ -17,10 +17,12 @@ fn event(payload: serde_json::Value) -> GlobalEvent {
 fn run_outcomes_are_derived_from_action_calls_and_assistant_text() {
     let acted = ObservationSink::discarding();
     acted.set_active_run("alice", Some("run_acted"));
-    acted.mark_action("alice");
+    acted.mark_action("alice", "general");
+    let evidence = acted.take_run_evidence("run_acted");
+    assert_eq!(evidence.outcome(), RunOutcome::Acted);
     assert_eq!(
-        acted.take_run_evidence("run_acted").outcome(),
-        RunOutcome::Acted
+        evidence.settled_rooms().collect::<Vec<_>>(),
+        vec!["general"]
     );
 
     let silent = ObservationSink::discarding();
@@ -191,4 +193,33 @@ fn irrelevant_engine_events_do_not_enter_the_durable_observation_stream() {
         None,
         "the initial all-zero usage frame is not durable evidence",
     );
+}
+
+/// Standing down settles a room's delivery without counting as a response:
+/// the room stops being redelivered, but the turn still reports `silent`.
+#[test]
+fn an_ack_settles_its_room_without_being_recorded_as_a_response() {
+    let sink = ObservationSink::discarding();
+    sink.set_active_run("alice", Some("run_ack"));
+    sink.mark_ack("alice", "quiet_room");
+    let evidence = sink.take_run_evidence("run_ack");
+    assert_eq!(evidence.outcome(), RunOutcome::Silent);
+    assert!(evidence.acted_rooms().is_empty());
+    assert_eq!(
+        evidence.settled_rooms().collect::<Vec<_>>(),
+        vec!["quiet_room"]
+    );
+}
+
+/// Rooms shown to the engine but neither answered nor acked must NOT settle —
+/// that is the whole reason settlement is per room rather than per run.
+#[test]
+fn a_room_that_was_only_shown_never_settles() {
+    let sink = ObservationSink::discarding();
+    sink.set_active_run("alice", Some("run_partial"));
+    sink.mark_action("alice", "answered");
+    let evidence = sink.take_run_evidence("run_partial");
+    let settled = evidence.settled_rooms().collect::<Vec<_>>();
+    assert_eq!(settled, vec!["answered"]);
+    assert!(!settled.contains(&"only_shown"));
 }

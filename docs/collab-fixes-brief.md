@@ -2,6 +2,8 @@
 
 **这份文件是给实施者的工单，不是设计文档。** 语义权威是 [collaboration.md](collaboration.md)，DDL 权威是 [collaboration-data-model.md](collaboration-data-model.md)，前端权威是 [collaboration-desktop.md](collaboration-desktop.md)。三份都已按本轮结论更新，**有任何冲突以那三份为准，不以本文为准**。
 
+> **本篇已部分被取代。** F1–F8 落地后，"一个 Agent 两个房间"暴露出唤醒粒度与投递粒度不一致的问题，唤醒随之从**按房间**改成**按 Agent 一次覆盖整个收件箱**，游标改为**逐房间结算**，并新增 `ack` 工具。受影响的是 F1（游标推进的条件）与 F5（triage 的粒度）。**以 [collaboration.md](collaboration.md) §5 / §7.3 / §8.1 / §8.2 / §8.3 为准**，本篇其余部分仍然有效。
+
 背景：`crates/openwork-collab` 的 P1–P6 已经实现。下面 8 组是设计与实现不符、或存在结构性缺口的地方。行号是本文写作时的位置，会漂。
 
 按 **F1 → F8** 顺序做，每组一个独立 commit。F1 是唯一在生产里持续造成损失的一条，其余可以按顺序推进。

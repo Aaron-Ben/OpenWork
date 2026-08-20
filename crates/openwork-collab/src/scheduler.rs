@@ -123,17 +123,11 @@ struct RuntimeState {
     active_run_id: Option<String>,
     pending: HashMap<String, Vec<MessageNotice>>,
     prompt_note: Option<String>,
-    deferred_room_id: Option<String>,
-    deferred_prompt_note: Option<String>,
     proactive: Option<ProactivePrompt>,
     needs_full_context: bool,
+    /// Highest sequence handed to the engine this run, per room. Consumed once
+    /// at settlement; see `settle_read_cursor`.
     delivered_sequences: HashMap<String, i64>,
-    unpublished_batch: Option<UnpublishedBatch>,
-}
-
-struct UnpublishedBatch {
-    delivered_sequences: HashMap<String, i64>,
-    attempts: u8,
 }
 
 struct ProactivePrompt {
@@ -149,12 +143,9 @@ impl RuntimeState {
             active_run_id: None,
             pending: HashMap::new(),
             prompt_note: None,
-            deferred_room_id: None,
-            deferred_prompt_note: None,
             proactive: None,
             needs_full_context: true,
             delivered_sequences: HashMap::new(),
-            unpublished_batch: None,
         }
     }
 }
@@ -248,7 +239,11 @@ pub async fn start(
     let scheduler_cancel = cancel.clone();
     let scheduler = tokio::spawn(async move {
         let triage = TriageClient::new(storage.pool().clone());
-        let mut deadlines = HashMap::<(String, String), Instant>::new();
+        // Keyed by Agent, not by (Agent, room): one wake covers the whole inbox.
+        // The window is armed by the FIRST pending message and is NOT extended by
+        // later ones — otherwise a steadily busy room would push the deadline
+        // forward forever and the Agent would never wake at all.
+        let mut deadlines = HashMap::<String, Instant>::new();
         let mut ticker = interval(Duration::from_millis(100));
         loop {
             tokio::select! {
@@ -273,10 +268,9 @@ pub async fn start(
                                     .entry(notice.room_id.clone())
                                     .or_default()
                                     .push(notice.clone());
-                                deadlines.insert(
-                                    (agent.id, notice.room_id.clone()),
-                                    Instant::now() + DEBOUNCE,
-                                );
+                                deadlines
+                                    .entry(agent.id)
+                                    .or_insert_with(|| Instant::now() + DEBOUNCE);
                             }
                         }
                         Err(error) => eprintln!("failed to resolve collaboration candidates: {error}"),
@@ -404,8 +398,8 @@ pub async fn start(
                         .filter(|(_, deadline)| **deadline <= now)
                         .map(|(key, _)| key.clone())
                         .collect::<Vec<_>>();
-                    for (agent_id, room_id) in due {
-                        deadlines.remove(&(agent_id.clone(), room_id.clone()));
+                    for agent_id in due {
+                        deadlines.remove(&agent_id);
                         let services = DispatchServices {
                             storage: &storage,
                             homes: &homes,
@@ -422,10 +416,9 @@ pub async fn start(
                             &mut sessions,
                             &triage,
                             &agent_id,
-                            &room_id,
                         ).await;
                         if retry {
-                            deadlines.insert((agent_id, room_id), Instant::now() + DEBOUNCE);
+                            deadlines.insert(agent_id, Instant::now() + DEBOUNCE);
                         }
                     }
                     for agent_id in runtime.mark_unresponsive(Duration::from_secs(5 * 60)).await {
@@ -557,31 +550,37 @@ fn cancel_stalled_wake(proactivity: &ProactivityHub, stalled_claim: bool, room_i
     }
 }
 
+/// One wake per Agent, covering every room with pending messages.
+///
+/// Triage judges the whole inbox at once rather than one room at a time: an
+/// Agent has a single engine session, so a per-room wake still hands it the
+/// cross-room inbox, and settling that inbox per wake is what keeps the read
+/// cursor honest (see `settle_read_cursor`).
 async fn handle_due(
     services: &DispatchServices<'_>,
     states: &mut HashMap<String, RuntimeState>,
     sessions: &mut HashMap<String, String>,
     triage: &TriageClient,
     agent_id: &str,
-    room_id: &str,
 ) -> bool {
-    let Some(batch) = states
-        .get_mut(agent_id)
-        .and_then(|state| state.pending.remove(room_id))
-    else {
+    let Some(batches) = states.get_mut(agent_id).map(|state| {
+        state
+            .pending
+            .drain()
+            .filter(|(_, notices)| !notices.is_empty())
+            .collect::<HashMap<String, Vec<MessageNotice>>>()
+    }) else {
         return false;
     };
-    let authors = batch
-        .iter()
-        .map(|notice| notice.author_id.as_str())
-        .collect::<HashSet<_>>();
-    let active_teammates = active_teammates_for_room(states, agent_id, room_id, &authors);
+    if batches.is_empty() {
+        return false;
+    }
+    let active_teammates = active_teammates(states, agent_id, &batches);
     let triage = wake_triage::evaluate(
         services.storage,
         triage,
         agent_id,
-        room_id,
-        &batch,
+        &batches,
         &active_teammates,
         services.observations,
     )
@@ -593,14 +592,13 @@ async fn handle_due(
         return false;
     };
     let action = state.wake.on_debounce_elapsed();
-    if action == WakeAction::Defer
-        || (action == WakeAction::Inject && state.room_id.as_deref() != Some(room_id))
-    {
-        state.deferred_room_id = Some(room_id.to_string());
-        state.deferred_prompt_note = triage.prompt_note;
+    if action == WakeAction::Defer {
+        // Injection budget spent. The messages stay unread, and the pending
+        // rerun this already armed picks them up from the inbox next turn.
         return false;
     }
-    state.room_id = Some(room_id.to_string());
+    // An inbox wake has no single focused room; the digest carries them all.
+    state.room_id = None;
     state.prompt_note = triage.prompt_note;
     if let Err(error) = dispatch(
         services,
@@ -618,22 +616,42 @@ async fn handle_due(
     false
 }
 
-fn active_teammates_for_room(
+/// Teammates already running a turn that covers one of the rooms in this batch.
+///
+/// Room attribution comes from what each teammate was actually handed this run
+/// (`delivered_sequences`), plus the focused room of an autonomous wake — a
+/// teammate busy with an unrelated room must not suppress this one. Message
+/// authors are excluded: they are awake, but they are the ones speaking.
+///
+/// The result is an unordered set per room. It never expresses a turn order, so
+/// it cannot be read as "I am third in line" (see collaboration.md 9.1).
+fn active_teammates(
     states: &HashMap<String, RuntimeState>,
     candidate_id: &str,
-    room_id: &str,
-    authors: &HashSet<&str>,
-) -> HashSet<String> {
-    states
-        .iter()
-        .filter(|(teammate_id, state)| {
-            teammate_id.as_str() != candidate_id
-                && state.active_run_id.is_some()
-                && state.room_id.as_deref() == Some(room_id)
-                && !authors.contains(teammate_id.as_str())
-        })
-        .map(|(teammate_id, _)| teammate_id.clone())
-        .collect()
+    batches: &HashMap<String, Vec<MessageNotice>>,
+) -> HashMap<String, HashSet<String>> {
+    let mut per_room = HashMap::<String, HashSet<String>>::new();
+    for (room_id, notices) in batches {
+        let authors = notices
+            .iter()
+            .map(|notice| notice.author_id.as_str())
+            .collect::<HashSet<_>>();
+        let busy = states
+            .iter()
+            .filter(|(teammate_id, state)| {
+                teammate_id.as_str() != candidate_id
+                    && state.active_run_id.is_some()
+                    && !authors.contains(teammate_id.as_str())
+                    && (state.delivered_sequences.contains_key(room_id)
+                        || state.room_id.as_deref() == Some(room_id.as_str()))
+            })
+            .map(|(teammate_id, _)| teammate_id.clone())
+            .collect::<HashSet<_>>();
+        if !busy.is_empty() {
+            per_room.insert(room_id.clone(), busy);
+        }
+    }
+    per_room
 }
 
 async fn handle_idle(
@@ -647,17 +665,10 @@ async fn handle_idle(
     };
     if let Some(run_id) = state.active_run_id.take() {
         services.observations.set_active_run(agent_id, None);
-        let outcome = services.observations.take_run_evidence(&run_id).outcome();
+        let evidence = services.observations.take_run_evidence(&run_id);
+        let outcome = evidence.outcome();
         let delivered_sequences = std::mem::take(&mut state.delivered_sequences);
-        settle_read_cursor(
-            services,
-            state,
-            agent_id,
-            &run_id,
-            outcome,
-            delivered_sequences,
-        )
-        .await;
+        settle_read_cursor(services, agent_id, &run_id, &evidence, &delivered_sequences).await;
         services.observations.record(OwnedObservation::linked(
             Some(&run_id),
             Some(agent_id),
@@ -674,10 +685,7 @@ async fn handle_idle(
         }
     }
     if state.wake.on_idle() == IdleAction::Rerun {
-        if let Some(room_id) = state.deferred_room_id.take() {
-            state.room_id = Some(room_id);
-            state.prompt_note = state.deferred_prompt_note.take();
-        }
+        state.room_id = None;
         if let Err(error) = dispatch(services, sessions, agent_id, state, "rerun", true).await {
             eprintln!("failed to rerun Agent {agent_id}: {error}");
             state.wake.reset();
@@ -685,80 +693,60 @@ async fn handle_idle(
     }
 }
 
+/// Advance the read cursor for the rooms this run actually finished with.
+///
+/// A room settles only when the Agent published into it (`reply` / `react` /
+/// `card`) or explicitly stood down (`ack`). Everything else it was merely
+/// shown stays unread and is redelivered next turn.
+///
+/// The alternative — advancing every room that appeared in the digest — reads
+/// "delivered" as "handled" and silently drops rooms the turn never addressed:
+/// a run focused on room A would mark room B read, and B's own follow-up wake
+/// would then arrive with an empty inbox and produce nothing at all.
+///
+/// A room that is never settled simply stays unread. That does not spin: wakes
+/// are driven by message arrival, so an unanswered room costs nothing until
+/// something new is actually said in it.
 async fn settle_read_cursor(
     services: &DispatchServices<'_>,
-    state: &mut RuntimeState,
     agent_id: &str,
     run_id: &str,
-    outcome: crate::model::RunOutcome,
-    delivered_sequences: HashMap<String, i64>,
+    evidence: &crate::observation::RunEvidence,
+    delivered_sequences: &HashMap<String, i64>,
 ) {
-    let settlement = cursor_settlement(state, outcome, &delivered_sequences);
-    if let CursorSettlement::ForceAdvance { attempts } = settlement {
-        services.observations.record(OwnedObservation::linked(
-            Some(run_id),
-            Some(agent_id),
-            state.room_id.as_deref(),
-            "inbox.force_advanced",
-            json!({
-                "attempts": attempts,
-                "deliveredSequences": &delivered_sequences,
-            }),
-        ));
-    }
-    if settlement == CursorSettlement::Hold {
+    if delivered_sequences.is_empty() {
         return;
     }
+    let settled = evidence.settled_rooms().collect::<HashSet<_>>();
+    let mut advanced = Vec::new();
+    let mut carried = Vec::new();
     for (room_id, sequence) in delivered_sequences {
-        if let Err(error) = services
+        if !settled.contains(room_id.as_str()) {
+            carried.push(room_id.clone());
+            continue;
+        }
+        match services
             .storage
-            .mark_read(&room_id, agent_id, sequence)
+            .mark_read(room_id, agent_id, *sequence)
             .await
         {
-            eprintln!(
+            Ok(_) => advanced.push(room_id.clone()),
+            Err(error) => eprintln!(
                 "failed to advance inbox cursor for Agent {agent_id} in room {room_id}: {error}"
-            );
+            ),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CursorSettlement {
-    Advance,
-    Hold,
-    ForceAdvance { attempts: u8 },
-}
-
-fn cursor_settlement(
-    state: &mut RuntimeState,
-    outcome: crate::model::RunOutcome,
-    delivered_sequences: &HashMap<String, i64>,
-) -> CursorSettlement {
-    match outcome {
-        crate::model::RunOutcome::Acted | crate::model::RunOutcome::Silent => {
-            state.unpublished_batch = None;
-            CursorSettlement::Advance
-        }
-        crate::model::RunOutcome::Unpublished => {
-            let attempts = state.unpublished_batch.as_ref().map_or(1, |previous| {
-                if previous.delivered_sequences == *delivered_sequences {
-                    previous.attempts.saturating_add(1)
-                } else {
-                    1
-                }
-            });
-            if attempts >= 2 && !delivered_sequences.is_empty() {
-                state.unpublished_batch = None;
-                CursorSettlement::ForceAdvance { attempts }
-            } else {
-                state.unpublished_batch = Some(UnpublishedBatch {
-                    delivered_sequences: delivered_sequences.clone(),
-                    attempts,
-                });
-                CursorSettlement::Hold
-            }
-        }
-    }
+    services.observations.record(OwnedObservation::linked(
+        Some(run_id),
+        Some(agent_id),
+        None,
+        "inbox.settled",
+        json!({
+            "advanced": advanced,
+            "carriedOver": carried,
+            "ackedRooms": evidence.acked_rooms(),
+        }),
+    ));
 }
 
 async fn dispatch(
@@ -813,25 +801,47 @@ async fn dispatch(
         .inbox(agent_id)
         .await
         .map_err(|error| error.to_string())?;
-    let room_id_owned = state.room_id.clone();
-    let room_id = room_id_owned.as_deref();
+    let focused_room_id = state.room_id.clone();
     let full_context = state.needs_full_context;
-    let glance = match (full_context, room_id) {
-        (true, Some(room_id)) => {
-            let glance = services
-                .storage
-                .glance(room_id, 50)
-                .await
-                .map_err(|error| error.to_string())?;
-            Some(glance)
-        }
-        _ => None,
-    };
-    if let Some(room_id) = room_id {
+
+    // Every room with something to deliver, plus the focused room of an
+    // autonomous wake even when it has no unread of its own.
+    let mut digest_room_ids = inbox
+        .messages
+        .iter()
+        .map(|message| message.room_id.clone())
+        .collect::<Vec<_>>();
+    if let Some(focused) = focused_room_id.as_deref() {
+        digest_room_ids.push(focused.to_string());
+    }
+    digest_room_ids.sort();
+    digest_room_ids.dedup();
+
+    let summaries = services
+        .storage
+        .room_summaries(agent_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut rooms = Vec::with_capacity(digest_room_ids.len());
+    for room_id in &digest_room_ids {
+        let summary = summaries.iter().find(|room| &room.id == room_id);
+        let glance = if full_context {
+            Some(
+                services
+                    .storage
+                    .glance(room_id, 50)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        // The seen cursor is what HELD compares against, so it must reflect the
+        // highest sequence this room actually showed the Agent this turn.
         let delivered_highest = inbox
             .messages
             .iter()
-            .filter(|message| message.room_id == room_id)
+            .filter(|message| &message.room_id == room_id)
             .map(|message| message.sequence)
             .max()
             .unwrap_or(0);
@@ -842,18 +852,14 @@ async fn dispatch(
             .coordination
             .observe(agent_id, room_id, seen_highest)
             .await;
+        rooms.push(WakeRoom {
+            room_id: room_id.clone(),
+            kind: summary.map(|room| room.kind.clone()),
+            roster: summary.map(|room| room.members.clone()),
+            glance,
+        });
     }
-    let roster = match room_id {
-        Some(room_id) => services
-            .storage
-            .room_summaries(agent_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .find(|room| room.id == room_id)
-            .map(|room| room.members),
-        None => None,
-    };
+
     let memory = if full_context {
         Some(bounded_memory(
             &tokio::fs::read_to_string(home.join("memory/MEMORY.md"))
@@ -865,10 +871,9 @@ async fn dispatch(
     };
     let delivered_sequences = delivered_sequences(&inbox);
     let prompt = build_wake_prompt(WakePromptParts {
-        room_id,
+        focused_room_id: focused_room_id.as_deref(),
         inbox: &inbox,
-        glance: glance.as_ref(),
-        roster: roster.as_deref(),
+        rooms: &rooms,
         memory: memory.as_deref(),
         prompt_note: state.prompt_note.as_deref(),
         proactive: state.proactive.take(),
@@ -878,7 +883,7 @@ async fn dispatch(
         Some(
             services
                 .storage
-                .begin_run(&agent, room_id, trigger)
+                .begin_run(&agent, focused_room_id.as_deref(), trigger)
                 .await
                 .map_err(|error| error.to_string())?,
         )
@@ -893,7 +898,7 @@ async fn dispatch(
         services.observations.record(OwnedObservation::linked(
             Some(run_id),
             Some(&agent.id),
-            room_id,
+            focused_room_id.as_deref(),
             "prompt.started",
             json!({"trigger": trigger, "sessionId": session_id}),
         ));
@@ -901,7 +906,7 @@ async fn dispatch(
         services.observations.record(OwnedObservation::linked(
             Some(run_id),
             Some(&agent.id),
-            room_id,
+            focused_room_id.as_deref(),
             "prompt.injected",
             json!({"trigger": trigger, "sessionId": session_id}),
         ));
@@ -916,7 +921,7 @@ async fn dispatch(
             services.observations.record(OwnedObservation::linked(
                 Some(run_id),
                 Some(&agent.id),
-                room_id,
+                focused_room_id.as_deref(),
                 "prompt.failed",
                 json!({"error": message}),
             ));
@@ -997,26 +1002,40 @@ async fn ensure_session(
     Ok(session.id)
 }
 
+/// One room's slice of a wake digest.
+struct WakeRoom {
+    room_id: String,
+    kind: Option<String>,
+    roster: Option<Vec<RoomMember>>,
+    glance: Option<RoomGlance>,
+}
+
 struct WakePromptParts<'a> {
-    room_id: Option<&'a str>,
+    /// Set only for an autonomous wake, which really is about one room. An
+    /// inbox wake has no focus — every room in the digest is equally real.
+    focused_room_id: Option<&'a str>,
     inbox: &'a Inbox,
-    glance: Option<&'a RoomGlance>,
-    roster: Option<&'a [RoomMember]>,
+    rooms: &'a [WakeRoom],
     memory: Option<&'a str>,
     prompt_note: Option<&'a str>,
     proactive: Option<ProactivePrompt>,
     trigger: &'a str,
 }
 
-/// Assemble the JSON prompt injected with `prompt_async`. The roster carries
-/// each member's `id` — the standing prompt (AGENTS.md) tells the Agent to
-/// address teammates by that id, so the two must stay in sync.
+/// Assemble the JSON prompt injected with `prompt_async`.
+///
+/// The digest is grouped by room, and each room carries its own roster, because
+/// an Agent has one engine session serving every room it belongs to: without
+/// the grouping it would have to infer from a flat list which room a message
+/// came from and which room to answer in.
+///
+/// Each roster carries its members' `id`s — the standing prompt tells the Agent
+/// to address teammates by that id, so the two must stay in sync.
 fn build_wake_prompt(parts: WakePromptParts<'_>) -> String {
     let WakePromptParts {
-        room_id,
+        focused_room_id,
         inbox,
-        glance,
-        roster,
+        rooms,
         memory,
         prompt_note,
         proactive,
@@ -1025,12 +1044,12 @@ fn build_wake_prompt(parts: WakePromptParts<'_>) -> String {
     let (instruction, delivery) = if proactive.is_some() {
         (
             "This is an explicitly autonomous collaboration turn. Execute the focused brief using the published state and collaboration tools. Do not spend the turn merely deciding whether work exists; the cheap agenda gate already did that. Natural-language output without a successful tool call does not publish a response.",
-            "Unread is authoritative. Autonomous dispatch and seen coordination never update last_read_seq.",
+            "Unread is authoritative. Autonomous dispatch and seen coordination never update last_read_seq. Close out every room you were shown: openwork_reply / openwork_react / openwork_card settle a room, and openwork_ack settles one you are deliberately not answering. A room you leave unsettled stays unread and comes back.",
         )
     } else {
         (
-            "Triage found this room update actionable for you. Read the published state, decide independently whether speaking still adds value, then use openwork_reply or openwork_react. Natural-language output without a successful tool call does not publish a response.",
-            "Unread is authoritative. This prompt and its seen coordination cursor do not clear or update last_read_seq.",
+            "Triage found your inbox actionable. It may cover more than one room: each entry under rooms carries its own id, roster, and unread messages. Reply into a specific room with openwork_reply(room_id=...), and use openwork_ack(room_id=...) for a room you have read but are deliberately not answering. Natural-language output without a successful tool call does not publish a response.",
+            "Unread is authoritative. This prompt and its seen coordination cursor do not clear or update last_read_seq. Close out every room you were shown: openwork_reply / openwork_react / openwork_card settle a room, and openwork_ack settles one you are deliberately not answering. A room you leave unsettled stays unread and comes back.",
         )
     };
     let mut prompt = serde_json::Map::new();
@@ -1040,19 +1059,20 @@ fn build_wake_prompt(parts: WakePromptParts<'_>) -> String {
         prompt.insert("reason".to_string(), json!(proactive.reason));
         prompt.insert("focusedContext".to_string(), proactive.context);
     }
-    prompt.insert("roomId".to_string(), json!(room_id));
-    prompt.insert("unread".to_string(), prompt_inbox(inbox, glance));
+    if let Some(focused_room_id) = focused_room_id {
+        prompt.insert("focusedRoomId".to_string(), json!(focused_room_id));
+    }
+    prompt.insert("rooms".to_string(), json!(prompt_rooms(inbox, rooms)));
+    prompt.insert("unreadCount".to_string(), json!(inbox.unread_count));
     if let Some(notice) = inbox.omission_notice.as_deref() {
         prompt.insert("unreadOmissionNotice".to_string(), json!(notice));
+        prompt.insert("omittedCount".to_string(), json!(inbox.omitted_count));
     }
-    prompt.insert("roster".to_string(), json!(roster));
     prompt.insert("triagePromptNote".to_string(), json!(prompt_note));
     prompt.insert("delivery".to_string(), json!(delivery));
-    if glance.is_some() || memory.is_some() {
+    let full_context = memory.is_some() || rooms.iter().any(|room| room.glance.is_some());
+    if full_context {
         prompt.insert("fullContext".to_string(), json!(true));
-    }
-    if let Some(glance) = glance {
-        prompt.insert("recentPublishedState".to_string(), json!(glance));
     }
     if let Some(memory) = memory {
         prompt.insert("memory".to_string(), json!(memory));
@@ -1060,37 +1080,47 @@ fn build_wake_prompt(parts: WakePromptParts<'_>) -> String {
     serde_json::Value::Object(prompt).to_string()
 }
 
-fn prompt_inbox(inbox: &Inbox, glance: Option<&RoomGlance>) -> serde_json::Value {
-    let messages = inbox
-        .messages
+fn prompt_rooms(inbox: &Inbox, rooms: &[WakeRoom]) -> Vec<serde_json::Value> {
+    rooms
         .iter()
-        .map(|message| {
-            if glance
-                .is_some_and(|glance| glance.messages.iter().any(|recent| recent.id == message.id))
-            {
-                json!({
-                    "id": message.id,
-                    "roomId": message.room_id,
-                    "sequence": message.sequence,
-                    "includedInRecentPublishedState": true,
+        .map(|room| {
+            let unread = inbox
+                .messages
+                .iter()
+                .filter(|message| message.room_id == room.room_id)
+                .map(|message| {
+                    // A message already spelled out under recentPublishedState is
+                    // referenced by id instead of repeated: the same body twice in
+                    // one prompt is pure token cost.
+                    if room.glance.as_ref().is_some_and(|glance| {
+                        glance.messages.iter().any(|recent| recent.id == message.id)
+                    }) {
+                        json!({
+                            "id": message.id,
+                            "sequence": message.sequence,
+                            "includedInRecentPublishedState": true,
+                        })
+                    } else {
+                        json!(message)
+                    }
                 })
-            } else {
-                json!(message)
+                .collect::<Vec<_>>();
+            let mut entry = serde_json::Map::new();
+            entry.insert("roomId".to_string(), json!(room.room_id));
+            entry.insert("kind".to_string(), json!(room.kind));
+            entry.insert("roster".to_string(), json!(room.roster));
+            entry.insert("unread".to_string(), json!(unread));
+            if let Some(glance) = room.glance.as_ref() {
+                entry.insert("recentPublishedState".to_string(), json!(glance));
             }
+            serde_json::Value::Object(entry)
         })
-        .collect::<Vec<_>>();
-    json!({
-        "messages": messages,
-        "unreadCount": inbox.unread_count,
-        "omittedCount": inbox.omitted_count,
-        "omissionNotice": inbox.omission_notice,
-    })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::RunOutcome;
 
     fn member(id: &str, display_name: &str) -> RoomMember {
         RoomMember {
@@ -1102,12 +1132,20 @@ mod tests {
         }
     }
 
-    fn parts<'a>(roster: Option<&'a [RoomMember]>, inbox: &'a Inbox) -> WakePromptParts<'a> {
+    fn room(room_id: &str, roster: Vec<RoomMember>, glance: Option<RoomGlance>) -> WakeRoom {
+        WakeRoom {
+            room_id: room_id.to_string(),
+            kind: Some("group".to_string()),
+            roster: Some(roster),
+            glance,
+        }
+    }
+
+    fn parts<'a>(rooms: &'a [WakeRoom], inbox: &'a Inbox) -> WakePromptParts<'a> {
         WakePromptParts {
-            room_id: Some("general"),
+            focused_room_id: None,
             inbox,
-            glance: None,
-            roster,
+            rooms,
             memory: None,
             prompt_note: None,
             proactive: None,
@@ -1116,9 +1154,13 @@ mod tests {
     }
 
     fn message(id: &str, sequence: i64, body: &str) -> crate::model::Message {
+        in_room(id, "general", sequence, body)
+    }
+
+    fn in_room(id: &str, room_id: &str, sequence: i64, body: &str) -> crate::model::Message {
         crate::model::Message {
             id: id.to_string(),
-            room_id: "general".to_string(),
+            room_id: room_id.to_string(),
             sequence,
             author_id: "user".to_string(),
             kind: "normal".to_string(),
@@ -1147,22 +1189,30 @@ mod tests {
         state
     }
 
-    #[test]
-    fn wake_prompt_roster_carries_member_ids() {
-        let roster = [
-            member("user", "你"),
-            member("alice", "小艾"),
-            member("code_review", "Code Review"),
-        ];
-        let inbox = Inbox {
+    fn empty_inbox() -> Inbox {
+        Inbox {
             messages: Vec::new(),
             unread_count: 0,
             omitted_count: 0,
             omission_notice: None,
-        };
+        }
+    }
+
+    #[test]
+    fn each_room_carries_its_own_roster_of_member_ids() {
+        let rooms = [room(
+            "general",
+            vec![
+                member("user", "你"),
+                member("alice", "小艾"),
+                member("code_review", "Code Review"),
+            ],
+            None,
+        )];
+        let inbox = empty_inbox();
         let prompt: serde_json::Value =
-            serde_json::from_str(&build_wake_prompt(parts(Some(&roster), &inbox))).unwrap();
-        let roster = prompt["roster"].as_array().unwrap();
+            serde_json::from_str(&build_wake_prompt(parts(&rooms, &inbox))).unwrap();
+        let roster = prompt["rooms"][0]["roster"].as_array().unwrap();
         let ids: Vec<&str> = roster
             .iter()
             .map(|entry| entry["id"].as_str().unwrap())
@@ -1171,143 +1221,151 @@ mod tests {
         assert_eq!(roster[1]["displayName"].as_str().unwrap(), "小艾");
     }
 
+    /// The whole point of grouping: an Agent in two rooms must be able to tell
+    /// which message belongs where, and which roster applies to each.
     #[test]
-    fn proactive_wake_prompt_keeps_the_roster_and_ids() {
-        let roster = [member("bob", "Bob")];
+    fn two_rooms_stay_separated_with_their_own_messages_and_rosters() {
+        let rooms = [
+            room("general", vec![member("alice", "小艾")], None),
+            room("design", vec![member("bob", "Bob")], None),
+        ];
         let inbox = Inbox {
-            messages: Vec::new(),
-            unread_count: 0,
+            messages: vec![
+                message("msg_1", 4, "general question"),
+                in_room("msg_2", "design", 9, "design question"),
+            ],
+            unread_count: 2,
             omitted_count: 0,
             omission_notice: None,
         };
+        let prompt: serde_json::Value =
+            serde_json::from_str(&build_wake_prompt(parts(&rooms, &inbox))).unwrap();
+
+        assert_eq!(prompt["rooms"][0]["roomId"], "general");
+        assert_eq!(prompt["rooms"][0]["unread"].as_array().unwrap().len(), 1);
+        assert_eq!(prompt["rooms"][0]["unread"][0]["body"], "general question");
+        assert_eq!(prompt["rooms"][0]["roster"][0]["id"], "alice");
+
+        assert_eq!(prompt["rooms"][1]["roomId"], "design");
+        assert_eq!(prompt["rooms"][1]["unread"].as_array().unwrap().len(), 1);
+        assert_eq!(prompt["rooms"][1]["unread"][0]["body"], "design question");
+        assert_eq!(prompt["rooms"][1]["roster"][0]["id"], "bob");
+
+        // No single focused room, and the instruction must name the settle tools.
+        assert!(prompt.get("focusedRoomId").is_none());
+        let instruction = prompt["instruction"].as_str().unwrap();
+        assert!(instruction.contains("openwork_ack"));
+        assert!(instruction.contains("room_id"));
+    }
+
+    #[test]
+    fn proactive_wake_names_its_focused_room_and_keeps_the_roster() {
+        let rooms = [room("general", vec![member("bob", "Bob")], None)];
+        let inbox = empty_inbox();
         let prompt: serde_json::Value = serde_json::from_str(&build_wake_prompt(WakePromptParts {
+            focused_room_id: Some("general"),
             proactive: Some(ProactivePrompt {
                 reason: "stalled room".to_string(),
                 context: serde_json::json!({"roomId": "general"}),
             }),
-            ..parts(Some(&roster), &inbox)
+            ..parts(&rooms, &inbox)
         }))
         .unwrap();
-        assert_eq!(prompt["roster"][0]["id"].as_str().unwrap(), "bob");
+        assert_eq!(prompt["focusedRoomId"], "general");
+        assert_eq!(
+            prompt["rooms"][0]["roster"][0]["id"].as_str().unwrap(),
+            "bob"
+        );
         assert_eq!(prompt["trigger"].as_str().unwrap(), "room_message");
     }
 
     #[test]
     fn regular_wake_is_incremental_and_carries_the_omission_notice_in_prompt_text() {
+        let rooms = [room("general", vec![member("alice", "小艾")], None)];
         let inbox = Inbox {
             messages: vec![message("msg_2", 2, "new")],
             unread_count: 12,
             omitted_count: 11,
-            omission_notice: Some("另有 11 条更早未读已省略".to_string()),
+            omission_notice: Some("11 newer unread".to_string()),
         };
-        let prompt = build_wake_prompt(parts(None, &inbox));
+        let prompt = build_wake_prompt(parts(&rooms, &inbox));
         let value: serde_json::Value = serde_json::from_str(&prompt).unwrap();
-        assert!(value.get("recentPublishedState").is_none());
+        assert!(value["rooms"][0].get("recentPublishedState").is_none());
         assert!(value.get("memory").is_none());
-        assert_eq!(value["unreadOmissionNotice"], "另有 11 条更早未读已省略");
-        assert!(prompt.contains("另有 11 条更早未读已省略"));
+        assert!(value.get("fullContext").is_none());
+        assert_eq!(value["unreadOmissionNotice"], "11 newer unread");
+        assert!(prompt.contains("11 newer unread"));
     }
 
     #[test]
     fn full_context_replaces_duplicate_unread_bodies_with_id_references() {
         let duplicate = message("msg_2", 2, "already in recent state");
         let inbox = Inbox {
-            messages: vec![
-                duplicate.clone(),
-                message("msg_other", 1, "other room detail"),
-            ],
-            unread_count: 2,
+            messages: vec![duplicate.clone()],
+            unread_count: 1,
             omitted_count: 0,
             omission_notice: None,
         };
-        let glance = RoomGlance {
-            room_id: "general".to_string(),
-            highest_sequence: 2,
-            messages: vec![duplicate],
-        };
+        let rooms = [room(
+            "general",
+            vec![member("alice", "小艾")],
+            Some(RoomGlance {
+                room_id: "general".to_string(),
+                highest_sequence: 2,
+                messages: vec![duplicate],
+            }),
+        )];
         let value: serde_json::Value = serde_json::from_str(&build_wake_prompt(WakePromptParts {
-            glance: Some(&glance),
             memory: Some("# Memory"),
-            ..parts(None, &inbox)
+            ..parts(&rooms, &inbox)
         }))
         .unwrap();
         assert_eq!(value["fullContext"], true);
         assert_eq!(
-            value["unread"]["messages"][0]["includedInRecentPublishedState"],
+            value["rooms"][0]["unread"][0]["includedInRecentPublishedState"],
             true
         );
-        assert!(value["unread"]["messages"][0].get("body").is_none());
+        assert!(value["rooms"][0]["unread"][0].get("body").is_none());
         assert_eq!(
-            value["recentPublishedState"]["messages"][0]["body"],
+            value["rooms"][0]["recentPublishedState"]["messages"][0]["body"],
             "already in recent state"
         );
     }
 
-    #[test]
-    fn memory_truncation_is_unicode_safe_and_explicit() {
-        let memory = "中文🧠".repeat(MEMORY_MAX_CHARS);
-        let bounded = bounded_memory(&memory);
-        assert_eq!(
-            bounded
-                .split("\n\n[MEMORY.md truncated:")
-                .next()
-                .unwrap()
-                .chars()
-                .count(),
-            MEMORY_MAX_CHARS
-        );
-        assert!(bounded.contains("[MEMORY.md truncated:"));
+    fn notice(room_id: &str, author_id: &str, sequence: i64) -> MessageNotice {
+        MessageNotice {
+            room_id: room_id.to_string(),
+            author_id: author_id.to_string(),
+            body: "hi".to_string(),
+            sequence,
+        }
     }
 
     #[test]
     fn triage_active_set_is_room_scoped_and_excludes_candidate_and_authors() {
         let states = HashMap::from([
+            // alice is mid-run on general, so she counts for general.
             ("alice".to_string(), runtime("alice", "general")),
+            // bob is busy, but on another room: he must not suppress general.
             ("bob".to_string(), runtime("bob", "other")),
+            // carol is busy on general but wrote the message that woke this batch.
             ("carol".to_string(), runtime("carol", "general")),
             ("dave".to_string(), runtime("dave", "general")),
         ]);
-        let authors = HashSet::from(["carol"]);
+        let batches = HashMap::from([("general".to_string(), vec![notice("general", "carol", 4)])]);
+
+        let per_room = active_teammates(&states, "dave", &batches);
         assert_eq!(
-            active_teammates_for_room(&states, "dave", "general", &authors),
-            HashSet::from(["alice".to_string()])
+            per_room.get("general"),
+            Some(&HashSet::from(["alice".to_string()]))
         );
+        assert!(!per_room.contains_key("other"));
     }
 
     #[test]
-    fn cursor_settlement_holds_then_forces_the_same_unpublished_batch() {
-        let mut state = runtime("alice", "general");
-        let first_batch = HashMap::from([("general".to_string(), 12)]);
-
-        assert_eq!(
-            cursor_settlement(&mut state, RunOutcome::Unpublished, &first_batch),
-            CursorSettlement::Hold
-        );
-        assert_eq!(
-            cursor_settlement(&mut state, RunOutcome::Unpublished, &first_batch),
-            CursorSettlement::ForceAdvance { attempts: 2 }
-        );
-        assert!(state.unpublished_batch.is_none());
-    }
-
-    #[test]
-    fn cursor_settlement_resets_for_a_different_batch_and_for_success() {
-        let mut state = runtime("alice", "general");
-        let first_batch = HashMap::from([("general".to_string(), 12)]);
-        let next_batch = HashMap::from([("general".to_string(), 13)]);
-
-        assert_eq!(
-            cursor_settlement(&mut state, RunOutcome::Unpublished, &first_batch),
-            CursorSettlement::Hold
-        );
-        assert_eq!(
-            cursor_settlement(&mut state, RunOutcome::Unpublished, &next_batch),
-            CursorSettlement::Hold
-        );
-        assert_eq!(
-            cursor_settlement(&mut state, RunOutcome::Silent, &next_batch),
-            CursorSettlement::Advance
-        );
-        assert!(state.unpublished_batch.is_none());
+    fn a_room_with_no_busy_teammate_carries_no_entry_at_all() {
+        let states = HashMap::from([("bob".to_string(), runtime("bob", "other"))]);
+        let batches = HashMap::from([("general".to_string(), vec![notice("general", "user", 1)])]);
+        assert!(active_teammates(&states, "dave", &batches).is_empty());
     }
 }

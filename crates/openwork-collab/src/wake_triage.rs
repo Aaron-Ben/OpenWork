@@ -1,6 +1,6 @@
 //! Cheap-model gates for message-driven wakes, including Agent-DM loop checks.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     mcp::MessageNotice,
@@ -9,7 +9,8 @@ use crate::{
     proactivity::{DmProgress, resolve_dm_progress, should_probe_agent_dm},
     storage::CollabStorage,
     triage::{
-        DmLoopContext, TriageClient, TriageContext, TriageMessage, TriageSource, resolve_failure,
+        DmLoopContext, TriageClient, TriageContext, TriageMessage, TriageRoom, TriageSource,
+        resolve_failure,
     },
 };
 
@@ -18,30 +19,37 @@ pub struct WakeTriage {
     pub prompt_note: Option<String>,
 }
 
+/// One cheap-model decision for an Agent's whole pending inbox.
+///
+/// Judging room by room would spend a triage call per room and still hand the
+/// engine the cross-room inbox, because an Agent has exactly one session. So
+/// the gate matches the delivery: one decision, one wake, and per-room records
+/// so `collab_triages` still says what was decided about each room.
+///
+/// Agent-to-Agent DM rooms keep their own gate: the loop probe is a different
+/// question ("is this exchange still going anywhere?") with its own source, and
+/// folding it into the general decision would lose that.
 pub async fn evaluate(
     storage: &CollabStorage,
     triage: &TriageClient,
     agent_id: &str,
-    room_id: &str,
-    batch: &[MessageNotice],
-    active_teammates: &HashSet<String>,
+    batches: &HashMap<String, Vec<MessageNotice>>,
+    active_teammates: &HashMap<String, HashSet<String>>,
     observations: &ObservationSink,
 ) -> WakeTriage {
-    let Some(up_to_sequence) = batch.iter().map(|notice| notice.sequence).max() else {
+    if batches.is_empty() {
         return WakeTriage {
             actionable: false,
             prompt_note: None,
         };
-    };
-    let human_waiting = batch.iter().any(|notice| notice.author_id == "user");
-    let messages = batch
-        .iter()
-        .map(|notice| TriageMessage {
-            author_id: notice.author_id.clone(),
-            sequence: notice.sequence,
-            body: notice.body.clone(),
-        })
-        .collect::<Vec<_>>();
+    }
+    // A human anywhere in the inbox makes the whole decision fail open, and
+    // hides the "who else is awake" signal everywhere. Silence toward a waiting
+    // person is the worst outcome this gate can produce.
+    let human_waiting = batches
+        .values()
+        .flatten()
+        .any(|notice| notice.author_id == "user");
     let agent = match storage.agent(agent_id).await {
         Ok(Some(agent)) => agent,
         Ok(None) => {
@@ -65,13 +73,26 @@ pub async fn evaluate(
             None
         }
     };
-    let must_probe_dm = batch
-        .iter()
-        .any(|notice| should_probe_agent_dm(notice.sequence));
 
-    match storage.agent_direct_exchange(room_id, 32).await {
-        Ok(Some(exchange)) => {
-            return evaluate_agent_dm(
+    let mut rooms = Vec::new();
+    let mut dm_actionable = false;
+    let mut dm_prompt_note = None;
+    for (room_id, batch) in batches {
+        let Some(up_to_sequence) = batch.iter().map(|notice| notice.sequence).max() else {
+            continue;
+        };
+        let direct_exchange = match storage.agent_direct_exchange(room_id, 32).await {
+            Ok(exchange) => exchange,
+            Err(error) => {
+                eprintln!("failed to inspect direct room {room_id}: {error}");
+                None
+            }
+        };
+        if let Some(exchange) = direct_exchange {
+            let must_probe = batch
+                .iter()
+                .any(|notice| should_probe_agent_dm(notice.sequence));
+            let verdict = evaluate_agent_dm(
                 storage,
                 triage,
                 AgentDmEvaluation {
@@ -79,7 +100,7 @@ pub async fn evaluate(
                     agent: &agent,
                     room_id,
                     up_to_sequence,
-                    must_probe: must_probe_dm,
+                    must_probe,
                     messages: &exchange
                         .into_iter()
                         .map(|message| TriageMessage {
@@ -92,9 +113,32 @@ pub async fn evaluate(
                 },
             )
             .await;
+            if verdict.actionable {
+                dm_actionable = true;
+                dm_prompt_note = dm_prompt_note.or(verdict.prompt_note);
+            }
+            continue;
         }
-        Ok(None) => {}
-        Err(error) => eprintln!("failed to inspect direct room {room_id}: {error}"),
+        rooms.push(TriageRoom {
+            room_id: room_id.clone(),
+            kind: "group".to_string(),
+            messages: batch
+                .iter()
+                .map(|notice| TriageMessage {
+                    author_id: notice.author_id.clone(),
+                    sequence: notice.sequence,
+                    body: notice.body.clone(),
+                })
+                .collect(),
+            active_teammates: triage_active_teammates(human_waiting, active_teammates.get(room_id)),
+        });
+    }
+
+    if rooms.is_empty() {
+        return WakeTriage {
+            actionable: dm_actionable,
+            prompt_note: dm_prompt_note,
+        };
     }
 
     let started = std::time::Instant::now();
@@ -105,9 +149,7 @@ pub async fn evaluate(
                     settings,
                     TriageContext {
                         agent: &agent,
-                        room_id,
-                        messages: &messages,
-                        active_teammates: triage_active_teammates(human_waiting, active_teammates),
+                        rooms: &rooms,
                     },
                 )
                 .await
@@ -147,35 +189,54 @@ pub async fn evaluate(
                 )
             }
         };
-    record(
-        storage,
-        agent_id,
-        room_id,
-        up_to_sequence,
-        actionable,
-        response_mode,
-        source,
-        reason.as_deref(),
-        prompt_note.as_deref(),
-        settings.as_ref().map(|value| value.provider_id.as_str()),
-        settings.as_ref().map(|value| value.model_id.as_str()),
-        input_tokens,
-        output_tokens,
-        started,
-        observations,
-    )
-    .await;
+    // One decision, but a record per room: collab_triages stays keyed by
+    // (agent, room, up_to_seq) so the log drawer can still answer "what was
+    // decided about this room, up to which message".
+    for room in &rooms {
+        let up_to_sequence = room
+            .messages
+            .iter()
+            .map(|message| message.sequence)
+            .max()
+            .unwrap_or_default();
+        record(
+            storage,
+            agent_id,
+            &room.room_id,
+            up_to_sequence,
+            actionable,
+            response_mode,
+            source,
+            reason.as_deref(),
+            prompt_note.as_deref(),
+            settings.as_ref().map(|value| value.provider_id.as_str()),
+            settings.as_ref().map(|value| value.model_id.as_str()),
+            input_tokens,
+            output_tokens,
+            started,
+            observations,
+        )
+        .await;
+    }
     WakeTriage {
-        actionable,
-        prompt_note,
+        actionable: actionable || dm_actionable,
+        prompt_note: prompt_note.or(dm_prompt_note),
     }
 }
 
+/// The "who else is awake" signal, or nothing at all while a human waits.
+///
+/// Returning `None` must be indistinguishable from having no busy teammates:
+/// the triage prompt then carries no `activeTeammates` key and reads exactly as
+/// it did before the signal existed.
 fn triage_active_teammates(
     human_waiting: bool,
-    active_teammates: &HashSet<String>,
-) -> Option<&HashSet<String>> {
-    (!human_waiting && !active_teammates.is_empty()).then_some(active_teammates)
+    active_teammates: Option<&HashSet<String>>,
+) -> Option<HashSet<String>> {
+    if human_waiting {
+        return None;
+    }
+    active_teammates.filter(|set| !set.is_empty()).cloned()
 }
 
 struct AgentDmEvaluation<'a> {
@@ -331,7 +392,11 @@ async fn record(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, str::FromStr, sync::Arc};
+    use std::{
+        collections::{HashMap, HashSet},
+        str::FromStr,
+        sync::Arc,
+    };
 
     use axum::{
         Json, Router,
@@ -357,12 +422,16 @@ mod tests {
     #[test]
     fn active_teammates_are_completely_hidden_while_a_human_waits() {
         let active = HashSet::from(["alice".to_string(), "bob".to_string()]);
-        assert_eq!(super::triage_active_teammates(true, &active), None);
+        assert_eq!(super::triage_active_teammates(true, Some(&active)), None);
         assert_eq!(
-            super::triage_active_teammates(false, &active),
-            Some(&active)
+            super::triage_active_teammates(false, Some(&active)),
+            Some(active.clone())
         );
-        assert_eq!(super::triage_active_teammates(false, &HashSet::new()), None);
+        assert_eq!(
+            super::triage_active_teammates(false, Some(&HashSet::new())),
+            None
+        );
+        assert_eq!(super::triage_active_teammates(false, None), None);
     }
 
     #[derive(Clone, Default)]
@@ -486,14 +555,16 @@ mod tests {
             &storage,
             &triage,
             "bob",
-            &room.id,
-            &[MessageNotice {
-                room_id: room.id.clone(),
-                author_id: "alice".to_string(),
-                body: "loop step 7".to_string(),
-                sequence: 7,
-            }],
-            &HashSet::new(),
+            &HashMap::from([(
+                room.id.clone(),
+                vec![MessageNotice {
+                    room_id: room.id.clone(),
+                    author_id: "alice".to_string(),
+                    body: "loop step 7".to_string(),
+                    sequence: 7,
+                }],
+            )]),
+            &HashMap::new(),
             &observations,
         )
         .await;
@@ -512,14 +583,16 @@ mod tests {
             &storage,
             &triage,
             "bob",
-            &room.id,
-            &[MessageNotice {
-                room_id: room.id.clone(),
-                author_id: "alice".to_string(),
-                body: "loop step 8".to_string(),
-                sequence: 8,
-            }],
-            &HashSet::new(),
+            &HashMap::from([(
+                room.id.clone(),
+                vec![MessageNotice {
+                    room_id: room.id.clone(),
+                    author_id: "alice".to_string(),
+                    body: "loop step 8".to_string(),
+                    sequence: 8,
+                }],
+            )]),
+            &HashMap::new(),
             &observations,
         )
         .await;

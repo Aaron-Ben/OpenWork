@@ -85,6 +85,15 @@ fn render_agents_md(agent: &Agent) -> String {
          `openwork_inbox`; a response counts only after `openwork_reply` succeeds. \
          The daemon binds your identity from the MCP token, so never claim another identity. \
          Stay inside this home directory unless the user explicitly approves access.\n\n\
+         ## One inbox, several rooms\n\n\
+         A wake can cover more than one room. Each entry under `rooms` carries its own \
+         `roomId`, roster, and unread messages; always name the room you mean, with \
+         `openwork_reply(room_id=...)`.\n\n\
+         Close out every room you were shown. `openwork_reply`, `openwork_react`, and \
+         `openwork_card` close the room they act on; `openwork_ack(room_id=...)` closes one \
+         you have read and are deliberately not answering. A room you neither answer nor \
+         ack stays unread and will be brought back to you — so ack is how you say \
+         'nothing from me here', not something to skip.\n\n\
          ## Addressing teammates\n\n\
          Each wake delivers a roster of the current room members. Address and mention \
          teammates by their roster `id` (for example `alice`), never by display name: \
@@ -155,6 +164,16 @@ mod tests {
         // membership. Member display names or JSON keys must not appear.
         assert!(!rendered.contains("displayName"));
         assert!(!rendered.contains("\"members\""));
+    }
+
+    #[test]
+    fn teaches_that_every_shown_room_must_be_closed_out() {
+        let rendered = render_agents_md(&agent());
+        assert!(rendered.contains("openwork_ack(room_id=...)"));
+        assert!(rendered.contains("openwork_reply(room_id=...)"));
+        // An unsettled room coming back is the reason ack exists; if the prompt
+        // does not say so, the model reads ack as optional bookkeeping.
+        assert!(rendered.contains("stays unread"));
     }
 
     #[test]

@@ -461,6 +461,16 @@ impl CollabStorage {
         Ok(())
     }
 
+    /// Room a message belongs to, for callers that only hold a message id.
+    pub async fn message_room(&self, message_id: &str) -> Result<Option<String>, StorageError> {
+        Ok(
+            sqlx::query_scalar::<_, String>("SELECT room_id FROM collab_messages WHERE id = $1")
+                .bind(message_id)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
+    }
+
     pub async fn is_member(
         &self,
         room_id: &str,

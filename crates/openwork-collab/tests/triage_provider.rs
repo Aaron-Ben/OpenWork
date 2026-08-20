@@ -10,7 +10,9 @@ use axum::{
 use openwork_collab::{
     model::{AgendaCandidate, AgendaCard, AgentInput, TriageSettings},
     storage::CollabStorage,
-    triage::{AgendaTriageContext, DmLoopContext, TriageClient, TriageContext, TriageMessage},
+    triage::{
+        AgendaTriageContext, DmLoopContext, TriageClient, TriageContext, TriageMessage, TriageRoom,
+    },
 };
 use openwork_credentials::{ApiKeyCipher, PostgresCredentialStore, ProviderCredentialInput};
 use serde_json::{Value, json};
@@ -143,9 +145,12 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
             &settings,
             TriageContext {
                 agent: &agent,
-                room_id: "general",
-                messages: &messages,
-                active_teammates: Some(&HashSet::from(["bob".to_string()])),
+                rooms: &[TriageRoom {
+                    room_id: "general".to_string(),
+                    kind: "group".to_string(),
+                    messages: messages.clone(),
+                    active_teammates: Some(HashSet::from(["bob".to_string()])),
+                }],
             },
         )
         .await

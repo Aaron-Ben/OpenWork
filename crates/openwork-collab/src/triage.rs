@@ -4,7 +4,8 @@ use thiserror::Error;
 mod client;
 
 pub use client::{
-    AgendaTriageContext, DmLoopContext, SupportDecision, TriageClient, TriageContext, TriageMessage,
+    AgendaTriageContext, DmLoopContext, SupportDecision, TriageClient, TriageContext,
+    TriageMessage, TriageRoom,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -23,20 +23,43 @@ const MAX_SILENT_ASSISTANT_CHARS: usize = 8;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RunEvidence {
-    acted: bool,
+    acted_rooms: HashSet<String>,
+    acked_rooms: HashSet<String>,
     assistant_message_ids: HashSet<String>,
     text_parts: HashMap<String, usize>,
 }
 
 impl RunEvidence {
     pub fn outcome(&self) -> RunOutcome {
-        if self.acted {
+        if !self.acted_rooms.is_empty() {
             RunOutcome::Acted
         } else if self.text_parts.values().sum::<usize>() > MAX_SILENT_ASSISTANT_CHARS {
             RunOutcome::Unpublished
         } else {
             RunOutcome::Silent
         }
+    }
+
+    /// Rooms whose delivered batch this run finished with: either it published
+    /// something there, or it explicitly stood down with `ack`.
+    ///
+    /// This is the only thing that may advance a read cursor. A room the engine
+    /// was shown but never closed out stays unread on purpose — the whole point
+    /// of per-room settlement is that a turn focused elsewhere cannot silently
+    /// mark it handled.
+    pub fn settled_rooms(&self) -> impl Iterator<Item = &str> {
+        self.acted_rooms
+            .iter()
+            .chain(self.acked_rooms.iter())
+            .map(String::as_str)
+    }
+
+    pub fn acted_rooms(&self) -> &HashSet<String> {
+        &self.acted_rooms
+    }
+
+    pub fn acked_rooms(&self) -> &HashSet<String> {
+        &self.acked_rooms
     }
 }
 
@@ -266,7 +289,24 @@ impl ObservationSink {
         }
     }
 
-    pub fn mark_action(&self, agent_id: &str) {
+    /// Record that the Agent published something into `room_id` this run.
+    pub fn mark_action(&self, agent_id: &str, room_id: &str) {
+        self.with_active_evidence(agent_id, |evidence| {
+            evidence.acted_rooms.insert(room_id.to_string());
+        });
+    }
+
+    /// Record that the Agent explicitly stood down on `room_id` this run.
+    ///
+    /// Standing down is not acting: it settles the room's delivery without
+    /// counting as a response, so an ack-only turn still reports `silent`.
+    pub fn mark_ack(&self, agent_id: &str, room_id: &str) {
+        self.with_active_evidence(agent_id, |evidence| {
+            evidence.acked_rooms.insert(room_id.to_string());
+        });
+    }
+
+    fn with_active_evidence(&self, agent_id: &str, apply: impl FnOnce(&mut RunEvidence)) {
         let Some(run_id) = self
             .active_runs
             .read()
@@ -276,7 +316,7 @@ impl ObservationSink {
             return;
         };
         if let Ok(mut evidence) = self.run_evidence.write() {
-            evidence.entry(run_id).or_default().acted = true;
+            apply(evidence.entry(run_id).or_default());
         }
     }
 

@@ -24,12 +24,21 @@ pub struct TriageMessage {
     pub body: String,
 }
 
+/// One room's share of a whole-inbox triage decision.
+#[derive(Debug)]
+pub struct TriageRoom {
+    pub room_id: String,
+    pub kind: String,
+    pub messages: Vec<TriageMessage>,
+    /// Teammates already running a turn covering this room. Unordered, and
+    /// suppressed entirely while a human is waiting (see `wake_triage`).
+    pub active_teammates: Option<HashSet<String>>,
+}
+
 #[derive(Debug)]
 pub struct TriageContext<'a> {
     pub agent: &'a Agent,
-    pub room_id: &'a str,
-    pub messages: &'a [TriageMessage],
-    pub active_teammates: Option<&'a HashSet<String>>,
+    pub rooms: &'a [TriageRoom],
 }
 
 #[derive(Debug)]
@@ -78,13 +87,35 @@ impl TriageClient {
         settings: &TriageSettings,
         context: TriageContext<'_>,
     ) -> Result<SupportDecision, TriageClientError> {
-        let mut prompt = json!({
-            "task": "Decide whether this candidate Agent should wake for the new room messages. Speaking, reacting, or carrying out another requested action are all actionable; an explicitly requested reaction is actionable even when no prose reply is needed. Return only the required JSON object. Do not choose an Agent by responseMode; judge only whether this candidate has something useful to contribute or do. When an activeTeammates object is present, those teammates are already running a turn on this same room; it is an unordered set and carries no turn order. Treat it as evidence that the room is already being handled: answer actionable=false unless this candidate would add something they cannot. When the key is absent, judge the messages on their own and do not speculate about who else may be awake.",
+        let rooms = context
+            .rooms
+            .iter()
+            .map(|room| {
+                let mut entry = Map::new();
+                entry.insert("roomId".to_string(), json!(room.room_id));
+                entry.insert("kind".to_string(), json!(room.kind));
+                entry.insert("newMessages".to_string(), json!(room.messages));
+                if let Some(active) = room.active_teammates.as_ref().filter(|set| !set.is_empty()) {
+                    entry.insert(
+                        "activeTeammates".to_string(),
+                        Value::Object(
+                            active
+                                .iter()
+                                .map(|agent_id| (agent_id.clone(), Value::Bool(true)))
+                                .collect::<Map<String, Value>>(),
+                        ),
+                    );
+                }
+                Value::Object(entry)
+            })
+            .collect::<Vec<_>>();
+        let prompt = json!({
+            "task": "Decide whether this candidate Agent should wake for its inbox. You are judging the WHOLE inbox at once, not one room: answer actionable=true if ANY room below deserves this candidate's attention. Speaking, reacting, or carrying out another requested action are all actionable; an explicitly requested reaction is actionable even when no prose reply is needed. Where a room carries an activeTeammates object, those teammates are already running a turn on that room; it is an unordered set and carries no turn order. Treat it as evidence that the room is already being handled, and do not count that room toward actionable unless this candidate would add something they cannot. A room without that key says nothing about who else is awake — judge it on its messages alone and do not speculate. Return only the required JSON object. Do not choose an Agent by responseMode; judge only whether this candidate has something useful to contribute or do.",
             "requiredShape": {
                 "actionable": "boolean",
                 "responseMode": "me|each|one-of-us",
                 "reason": "short string",
-                "promptNote": "short instruction for the candidate's main reasoning"
+                "promptNote": "short instruction naming which rooms deserve the candidate's attention"
             },
             "candidate": {
                 "id": context.agent.id,
@@ -93,19 +124,8 @@ impl TriageClient {
                 "bio": context.agent.bio,
                 "systemPrompt": context.agent.system_prompt,
             },
-            "roomId": context.room_id,
-            "newMessages": context.messages,
+            "rooms": rooms,
         });
-        if let Some(active_teammates) = context.active_teammates.filter(|set| !set.is_empty()) {
-            let set = active_teammates
-                .iter()
-                .map(|agent_id| (agent_id.clone(), Value::Bool(true)))
-                .collect::<Map<String, Value>>();
-            prompt
-                .as_object_mut()
-                .expect("triage prompt is an object")
-                .insert("activeTeammates".to_string(), Value::Object(set));
-        }
         self.invoke_decision(settings, "triage", prompt).await
     }
 
