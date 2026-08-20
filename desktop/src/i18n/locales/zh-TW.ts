@@ -267,6 +267,7 @@ export const zhTW = {
       title: '房間', create: '新增房間', name: '房間名稱', empty: '還沒有房間',
       messages: '訊息', older: '載入更早訊息', newer: '載入更新訊息', loading: '正在載入…',
       messagePlaceholder: '發訊息，用 @ 點名同事', send: '發送', members: '同事名冊', addMember: '加入房間',
+      muteRoom: '不計入未讀總數', unmuteRoom: '計入未讀總數', muteAgent: '暫停 {{agent}} 的本房間喚醒', unmuteAgent: '恢復 {{agent}} 的本房間喚醒', agentWakePaused: '已暫停本房間喚醒', removeMember: '將 {{agent}} 移出房間',
       markRead: '標為已讀', noMessages: '還沒有訊息', user: '你', held: '{{agent}} 因隊友的新訊息讓位，正在重算。',
       agendaWake: 'Agenda 主動發起', scannerWake: 'Scanner 主動發起',
     },
@@ -300,6 +301,7 @@ export const zhTW = {
       actionable: '需要處理', notActionable: '無需處理',
       tokenSummary: 'Token：輸入 {{input}} · 快取 {{cached}} · 輸出 {{output}}',
       sources: { run: '執行', triage: 'Triage', event: '事件' },
+      outcomes: { acted: '已行動', silent: '主動靜默', unpublished: '正文未發佈', unknown: '未知' },
     },
   },
   tool: {

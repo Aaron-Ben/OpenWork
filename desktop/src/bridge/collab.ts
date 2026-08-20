@@ -34,6 +34,7 @@ export interface CollabRoomMember {
   displayName: string
   kind: 'user' | 'agent'
   enabled: boolean
+  muted: boolean
 }
 
 export interface CollabRoomSummary {
@@ -175,6 +176,10 @@ export const collabCommands = {
     invoke('collab_room_create', { title, id: id ?? null }),
   addMember: (roomId: string, participantId: string): Promise<unknown> =>
     invoke('collab_room_add_member', { roomId, participantId }),
+  removeMember: (roomId: string, participantId: string): Promise<unknown> =>
+    invoke('collab_room_remove_member', { roomId, participantId }),
+  setMuted: (roomId: string, participantId: string, muted: boolean): Promise<unknown> =>
+    invoke('collab_room_set_muted', { roomId, participantId, muted }),
   sendMessage: (roomId: string, body: string): Promise<unknown> =>
     invoke('collab_message_send', { roomId, body }),
   messagePage: (

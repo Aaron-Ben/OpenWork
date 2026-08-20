@@ -102,6 +102,7 @@ pub struct RoomMember {
     pub display_name: String,
     pub kind: String,
     pub enabled: bool,
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +180,25 @@ pub enum AgentReplyOutcome {
 pub struct Inbox {
     pub messages: Vec<Message>,
     pub unread_count: u64,
+    pub omitted_count: u64,
+    pub omission_notice: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcome {
+    Acted,
+    Silent,
+    Unpublished,
+}
+
+impl RunOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Acted => "acted",
+            Self::Silent => "silent",
+            Self::Unpublished => "unpublished",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

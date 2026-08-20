@@ -1,5 +1,6 @@
 use openwork_collab::{
-    observation::{EngineObservation, normalize_engine_observation},
+    model::RunOutcome,
+    observation::{EngineObservation, ObservationSink, normalize_engine_observation},
     opencode::GlobalEvent,
 };
 use serde_json::json;
@@ -10,6 +11,91 @@ fn event(payload: serde_json::Value) -> GlobalEvent {
         project: None,
         payload,
     }
+}
+
+#[test]
+fn run_outcomes_are_derived_from_action_calls_and_assistant_text() {
+    let acted = ObservationSink::discarding();
+    acted.set_active_run("alice", Some("run_acted"));
+    acted.mark_action("alice");
+    assert_eq!(
+        acted.take_run_evidence("run_acted").outcome(),
+        RunOutcome::Acted
+    );
+
+    let silent = ObservationSink::discarding();
+    silent.set_active_run("alice", Some("run_silent"));
+    silent.observe_assistant_text(
+        "run_silent",
+        &event(json!({
+            "type": "message.updated",
+            "properties": {"info": {"id": "msg_assistant", "role": "assistant"}}
+        })),
+    );
+    silent.observe_assistant_text(
+        "run_silent",
+        &event(json!({
+            "type": "message.part.updated",
+            "properties": {"part": {
+                "id": "prt_1", "messageID": "msg_assistant", "type": "text", "text": "..."
+            }}
+        })),
+    );
+    assert_eq!(
+        silent.take_run_evidence("run_silent").outcome(),
+        RunOutcome::Silent
+    );
+
+    let unpublished = ObservationSink::discarding();
+    unpublished.set_active_run("alice", Some("run_unpublished"));
+    unpublished.observe_assistant_text(
+        "run_unpublished",
+        &event(json!({
+            "type": "message.updated",
+            "properties": {"info": {"id": "msg_assistant", "role": "assistant"}}
+        })),
+    );
+    let update = |text: &str| {
+        event(json!({
+            "type": "message.part.updated",
+            "properties": {"part": {
+                "id": "prt_1", "messageID": "msg_assistant", "type": "text", "text": text
+            }}
+        }))
+    };
+    unpublished.observe_assistant_text("run_unpublished", &update("这是一段"));
+    unpublished.observe_assistant_text(
+        "run_unpublished",
+        &update("这是一段没有通过 reply 工具发布的完整正文。"),
+    );
+    assert_eq!(
+        unpublished.take_run_evidence("run_unpublished").outcome(),
+        RunOutcome::Unpublished
+    );
+
+    let user_text = ObservationSink::discarding();
+    user_text.set_active_run("alice", Some("run_user_text"));
+    user_text.observe_assistant_text(
+        "run_user_text",
+        &event(json!({
+            "type": "message.updated",
+            "properties": {"info": {"id": "msg_user", "role": "user"}}
+        })),
+    );
+    user_text.observe_assistant_text(
+        "run_user_text",
+        &event(json!({
+            "type": "message.part.updated",
+            "properties": {"part": {
+                "id": "prt_user", "messageID": "msg_user", "type": "text",
+                "text": "这是很长的用户提示词，不应成为 Agent 的未发布正文。"
+            }}
+        })),
+    );
+    assert_eq!(
+        user_text.take_run_evidence("run_user_text").outcome(),
+        RunOutcome::Silent
+    );
 }
 
 #[test]

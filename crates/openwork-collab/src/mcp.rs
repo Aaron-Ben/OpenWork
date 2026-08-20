@@ -92,6 +92,12 @@ struct ReactRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct DmRequest {
+    #[schemars(description = "Participant id to open or reuse a direct room with")]
+    participant_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum CardAction {
     List,
@@ -148,6 +154,7 @@ impl CollaborationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<String, String> {
         let agent_id = self.authenticated_agent(&context)?;
+        self.observations.mark_action(&agent_id);
         if !self
             .storage
             .is_member(&request.room_id, &agent_id)
@@ -216,7 +223,7 @@ impl CollaborationMcp {
     }
 
     #[tool(
-        description = "Read all of your currently unread OpenWork room messages. This tool never advances the persisted read cursor."
+        description = "Read your bounded currently-unread OpenWork room digest. Reading is side-effect free; the daemon advances delivery only when a run settles successfully."
     )]
     async fn inbox(
         &self,
@@ -272,12 +279,35 @@ impl CollaborationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<String, String> {
         let agent_id = self.authenticated_agent(&context)?;
+        self.observations.mark_action(&agent_id);
         let reaction = self
             .storage
             .add_reaction(&request.message_id, &agent_id, &request.emoji)
             .await
             .map_err(|error| error.to_string())?;
         serde_json::to_string(&reaction).map_err(|error| error.to_string())
+    }
+
+    #[tool(
+        description = "Open or reuse a direct OpenWork room with one participant. Your own identity comes from the authenticated MCP connection."
+    )]
+    async fn dm(
+        &self,
+        Parameters(request): Parameters<DmRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<String, String> {
+        let agent_id = self.authenticated_agent(&context)?;
+        let room = self
+            .storage
+            .create_direct_room(&agent_id, &request.participant_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.events
+            .publish(CollabEventKind::RoomsChanged {
+                room_id: room.id.clone(),
+            })
+            .await;
+        serde_json::to_string(&room).map_err(|error| error.to_string())
     }
 
     #[tool(
@@ -289,6 +319,7 @@ impl CollaborationMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<String, String> {
         let agent_id = self.authenticated_agent(&context)?;
+        self.observations.mark_action(&agent_id);
         match request.action {
             CardAction::List => {
                 let room_id = required_parameter(request.room_id, "room_id", "list")?;
@@ -460,7 +491,7 @@ pub async fn start_server(
 
 #[cfg(test)]
 mod tests {
-    use super::{CardRequest, IdentityRegistry};
+    use super::{CardRequest, DmRequest, IdentityRegistry};
 
     #[test]
     fn issued_token_binds_one_agent_without_accepting_an_agent_parameter() {
@@ -478,5 +509,15 @@ mod tests {
             value.get("type").and_then(serde_json::Value::as_str),
             Some("object")
         );
+    }
+
+    #[test]
+    fn dm_tool_schema_accepts_only_the_other_participant() {
+        let schema = rmcp::schemars::schema_for!(DmRequest);
+        let value = serde_json::to_value(schema).unwrap();
+        let properties = value["properties"].as_object().unwrap();
+        assert!(properties.contains_key("participant_id"));
+        assert!(!properties.contains_key("agent_id"));
+        assert_eq!(properties.len(), 1);
     }
 }

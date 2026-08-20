@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     event::{CollabEventKind, CollabEventPublisher},
-    model::{ObservationInput, TriageRecord, TriageRecordInput},
+    model::{ObservationInput, RunOutcome, TriageRecord, TriageRecordInput},
     opencode::GlobalEvent,
     storage::{CollabStorage, StorageError},
 };
@@ -19,6 +19,26 @@ use crate::{
 const MAX_DETAIL_CHARS: usize = 2_000;
 const MAX_TRACKED_RUNS: usize = 1_024;
 const MAX_FINGERPRINTS_PER_RUN: usize = 512;
+const MAX_SILENT_ASSISTANT_CHARS: usize = 8;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunEvidence {
+    acted: bool,
+    assistant_message_ids: HashSet<String>,
+    text_parts: HashMap<String, usize>,
+}
+
+impl RunEvidence {
+    pub fn outcome(&self) -> RunOutcome {
+        if self.acted {
+            RunOutcome::Acted
+        } else if self.text_parts.values().sum::<usize>() > MAX_SILENT_ASSISTANT_CHARS {
+            RunOutcome::Unpublished
+        } else {
+            RunOutcome::Silent
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TokenUsage {
@@ -202,6 +222,7 @@ impl OwnedObservation {
 pub struct ObservationSink {
     sender: Option<mpsc::Sender<OwnedObservation>>,
     active_runs: Arc<RwLock<HashMap<String, String>>>,
+    run_evidence: Arc<RwLock<HashMap<String, RunEvidence>>>,
 }
 
 impl ObservationSink {
@@ -223,6 +244,7 @@ impl ObservationSink {
         Self {
             sender: None,
             active_runs: Arc::default(),
+            run_evidence: Arc::default(),
         }
     }
 
@@ -234,11 +256,97 @@ impl ObservationSink {
         match run_id {
             Some(run_id) => {
                 active_runs.insert(agent_id.to_string(), run_id.to_string());
+                if let Ok(mut evidence) = self.run_evidence.write() {
+                    evidence.entry(run_id.to_string()).or_default();
+                }
             }
             None => {
                 active_runs.remove(agent_id);
             }
         }
+    }
+
+    pub fn mark_action(&self, agent_id: &str) {
+        let Some(run_id) = self
+            .active_runs
+            .read()
+            .ok()
+            .and_then(|runs| runs.get(agent_id).cloned())
+        else {
+            return;
+        };
+        if let Ok(mut evidence) = self.run_evidence.write() {
+            evidence.entry(run_id).or_default().acted = true;
+        }
+    }
+
+    pub fn observe_assistant_text(&self, run_id: &str, event: &GlobalEvent) {
+        if event.event_type() == Some("message.updated") {
+            let Some(info) = event.payload.pointer("/properties/info") else {
+                return;
+            };
+            if info.get("role").and_then(Value::as_str) != Some("assistant") {
+                return;
+            }
+            let Some(message_id) = info.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Ok(mut evidence) = self.run_evidence.write() {
+                evidence
+                    .entry(run_id.to_string())
+                    .or_default()
+                    .assistant_message_ids
+                    .insert(message_id.to_string());
+            }
+            return;
+        }
+        if event.event_type() != Some("message.part.updated") {
+            return;
+        }
+        let Some(part) = event.payload.pointer("/properties/part") else {
+            return;
+        };
+        if part.get("type").and_then(Value::as_str) != Some("text") {
+            return;
+        }
+        let Some(text) = part.get("text").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(message_id) = part
+            .get("messageID")
+            .or_else(|| part.get("messageId"))
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        let part_id = part
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let chars = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .count();
+        if let Ok(mut evidence) = self.run_evidence.write() {
+            let evidence = evidence.entry(run_id.to_string()).or_default();
+            if !evidence.assistant_message_ids.contains(message_id) {
+                return;
+            }
+            evidence
+                .text_parts
+                .entry(part_id)
+                .and_modify(|current| *current = (*current).max(chars))
+                .or_insert(chars);
+        }
+    }
+
+    pub fn take_run_evidence(&self, run_id: &str) -> RunEvidence {
+        self.run_evidence
+            .write()
+            .ok()
+            .and_then(|mut evidence| evidence.remove(run_id))
+            .unwrap_or_default()
     }
 }
 
@@ -257,6 +365,7 @@ pub fn start(
 ) -> (ObservationSink, ObservationHandle) {
     let (sender, mut receiver) = mpsc::channel::<OwnedObservation>(1_024);
     let active_runs = Arc::new(RwLock::new(HashMap::new()));
+    let run_evidence = Arc::new(RwLock::new(HashMap::new()));
     let task = tokio::spawn(async move {
         let mut run_usage = HashMap::<String, HashMap<String, TokenUsage>>::new();
         let mut run_fingerprints = HashMap::<String, HashSet<String>>::new();
@@ -341,6 +450,7 @@ pub fn start(
         ObservationSink {
             sender: Some(sender),
             active_runs,
+            run_evidence,
         },
         ObservationHandle(task),
     )

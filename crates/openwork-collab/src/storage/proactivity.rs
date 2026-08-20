@@ -51,12 +51,13 @@ impl CollabStorage {
         .await?;
         for member in members {
             sqlx::query(
-                "INSERT INTO collab_room_members (room_id, participant_id)
-                 VALUES ($1, $2)
+                "INSERT INTO collab_room_members (room_id, participant_id, last_read_seq)
+                 VALUES ($1, $2, $3)
                  ON CONFLICT (room_id, participant_id) DO NOTHING",
             )
             .bind(&row.id)
             .bind(member)
+            .bind(row.next_seq)
             .execute(&mut *transaction)
             .await?;
         }

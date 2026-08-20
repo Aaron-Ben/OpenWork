@@ -103,7 +103,7 @@ export function AgentManager() {
               <input type="checkbox" className="mt-0.5 size-4 accent-clay" checked={form.scannerEnabled} onChange={(event) => patch({ scannerEnabled: event.target.checked })} />
               <span className="grid gap-0.5"><strong>{t('collab.agents.scanner')}</strong><span className="text-xs text-ink-faint">{t('collab.agents.scannerHint')}</span></span>
             </label>
-            <Field label={t('collab.agents.prompt')}><Textarea required rows={5} value={form.systemPrompt} onChange={(event) => patch({ systemPrompt: event.target.value })} /></Field>
+            <Field label={t('collab.agents.prompt')}><Textarea rows={5} value={form.systemPrompt} onChange={(event) => patch({ systemPrompt: event.target.value })} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label={t('collab.agents.provider')}><Input required value={form.providerId} onChange={(event) => patch({ providerId: event.target.value })} /></Field>
               <Field label={t('collab.agents.model')}><Input required value={form.modelId} onChange={(event) => patch({ modelId: event.target.value })} /></Field>

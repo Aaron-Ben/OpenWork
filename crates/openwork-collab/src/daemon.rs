@@ -198,6 +198,15 @@ pub enum IpcRequest {
         room_id: String,
         participant_id: String,
     },
+    RemoveMember {
+        room_id: String,
+        participant_id: String,
+    },
+    SetMuted {
+        room_id: String,
+        participant_id: String,
+        muted: bool,
+    },
     SendMessage {
         room_id: String,
         author_id: String,
@@ -452,15 +461,49 @@ async fn handle_request_inner(
             room_id,
             participant_id,
         } => {
-            context
+            let message = context
                 .storage
                 .add_member(&room_id, &participant_id)
+                .await?;
+            if let Some(message) = &message {
+                publish_room_message(context, message).await;
+            }
+            context
+                .events
+                .publish(CollabEventKind::RoomsChanged {
+                    room_id: room_id.clone(),
+                })
+                .await;
+            Ok(IpcResponse::success(json!({
+                "added": message.is_some(),
+                "message": message,
+            })))
+        }
+        IpcRequest::RemoveMember {
+            room_id,
+            participant_id,
+        } => {
+            let message = context
+                .storage
+                .remove_member(&room_id, &participant_id)
+                .await?;
+            publish_room_message(context, &message).await;
+            Ok(IpcResponse::success(message))
+        }
+        IpcRequest::SetMuted {
+            room_id,
+            participant_id,
+            muted,
+        } => {
+            context
+                .storage
+                .set_member_muted(&room_id, &participant_id, muted)
                 .await?;
             context
                 .events
                 .publish(CollabEventKind::RoomsChanged { room_id })
                 .await;
-            Ok(IpcResponse::success(json!({"added": true})))
+            Ok(IpcResponse::success(json!({"muted": muted})))
         }
         IpcRequest::SendMessage {
             room_id,
@@ -527,7 +570,7 @@ async fn handle_request_inner(
         } => {
             let sequence = context
                 .storage
-                .mark_user_read(&room_id, through_sequence)
+                .mark_read(&room_id, "user", through_sequence)
                 .await?;
             context
                 .events
@@ -687,6 +730,21 @@ async fn handle_request_inner(
             Ok(IpcResponse::success(mutation))
         }
     }
+}
+
+async fn publish_room_message(context: &DaemonContext, message: &crate::model::Message) {
+    let _ = context.notices.send(MessageNotice {
+        room_id: message.room_id.clone(),
+        author_id: message.author_id.clone(),
+        body: message.body.clone(),
+        sequence: message.sequence,
+    });
+    context
+        .events
+        .publish(CollabEventKind::RoomsChanged {
+            room_id: message.room_id.clone(),
+        })
+        .await;
 }
 
 pub async fn request(socket: &Path, request: &IpcRequest) -> Result<IpcResponse, DaemonError> {

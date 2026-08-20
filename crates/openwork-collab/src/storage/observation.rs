@@ -104,7 +104,7 @@ impl CollabStorage {
         for row in sqlx::query_as::<_, LogRunRow>(
             "SELECT id, agent_id, room_id, trigger, status, started_at, ended_at,
                     provider_id, model_id, input_tokens, cached_input_tokens,
-                    output_tokens, error_code, error_message
+                    output_tokens, error_code, error_message, outcome
                FROM collab_runs
               WHERE $1::TEXT IS NULL OR room_id = $1
               ORDER BY started_at DESC, id DESC LIMIT $2",
@@ -135,6 +135,7 @@ impl CollabStorage {
                         "outputTokens": row.output_tokens,
                         "errorCode": row.error_code,
                         "errorMessage": row.error_message,
+                        "outcome": row.outcome,
                     }),
                     created_at: format_china(row.started_at)?,
                 },
@@ -236,6 +237,7 @@ struct LogRunRow {
     output_tokens: Option<i64>,
     error_code: Option<String>,
     error_message: Option<String>,
+    outcome: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

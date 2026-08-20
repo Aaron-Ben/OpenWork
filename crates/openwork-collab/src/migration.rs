@@ -16,6 +16,9 @@ const P5_SQL: &str = include_str!("../migrations/202608190003_collab_p5.sql");
 const P6_VERSION: i64 = 202_608_190_004;
 const P6_DESCRIPTION: &str = "collab p6";
 const P6_SQL: &str = include_str!("../migrations/202608190004_collab_p6.sql");
+const FIXES_VERSION: i64 = 202_608_200_001;
+const FIXES_DESCRIPTION: &str = "collab fixes";
+const FIXES_SQL: &str = include_str!("../migrations/202608200001_collab_fixes.sql");
 
 pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
     let mut transaction = pool.begin().await?;
@@ -35,6 +38,7 @@ pub async fn migrate(pool: &PgPool) -> Result<(), MigrationError> {
         (P4_VERSION, P4_DESCRIPTION, P4_SQL),
         (P5_VERSION, P5_DESCRIPTION, P5_SQL),
         (P6_VERSION, P6_DESCRIPTION, P6_SQL),
+        (FIXES_VERSION, FIXES_DESCRIPTION, FIXES_SQL),
     ] {
         let applied: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM collab_schema_migrations WHERE version = $1)",
@@ -65,7 +69,7 @@ pub enum MigrationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{P1_SQL, P3_SQL, P4_SQL, P5_SQL, P6_SQL};
+    use super::{FIXES_SQL, P1_SQL, P3_SQL, P4_SQL, P5_SQL, P6_SQL};
 
     #[test]
     fn p1_schema_obeys_time_and_terminal_run_constraints() {
@@ -109,5 +113,14 @@ mod tests {
         assert!(P6_SQL.contains("AT TIME ZONE 'Asia/Shanghai'"));
         assert!(P6_SQL.contains("collab_events_payload_is_object"));
         assert!(!P6_SQL.contains("collab_events_kind_valid"));
+    }
+
+    #[test]
+    fn fixes_backfill_unknown_before_outcome_scope_is_added() {
+        let backfill = FIXES_SQL.find("SET outcome = 'unknown'").unwrap();
+        let constraint = FIXES_SQL.find("collab_runs_outcome_scope").unwrap();
+        assert!(backfill < constraint);
+        assert!(FIXES_SQL.contains("'acted', 'silent', 'unpublished', 'unknown'"));
+        assert!(!FIXES_SQL.contains("TIMESTAMP"));
     }
 }

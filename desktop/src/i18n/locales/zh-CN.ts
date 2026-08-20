@@ -336,6 +336,7 @@ export const zhCN = {
       title: '房间', create: '新建房间', name: '房间名称', empty: '还没有房间',
       messages: '消息', older: '加载更早消息', newer: '加载更新消息', loading: '正在加载…',
       messagePlaceholder: '发消息，用 @ 点名同事', send: '发送', members: '同事名册', addMember: '加入房间',
+      muteRoom: '不计入未读总数', unmuteRoom: '计入未读总数', muteAgent: '暂停 {{agent}} 的本房间唤醒', unmuteAgent: '恢复 {{agent}} 的本房间唤醒', agentWakePaused: '已暂停本房间唤醒', removeMember: '将 {{agent}} 移出房间',
       markRead: '标为已读', noMessages: '还没有消息', user: '你', held: '{{agent}} 因队友的新消息让位，正在重算。',
       agendaWake: 'Agenda 主动发起', scannerWake: 'Scanner 主动发起',
     },
@@ -369,6 +370,7 @@ export const zhCN = {
       actionable: '需要处理', notActionable: '无需处理',
       tokenSummary: 'Token：输入 {{input}} · 缓存 {{cached}} · 输出 {{output}}',
       sources: { run: '运行', triage: 'Triage', event: '事件' },
+      outcomes: { acted: '已行动', silent: '主动静默', unpublished: '正文未发布', unknown: '未知' },
     },
   },
   tool: {

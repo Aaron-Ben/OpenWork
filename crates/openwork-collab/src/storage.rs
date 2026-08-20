@@ -1,5 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
+use serde_json::json;
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
 use time::PrimitiveDateTime;
@@ -26,6 +27,7 @@ pub use gc::{CollabGcOutcome, CollabGcPolicy};
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://openwork:openwork@localhost:5432/openwork";
 pub const MESSAGE_DEDUP_WINDOW: Duration = Duration::from_secs(3);
+pub const INBOX_MESSAGE_LIMIT: i64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct CollabStorage {
@@ -288,7 +290,8 @@ impl CollabStorage {
         let mut summaries = Vec::with_capacity(rooms.len());
         for room in rooms {
             let members = sqlx::query_as::<_, RoomMemberRow>(
-                "SELECT p.id, p.display_name, p.kind, COALESCE(a.enabled, TRUE) AS enabled
+                "SELECT p.id, p.display_name, p.kind, COALESCE(a.enabled, TRUE) AS enabled,
+                        rm.muted
                    FROM collab_room_members rm
                    JOIN collab_participants p ON p.id = rm.participant_id
                    LEFT JOIN collab_agents a ON a.id = p.id
@@ -315,12 +318,10 @@ impl CollabStorage {
         Ok(summaries)
     }
 
-    /// Advances only the human user's persisted read cursor.
-    ///
-    /// Agent delivery uses its own unread cursor and must never call this method.
-    pub async fn mark_user_read(
+    pub async fn mark_read(
         &self,
         room_id: &str,
+        participant_id: &str,
         through_sequence: i64,
     ) -> Result<i64, StorageError> {
         if through_sequence < 0 {
@@ -332,32 +333,131 @@ impl CollabStorage {
             "UPDATE collab_room_members rm
                 SET last_read_seq = GREATEST(
                     rm.last_read_seq,
-                    LEAST($2, (SELECT next_seq FROM collab_rooms WHERE id = $1))
+                    LEAST($3, (SELECT next_seq FROM collab_rooms WHERE id = $1))
                 )
-              WHERE rm.room_id = $1 AND rm.participant_id = 'user'
+              WHERE rm.room_id = $1 AND rm.participant_id = $2
               RETURNING rm.last_read_seq",
         )
         .bind(room_id)
+        .bind(participant_id)
         .bind(through_sequence)
         .fetch_optional(&self.pool)
         .await?
-        .ok_or_else(|| StorageError::NotFound(format!("user membership in room {room_id}")))
+        .ok_or_else(|| {
+            StorageError::NotFound(format!(
+                "participant {participant_id} membership in room {room_id}"
+            ))
+        })
     }
 
     pub async fn add_member(
         &self,
         room_id: &str,
         participant_id: &str,
-    ) -> Result<(), StorageError> {
-        sqlx::query(
-            "INSERT INTO collab_room_members (room_id, participant_id)
-             VALUES ($1, $2)
+    ) -> Result<Option<Message>, StorageError> {
+        let mut transaction = self.pool.begin().await?;
+        let next_sequence = sqlx::query_scalar::<_, i64>(
+            "SELECT next_seq FROM collab_rooms WHERE id = $1 FOR UPDATE",
+        )
+        .bind(room_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or_else(|| StorageError::NotFound(format!("room {room_id}")))?;
+        let inserted = sqlx::query(
+            "INSERT INTO collab_room_members (room_id, participant_id, last_read_seq)
+             VALUES ($1, $2, $3)
              ON CONFLICT (room_id, participant_id) DO NOTHING",
         )
         .bind(room_id)
         .bind(participant_id)
+        .bind(next_sequence)
+        .execute(&mut *transaction)
+        .await?;
+        if inserted.rows_affected() == 0 {
+            transaction.rollback().await?;
+            return Ok(None);
+        }
+        let message = board::insert_system_message(
+            &mut transaction,
+            room_id,
+            "user",
+            &format!("{participant_id} joined the room"),
+            json!({
+                "type": "member_joined",
+                "participantId": participant_id,
+            }),
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(Some(message))
+    }
+
+    pub async fn remove_member(
+        &self,
+        room_id: &str,
+        participant_id: &str,
+    ) -> Result<Message, StorageError> {
+        let mut transaction = self.pool.begin().await?;
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_room_members
+                 WHERE room_id = $1 AND participant_id = $2
+             )",
+        )
+        .bind(room_id)
+        .bind(participant_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !exists {
+            transaction.rollback().await?;
+            return Err(StorageError::NotFound(format!(
+                "participant {participant_id} membership in room {room_id}"
+            )));
+        }
+        let message = board::insert_system_message(
+            &mut transaction,
+            room_id,
+            "user",
+            &format!("{participant_id} left the room"),
+            json!({
+                "type": "member_left",
+                "participantId": participant_id,
+            }),
+        )
+        .await?;
+        sqlx::query(
+            "DELETE FROM collab_room_members
+              WHERE room_id = $1 AND participant_id = $2",
+        )
+        .bind(room_id)
+        .bind(participant_id)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(message)
+    }
+
+    pub async fn set_member_muted(
+        &self,
+        room_id: &str,
+        participant_id: &str,
+        muted: bool,
+    ) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            "UPDATE collab_room_members
+                SET muted = $3
+              WHERE room_id = $1 AND participant_id = $2",
+        )
+        .bind(room_id)
+        .bind(participant_id)
+        .bind(muted)
         .execute(&self.pool)
         .await?;
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound(format!(
+                "participant {participant_id} membership in room {room_id}"
+            )));
+        }
         Ok(())
     }
 
@@ -560,6 +660,20 @@ impl CollabStorage {
         })
     }
 
+    /// Delivers the OLDEST unread messages, never the newest.
+    ///
+    /// The direction is load-bearing, not a preference. The caller advances
+    /// `last_read_seq` to the highest sequence it delivered per room, so the
+    /// delivered set must be a contiguous prefix of each room's unread tail —
+    /// otherwise anything the limit dropped ends up below the cursor and
+    /// becomes permanently unreachable (`inbox` only ever returns
+    /// `sequence > last_read_seq`, and `glance` looks back a bounded window).
+    ///
+    /// Ordering by `created_at` ascending gives that prefix for free: messages
+    /// within one room are themselves time-ordered, so restricting a global
+    /// time-ordered prefix to a single room yields that room's prefix.
+    /// Delivering the newest instead would silently drop the backlog on the
+    /// first wake after a long silence — exactly when the backlog matters.
     pub async fn inbox(&self, participant_id: &str) -> Result<Inbox, StorageError> {
         let records = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.room_id, m.sequence, m.author_id, m.kind, m.body,
@@ -568,27 +682,43 @@ impl CollabStorage {
                JOIN collab_messages m ON m.room_id = rm.room_id
               WHERE rm.participant_id = $1
                 AND m.sequence > rm.last_read_seq
-              ORDER BY m.created_at, m.room_id, m.sequence",
+              ORDER BY m.created_at, m.room_id, m.sequence
+              LIMIT $2",
         )
         .bind(participant_id)
+        .bind(INBOX_MESSAGE_LIMIT)
         .fetch_all(&self.pool)
         .await?;
         let messages = records_to_messages(records)?;
-        let unread = sqlx::query_as::<_, UnreadRow>(
-            "SELECT rm.last_read_seq, r.next_seq
+        // Counted, not derived from `next_seq - last_read_seq`, because this
+        // number is compared against the delivered message count below. The
+        // two agree while messages are never deleted (collab GC only touches
+        // events and triages); if message GC is ever added, `room_summaries`
+        // needs the same treatment or the two will drift.
+        let unread_count = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*)::BIGINT
                FROM collab_room_members rm
-               JOIN collab_rooms r ON r.id = rm.room_id
-              WHERE rm.participant_id = $1",
+               JOIN collab_messages m ON m.room_id = rm.room_id
+              WHERE rm.participant_id = $1
+                AND m.sequence > rm.last_read_seq",
         )
         .bind(participant_id)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .map(|row| unread_count(row.last_read_seq, row.next_seq))
-        .sum();
+        .fetch_one(&self.pool)
+        .await?;
+        let unread_count = u64::try_from(unread_count).map_err(|_| {
+            StorageError::InvalidInput("unread count exceeded the supported range".to_string())
+        })?;
+        let omitted_count = unread_count.saturating_sub(messages.len() as u64);
         Ok(Inbox {
             messages,
-            unread_count: unread,
+            unread_count,
+            omitted_count,
+            omission_notice: (omitted_count > 0).then(|| {
+                format!(
+                    "{omitted_count} newer unread message(s) are not shown here; \
+                     they stay unread and arrive in a later turn."
+                )
+            }),
         })
     }
 
@@ -619,6 +749,7 @@ impl CollabStorage {
         &self,
         run_id: &str,
         status: &str,
+        outcome: Option<&str>,
         error: Option<(&str, &str)>,
     ) -> Result<(), StorageError> {
         if !matches!(status, "completed" | "failed" | "cancelled" | "interrupted") {
@@ -626,17 +757,28 @@ impl CollabStorage {
                 "invalid terminal run status: {status}"
             )));
         }
+        let outcome_is_valid = match status {
+            "completed" => matches!(outcome, Some("acted" | "silent" | "unpublished")),
+            _ => outcome.is_none(),
+        };
+        if !outcome_is_valid {
+            return Err(StorageError::InvalidInput(format!(
+                "invalid outcome {outcome:?} for terminal run status {status}"
+            )));
+        }
         let (error_code, error_message) = error.unzip();
         sqlx::query(
             "UPDATE collab_runs
                 SET status = $2,
                     ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
-                    error_code = $3,
-                    error_message = $4
+                    outcome = $3,
+                    error_code = $4,
+                    error_message = $5
               WHERE id = $1 AND status = 'running'",
         )
         .bind(run_id)
         .bind(status)
+        .bind(outcome)
         .bind(error_code)
         .bind(error_message)
         .execute(&self.pool)
@@ -648,7 +790,6 @@ impl CollabStorage {
 fn validate_agent(input: &AgentInput) -> Result<(), StorageError> {
     for (field, value) in [
         ("display_name", input.display_name.as_str()),
-        ("system_prompt", input.system_prompt.as_str()),
         ("provider_id", input.provider_id.as_str()),
         ("model_id", input.model_id.as_str()),
     ] {
@@ -723,6 +864,7 @@ struct RoomMemberRow {
     display_name: String,
     kind: String,
     enabled: bool,
+    muted: bool,
 }
 
 impl RoomMemberRow {
@@ -732,6 +874,7 @@ impl RoomMemberRow {
             display_name: self.display_name,
             kind: self.kind,
             enabled: self.enabled,
+            muted: self.muted,
         }
     }
 }
@@ -772,12 +915,6 @@ impl MessageRow {
             created_at: format_china(self.created_at)?,
         })
     }
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct UnreadRow {
-    last_read_seq: i64,
-    next_seq: i64,
 }
 
 #[derive(Debug, Error)]

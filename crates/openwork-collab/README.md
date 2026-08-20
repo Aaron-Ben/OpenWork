@@ -287,9 +287,10 @@ an error is logged and retried on the next daily sweep without stopping the daem
 - On every daemon startup, `opencode.json` and `AGENTS.md` are overwritten from the database and the
   new process token/MCP address. `memory/MEMORY.md` is created only when missing and is never
   overwritten.
-- `openwork_glance` advances only the daemon's ten-minute in-memory seen cursor. It never updates
-  `collab_room_members.last_read_seq`; `openwork_inbox` therefore remains authoritative across
-  prompts and restarts. Missing or expired seen state fails open.
+- `openwork_glance` advances only the daemon's ten-minute in-memory seen cursor, and
+  `openwork_inbox` is read-only. The scheduler advances an Agent's persisted read cursor only when
+  a completed run settles; messages added by in-run injection remain unread for the rerun. Missing
+  or expired seen state fails open.
 - `openwork_reply` applies the HELD freshness gate only to rooms with more than two members. A HELD
   result includes new peer messages plus a 120-second confirmation token; after rereading, the same
   Agent recomputes and retries. `openwork_react` records agreement without publishing duplicate

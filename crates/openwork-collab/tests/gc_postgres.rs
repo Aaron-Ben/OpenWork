@@ -49,7 +49,7 @@ async fn gc_deletes_only_expired_events_and_triages_in_bounded_batches() {
         .await
         .unwrap();
     storage
-        .finish_run(&run_id, "completed", None)
+        .finish_run(&run_id, "completed", Some("silent"), None)
         .await
         .unwrap();
 
@@ -117,7 +117,7 @@ async fn gc_deletes_only_expired_events_and_triages_in_bounded_batches() {
     assert_eq!(event_ids, ["event-fresh"]);
     assert_eq!(triage_ids, ["triage-fresh"]);
     assert_eq!(
-        message_count, 1,
+        message_count, 3,
         "room history must never be garbage-collected"
     );
     assert_eq!(run_count, 1, "run retention is independent from P6 GC");

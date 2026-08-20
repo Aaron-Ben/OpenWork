@@ -14,6 +14,8 @@ interface RoomStoreState {
   fetchAll: () => Promise<void>
   create: (title: string) => Promise<void>
   addMember: (roomId: string, participantId: string) => Promise<void>
+  removeMember: (roomId: string, participantId: string) => Promise<void>
+  setMuted: (roomId: string, participantId: string, muted: boolean) => Promise<void>
   markRead: (roomId: string, throughSequence: number) => Promise<void>
 }
 
@@ -35,6 +37,14 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
   },
   addMember: async (roomId, participantId) => {
     await collabCommands.addMember(roomId, participantId)
+    await get().fetchAll()
+  },
+  removeMember: async (roomId, participantId) => {
+    await collabCommands.removeMember(roomId, participantId)
+    await get().fetchAll()
+  },
+  setMuted: async (roomId, participantId, muted) => {
+    await collabCommands.setMuted(roomId, participantId, muted)
     await get().fetchAll()
   },
   markRead: async (roomId, throughSequence) => {

@@ -272,6 +272,7 @@ export const enUS = {
       title: 'Rooms', create: 'New room', name: 'Room name', empty: 'No rooms yet',
       messages: 'Messages', older: 'Load older messages', newer: 'Load newer messages', loading: 'Loading…',
       messagePlaceholder: 'Message the room; use @ to name a teammate', send: 'Send', members: 'Teammates', addMember: 'Add to room',
+      muteRoom: 'Exclude room from unread total', unmuteRoom: 'Include room in unread total', muteAgent: 'Pause {{agent}} wake-ups in this room', unmuteAgent: 'Resume {{agent}} wake-ups in this room', agentWakePaused: 'Wake-ups paused in this room', removeMember: 'Remove {{agent}} from room',
       markRead: 'Mark read', noMessages: 'No messages yet', user: 'You', held: '{{agent}} yielded to a newer teammate message and is recomputing.',
       agendaWake: 'Started by agenda', scannerWake: 'Started by scanner',
     },
@@ -305,6 +306,7 @@ export const enUS = {
       actionable: 'Actionable', notActionable: 'Not actionable',
       tokenSummary: 'Tokens: input {{input}} · cached {{cached}} · output {{output}}',
       sources: { run: 'Run', triage: 'Triage', event: 'Event' },
+      outcomes: { acted: 'Acted', silent: 'Silent', unpublished: 'Unpublished', unknown: 'Unknown' },
     },
   },
   tool: {

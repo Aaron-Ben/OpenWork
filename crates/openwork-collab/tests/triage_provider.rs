@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{collections::HashSet, str::FromStr, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -145,6 +145,7 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
                 agent: &agent,
                 room_id: "general",
                 messages: &messages,
+                active_teammates: Some(&HashSet::from(["bob".to_string()])),
             },
         )
         .await
@@ -155,6 +156,8 @@ async fn triage_uses_the_configured_openwork_provider_api_and_records_usage_shap
     let (authorization, request) = captured.0.lock().await.clone().unwrap();
     assert_eq!(authorization, "Bearer support-secret");
     assert_eq!(request["model"], "cheap-model");
+    assert!(request.to_string().contains("activeTeammates"));
+    assert!(request.to_string().contains("\\\"bob\\\":true"));
     assert!(
         request
             .to_string()

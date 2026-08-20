@@ -39,6 +39,8 @@ pub fn run() {
             commands::collab::collab_room_list,
             commands::collab::collab_room_create,
             commands::collab::collab_room_add_member,
+            commands::collab::collab_room_remove_member,
+            commands::collab::collab_room_set_muted,
             commands::collab::collab_message_send,
             commands::collab::collab_message_page,
             commands::collab::collab_room_mark_read,

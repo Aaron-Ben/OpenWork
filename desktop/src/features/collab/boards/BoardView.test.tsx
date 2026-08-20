@@ -8,8 +8,8 @@ const room: CollabRoomSummary = {
   id: 'general', kind: 'group', title: 'General', nextSequence: 0,
   lastReadSequence: 0, unreadCount: 0, muted: false,
   members: [
-    { id: 'user', displayName: 'You', kind: 'user', enabled: true },
-    { id: 'alice', displayName: 'Alice', kind: 'agent', enabled: true },
+    { id: 'user', displayName: 'You', kind: 'user', enabled: true, muted: false },
+    { id: 'alice', displayName: 'Alice', kind: 'agent', enabled: true, muted: false },
   ],
 }
 

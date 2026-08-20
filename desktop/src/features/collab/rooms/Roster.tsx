@@ -1,4 +1,4 @@
-import { Bot, ShieldAlert, UserRoundPlus } from 'lucide-react'
+import { Bell, BellOff, Bot, ShieldAlert, UserMinus, UserRoundPlus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { CollabAgent, CollabAgentActivity, CollabRoomSummary } from '@/bridge/collab'
@@ -11,6 +11,8 @@ export function Roster({ room, agents, open }: { room: CollabRoomSummary; agents
   const { t } = useTranslation()
   const pending = usePermissionStore((state) => state.pending)
   const addMember = useRoomStore((state) => state.addMember)
+  const removeMember = useRoomStore((state) => state.removeMember)
+  const setMuted = useRoomStore((state) => state.setMuted)
   const memberIds = new Set(room.members.map((member) => member.id))
   const available = agents.filter((agent) => agent.enabled && !memberIds.has(agent.id))
   const roster = room.members.filter((member) => member.kind === 'agent' && member.enabled)
@@ -49,8 +51,31 @@ export function Roster({ room, agents, open }: { room: CollabRoomSummary; agents
               <span className={`grid size-8 place-items-center rounded-full ${waiting ? 'bg-red-100 text-red-700' : 'bg-clay/10 text-clay'}`}><Bot size={16} /></span>
               <span className="min-w-0 flex-1">
                 <strong className="block truncate text-sm">{member.displayName}</strong>
-                <span className={`block truncate text-xs ${waiting ? 'text-red-700' : 'text-ink-faint'}`}>{waiting ? t('collab.agents.waitingApproval') : activityText}</span>
+                <span className={`block truncate text-xs ${waiting ? 'text-red-700' : 'text-ink-faint'}`}>
+                  {waiting ? t('collab.agents.waitingApproval') : member.muted ? t('collab.rooms.agentWakePaused') : activityText}
+                </span>
               </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                aria-label={t(member.muted ? 'collab.rooms.unmuteAgent' : 'collab.rooms.muteAgent', { agent: member.displayName })}
+                title={t(member.muted ? 'collab.rooms.unmuteAgent' : 'collab.rooms.muteAgent', { agent: member.displayName })}
+                onClick={() => void setMuted(room.id, member.id, !member.muted)}
+              >
+                {member.muted ? <BellOff size={14} /> : <Bell size={14} />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                aria-label={t('collab.rooms.removeMember', { agent: member.displayName })}
+                onClick={() => void removeMember(room.id, member.id)}
+              >
+                <UserMinus size={14} />
+              </Button>
             </div>
           )
         })}

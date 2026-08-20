@@ -243,11 +243,22 @@ CREATE TABLE collab_runs (
     rate_limit_percent  DOUBLE PRECISION,
     error_code          TEXT,
     error_message       TEXT,
+    outcome             TEXT,
     CONSTRAINT collab_runs_trigger_valid CHECK (
         trigger IN ('message', 'rerun', 'idle', 'agenda', 'scanner', 'user')
     ),
     CONSTRAINT collab_runs_status_valid CHECK (
         status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')
+    ),
+    CONSTRAINT collab_runs_outcome_valid CHECK (
+        outcome IS NULL OR outcome IN ('acted', 'silent', 'unpublished', 'unknown')
+    ),
+    -- outcome 只在 completed 上有意义：running 还没有结论；
+    -- failed / cancelled / interrupted 的那一轮没跑完，判不出它是主动闭嘴还是被打断。
+    -- 这条约束同时让"跑完了却没派生 outcome"成为不可能状态。
+    CONSTRAINT collab_runs_outcome_scope CHECK (
+        (status =  'completed' AND outcome IS NOT NULL) OR
+        (status <> 'completed' AND outcome IS     NULL)
     ),
     -- .claude/rules/database.md §1.3 的硬要求：终态必有 ended_at，运行中必无。
     CONSTRAINT collab_runs_terminal_time_valid CHECK (
@@ -262,6 +273,10 @@ CREATE INDEX idx_collab_runs_agent_started ON collab_runs(agent_id, started_at D
 ```
 
 **usage 落差量不落累计值。** 引擎报的是会话累计，每轮取差；直接存累计会让"这一轮花了多少"永远算不出来。
+
+**`outcome` 由 daemon 派生，不由 Agent 上报。** 语义与理由见 [collaboration.md §8.3](collaboration.md)：`acted` 调过工具，`silent` 无工具调用且正文近乎为空，`unpublished` 无工具调用却吐了大段正文。判据是 daemon 的一手事实——它既是全部 MCP 调用的接收方，也在消费事件流里的 assistant 正文——所以这一列不花任何 token。
+
+`unknown` 只出现在**本列加入之前**建的行上。加列的迁移必须把既有的 `status = 'completed'` 行回填成 `unknown` 再加 `collab_runs_outcome_scope`，否则约束在历史数据上直接失败；把它们编成 `acted` 或 `silent` 是凭空造事实——那些轮次当时没有记录判据，事后判不出来。新写入的行不允许 `unknown`。
 
 ```sql
 CREATE TABLE collab_triages (
@@ -391,5 +406,6 @@ daemon 启动时，除释放认领外还要把所有 `status = 'running'` 的 `c
 | **P3** | `collab_triages` `collab_reactions` |
 | **P4** | `collab_boards` `collab_board_columns` `collab_cards` |
 | **P6** | `collab_events` |
+| **修正项** | 不建新表；`collab_runs` 加 `outcome` 列（回填 + 两条 CHECK） |
 
 每个迁移必须能在**空库**上从头跑通，不依赖任何手工修复过的状态。

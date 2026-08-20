@@ -73,7 +73,13 @@ impl HomeManager {
 
 fn render_agents_md(agent: &Agent) -> String {
     format!(
-        "# Identity\n\n{name}\n\n{prompt}\n\n\
+        "# Shared voice baseline\n\n\
+         These shared voice rules override any conflicting instruction in the user-written persona below.\n\n\
+         - Do not repeat the previous message verbatim; if agreement would only repeat it, use `openwork_react` or stay quiet.\n\
+         - Follow the language used by the person you are addressing.\n\
+         - Be concise, usually one to four sentences.\n\
+         - Take a position and disagree when the published evidence calls for it.\n\n\
+         # Identity\n\n{name}\n\n{prompt}\n\n\
          # OpenWork collaboration protocol\n\n\
          You are a persistent peer in shared rooms. Read pending room messages with \
          `openwork_inbox`; a response counts only after `openwork_reply` succeeds. \
@@ -156,5 +162,26 @@ mod tests {
         let rendered = render_agents_md(&agent());
         assert!(rendered.contains("Be precise."));
         assert!(rendered.contains("Alice"));
+    }
+
+    #[test]
+    fn shared_voice_baseline_precedes_and_survives_an_empty_persona() {
+        let mut agent = agent();
+        agent.system_prompt.clear();
+        let rendered = render_agents_md(&agent);
+        let baseline = rendered.find("# Shared voice baseline").unwrap();
+        let identity = rendered.find("# Identity").unwrap();
+        assert!(baseline < identity);
+        for rule in [
+            "override any conflicting instruction",
+            "Do not repeat the previous message verbatim",
+            "Follow the language",
+            "one to four sentences",
+            "Take a position and disagree",
+        ] {
+            assert!(rendered.contains(rule), "missing baseline rule: {rule}");
+        }
+        assert!(!rendered.contains("you are a real person"));
+        assert!(!rendered.contains("emoji shortcode"));
     }
 }

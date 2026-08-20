@@ -122,9 +122,23 @@ async fn concurrent_card_claim_has_exactly_one_winner() {
         boards[0].columns[0].cards[0].claimed_by.as_deref(),
         Some(winner)
     );
-    let messages = storage.room_messages("general").await.unwrap();
+    let messages = storage
+        .room_messages("general")
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| {
+            matches!(
+                message
+                    .system_payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("type"))
+                    .and_then(serde_json::Value::as_str),
+                Some("card_created" | "card_claimed")
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(messages.len(), 2);
-    assert!(messages.iter().all(|message| message.kind == "system"));
     assert_eq!(
         messages[0]
             .system_payload
@@ -146,7 +160,7 @@ async fn concurrent_card_claim_has_exactly_one_winner() {
     let startup_release = storage.release_all_claims().await.unwrap();
     assert_eq!(startup_release.count, 1);
     assert_eq!(startup_release.room_ids, vec!["general"]);
-    assert_eq!(storage.room_messages("general").await.unwrap().len(), 2);
+    assert_eq!(storage.room_messages("general").await.unwrap().len(), 5);
     assert!(
         storage.boards("general").await.unwrap()[0].columns[0].cards[0]
             .claimed_by

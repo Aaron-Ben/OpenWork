@@ -61,7 +61,7 @@ async fn sideband_worker_persists_triage_and_deduplicated_message_usage() {
     ));
     sink.set_active_run("alice", None);
     storage
-        .finish_run(&run_id, "completed", None)
+        .finish_run(&run_id, "completed", Some("silent"), None)
         .await
         .unwrap();
 

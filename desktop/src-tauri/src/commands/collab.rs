@@ -91,6 +91,38 @@ pub async fn collab_room_add_member(
 }
 
 #[tauri::command]
+pub async fn collab_room_remove_member(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    participant_id: String,
+) -> Result<Value, CommandError> {
+    client
+        .call(&IpcRequest::RemoveMember {
+            room_id,
+            participant_id,
+        })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn collab_room_set_muted(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    participant_id: String,
+    muted: bool,
+) -> Result<Value, CommandError> {
+    client
+        .call(&IpcRequest::SetMuted {
+            room_id,
+            participant_id,
+            muted,
+        })
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn collab_message_send(
     client: tauri::State<'_, CollabDaemonClient>,
     room_id: String,

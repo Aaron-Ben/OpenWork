@@ -96,7 +96,7 @@ async fn flat_log_timeline_combines_runs_triages_and_open_ended_events() {
             .unwrap();
     }
     storage
-        .finish_run(&run_id, "completed", None)
+        .finish_run(&run_id, "completed", Some("silent"), None)
         .await
         .unwrap();
 

@@ -1,10 +1,11 @@
-import { Hash, Plus } from 'lucide-react'
+import { Bell, BellOff, Hash, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { CollabRoomSummary } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useRoomStore } from './roomStore'
 
 interface RoomListProps {
   rooms: CollabRoomSummary[]
@@ -17,6 +18,7 @@ export function RoomList({ rooms, activeRoomId, onSelect, onCreate }: RoomListPr
   const { t } = useTranslation()
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
+  const setMuted = useRoomStore((state) => state.setMuted)
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -42,19 +44,31 @@ export function RoomList({ rooms, activeRoomId, onSelect, onCreate }: RoomListPr
       ) : null}
       <nav className="grid gap-1 p-2">
         {rooms.map((room) => (
-          <Button
-            key={room.id}
-            type="button"
-            variant="ghost"
-            className={`h-auto min-h-10 justify-start rounded-xl px-3 py-2 ${activeRoomId === room.id ? 'bg-paper shadow-sm' : ''}`}
-            onClick={() => onSelect(room.id)}
-          >
-            <Hash size={16} className="shrink-0 text-ink-faint" />
-            <span className="min-w-0 flex-1 truncate text-left">{room.title ?? room.id}</span>
-            {room.unreadCount > 0 ? (
-              <span className="rounded-full bg-clay px-1.5 text-[11px] font-semibold text-white">{room.unreadCount}</span>
-            ) : null}
-          </Button>
+          <div key={room.id} className={`flex items-center rounded-xl ${activeRoomId === room.id ? 'bg-paper shadow-sm' : ''}`}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-auto min-h-10 min-w-0 flex-1 justify-start rounded-xl px-3 py-2"
+              onClick={() => onSelect(room.id)}
+            >
+              <Hash size={16} className="shrink-0 text-ink-faint" />
+              <span className="min-w-0 flex-1 truncate text-left">{room.title ?? room.id}</span>
+              {room.unreadCount > 0 ? (
+                <span className="rounded-full bg-clay px-1.5 text-[11px] font-semibold text-white">{room.unreadCount}</span>
+              ) : null}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="mr-1 size-8 shrink-0 rounded-lg"
+              aria-label={t(room.muted ? 'collab.rooms.unmuteRoom' : 'collab.rooms.muteRoom')}
+              title={t(room.muted ? 'collab.rooms.unmuteRoom' : 'collab.rooms.muteRoom')}
+              onClick={() => void setMuted(room.id, 'user', !room.muted)}
+            >
+              {room.muted ? <BellOff size={15} /> : <Bell size={15} />}
+            </Button>
+          </div>
         ))}
         {rooms.length === 0 ? <p className="px-3 py-8 text-center text-sm text-ink-faint">{t('collab.rooms.empty')}</p> : null}
       </nav>

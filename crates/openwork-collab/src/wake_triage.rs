@@ -1,5 +1,7 @@
 //! Cheap-model gates for message-driven wakes, including Agent-DM loop checks.
 
+use std::collections::HashSet;
+
 use crate::{
     mcp::MessageNotice,
     model::TriageRecordInput,
@@ -22,6 +24,7 @@ pub async fn evaluate(
     agent_id: &str,
     room_id: &str,
     batch: &[MessageNotice],
+    active_teammates: &HashSet<String>,
     observations: &ObservationSink,
 ) -> WakeTriage {
     let Some(up_to_sequence) = batch.iter().map(|notice| notice.sequence).max() else {
@@ -104,6 +107,7 @@ pub async fn evaluate(
                         agent: &agent,
                         room_id,
                         messages: &messages,
+                        active_teammates: triage_active_teammates(human_waiting, active_teammates),
                     },
                 )
                 .await
@@ -165,6 +169,13 @@ pub async fn evaluate(
         actionable,
         prompt_note,
     }
+}
+
+fn triage_active_teammates(
+    human_waiting: bool,
+    active_teammates: &HashSet<String>,
+) -> Option<&HashSet<String>> {
+    (!human_waiting && !active_teammates.is_empty()).then_some(active_teammates)
 }
 
 struct AgentDmEvaluation<'a> {
@@ -320,7 +331,7 @@ async fn record(
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, sync::Arc};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
 
     use axum::{
         Json, Router,
@@ -342,6 +353,17 @@ mod tests {
     use crate::{
         mcp::MessageNotice, model::AgentInput, storage::CollabStorage, triage::TriageClient,
     };
+
+    #[test]
+    fn active_teammates_are_completely_hidden_while_a_human_waits() {
+        let active = HashSet::from(["alice".to_string(), "bob".to_string()]);
+        assert_eq!(super::triage_active_teammates(true, &active), None);
+        assert_eq!(
+            super::triage_active_teammates(false, &active),
+            Some(&active)
+        );
+        assert_eq!(super::triage_active_teammates(false, &HashSet::new()), None);
+    }
 
     #[derive(Clone, Default)]
     struct Calls(Arc<Mutex<u32>>);
@@ -471,6 +493,7 @@ mod tests {
                 body: "loop step 7".to_string(),
                 sequence: 7,
             }],
+            &HashSet::new(),
             &observations,
         )
         .await;
@@ -496,6 +519,7 @@ mod tests {
                 body: "loop step 8".to_string(),
                 sequence: 8,
             }],
+            &HashSet::new(),
             &observations,
         )
         .await;

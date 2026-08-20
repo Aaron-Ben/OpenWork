@@ -78,3 +78,20 @@ async fn a_busy_session_without_events_becomes_unresponsive() {
         AgentActivity::Unresponsive
     );
 }
+
+#[test]
+fn executing_detail_truncation_is_unicode_safe() {
+    let detail = "执行🧪".repeat(100);
+    let activity = normalize_activity(&event(json!({
+        "type": "message.part.updated",
+        "properties": {
+            "sessionID": "ses_1",
+            "part": {"type": "tool", "tool": "bash", "state": {"status": "running", "title": detail}}
+        }
+    })))
+    .unwrap();
+    let AgentActivity::Executing { detail } = activity else {
+        panic!("expected executing activity");
+    };
+    assert_eq!(detail.chars().count(), 80);
+}
