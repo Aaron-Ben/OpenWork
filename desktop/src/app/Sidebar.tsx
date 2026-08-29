@@ -15,11 +15,10 @@ interface SidebarProps {
   onToggleExpanded: () => void
   onNavigate: (next: AppView) => void
   collabUnreadCount?: number
-  collabPermissionCount?: number
   onOpenCollab?: () => void
 }
 
-export function Sidebar({ view, expanded, onToggleExpanded, onNavigate, collabUnreadCount = 0, collabPermissionCount = 0, onOpenCollab = () => undefined }: SidebarProps) {
+export function Sidebar({ view, expanded, onToggleExpanded, onNavigate, collabUnreadCount = 0, onOpenCollab = () => undefined }: SidebarProps) {
   const { t } = useTranslation()
   const reduceMotion = useReducedMotion()
 
@@ -72,7 +71,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate, collabUn
             {t('activity.navigation')}
           </SettingsNavItem>
         </nav>
-        <WorkbenchFooter unreadCount={collabUnreadCount} permissionCount={collabPermissionCount} onOpenCollab={onOpenCollab} onOpenSettings={() => onNavigate('settings-models')} />
+        <WorkbenchFooter unreadCount={collabUnreadCount} onOpenCollab={onOpenCollab} onOpenSettings={() => onNavigate('settings-models')} />
       </motion.aside>
     )
   }
@@ -99,14 +98,13 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate, collabUn
           />
         </motion.div>
       </div>
-      <WorkbenchFooter unreadCount={collabUnreadCount} permissionCount={collabPermissionCount} onOpenCollab={onOpenCollab} onOpenSettings={() => onNavigate('settings-models')} />
+      <WorkbenchFooter unreadCount={collabUnreadCount} onOpenCollab={onOpenCollab} onOpenSettings={() => onNavigate('settings-models')} />
     </motion.aside>
   )
 }
 
-function WorkbenchFooter({ unreadCount, permissionCount, onOpenCollab, onOpenSettings }: {
+function WorkbenchFooter({ unreadCount, onOpenCollab, onOpenSettings }: {
   unreadCount: number
-  permissionCount: number
   onOpenCollab: () => void
   onOpenSettings: () => void
 }) {
@@ -124,7 +122,6 @@ function WorkbenchFooter({ unreadCount, permissionCount, onOpenCollab, onOpenSet
           <UsersRound size={17} className="shrink-0" />
           <span className="truncate">{t('collab.brand')}</span>
           {unreadCount > 0 ? <span data-collab-unread={unreadCount} className="absolute -right-1 -top-1 rounded-full bg-clay px-1 text-[10px] text-white">{unreadCount}</span> : null}
-          {permissionCount > 0 ? <span data-collab-approvals={permissionCount} className="absolute -bottom-1 -right-1 rounded-full bg-red-600 px-1 text-[10px] text-white">{permissionCount}</span> : null}
         </Button>
         <Button
           type="button"

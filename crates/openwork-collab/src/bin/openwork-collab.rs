@@ -1,261 +1,178 @@
-use std::{env, error::Error, io};
+use std::{error::Error, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use openwork_collab::{
-    daemon::{DaemonConfig, IpcRequest, request, run},
-    model::{AgentInput, CardInput},
-    opencode::PermissionReply,
+    computer::{
+        daemon::{ComputerDaemon, ComputerOptions},
+        opencode::OpenCodeAdapter,
+    },
+    protocol::{ControlRequest, ControlResponse},
+    server::{CollaborationServer, ServerOptions, control::request},
 };
+use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 type CliResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 #[tokio::main]
 async fn main() {
-    if let Err(error) = run_cli().await {
+    if let Err(error) = run().await {
         eprintln!("error: {error}");
         std::process::exit(1);
     }
 }
 
-async fn run_cli() -> CliResult<()> {
-    let mut args = env::args().skip(1);
-    let command = args.next().unwrap_or_else(|| "help".to_string());
-    if command == "daemon" {
-        return run(DaemonConfig::from_env()?).await.map_err(Into::into);
-    }
-    if matches!(command.as_str(), "help" | "--help" | "-h") {
-        print_usage();
-        return Ok(());
-    }
-
-    let ipc = match command.as_str() {
-        "ping" => IpcRequest::Ping,
-        "status" => IpcRequest::Status,
-        "shutdown" => IpcRequest::Shutdown,
-        "agent-create" => IpcRequest::CreateAgent {
-            agent: agent_create_input(&mut args)?,
-        },
-        "agent-update" => IpcRequest::UpdateAgent {
-            agent: agent_update_input(&mut args)?,
-        },
-        "agent-list" => IpcRequest::ListAgents,
-        "room-create" => {
-            let title = required(&mut args, "room title")?;
-            IpcRequest::CreateRoom {
-                id: args.next(),
-                title,
-            }
+async fn run() -> CliResult<()> {
+    let mut arguments = std::env::args().skip(1);
+    match arguments.next().as_deref() {
+        Some("server") => run_server().await,
+        Some("computer") => run_computer().await,
+        Some("ensure-local-computer") => {
+            print_response(control(ControlRequest::EnsureLocalComputer).await?)
         }
-        "dm-create" => IpcRequest::CreateDirectRoom {
-            first_participant: required(&mut args, "first participant id")?,
-            second_participant: required(&mut args, "second participant id")?,
-        },
-        "room-add" => IpcRequest::AddMember {
-            room_id: required(&mut args, "room id")?,
-            participant_id: required(&mut args, "participant id")?,
-        },
-        "send" => IpcRequest::SendMessage {
-            room_id: required(&mut args, "room id")?,
-            author_id: required(&mut args, "author id")?,
-            body: required(&mut args, "message body")?,
-        },
-        "messages" => IpcRequest::Messages {
-            room_id: required(&mut args, "room id")?,
-        },
-        "permissions" => IpcRequest::Permissions,
-        "permission-reply" => IpcRequest::ReplyPermission {
-            id: required(&mut args, "permission id")?,
-            reply: permission_reply(&required(&mut args, "reply")?)?,
-            message: args.next(),
-        },
-        "permission-abort" => IpcRequest::AbortPermission {
-            id: required(&mut args, "permission id")?,
-        },
-        "credential-check" => IpcRequest::CredentialCheck {
-            provider_id: required(&mut args, "provider id")?,
-        },
-        "triage-config" => IpcRequest::ConfigureTriage {
-            provider_id: required(&mut args, "provider id")?,
-            model_id: required(&mut args, "model id")?,
-        },
-        "triage-list" => IpcRequest::ListTriages {
-            room_id: args.next(),
-        },
-        "logs" => IpcRequest::ListLogs {
-            room_id: args.next(),
-            limit: 300,
-        },
-        "board-create" => IpcRequest::CreateBoard {
-            id: required(&mut args, "board id")?,
-            room_id: required(&mut args, "room id")?,
-            title: required(&mut args, "board title")?,
-        },
-        "board-column-create" => IpcRequest::CreateBoardColumn {
-            id: required(&mut args, "column id")?,
-            board_id: required(&mut args, "board id")?,
-            title: required(&mut args, "column title")?,
-            position: parse_i32(&required(&mut args, "position")?, "position")?,
-            is_done: parse_bool(&required(&mut args, "is done")?, "is done")?,
-        },
-        "board-list" => IpcRequest::ListBoards {
-            room_id: required(&mut args, "room id")?,
-        },
-        "card-create" => IpcRequest::CreateCard {
-            card: CardInput {
-                board_id: required(&mut args, "board id")?,
-                column_id: required(&mut args, "column id")?,
-                title: required(&mut args, "card title")?,
-                description: None,
-                position: 0,
-                assignee_id: args.next(),
-            },
-        },
-        "card-move" => IpcRequest::MoveCard {
-            card_id: required(&mut args, "card id")?,
-            column_id: required(&mut args, "column id")?,
-            position: parse_i32(&required(&mut args, "position")?, "position")?,
-        },
-        "card-release" => IpcRequest::ReleaseCardClaim {
-            card_id: required(&mut args, "card id")?,
-            claimed_by: required(&mut args, "claimant id")?,
-        },
-        unknown => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("unknown command {unknown:?}; run with --help"),
+        Some("agent-create") => {
+            let id = required(&mut arguments, "agent id")?;
+            let display_name = required(&mut arguments, "display name")?;
+            let system_prompt = required(&mut arguments, "system prompt")?;
+            print_response(
+                control(ControlRequest::CreateAgent {
+                    id,
+                    display_name,
+                    system_prompt,
+                })
+                .await?,
             )
-            .into());
         }
-    };
-    if args.next().is_some() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "too many arguments").into());
+        Some("dm-create") => {
+            let agent_id = required(&mut arguments, "agent id")?;
+            print_response(control(ControlRequest::CreateDirectRoom { agent_id }).await?)
+        }
+        Some("send") => {
+            let room_id = required(&mut arguments, "room id")?;
+            let body = required(&mut arguments, "message body")?;
+            print_response(control(ControlRequest::SendMessage { room_id, body }).await?)
+        }
+        Some("messages") => {
+            let room_id = required(&mut arguments, "room id")?;
+            print_response(control(ControlRequest::ListMessages { room_id }).await?)
+        }
+        Some("help" | "--help" | "-h") | None => {
+            print_usage();
+            Ok(())
+        }
+        Some(command) => Err(format!("unknown command {command:?}; run with --help").into()),
     }
-    let config = DaemonConfig::from_env()?;
-    let response = request(&config.socket_path(), &ipc).await?;
+}
+
+async fn run_server() -> CliResult<()> {
+    let state_root = state_root().join("server");
+    let runtime_bind: SocketAddr = std::env::var("OPENWORK_COLLAB_RUNTIME_BIND")
+        .unwrap_or_else(|_| "127.0.0.1:17843".to_string())
+        .parse()?;
+    let shutdown = CancellationToken::new();
+    let server = CollaborationServer::start(
+        ServerOptions {
+            database_url: std::env::var("DATABASE_URL")?,
+            state_root,
+            control_socket: control_socket(),
+            runtime_bind,
+        },
+        shutdown.clone(),
+    )
+    .await?;
     println!(
-        "{}",
-        serde_json::to_string_pretty(&response.data.unwrap_or(serde_json::Value::Null))?
+        "Collaboration Runtime listening on {}",
+        server.runtime_addr()
     );
-    if !response.ok {
-        return Err(io::Error::other(
-            response
-                .error
-                .unwrap_or_else(|| "daemon request failed".to_string()),
-        )
-        .into());
-    }
+    tokio::signal::ctrl_c().await?;
+    shutdown.cancel();
+    server.shutdown().await?;
     Ok(())
 }
 
-/// `agent-create <display-name> <provider-id> <model-id> <system-prompt>
-///  <scanner-enabled> [explicit-id]` — the id is derived from the display name;
-/// the trailing explicit id is only for names that cannot derive one.
-fn agent_create_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput> {
-    let display_name = required(args, "display name")?;
-    let provider_id = required(args, "provider id")?;
-    let model_id = required(args, "model id")?;
-    let system_prompt = required(args, "system prompt")?;
-    let scanner_enabled = parse_bool(&required(args, "scanner enabled")?, "scanner enabled")?;
-    Ok(AgentInput {
-        id: args.next(),
-        display_name,
-        provider_id,
-        model_id,
-        system_prompt,
-        role: None,
-        bio: None,
-        enabled: true,
-        scanner_enabled,
-    })
-}
-
-/// `agent-update <id> <display-name> <provider-id> <model-id>
-///  <system-prompt> <scanner-enabled>` — updates never re-derive the id.
-fn agent_update_input(args: &mut impl Iterator<Item = String>) -> CliResult<AgentInput> {
-    Ok(AgentInput {
-        id: Some(required(args, "agent id")?),
-        display_name: required(args, "display name")?,
-        provider_id: required(args, "provider id")?,
-        model_id: required(args, "model id")?,
-        system_prompt: required(args, "system prompt")?,
-        role: None,
-        bio: None,
-        enabled: true,
-        scanner_enabled: parse_bool(&required(args, "scanner enabled")?, "scanner enabled")?,
-    })
-}
-
-fn permission_reply(value: &str) -> CliResult<PermissionReply> {
-    match value {
-        "once" => Ok(PermissionReply::Once),
-        "always" => Ok(PermissionReply::Always),
-        "reject" => Ok(PermissionReply::Reject),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "permission reply must be once, always, or reject",
-        )
-        .into()),
+async fn run_computer() -> CliResult<()> {
+    let identity: ComputerIdentity = serde_json::from_slice(
+        &tokio::fs::read(state_root().join("computer/computer.json")).await?,
+    )?;
+    if identity.protocol_version != openwork_collab::protocol::COLLAB_PROTOCOL_VERSION
+        || identity.computer_id != "local"
+    {
+        return Err("computer identity has an incompatible protocol or id".into());
+    }
+    let shim_executable = std::env::current_exe()?.with_file_name("openwork");
+    let opencode = std::env::var("OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string());
+    let shutdown = CancellationToken::new();
+    let daemon = ComputerDaemon::new(
+        ComputerOptions {
+            state_root: state_root().join("computer"),
+            runtime_base_url: identity.runtime_base_url,
+            device_token: identity.device_token,
+            shim_executable,
+            supervised: false,
+            poll_interval: Duration::from_secs(20),
+            roster_interval: Duration::from_secs(60),
+        },
+        Arc::new(OpenCodeAdapter::with_executable(opencode)),
+    );
+    tokio::select! {
+        result = daemon.run(shutdown.clone()) => result.map_err(Into::into),
+        result = tokio::signal::ctrl_c() => {
+            result?;
+            shutdown.cancel();
+            Ok(())
+        }
     }
 }
 
-fn required(args: &mut impl Iterator<Item = String>, name: &'static str) -> CliResult<String> {
-    args.next().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, format!("missing {name}")).into()
-    })
+async fn control(request_value: ControlRequest) -> CliResult<ControlResponse> {
+    Ok(request(&control_socket(), &request_value).await?)
 }
 
-fn parse_i32(value: &str, name: &str) -> CliResult<i32> {
-    value.parse().map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {name} {value:?}: {error}"),
-        )
-        .into()
-    })
+fn print_response(response: ControlResponse) -> CliResult<()> {
+    match response {
+        ControlResponse::Error { message } => Err(message.into()),
+        response => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+            Ok(())
+        }
+    }
 }
 
-fn parse_bool(value: &str, name: &str) -> CliResult<bool> {
-    value.parse().map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid {name} {value:?}: {error}"),
-        )
-        .into()
-    })
+fn state_root() -> PathBuf {
+    std::env::var_os("OPENWORK_COLLAB_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".openwork")))
+        .expect("HOME or OPENWORK_COLLAB_HOME must be set")
+}
+
+fn control_socket() -> PathBuf {
+    state_root().join("server/control.sock")
+}
+
+fn required(arguments: &mut impl Iterator<Item = String>, name: &str) -> CliResult<String> {
+    arguments
+        .next()
+        .ok_or_else(|| format!("missing {name}").into())
 }
 
 fn print_usage() {
     println!(
-        "OpenWork collaboration\n\n\
+        "OpenWork local collaboration (macOS, OpenCode only)\n\n\
          Usage:\n\
-           openwork-collab daemon\n\
-           openwork-collab status | shutdown | agent-list | permissions\n\
-           openwork-collab permission-reply <permission-id> <once|always|reject> [message]\n\
-           openwork-collab permission-abort <permission-id>\n\
-           openwork-collab agent-create <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled> [explicit-id]\n\
-           openwork-collab agent-update <id> <display-name> <provider-id> <model-id> <system-prompt> <scanner-enabled>\n\
-           openwork-collab room-create <title> [id]\n\
-           openwork-collab dm-create <first-participant-id> <second-participant-id>\n\
-           openwork-collab room-add <room-id> <participant-id>\n\
-           openwork-collab send <room-id> <author-id> <body>\n\
-           openwork-collab messages <room-id>\n\
-           openwork-collab credential-check <provider-id>\n\n\
-           openwork-collab triage-config <provider-id> <model-id>\n\
-           openwork-collab triage-list [room-id]\n\n\
-           openwork-collab logs [room-id]\n\n\
-           openwork-collab board-create <id> <room-id> <title>\n\
-           openwork-collab board-column-create <id> <board-id> <title> <position> <is-done>\n\
-           openwork-collab board-list <room-id>\n\
-           openwork-collab card-create <board-id> <column-id> <title> [assignee-id]\n\
-           openwork-collab card-move <card-id> <column-id> <position>\n\
-           openwork-collab card-release <card-id> <claimant-id>\n\n\
-         Environment:\n\
-           DATABASE_URL            PostgreSQL URL\n\
-           OPENWORK_COLLAB_HOME     daemon state root (default ~/.openwork/collab)\n\
-           OPENWORK_COLLAB_EVENT_RETENTION_DAYS  event retention (default 30)\n\
-           OPENWORK_COLLAB_TRIAGE_RETENTION_DAYS triage retention (default 30)\n\
-           OPENWORK_COLLAB_GC_BATCH_SIZE          rows per delete (default 500)\n\
-           OPENWORK_COLLAB_GC_STATEMENT_TIMEOUT_MS per-delete timeout (default 2000)\n\
-           OPENCODE_BIN             alternate opencode executable\n\
-           OPENCODE_SERVER_PASSWORD optional OpenCode basic-auth password"
+           openwork-collab server\n\
+           openwork-collab computer\n\
+           openwork-collab ensure-local-computer\n\
+           openwork-collab agent-create <id> <display-name> <system-prompt>\n\
+           openwork-collab dm-create <agent-id>\n\
+           openwork-collab send <room-id> <body>\n\
+           openwork-collab messages <room-id>"
     );
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ComputerIdentity {
+    protocol_version: u32,
+    computer_id: String,
+    runtime_base_url: String,
+    device_token: String,
 }

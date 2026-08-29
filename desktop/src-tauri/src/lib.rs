@@ -26,7 +26,6 @@ pub fn run() {
             let collab = tauri::async_runtime::block_on(
                 collab_client::CollabDaemonClient::discover_or_start(),
             )?;
-            event_bridge::spawn_collab_event_bridge(app.handle().clone(), collab.clone());
             app.manage(collab);
             app.manage(core);
             Ok(())
@@ -35,27 +34,10 @@ pub fn run() {
             commands::collab::collab_status,
             commands::collab::collab_agent_list,
             commands::collab::collab_agent_create,
-            commands::collab::collab_agent_update,
             commands::collab::collab_room_list,
-            commands::collab::collab_room_create,
-            commands::collab::collab_room_add_member,
-            commands::collab::collab_room_remove_member,
-            commands::collab::collab_room_set_muted,
+            commands::collab::collab_direct_room_create,
             commands::collab::collab_message_send,
-            commands::collab::collab_message_page,
-            commands::collab::collab_room_mark_read,
-            commands::collab::collab_permission_list,
-            commands::collab::collab_permission_reply,
-            commands::collab::collab_permission_abort,
-            commands::collab::collab_log_list,
-            commands::collab::collab_triage_settings,
-            commands::collab::collab_triage_configure,
-            commands::collab::collab_board_list,
-            commands::collab::collab_board_create,
-            commands::collab::collab_board_column_create,
-            commands::collab::collab_card_create,
-            commands::collab::collab_card_move,
-            commands::collab::collab_card_release_claim,
+            commands::collab::collab_message_list,
             commands::skills::list_skills,
             commands::skills::set_skill_disabled,
             commands::skills::read_skill,

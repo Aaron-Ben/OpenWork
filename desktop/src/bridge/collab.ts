@@ -1,51 +1,25 @@
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export interface CollabAgent {
   id: string
   displayName: string
-  role: string | null
-  bio: string | null
   systemPrompt: string
-  providerId: string
-  modelId: string
-  opencodeSessionId: string | null
+  engineId: 'opencode'
+  model: string | null
+  configVersion: number
   enabled: boolean
-  scannerEnabled: boolean
-  activity: CollabAgentActivity
 }
 
-/** `id` is null on create when the daemon should derive it from the name; it is
- *  the existing agent's id on update, which never re-derives. */
-export type CollabAgentInput = Omit<CollabAgent, 'id' | 'opencodeSessionId' | 'activity'> & {
-  id: string | null
-}
-
-export type CollabAgentActivity =
-  | { kind: 'idle' }
-  | { kind: 'busy' }
-  | { kind: 'replying' }
-  | { kind: 'compacting' }
-  | { kind: 'executing'; detail: string }
-  | { kind: 'unresponsive' }
-
-export interface CollabRoomMember {
+export interface CollabAgentInput {
   id: string
   displayName: string
-  kind: 'user' | 'agent'
-  enabled: boolean
-  muted: boolean
+  systemPrompt: string
 }
 
-export interface CollabRoomSummary {
+export interface CollabRoom {
   id: string
-  kind: 'group' | 'direct'
+  kind: 'direct' | 'group'
   title: string | null
-  nextSequence: number
-  lastReadSequence: number
-  unreadCount: number
-  muted: boolean
-  members: CollabRoomMember[]
 }
 
 export interface CollabMessage {
@@ -53,194 +27,23 @@ export interface CollabMessage {
   roomId: string
   sequence: number
   authorId: string
-  kind: 'normal' | 'system'
   body: string
-  systemPayload: Record<string, unknown> | null
-  createdAt: string
 }
-
-export interface CollabBoard {
-  id: string
-  roomId: string
-  title: string
-  columns: CollabBoardColumn[]
-  createdAt: string
-  updatedAt: string
-}
-
-export interface CollabBoardColumn {
-  id: string
-  boardId: string
-  title: string
-  position: number
-  isDone: boolean
-  cards: CollabCard[]
-}
-
-export interface CollabCard {
-  id: string
-  boardId: string
-  columnId: string
-  title: string
-  description: string | null
-  position: number
-  assigneeId: string | null
-  claimedBy: string | null
-  claimedAt: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-export interface CollabCardInput {
-  boardId: string
-  columnId: string
-  title: string
-  description: string | null
-  position: number
-  assigneeId: string | null
-}
-
-export interface CollabCardMutation {
-  card: CollabCard
-  message: CollabMessage
-}
-
-export interface CollabMessagePage {
-  messages: CollabMessage[]
-  hasOlder: boolean
-  hasNewer: boolean
-}
-
-export type CollabMessagePageAnchor = {
-  kind: 'around' | 'before' | 'after'
-  sequence: number
-}
-
-export interface CollabPendingPermission {
-  id: string
-  sessionId: string
-  agentId: string | null
-  permission: string
-  patterns: string[]
-}
-
-export interface CollabLogEntry {
-  source: 'run' | 'triage' | 'event'
-  id: string
-  runId: string | null
-  agentId: string | null
-  roomId: string | null
-  kind: string
-  payload: Record<string, unknown>
-  createdAt: string
-}
-
-export interface CollabTriageSettings {
-  providerId: string
-  modelId: string
-}
-
-export type CollabPermissionReply = 'once' | 'always' | 'reject'
-
-export type CollabEvent =
-  | { version: number; sequence: number; type: 'rooms_changed'; roomId: string }
-  | { version: number; sequence: number; type: 'boards_changed'; roomId: string }
-  | { version: number; sequence: number; type: 'agents_changed' }
-  | { version: number; sequence: number; type: 'permissions_changed' }
-  | { version: number; sequence: number; type: 'engine_changed' }
-  | { version: number; sequence: number; type: 'logs_changed'; roomId: string | null }
-  | {
-      version: number
-      sequence: number
-      type: 'reply_held'
-      agentId: string
-      roomId: string
-      peerSequence: number
-    }
-  | {
-      version: number
-      sequence: number
-      type: 'agent_activity_changed'
-      agentId: string
-      activity: CollabAgentActivity
-    }
-
-export const COLLAB_EVENT_VERSION = 1
-export const COLLAB_EVENT = 'openwork://collab-event'
-export const COLLAB_EVENT_BATCH = 'openwork://collab-event-batch'
 
 export const collabCommands = {
   status: (): Promise<unknown> => invoke('collab_status'),
   listAgents: (): Promise<CollabAgent[]> => invoke('collab_agent_list'),
   createAgent: (agent: CollabAgentInput): Promise<CollabAgent> =>
-    invoke('collab_agent_create', { agent }),
-  updateAgent: (agent: CollabAgentInput): Promise<CollabAgent> =>
-    invoke('collab_agent_update', { agent }),
-  listRooms: (): Promise<CollabRoomSummary[]> => invoke('collab_room_list'),
-  createRoom: (title: string, id?: string | null): Promise<unknown> =>
-    invoke('collab_room_create', { title, id: id ?? null }),
-  addMember: (roomId: string, participantId: string): Promise<unknown> =>
-    invoke('collab_room_add_member', { roomId, participantId }),
-  removeMember: (roomId: string, participantId: string): Promise<unknown> =>
-    invoke('collab_room_remove_member', { roomId, participantId }),
-  setMuted: (roomId: string, participantId: string, muted: boolean): Promise<unknown> =>
-    invoke('collab_room_set_muted', { roomId, participantId, muted }),
-  sendMessage: (roomId: string, body: string): Promise<unknown> =>
-    invoke('collab_message_send', { roomId, body }),
-  messagePage: (
-    roomId: string,
-    anchor: CollabMessagePageAnchor | null,
-    limit = 40,
-  ): Promise<CollabMessagePage> =>
-    invoke('collab_message_page', { roomId, anchor, limit }),
-  markRead: (roomId: string, throughSequence: number): Promise<unknown> =>
-    invoke('collab_room_mark_read', { roomId, throughSequence }),
-  listPermissions: (): Promise<CollabPendingPermission[]> =>
-    invoke('collab_permission_list'),
-  replyPermission: (
-    id: string,
-    reply: CollabPermissionReply,
-    message?: string,
-  ): Promise<unknown> => invoke('collab_permission_reply', { id, reply, message }),
-  abortPermission: (id: string): Promise<unknown> =>
-    invoke('collab_permission_abort', { id }),
-  listLogs: (roomId: string | null, limit = 300): Promise<CollabLogEntry[]> =>
-    invoke('collab_log_list', { roomId, limit }),
-  getTriageSettings: (): Promise<CollabTriageSettings | null> =>
-    invoke('collab_triage_settings'),
-  configureTriage: (providerId: string, modelId: string): Promise<CollabTriageSettings> =>
-    invoke('collab_triage_configure', { providerId, modelId }),
-  listBoards: (roomId: string): Promise<CollabBoard[]> =>
-    invoke('collab_board_list', { roomId }),
-  createBoard: (id: string, roomId: string, title: string): Promise<CollabBoard> =>
-    invoke('collab_board_create', { id, roomId, title }),
-  createBoardColumn: (
-    id: string,
-    boardId: string,
-    title: string,
-    position: number,
-    isDone: boolean,
-  ): Promise<CollabBoardColumn> =>
-    invoke('collab_board_column_create', { id, boardId, title, position, isDone }),
-  createCard: (card: CollabCardInput): Promise<CollabCardMutation> =>
-    invoke('collab_card_create', { card }),
-  moveCard: (cardId: string, columnId: string, position: number): Promise<CollabCardMutation> =>
-    invoke('collab_card_move', { cardId, columnId, position }),
-  releaseCardClaim: (cardId: string, claimedBy: string): Promise<CollabCardMutation> =>
-    invoke('collab_card_release_claim', { cardId, claimedBy }),
-}
-
-export async function listenToCollabEvents(
-  handler: (payload: CollabEvent) => void,
-): Promise<UnlistenFn> {
-  const [unlistenSingle, unlistenBatch] = await Promise.all([
-    listen<CollabEvent>(COLLAB_EVENT, (event) => handler(event.payload)),
-    listen<CollabEvent[]>(COLLAB_EVENT_BATCH, (event) => {
-      for (const payload of event.payload) handler(payload)
+    invoke('collab_agent_create', {
+      id: agent.id,
+      displayName: agent.displayName,
+      systemPrompt: agent.systemPrompt,
     }),
-  ])
-  return () => {
-    unlistenSingle()
-    unlistenBatch()
-  }
+  listRooms: (): Promise<CollabRoom[]> => invoke('collab_room_list'),
+  createDirectRoom: (agentId: string): Promise<CollabRoom> =>
+    invoke('collab_direct_room_create', { agentId }),
+  sendMessage: (roomId: string, body: string): Promise<CollabMessage> =>
+    invoke('collab_message_send', { roomId, body }),
+  listMessages: (roomId: string): Promise<CollabMessage[]> =>
+    invoke('collab_message_list', { roomId }),
 }

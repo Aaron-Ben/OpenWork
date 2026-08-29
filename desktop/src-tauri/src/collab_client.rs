@@ -1,9 +1,12 @@
 use std::{path::PathBuf, process::Stdio, time::Duration};
 
-use openwork_collab::daemon::{request, DaemonConfig, IpcRequest, COLLAB_PROTOCOL_VERSION};
-use serde::{de::DeserializeOwned, Deserialize};
+use openwork_collab::{
+    protocol::{ControlRequest, ControlResponse, COLLAB_PROTOCOL_VERSION},
+    server::control::{request, ControlError},
+};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{net::UnixStream, process::Command};
+use tokio::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct CollabDaemonClient {
@@ -12,226 +15,136 @@ pub struct CollabDaemonClient {
 
 impl CollabDaemonClient {
     pub async fn discover_or_start() -> Result<Self, CollabClientError> {
-        let config = DaemonConfig::from_env()?;
+        let state_root = state_root()?;
         let client = Self {
-            socket_path: config.socket_path(),
+            socket_path: state_root.join("server/control.sock"),
         };
-        client
-            .ensure_running(Self::launch_current_executable)
-            .await?;
+        if client.call(&ControlRequest::ListAgents).await.is_err() {
+            launch_current_executable("--openwork-collab-server")?;
+            client.wait_until_ready().await?;
+        }
+        let registration = match client.call(&ControlRequest::EnsureLocalComputer).await? {
+            ControlResponse::LocalComputer(registration) => registration,
+            ControlResponse::Error { message } => return Err(CollabClientError::Rejected(message)),
+            _ => {
+                return Err(CollabClientError::Protocol(
+                    "unexpected ensure response".to_string(),
+                ))
+            }
+        };
+        let identity_path = state_root.join("computer/computer.json");
+        let device_token = match registration.device_token {
+            Some(token) => token,
+            None => read_identity(&identity_path)?.device_token,
+        };
+        write_identity(
+            &identity_path,
+            &ComputerIdentity {
+                protocol_version: COLLAB_PROTOCOL_VERSION,
+                computer_id: "local".to_string(),
+                runtime_base_url: registration.runtime_base_url,
+                device_token,
+            },
+        )?;
+        launch_current_executable("--openwork-collab-computer")?;
         Ok(client)
     }
 
-    fn launch_current_executable() -> Result<(), CollabClientError> {
-        let executable = std::env::current_exe()?;
-        let mut command = Command::new(executable);
-        command
-            .arg("--openwork-collab-daemon")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(false);
-        #[cfg(unix)]
-        command.process_group(0);
-        command.spawn()?;
-        Ok(())
+    pub async fn call(
+        &self,
+        control_request: &ControlRequest,
+    ) -> Result<ControlResponse, CollabClientError> {
+        request(&self.socket_path, control_request)
+            .await
+            .map_err(Into::into)
     }
 
-    async fn ensure_running(
-        &self,
-        launch: impl FnOnce() -> Result<(), CollabClientError>,
-    ) -> Result<(), CollabClientError> {
-        match self.handshake().await {
-            Ok(handshake) if handshake.is_current() => return Ok(()),
-            Ok(_) => {
-                let _: serde_json::Value = self.call(&IpcRequest::Shutdown).await?;
-                self.wait_until_stopped().await?;
-            }
-            Err(_) => {}
-        }
-
-        launch()?;
-
+    async fn wait_until_ready(&self) -> Result<(), CollabClientError> {
         let mut last_error = None;
         for _ in 0..100 {
-            match self.handshake().await {
-                Ok(handshake) if handshake.is_current() => return Ok(()),
-                Ok(handshake) => {
-                    last_error = Some(format!(
-                        "daemon protocol {} does not match Desktop protocol {COLLAB_PROTOCOL_VERSION}",
-                        handshake.protocol_version,
-                    ));
-                }
+            match self.call(&ControlRequest::ListAgents).await {
+                Ok(_) => return Ok(()),
                 Err(error) => last_error = Some(error.to_string()),
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         Err(CollabClientError::Startup(last_error.unwrap_or_else(
-            || "daemon did not create its socket".to_string(),
+            || "Server did not create its control socket".to_string(),
         )))
-    }
-
-    async fn wait_until_stopped(&self) -> Result<(), CollabClientError> {
-        for _ in 0..100 {
-            if UnixStream::connect(&self.socket_path).await.is_err() {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        Err(CollabClientError::Startup(format!(
-            "incompatible collaboration daemon did not stop at {}",
-            self.socket_path.display(),
-        )))
-    }
-
-    pub fn socket_path(&self) -> &std::path::Path {
-        &self.socket_path
-    }
-
-    pub async fn call<T: DeserializeOwned>(
-        &self,
-        ipc: &IpcRequest,
-    ) -> Result<T, CollabClientError> {
-        let response = request(&self.socket_path, ipc).await?;
-        if !response.ok {
-            return Err(CollabClientError::Rejected(
-                response
-                    .error
-                    .unwrap_or_else(|| "daemon rejected the request".to_string()),
-            ));
-        }
-        let data = response
-            .data
-            .ok_or_else(|| CollabClientError::Protocol("response data is missing".to_string()))?;
-        serde_json::from_value(data).map_err(CollabClientError::Json)
-    }
-
-    async fn handshake(&self) -> Result<DaemonHandshake, CollabClientError> {
-        self.call(&IpcRequest::Ping).await
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DaemonHandshake {
-    pong: bool,
-    #[serde(default)]
-    protocol_version: u32,
+fn launch_current_executable(role: &str) -> Result<(), CollabClientError> {
+    let executable = std::env::current_exe()?;
+    let mut command = Command::new(executable);
+    command
+        .arg(role)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false)
+        .process_group(0);
+    command.spawn()?;
+    Ok(())
 }
 
-impl DaemonHandshake {
-    fn is_current(&self) -> bool {
-        self.pong && self.protocol_version == COLLAB_PROTOCOL_VERSION
-    }
+fn state_root() -> Result<PathBuf, CollabClientError> {
+    std::env::var_os("OPENWORK_COLLAB_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".openwork")))
+        .ok_or(CollabClientError::MissingHome)
+}
+
+fn read_identity(path: &std::path::Path) -> Result<ComputerIdentity, CollabClientError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        CollabClientError::Identity(format!(
+            "{} could not be read after the one-time device token was consumed: {error}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| CollabClientError::Identity(error.to_string()))
+}
+
+fn write_identity(
+    path: &std::path::Path,
+    identity: &ComputerIdentity,
+) -> Result<(), CollabClientError> {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = path.parent().expect("computer identity has parent");
+    std::fs::create_dir_all(parent)?;
+    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    let temporary = parent.join(format!(".computer-{}.tmp", std::process::id()));
+    std::fs::write(&temporary, serde_json::to_vec_pretty(identity)?)?;
+    std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct ComputerIdentity {
+    pub protocol_version: u32,
+    pub computer_id: String,
+    pub runtime_base_url: String,
+    pub device_token: String,
 }
 
 #[derive(Debug, Error)]
 pub enum CollabClientError {
-    #[error(transparent)]
-    Daemon(#[from] openwork_collab::daemon::DaemonError),
-    #[error("collaboration daemon could not start: {0}")]
+    #[error("collaboration Server could not start: {0}")]
     Startup(String),
-    #[error("collaboration daemon rejected the request: {0}")]
+    #[error("collaboration control request was rejected: {0}")]
     Rejected(String),
-    #[error("collaboration daemon protocol failed: {0}")]
+    #[error("collaboration control protocol failed: {0}")]
     Protocol(String),
-    #[error("collaboration daemon response was invalid: {0}")]
-    Json(serde_json::Error),
-    #[error("collaboration daemon process failed: {0}")]
+    #[error("Local Computer identity is unavailable: {0}")]
+    Identity(String),
+    #[error("HOME or OPENWORK_COLLAB_HOME must be set")]
+    MissingHome,
+    #[error(transparent)]
+    Control(#[from] ControlError),
+    #[error("collaboration process failed: {0}")]
     Io(#[from] std::io::Error),
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use openwork_collab::daemon::IpcRequest;
-    use tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::UnixListener,
-    };
-
-    use super::{CollabDaemonClient, COLLAB_PROTOCOL_VERSION};
-
-    fn socket_path() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "openwork-collab-client-{}-{nonce}.sock",
-            std::process::id()
-        ))
-    }
-
-    async fn reply(listener: &UnixListener, response: &[u8]) -> IpcRequest {
-        let (mut stream, _) = listener.accept().await.expect("accept request");
-        let mut request = String::new();
-        BufReader::new(&mut stream)
-            .read_line(&mut request)
-            .await
-            .expect("read request");
-        stream.write_all(response).await.expect("write response");
-        serde_json::from_str(&request).expect("parse request")
-    }
-
-    async fn serve_incompatible_daemon(listener: UnixListener, path: PathBuf) -> [IpcRequest; 2] {
-        let ping = reply(
-            &listener,
-            b"{\"ok\":true,\"data\":{\"pong\":true,\"protocolVersion\":0},\"error\":null}\n",
-        )
-        .await;
-        let shutdown = reply(
-            &listener,
-            b"{\"ok\":true,\"data\":{\"shuttingDown\":true},\"error\":null}\n",
-        )
-        .await;
-        drop(listener);
-        std::fs::remove_file(path).expect("remove incompatible socket");
-        [ping, shutdown]
-    }
-
-    #[tokio::test]
-    async fn replaces_a_daemon_when_its_protocol_is_incompatible() {
-        let socket_path = socket_path();
-        let incompatible_listener =
-            UnixListener::bind(&socket_path).expect("bind incompatible daemon");
-        let incompatible_server = tokio::spawn(serve_incompatible_daemon(
-            incompatible_listener,
-            socket_path.clone(),
-        ));
-        let client = CollabDaemonClient {
-            socket_path: socket_path.clone(),
-        };
-        let launch_path = socket_path.clone();
-
-        let requests = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            client
-                .ensure_running(move || {
-                    let listener = UnixListener::bind(&launch_path)?;
-                    tokio::spawn(async move {
-                        let response = format!(
-                            "{{\"ok\":true,\"data\":{{\"pong\":true,\"protocolVersion\":{COLLAB_PROTOCOL_VERSION}}},\"error\":null}}\n"
-                        );
-                        reply(&listener, response.as_bytes()).await;
-                    });
-                    Ok(())
-                })
-                .await
-                .expect("replace incompatible daemon");
-            incompatible_server
-                .await
-                .expect("incompatible daemon stopped")
-        })
-        .await
-        .expect("replacement timed out");
-
-        let [ping, shutdown] = requests;
-        assert!(matches!(ping, IpcRequest::Ping));
-        assert!(matches!(shutdown, IpcRequest::Shutdown));
-        std::fs::remove_file(socket_path).expect("remove replacement socket");
-    }
+    #[error("Local Computer identity could not be encoded: {0}")]
+    Json(#[from] serde_json::Error),
 }

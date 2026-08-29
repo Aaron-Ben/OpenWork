@@ -39,22 +39,14 @@ describe('i18n', () => {
     expect(keyPaths(enUS).sort()).toEqual(expected)
   })
 
-  it('localizes every collaboration log drawer label in all supported languages', () => {
+  it('localizes the P0 collaboration surface in all supported languages', () => {
     const paths = [
-      'collab.logs.title',
-      'collab.logs.description',
-      'collab.logs.allRooms',
-      'collab.logs.currentRoom',
-      'collab.logs.refresh',
-      'collab.logs.loading',
-      'collab.logs.empty',
-      'collab.logs.payload',
-      'collab.logs.actionable',
-      'collab.logs.notActionable',
-      'collab.logs.tokenSummary',
-      'collab.logs.sources.run',
-      'collab.logs.sources.triage',
-      'collab.logs.sources.event',
+      'collab.nav.rooms',
+      'collab.nav.agents',
+      'collab.rooms.title',
+      'collab.rooms.messagePlaceholder',
+      'collab.agents.title',
+      'collab.agents.prompt',
     ] as const
     for (const language of supportedLanguages) {
       const translate = i18n.getFixedT(language)

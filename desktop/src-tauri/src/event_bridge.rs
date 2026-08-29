@@ -1,18 +1,13 @@
 use std::time::Duration;
 
-use openwork_collab::{daemon::IpcRequest, event::CollabEventEnvelope};
 use openwork_core::{SessionUpdate, SessionUpdateEnvelope};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 
 pub const SESSION_UPDATE_EVENT: &str = "openwork://session-update";
 pub const SESSION_UPDATE_BATCH_EVENT: &str = "openwork://session-update-batch";
 const LIVE_UPDATE_BATCH_INTERVAL: Duration = Duration::from_millis(50);
-pub const COLLAB_EVENT: &str = "openwork://collab-event";
-pub const COLLAB_EVENT_BATCH: &str = "openwork://collab-event-batch";
 
 enum BridgeEmission {
     // Boxed so the enum stays pointer-sized: the batch variant only carries a
@@ -114,59 +109,6 @@ pub fn spawn_session_update_bridge(
             }
         }
     });
-}
-
-pub fn spawn_collab_event_bridge(app: AppHandle, client: crate::collab_client::CollabDaemonClient) {
-    tauri::async_runtime::spawn(async move {
-        let mut after_sequence = 0_u64;
-        loop {
-            let result = forward_collab_events(&app, &client, &mut after_sequence).await;
-            if let Err(error) = result {
-                eprintln!("collaboration event bridge disconnected: {error}");
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-    });
-}
-
-async fn forward_collab_events(
-    app: &AppHandle,
-    client: &crate::collab_client::CollabDaemonClient,
-    after_sequence: &mut u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut stream = UnixStream::connect(client.socket_path()).await?;
-    let mut request = serde_json::to_vec(&IpcRequest::SubscribeEvents {
-        after_sequence: *after_sequence,
-    })?;
-    request.push(b'\n');
-    stream.write_all(&request).await?;
-    let mut lines = BufReader::new(stream).lines();
-
-    while let Some(line) = lines.next_line().await? {
-        let first: CollabEventEnvelope = serde_json::from_str(&line)?;
-        *after_sequence = (*after_sequence).max(first.sequence);
-        let mut batch = vec![first];
-        loop {
-            match tokio::time::timeout(LIVE_UPDATE_BATCH_INTERVAL, lines.next_line()).await {
-                Ok(Ok(Some(line))) => {
-                    let event: CollabEventEnvelope = serde_json::from_str(&line)?;
-                    *after_sequence = (*after_sequence).max(event.sequence);
-                    batch.push(event);
-                }
-                Ok(Ok(None)) => break,
-                Ok(Err(error)) => return Err(error.into()),
-                Err(_) => break,
-            }
-        }
-        if batch.len() == 1 {
-            if let Some(event) = batch.pop() {
-                let _ = app.emit(COLLAB_EVENT, event);
-            }
-        } else {
-            let _ = app.emit(COLLAB_EVENT_BATCH, batch);
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

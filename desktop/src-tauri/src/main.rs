@@ -1,16 +1,99 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+
+use openwork_collab::{
+    computer::{
+        daemon::{ComputerDaemon, ComputerOptions},
+        opencode::OpenCodeAdapter,
+    },
+    server::{CollaborationServer, ServerOptions},
+};
+use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 fn main() {
-    if std::env::args().any(|argument| argument == "--openwork-collab-daemon") {
-        let runtime = tokio::runtime::Runtime::new().expect("create collaboration daemon runtime");
-        if let Err(error) = runtime.block_on(async {
-            openwork_collab::daemon::run(openwork_collab::daemon::DaemonConfig::from_env()?).await
-        }) {
-            eprintln!("collaboration daemon failed: {error}");
-            std::process::exit(1);
-        }
+    let invoked_name = std::env::args_os()
+        .next()
+        .and_then(|path| PathBuf::from(path).file_name().map(|name| name.to_owned()));
+    if invoked_name.as_deref() == Some(std::ffi::OsStr::new("openwork")) {
+        std::process::exit(openwork_collab::computer::shim::main());
+    }
+    let role = std::env::args().nth(1);
+    if role.as_deref() == Some("--openwork-collab-server") {
+        run_role(run_server());
+        return;
+    }
+    if role.as_deref() == Some("--openwork-collab-computer") {
+        run_role(run_computer());
         return;
     }
     openwork_desktop_lib::run()
+}
+
+fn run_role(future: impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>) {
+    let _ = dotenvy::dotenv();
+    let runtime = tokio::runtime::Runtime::new().expect("create local collaboration runtime");
+    if let Err(error) = runtime.block_on(future) {
+        eprintln!("local collaboration process failed: {error}");
+        std::process::exit(1);
+    }
+}
+
+async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    let root = state_root()?;
+    let shutdown = CancellationToken::new();
+    let _server = CollaborationServer::start(
+        ServerOptions {
+            database_url: std::env::var("DATABASE_URL")?,
+            state_root: root.join("server"),
+            control_socket: root.join("server/control.sock"),
+            runtime_bind: "127.0.0.1:0".parse::<SocketAddr>()?,
+        },
+        shutdown,
+    )
+    .await?;
+    std::future::pending::<()>().await;
+    Ok(())
+}
+
+async fn run_computer() -> Result<(), Box<dyn std::error::Error>> {
+    let root = state_root()?;
+    let identity: ComputerIdentity =
+        serde_json::from_slice(&tokio::fs::read(root.join("computer/computer.json")).await?)?;
+    if identity.protocol_version != openwork_collab::protocol::COLLAB_PROTOCOL_VERSION
+        || identity.computer_id != "local"
+    {
+        return Err("Local Computer identity is incompatible".into());
+    }
+    let opencode = std::env::var("OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string());
+    ComputerDaemon::new(
+        ComputerOptions {
+            state_root: root.join("computer"),
+            runtime_base_url: identity.runtime_base_url,
+            device_token: identity.device_token,
+            shim_executable: std::env::current_exe()?,
+            supervised: false,
+            poll_interval: Duration::from_secs(20),
+            roster_interval: Duration::from_secs(60),
+        },
+        Arc::new(OpenCodeAdapter::with_executable(opencode)),
+    )
+    .run(CancellationToken::new())
+    .await?;
+    Ok(())
+}
+
+fn state_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    std::env::var_os("OPENWORK_COLLAB_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".openwork")))
+        .ok_or_else(|| "HOME or OPENWORK_COLLAB_HOME must be set".into())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ComputerIdentity {
+    protocol_version: u32,
+    computer_id: String,
+    runtime_base_url: String,
+    device_token: String,
 }

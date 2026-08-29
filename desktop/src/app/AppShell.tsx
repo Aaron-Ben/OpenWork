@@ -33,13 +33,11 @@ const TracePage = lazy(() => import('@/features/traces/TracePage'))
 
 interface AppShellProps {
   collabUnreadCount: number
-  collabPermissionCount: number
   onOpenCollab: () => void
 }
 
 export function AppShell({
   collabUnreadCount,
-  collabPermissionCount,
   onOpenCollab,
 }: AppShellProps) {
   const { t } = useTranslation()
@@ -152,7 +150,6 @@ export function AppShell({
         onToggleExpanded={toggleSidebar}
         onNavigate={navigate}
         collabUnreadCount={collabUnreadCount}
-        collabPermissionCount={collabPermissionCount}
         onOpenCollab={onOpenCollab}
       />
       <section className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">

@@ -1,12 +1,8 @@
 import { create } from 'zustand'
 
-import {
-  collabCommands,
-  type CollabAgent,
-  type CollabAgentActivity,
-  type CollabAgentInput,
-} from '@/bridge/collab'
+import { collabCommands, type CollabAgent, type CollabAgentInput } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
+import { useRoomStore } from '@/features/collab/rooms/roomStore'
 
 interface AgentStoreState {
   agents: CollabAgent[]
@@ -14,8 +10,6 @@ interface AgentStoreState {
   error: string | null
   fetchAll: () => Promise<void>
   create: (input: CollabAgentInput) => Promise<void>
-  update: (input: CollabAgentInput) => Promise<void>
-  applyActivity: (agentId: string, activity: CollabAgentActivity) => void
 }
 
 export const useAgentStore = create<AgentStoreState>((set, get) => ({
@@ -31,18 +25,8 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     }
   },
   create: async (input) => {
-    await collabCommands.createAgent(input)
-    await get().fetchAll()
-  },
-  update: async (input) => {
-    await collabCommands.updateAgent(input)
-    await get().fetchAll()
-  },
-  applyActivity: (agentId, activity) => {
-    set({
-      agents: get().agents.map((agent) =>
-        agent.id === agentId ? { ...agent, activity } : agent,
-      ),
-    })
+    const agent = await collabCommands.createAgent(input)
+    await collabCommands.createDirectRoom(agent.id)
+    await Promise.all([get().fetchAll(), useRoomStore.getState().fetchAll()])
   },
 }))

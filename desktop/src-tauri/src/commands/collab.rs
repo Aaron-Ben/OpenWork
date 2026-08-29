@@ -1,125 +1,71 @@
-use openwork_collab::{
-    daemon::IpcRequest,
-    model::{
-        Agent, AgentInput, AgentView, Board, BoardColumn, CardInput, CardMutation, CollabLogEntry,
-        MessagePage, MessagePageAnchor, Room, RoomSummary, SendMessageOutcome, TriageSettings,
-    },
-    opencode::PermissionReply,
-    permission::PendingPermission,
+use openwork_collab::protocol::{
+    AgentView, ComputerView, ControlRequest, ControlResponse, MessageView, RoomView,
 };
-use serde_json::Value;
 
 use crate::{collab_client::CollabDaemonClient, CommandError};
 
 #[tauri::command]
 pub async fn collab_status(
     client: tauri::State<'_, CollabDaemonClient>,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::Status)
-        .await
-        .map_err(CommandError::from)
+) -> Result<ComputerView, CommandError> {
+    match client.call(&ControlRequest::EnsureLocalComputer).await? {
+        ControlResponse::LocalComputer(registration) => Ok(registration.computer),
+        response => Err(unexpected(response)),
+    }
 }
 
 #[tauri::command]
 pub async fn collab_agent_list(
     client: tauri::State<'_, CollabDaemonClient>,
 ) -> Result<Vec<AgentView>, CommandError> {
-    client
-        .call(&IpcRequest::ListAgents)
-        .await
-        .map_err(CommandError::from)
+    match client.call(&ControlRequest::ListAgents).await? {
+        ControlResponse::Agents { agents } => Ok(agents),
+        response => Err(unexpected(response)),
+    }
 }
 
 #[tauri::command]
 pub async fn collab_agent_create(
     client: tauri::State<'_, CollabDaemonClient>,
-    agent: AgentInput,
-) -> Result<Agent, CommandError> {
-    client
-        .call(&IpcRequest::CreateAgent { agent })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_agent_update(
-    client: tauri::State<'_, CollabDaemonClient>,
-    agent: AgentInput,
-) -> Result<Agent, CommandError> {
-    client
-        .call(&IpcRequest::UpdateAgent { agent })
-        .await
-        .map_err(CommandError::from)
+    id: String,
+    display_name: String,
+    system_prompt: String,
+) -> Result<AgentView, CommandError> {
+    match client
+        .call(&ControlRequest::CreateAgent {
+            id,
+            display_name,
+            system_prompt,
+        })
+        .await?
+    {
+        ControlResponse::Agent(agent) => Ok(agent),
+        response => Err(unexpected(response)),
+    }
 }
 
 #[tauri::command]
 pub async fn collab_room_list(
     client: tauri::State<'_, CollabDaemonClient>,
-) -> Result<Vec<RoomSummary>, CommandError> {
-    client
-        .call(&IpcRequest::ListRooms)
-        .await
-        .map_err(CommandError::from)
+) -> Result<Vec<RoomView>, CommandError> {
+    match client.call(&ControlRequest::ListRooms).await? {
+        ControlResponse::Rooms { rooms } => Ok(rooms),
+        response => Err(unexpected(response)),
+    }
 }
 
 #[tauri::command]
-pub async fn collab_room_create(
+pub async fn collab_direct_room_create(
     client: tauri::State<'_, CollabDaemonClient>,
-    title: String,
-    id: Option<String>,
-) -> Result<Room, CommandError> {
-    client
-        .call(&IpcRequest::CreateRoom { id, title })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_room_add_member(
-    client: tauri::State<'_, CollabDaemonClient>,
-    room_id: String,
-    participant_id: String,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::AddMember {
-            room_id,
-            participant_id,
-        })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_room_remove_member(
-    client: tauri::State<'_, CollabDaemonClient>,
-    room_id: String,
-    participant_id: String,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::RemoveMember {
-            room_id,
-            participant_id,
-        })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_room_set_muted(
-    client: tauri::State<'_, CollabDaemonClient>,
-    room_id: String,
-    participant_id: String,
-    muted: bool,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::SetMuted {
-            room_id,
-            participant_id,
-            muted,
-        })
-        .await
-        .map_err(CommandError::from)
+    agent_id: String,
+) -> Result<RoomView, CommandError> {
+    match client
+        .call(&ControlRequest::CreateDirectRoom { agent_id })
+        .await?
+    {
+        ControlResponse::Room(room) => Ok(room),
+        response => Err(unexpected(response)),
+    }
 }
 
 #[tauri::command]
@@ -127,204 +73,34 @@ pub async fn collab_message_send(
     client: tauri::State<'_, CollabDaemonClient>,
     room_id: String,
     body: String,
-) -> Result<SendMessageOutcome, CommandError> {
-    client
-        .call(&IpcRequest::SendMessage {
-            room_id,
-            author_id: "user".to_string(),
-            body,
-        })
-        .await
-        .map_err(CommandError::from)
+) -> Result<MessageView, CommandError> {
+    match client
+        .call(&ControlRequest::SendMessage { room_id, body })
+        .await?
+    {
+        ControlResponse::Message(message) => Ok(message),
+        response => Err(unexpected(response)),
+    }
 }
 
 #[tauri::command]
-pub async fn collab_message_page(
+pub async fn collab_message_list(
     client: tauri::State<'_, CollabDaemonClient>,
     room_id: String,
-    anchor: Option<MessagePageAnchor>,
-    limit: u32,
-) -> Result<MessagePage, CommandError> {
-    client
-        .call(&IpcRequest::MessagePage {
-            room_id,
-            anchor,
-            limit,
-        })
-        .await
-        .map_err(CommandError::from)
+) -> Result<Vec<MessageView>, CommandError> {
+    match client
+        .call(&ControlRequest::ListMessages { room_id })
+        .await?
+    {
+        ControlResponse::Messages { messages } => Ok(messages),
+        response => Err(unexpected(response)),
+    }
 }
 
-#[tauri::command]
-pub async fn collab_room_mark_read(
-    client: tauri::State<'_, CollabDaemonClient>,
-    room_id: String,
-    through_sequence: i64,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::MarkRead {
-            room_id,
-            through_sequence,
-        })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_permission_list(
-    client: tauri::State<'_, CollabDaemonClient>,
-) -> Result<Vec<PendingPermission>, CommandError> {
-    client
-        .call(&IpcRequest::Permissions)
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_permission_reply(
-    client: tauri::State<'_, CollabDaemonClient>,
-    id: String,
-    reply: PermissionReply,
-    message: Option<String>,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::ReplyPermission { id, reply, message })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_permission_abort(
-    client: tauri::State<'_, CollabDaemonClient>,
-    id: String,
-) -> Result<Value, CommandError> {
-    client
-        .call(&IpcRequest::AbortPermission { id })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_log_list(
-    client: tauri::State<'_, CollabDaemonClient>,
-    room_id: Option<String>,
-    limit: u32,
-) -> Result<Vec<CollabLogEntry>, CommandError> {
-    client
-        .call(&IpcRequest::ListLogs { room_id, limit })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_triage_settings(
-    client: tauri::State<'_, CollabDaemonClient>,
-) -> Result<Option<TriageSettings>, CommandError> {
-    client
-        .call(&IpcRequest::TriageSettings)
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_triage_configure(
-    client: tauri::State<'_, CollabDaemonClient>,
-    provider_id: String,
-    model_id: String,
-) -> Result<TriageSettings, CommandError> {
-    client
-        .call(&IpcRequest::ConfigureTriage {
-            provider_id,
-            model_id,
-        })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_board_list(
-    client: tauri::State<'_, CollabDaemonClient>,
-    room_id: String,
-) -> Result<Vec<Board>, CommandError> {
-    client
-        .call(&IpcRequest::ListBoards { room_id })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_board_create(
-    client: tauri::State<'_, CollabDaemonClient>,
-    id: String,
-    room_id: String,
-    title: String,
-) -> Result<Board, CommandError> {
-    client
-        .call(&IpcRequest::CreateBoard { id, room_id, title })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_board_column_create(
-    client: tauri::State<'_, CollabDaemonClient>,
-    id: String,
-    board_id: String,
-    title: String,
-    position: i32,
-    is_done: bool,
-) -> Result<BoardColumn, CommandError> {
-    client
-        .call(&IpcRequest::CreateBoardColumn {
-            id,
-            board_id,
-            title,
-            position,
-            is_done,
-        })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_card_create(
-    client: tauri::State<'_, CollabDaemonClient>,
-    card: CardInput,
-) -> Result<CardMutation, CommandError> {
-    client
-        .call(&IpcRequest::CreateCard { card })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_card_move(
-    client: tauri::State<'_, CollabDaemonClient>,
-    card_id: String,
-    column_id: String,
-    position: i32,
-) -> Result<CardMutation, CommandError> {
-    client
-        .call(&IpcRequest::MoveCard {
-            card_id,
-            column_id,
-            position,
-        })
-        .await
-        .map_err(CommandError::from)
-}
-
-#[tauri::command]
-pub async fn collab_card_release_claim(
-    client: tauri::State<'_, CollabDaemonClient>,
-    card_id: String,
-    claimed_by: String,
-) -> Result<CardMutation, CommandError> {
-    client
-        .call(&IpcRequest::ReleaseCardClaim {
-            card_id,
-            claimed_by,
-        })
-        .await
-        .map_err(CommandError::from)
+fn unexpected(response: ControlResponse) -> CommandError {
+    let message = match response {
+        ControlResponse::Error { message } => message,
+        _ => "collaboration Server returned an unexpected response".to_string(),
+    };
+    CommandError::new(crate::CommandErrorCode::CollaborationUnavailable, message)
 }
