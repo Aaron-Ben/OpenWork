@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { deriveAgentSlug } from './agentId'
 import { useAgentStore } from './agentStore'
 
-const DEFAULT_MODEL = 'opencode/mimo-v2.5-free'
+const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'
 
 export function AgentManager() {
   const { t } = useTranslation()
