@@ -1,24 +1,31 @@
 mod auth;
 pub mod control;
 mod migration;
+mod redis;
 mod runtime;
+mod scheduler;
 mod storage;
+mod triage;
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use sqlx::PgPool;
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use scheduler::Scheduler;
 use storage::CollaborationStore;
 
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
     pub database_url: String,
+    pub redis_url: String,
     pub state_root: PathBuf,
     pub control_socket: PathBuf,
     pub runtime_bind: SocketAddr,
+    pub computer_lease: Duration,
+    pub offline_sweep_interval: Duration,
 }
 
 pub struct CollaborationServer;
@@ -51,6 +58,28 @@ impl CollaborationServer {
         migration::migrate(&pool).await?;
         let store = CollaborationStore::new(pool.clone());
         let signing_key = auth::load_or_create_signing_key(&options.state_root).await?;
+        let (coordination, redis_task) =
+            redis::RedisCoordination::start(&options.redis_url, shutdown.clone()).await?;
+        let scheduler = Scheduler::new(store.clone(), coordination);
+        let scheduler_task = scheduler.start(shutdown.clone());
+        let sweep_store = store.clone();
+        let sweep_shutdown = shutdown.clone();
+        let computer_lease = options.computer_lease;
+        let offline_sweep_interval = options.offline_sweep_interval;
+        let offline_sweep_task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(offline_sweep_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = sweep_shutdown.cancelled() => return,
+                    _ = interval.tick() => {
+                        if let Err(error) = sweep_store.sweep_offline_computer(computer_lease).await {
+                            tracing::warn!(%error, "Local Computer offline sweep failed");
+                        }
+                    }
+                }
+            }
+        });
 
         let control = control::bind(&options.control_socket).await?;
         let runtime = tokio::net::TcpListener::bind(options.runtime_bind).await?;
@@ -59,13 +88,21 @@ impl CollaborationServer {
 
         let control_shutdown = shutdown.clone();
         let control_store = store.clone();
+        let control_scheduler = scheduler.clone();
         let control_task = tokio::spawn(async move {
-            control::serve(control, control_store, runtime_base_url, control_shutdown).await;
+            control::serve(
+                control,
+                control_store,
+                control_scheduler,
+                runtime_base_url,
+                control_shutdown,
+            )
+            .await;
         });
 
         let runtime_shutdown = shutdown.clone();
         let runtime_task = tokio::spawn(async move {
-            let app = runtime::router(store, signing_key);
+            let app = runtime::router(store, signing_key, scheduler);
             let _ = axum::serve(runtime, app)
                 .with_graceful_shutdown(runtime_shutdown.cancelled_owned())
                 .await;
@@ -75,7 +112,13 @@ impl CollaborationServer {
             shutdown,
             control_socket: options.control_socket,
             pool,
-            tasks: vec![control_task, runtime_task],
+            tasks: vec![
+                redis_task,
+                scheduler_task,
+                offline_sweep_task,
+                control_task,
+                runtime_task,
+            ],
             runtime_addr,
         })
     }
@@ -109,6 +152,8 @@ pub enum ServerError {
     Database(#[from] sqlx::Error),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Redis configuration error: {0}")]
+    Redis(#[from] ::redis::RedisError),
     #[error("server task failed: {0}")]
     Task(#[from] tokio::task::JoinError),
 }

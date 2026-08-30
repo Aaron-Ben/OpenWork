@@ -44,9 +44,12 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let _server = CollaborationServer::start(
         ServerOptions {
             database_url: std::env::var("DATABASE_URL")?,
+            redis_url: std::env::var("REDIS_URL")?,
             state_root: root.join("server"),
             control_socket: root.join("server/control.sock"),
             runtime_bind: "127.0.0.1:0".parse::<SocketAddr>()?,
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
         },
         shutdown,
     )
@@ -74,6 +77,8 @@ async fn run_computer() -> Result<(), Box<dyn std::error::Error>> {
             supervised: false,
             poll_interval: Duration::from_secs(20),
             roster_interval: Duration::from_secs(60),
+            heartbeat_interval: Duration::from_secs(30),
+            probe_interval: Duration::from_secs(5 * 60),
         },
         Arc::new(OpenCodeAdapter::with_executable(opencode)),
     )

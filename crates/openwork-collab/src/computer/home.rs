@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
@@ -13,9 +15,22 @@ pub struct HomeManager {
 
 pub struct AgentHome {
     pub root: PathBuf,
+    pub triage_root: PathBuf,
     pub session_file: PathBuf,
     pub environment: BTreeMap<String, String>,
     token_file: PathBuf,
+    engine_id: String,
+    model: String,
+    persona_hash: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct SessionMetadata {
+    engine_id: String,
+    model: String,
+    persona_hash: String,
+    session_id: String,
+    updated_at: String,
 }
 
 impl HomeManager {
@@ -40,6 +55,7 @@ impl HomeManager {
         let memory = root.join("memory");
         let notes = root.join("notes");
         let workspace = root.join("workspace");
+        let triage_root = self.state_root.join("triage");
         let config_root = self.state_root.join("opencode-config").join(&assignment.id);
         let opencode_config = config_root.join("opencode");
         for directory in [
@@ -49,6 +65,7 @@ impl HomeManager {
             &memory,
             &notes,
             &workspace,
+            &triage_root,
             &config_root,
             &opencode_config,
         ] {
@@ -129,12 +146,16 @@ impl HomeManager {
         }
         Ok(AgentHome {
             root,
+            triage_root,
             session_file: self
                 .state_root
                 .join("sessions")
                 .join(format!("{}.session", assignment.id)),
             environment,
             token_file,
+            engine_id: assignment.engine_id.clone(),
+            model: assignment.model.clone(),
+            persona_hash: persona_hash(assignment),
         })
     }
 }
@@ -145,9 +166,21 @@ impl AgentHome {
     }
 
     pub async fn load_session(&self) -> Result<Option<String>, HomeError> {
-        match tokio::fs::read_to_string(&self.session_file).await {
-            Ok(session) if !session.trim().is_empty() => Ok(Some(session.trim().to_string())),
-            Ok(_) => Ok(None),
+        match tokio::fs::read(&self.session_file).await {
+            Ok(bytes) => {
+                let Ok(metadata) = serde_json::from_slice::<SessionMetadata>(&bytes) else {
+                    return Ok(None);
+                };
+                if metadata.engine_id == self.engine_id
+                    && metadata.model == self.model
+                    && metadata.persona_hash == self.persona_hash
+                    && !metadata.session_id.trim().is_empty()
+                {
+                    Ok(Some(metadata.session_id))
+                } else {
+                    Ok(None)
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -156,8 +189,43 @@ impl AgentHome {
     pub async fn save_session(&self, session_id: &str) -> Result<(), HomeError> {
         let parent = self.session_file.parent().expect("session has parent");
         secure_directory(parent).await?;
-        atomic_write(&self.session_file, session_id.as_bytes(), 0o600).await
+        let metadata = SessionMetadata {
+            engine_id: self.engine_id.clone(),
+            model: self.model.clone(),
+            persona_hash: self.persona_hash.clone(),
+            session_id: session_id.to_string(),
+            updated_at: time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("current timestamp formats as RFC 3339"),
+        };
+        atomic_write(&self.session_file, &serde_json::to_vec(&metadata)?, 0o600).await
     }
+
+    pub async fn clear_session(&self) -> Result<(), HomeError> {
+        match tokio::fs::remove_file(&self.session_file).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn persona_hash(assignment: &AgentAssignment) -> String {
+    let fields = [
+        assignment.id.as_str(),
+        assignment.display_name.as_str(),
+        assignment.role.as_deref().unwrap_or_default(),
+        assignment.bio.as_deref().unwrap_or_default(),
+        assignment.system_prompt.as_str(),
+    ];
+    let mut hasher = Sha256::new();
+    for field in fields {
+        let normalized = field.replace("\r\n", "\n");
+        let normalized = normalized.trim();
+        hasher.update(normalized.len().to_be_bytes());
+        hasher.update(normalized.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 async fn secure_directory(path: &std::path::Path) -> Result<(), std::io::Error> {
@@ -194,8 +262,12 @@ async fn atomic_write(path: &std::path::Path, bytes: &[u8], mode: u32) -> Result
 
 fn standing_prompt(assignment: &AgentAssignment) -> String {
     format!(
-        "# Identity\n\n{} (`{}`)\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published.\n\n# Local workspace\n\nUse memory/, notes/, and workspace/ for local durable work.\n\n# CLI discovery\n\nRun `openwork --help` when needed.\n\n# Memory discipline\n\nNever write credentials or runtime tokens into memory.\n",
-        assignment.display_name, assignment.id, assignment.system_prompt
+        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\nBio: {}\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published.\n\n# Local workspace\n\nUse memory/, notes/, and workspace/ for local durable work.\n\n# CLI discovery\n\nRun `openwork --help` when needed.\n\n# Memory discipline\n\nNever write credentials or runtime tokens into memory.\n",
+        assignment.display_name,
+        assignment.id,
+        assignment.role.as_deref().unwrap_or("unspecified"),
+        assignment.bio.as_deref().unwrap_or("unspecified"),
+        assignment.system_prompt
     )
 }
 
@@ -214,4 +286,6 @@ pub enum HomeError {
     InvalidAgentId(String),
     #[error("Agent home I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Agent home metadata was invalid: {0}")]
+    Json(#[from] serde_json::Error),
 }

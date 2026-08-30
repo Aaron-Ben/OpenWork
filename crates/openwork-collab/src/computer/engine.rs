@@ -36,6 +36,7 @@ pub struct ClassifyRequest {
     pub cwd: PathBuf,
     pub prompt: String,
     pub model: Option<String>,
+    pub environment: BTreeMap<String, String>,
     pub cancellation: CancellationToken,
 }
 
@@ -66,6 +67,7 @@ pub struct EngineProbe {
 #[async_trait]
 pub trait EngineAdapter: Send + Sync {
     async fn probe(&self) -> Result<EngineProbe, EngineError>;
+    async fn probe_behavior(&self) -> Result<EngineProbe, EngineError>;
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError>;
     async fn run_turn(&self, request: TurnRequest) -> Result<TurnResult, EngineError>;
 }
@@ -80,8 +82,14 @@ pub enum EngineError {
     Protocol(String),
     #[error("OpenCode reported an error: {0}")]
     Reported(String),
+    #[error("OpenCode resume session is invalid: {0}")]
+    SessionInvalid(String),
     #[error("OpenCode I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("OpenCode turn was cancelled")]
     Cancelled,
+    #[error("OpenCode {0} timed out")]
+    Timeout(&'static str),
+    #[error("OpenCode {0} exceeded its output limit")]
+    OutputLimit(&'static str),
 }

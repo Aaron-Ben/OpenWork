@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Write as _};
+use std::{collections::BTreeMap, fmt::Write as _, time::Duration};
 
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -7,7 +7,8 @@ use uuid::Uuid;
 use crate::protocol::{
     AgentAssignment, AgentView, COLLAB_PROTOCOL_VERSION, CliResult, CliSideEffect, ComputerStatus,
     ComputerView, DeliveryRange, EngineStatus, FinishRunRequest, HeartbeatRequest, InboxResponse,
-    LocalComputerRegistration, MessageView, RoomView, RunView, TriggerEnvelope,
+    LocalComputerRegistration, MessageView, RoomView, RunView, TriageReportRequest,
+    TriggerEnvelope,
 };
 
 use super::auth::AgentClaims;
@@ -183,6 +184,26 @@ impl CollaborationStore {
         .map(|rows| rows.into_iter().map(MessageView::from).collect())
     }
 
+    pub async fn wake_recipients(
+        &self,
+        room_id: &str,
+        author_id: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT rm.participant_id
+             FROM collab_room_members rm
+             JOIN collab_rooms r ON r.id = rm.room_id
+             JOIN collab_agents a ON a.id = rm.participant_id
+             WHERE rm.room_id = $1 AND rm.participant_id <> $2 AND a.enabled
+               AND (NOT rm.muted OR r.kind = 'direct')
+             ORDER BY rm.participant_id",
+        )
+        .bind(room_id)
+        .bind(author_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
     pub async fn start_computer(&self, device_token: &str) -> Result<i64, sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
         let row: (String, i64) = sqlx::query_as(
@@ -229,14 +250,18 @@ impl CollaborationStore {
                 "PROTOCOL_MISMATCH: unsupported runtime payload",
             ));
         }
-        let status = engine_status_name(heartbeat.engine.status);
-        let checked = status != "unknown";
+        let engine_status = engine_status_name(heartbeat.engine.status);
+        let checked = engine_status != "unknown";
+        let computer_status = match heartbeat.status {
+            ComputerStatus::Online => "online",
+            ComputerStatus::Offline => "offline",
+        };
         let mut transaction = self.pool.begin().await?;
         self.authorize_device_transaction(&mut transaction, device_token, heartbeat.generation)
             .await?;
         sqlx::query(
             "UPDATE collab_computers
-             SET status = 'online',
+             SET status = $4,
                  last_seen_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
                  daemon_version = $1, daemon_supervised = $2,
                  updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
@@ -245,6 +270,7 @@ impl CollaborationStore {
         .bind(&heartbeat.daemon_version)
         .bind(heartbeat.supervised)
         .bind(heartbeat.generation)
+        .bind(computer_status)
         .execute(&mut *transaction)
         .await?;
         sqlx::query(
@@ -256,12 +282,57 @@ impl CollaborationStore {
                                    ELSE NULL END
              WHERE computer_id = 'local' AND engine_id = 'opencode'",
         )
-        .bind(status)
+        .bind(engine_status)
         .bind(&heartbeat.engine.version)
         .bind(checked)
         .execute(&mut *transaction)
         .await?;
+        if heartbeat.status == ComputerStatus::Offline {
+            sqlx::query(
+                "UPDATE collab_runs
+                 SET status = 'interrupted',
+                     ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                     heartbeat_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                     error_code = 'COMPUTER_OFFLINE',
+                     error_message = 'Local Computer stopped before the run finished'
+                 WHERE computer_id = 'local' AND computer_generation = $1
+                   AND status = 'running'",
+            )
+            .bind(heartbeat.generation)
+            .execute(&mut *transaction)
+            .await?;
+        }
         transaction.commit().await
+    }
+
+    pub async fn sweep_offline_computer(&self, lease: Duration) -> Result<bool, sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+        let result = sqlx::query(
+            "UPDATE collab_computers
+             SET status = 'offline',
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = 'local' AND status = 'online'
+               AND last_seen_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                   - ($1::double precision * INTERVAL '1 second')",
+        )
+        .bind(lease.as_secs_f64())
+        .execute(&mut *transaction)
+        .await?;
+        if result.rows_affected() > 0 {
+            sqlx::query(
+                "UPDATE collab_runs
+                 SET status = 'interrupted',
+                     ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                     heartbeat_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                     error_code = 'COMPUTER_OFFLINE',
+                     error_message = 'Local Computer heartbeat lease expired'
+                 WHERE computer_id = 'local' AND status = 'running'",
+            )
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn roster(
@@ -272,7 +343,8 @@ impl CollaborationStore {
         self.authorize_device(device_token, generation).await?;
         sqlx::query_as::<_, AssignmentRow>(
             "SELECT a.id, p.display_name, a.role, a.bio, a.system_prompt,
-                    a.engine_id, a.model, a.config_version
+                    a.engine_id, a.model, COALESCE(a.fast_model, a.model) AS fast_model,
+                    a.config_version
              FROM collab_agents a
              JOIN collab_participants p ON p.id = a.id
              WHERE a.computer_id = 'local' AND a.enabled
@@ -333,8 +405,9 @@ impl CollaborationStore {
         let rows = sqlx::query_as::<_, InboxRow>(
             "SELECT m.id, m.room_id, m.sequence, m.author_id, m.body, rm.last_read_seq
              FROM collab_room_members rm
+             JOIN collab_rooms r ON r.id = rm.room_id
              JOIN collab_messages m ON m.room_id = rm.room_id
-             WHERE rm.participant_id = $1 AND NOT rm.muted
+             WHERE rm.participant_id = $1 AND (NOT rm.muted OR r.kind = 'direct')
                AND m.sequence > rm.last_read_seq AND m.author_id <> $1
              ORDER BY m.room_id, m.sequence
              LIMIT 200",
@@ -386,6 +459,132 @@ impl CollaborationStore {
             }),
             messages,
         })
+    }
+
+    pub async fn agent_triage_profile(
+        &self,
+        claims: &AgentClaims,
+    ) -> Result<(String, Option<String>, Option<String>, String), sqlx::Error> {
+        sqlx::query_as(
+            "SELECT a.system_prompt, a.role, a.bio,
+                    COALESCE(a.fast_model, a.model) AS fast_model
+             FROM collab_agents a
+             JOIN collab_computers c ON c.id = a.computer_id
+             WHERE a.id = $1 AND a.enabled AND c.daemon_generation = $2
+               AND c.status = 'online'",
+        )
+        .bind(&claims.sub)
+        .bind(claims.generation)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    pub async fn triage_messages(
+        &self,
+        claims: &AgentClaims,
+        run_id: &str,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, MessageRow>(
+            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.body
+             FROM collab_runs r
+             JOIN collab_run_deliveries d ON d.run_id = r.id
+             JOIN collab_messages m ON m.room_id = d.room_id
+                AND m.sequence BETWEEN d.from_seq AND d.up_to_seq
+             WHERE r.id = $1 AND r.agent_id = $2
+               AND r.computer_generation = $3 AND r.status = 'running'
+               AND m.author_id <> $2
+             ORDER BY m.room_id, m.sequence",
+        )
+        .bind(run_id)
+        .bind(&claims.sub)
+        .bind(claims.generation)
+        .fetch_all(&self.pool)
+        .await?;
+        if rows.is_empty() {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        Ok(rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub async fn record_triage(
+        &self,
+        claims: &AgentClaims,
+        request: &TriageReportRequest,
+    ) -> Result<(), sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+        self.authorize_agent_transaction(&mut transaction, claims)
+            .await?;
+        let existing: Option<bool> = sqlx::query_scalar(
+            "SELECT actionable FROM collab_triages
+             WHERE run_id = $1 AND source = 'local_model'
+             LIMIT 1",
+        )
+        .bind(&request.run_id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if existing.is_some_and(|actionable| actionable != request.verdict.actionable) {
+            return Err(protocol_error(
+                "CONFLICT: triage verdict is immutable once recorded",
+            ));
+        }
+        let deliveries: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT d.room_id, d.up_to_seq
+             FROM collab_run_deliveries d
+             JOIN collab_runs r ON r.id = d.run_id
+             WHERE d.run_id = $1 AND r.agent_id = $2
+               AND r.computer_generation = $3 AND r.status = 'running'
+             FOR UPDATE OF d",
+        )
+        .bind(&request.run_id)
+        .bind(&claims.sub)
+        .bind(claims.generation)
+        .fetch_all(&mut *transaction)
+        .await?;
+        if deliveries.is_empty() {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        for (room_id, up_to_seq) in deliveries {
+            sqlx::query(
+                "INSERT INTO collab_triages (
+                    id, run_id, agent_id, computer_id, room_id, up_to_seq,
+                    actionable, source, reason, prompt_note, engine_id, model,
+                    input_tokens, output_tokens, latency_ms
+                 )
+                 SELECT $1, $2, $3, 'local', $4, $5, $6, 'local_model',
+                        $7, $8, 'opencode', $9, $10, $11, $12
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM collab_triages
+                    WHERE run_id = $2 AND room_id = $4 AND source = 'local_model'
+                 )",
+            )
+            .bind(format!("triage_{}", Uuid::new_v4().simple()))
+            .bind(&request.run_id)
+            .bind(&claims.sub)
+            .bind(&room_id)
+            .bind(up_to_seq)
+            .bind(request.verdict.actionable)
+            .bind(&request.verdict.reason)
+            .bind(&request.verdict.prompt_note)
+            .bind(&request.model)
+            .bind(request.input_tokens)
+            .bind(request.output_tokens)
+            .bind(request.latency_ms)
+            .execute(&mut *transaction)
+            .await?;
+            if !request.verdict.actionable {
+                sqlx::query(
+                    "UPDATE collab_run_deliveries
+                     SET eligible_reason = 'triage_false',
+                         eligible_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+                     WHERE run_id = $1 AND room_id = $2 AND eligible_reason IS NULL",
+                )
+                .bind(&request.run_id)
+                .bind(&room_id)
+                .execute(&mut *transaction)
+                .await?;
+            }
+        }
+        transaction.commit().await
     }
 
     pub async fn open_run(
@@ -489,6 +688,31 @@ impl CollaborationStore {
         }
     }
 
+    pub async fn heartbeat_run(
+        &self,
+        claims: &AgentClaims,
+        run_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+        self.authorize_agent_transaction(&mut transaction, claims)
+            .await?;
+        let result = sqlx::query(
+            "UPDATE collab_runs
+             SET heartbeat_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1 AND agent_id = $2 AND computer_generation = $3
+               AND status = 'running'",
+        )
+        .bind(run_id)
+        .bind(&claims.sub)
+        .bind(claims.generation)
+        .execute(&mut *transaction)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        transaction.commit().await
+    }
+
     pub async fn finish_run(
         &self,
         claims: &AgentClaims,
@@ -552,7 +776,7 @@ impl CollaborationStore {
                     .execute(&mut *transaction)
                     .await?;
                     acted |= reason == "action";
-                    acknowledged |= reason == "ack";
+                    acknowledged |= reason == "ack" || reason == "triage_false";
                 }
             }
             outcome = Some(if acted {
@@ -827,6 +1051,7 @@ struct AssignmentRow {
     system_prompt: String,
     engine_id: String,
     model: String,
+    fast_model: String,
     config_version: i64,
 }
 
@@ -882,6 +1107,7 @@ impl From<AssignmentRow> for AgentAssignment {
             system_prompt: row.system_prompt,
             engine_id: row.engine_id,
             model: row.model,
+            fast_model: row.fast_model,
             config_version: row.config_version,
         }
     }

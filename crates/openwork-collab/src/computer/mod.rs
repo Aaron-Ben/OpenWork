@@ -4,4 +4,7 @@ pub mod engine;
 mod home;
 pub mod opencode;
 mod runner;
+mod scheduling;
 pub mod shim;
+pub mod sse;
+pub mod triage;

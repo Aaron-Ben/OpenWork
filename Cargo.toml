@@ -44,6 +44,7 @@ hmac = "0.12"
 ignore = "0.4"
 libc = "0.2"
 regex = "1"
+redis = { version = "1", features = ["tokio-comp"] }
 schemars = "1"
 sha2 = "0.10"
 tokio-util = { version = "0.7", features = ["rt"] }

@@ -143,6 +143,7 @@ printf '%s\n' \
             cwd: directory.path().to_path_buf(),
             prompt: r#"{"actionable":false}"#.to_string(),
             model: None,
+            environment: Default::default(),
             cancellation: CancellationToken::new(),
         })
         .await
@@ -213,24 +214,37 @@ wait
         Err(openwork_collab::computer::engine::EngineError::Cancelled)
     ));
     for pid in pids {
-        assert_eq!(
-            unsafe { libc::kill(pid, 0) },
-            -1,
-            "process {pid} survived cancellation"
-        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while unsafe { libc::kill(pid, 0) } == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("process {pid} survived cancellation"));
     }
 }
 
 #[tokio::test]
-async fn probe_treats_a_resolvable_executable_as_ready_without_invoking_cli_commands() {
+async fn probe_requires_version_flags_and_auth_behavior() {
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("opencode-probe");
-    let invocation_log = directory.path().join("probe.log");
     tokio::fs::write(
         &executable,
         r#"#!/bin/sh
-echo "$*" > "$(dirname "$0")/probe.log"
-exit 91
+case "$*" in
+  "--version") echo "opencode 1.2.3" ;;
+  "run --help") echo "--pure --format --auto --model --session" ;;
+  "auth list") echo "1 credential" ;;
+  "run --pure --format json --agent openwork-triage")
+    prompt=$(cat)
+    [ "$prompt" = "Connectivity check. Reply with exactly: OK" ] || exit 92
+    printf '%s\n' \
+      '{"type":"step_start","sessionID":"ses_probe"}' \
+      '{"type":"text","sessionID":"ses_probe","part":{"text":"OK"}}'
+    printf '%s' "$PWD" > "${0%/*}/behavior-probed"
+    ;;
+  *) exit 91 ;;
+esac
 "#,
     )
     .await
@@ -245,11 +259,133 @@ exit 91
         .unwrap();
 
     let probe = OpenCodeAdapter::with_executable(executable)
-        .probe()
+        .probe_behavior()
         .await
         .unwrap();
     assert_eq!(probe.status, EngineProbeStatus::Ready);
-    assert_eq!(probe.version, None);
+    assert_eq!(probe.version.as_deref(), Some("opencode 1.2.3"));
     assert_eq!(probe.detail, None);
-    assert!(!tokio::fs::try_exists(invocation_log).await.unwrap());
+    let probe_cwd = tokio::fs::read_to_string(directory.path().join("behavior-probed"))
+        .await
+        .unwrap();
+    assert_ne!(PathBuf::from(probe_cwd), directory.path());
+}
+
+#[tokio::test]
+async fn oversized_jsonl_line_is_stopped_without_unbounded_buffering() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-too-large");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+head -c 1200000 /dev/zero | tr '\000' x
+printf '\n'
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        OpenCodeAdapter::with_executable(executable).run_turn(TurnRequest {
+            home: directory.path().to_path_buf(),
+            prompt: "large".to_string(),
+            model: None,
+            resume_session_id: None,
+            environment: Default::default(),
+            cancellation: CancellationToken::new(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(EngineError::OutputLimit("stdout"))));
+}
+
+#[tokio::test]
+async fn probe_times_out_a_hung_opencode_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-hung-probe");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+sleep 60
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let probe = tokio::time::timeout(
+        std::time::Duration::from_secs(7),
+        OpenCodeAdapter::with_executable(executable).probe(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(probe.status, EngineProbeStatus::Broken);
+    assert!(probe.detail.unwrap().contains("timed out"));
+}
+
+#[tokio::test]
+async fn process_errors_redact_tokens_and_the_agent_home() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-secret-error");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+printf 'Bearer supersecret token=abc TOKEN=XYZ at %s\n' "$PWD" >&2
+exit 1
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        OpenCodeAdapter::with_executable(executable).run_turn(TurnRequest {
+            home: directory.path().to_path_buf(),
+            prompt: "fail safely".to_string(),
+            model: None,
+            resume_session_id: None,
+            environment: Default::default(),
+            cancellation: CancellationToken::new(),
+        }),
+    )
+    .await
+    .unwrap();
+    let error = result.unwrap_err().to_string();
+
+    assert!(error.contains("Bearer <redacted>"));
+    assert!(error.contains("token=<redacted>"));
+    assert!(error.contains("TOKEN=<redacted>"));
+    assert!(error.contains("<agent-home>"));
+    assert!(!error.contains("supersecret"));
+    assert!(!error.contains("token=abc"));
+    assert!(!error.contains("TOKEN=XYZ"));
+    assert!(!error.contains(&directory.path().to_string_lossy().into_owned()));
 }

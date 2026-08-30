@@ -46,10 +46,13 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
     let server_shutdown = CancellationToken::new();
     let server = CollaborationServer::start(
         ServerOptions {
-            database_url,
+            database_url: database_url.clone(),
+            redis_url: "redis://127.0.0.1:6379".to_string(),
             state_root: state.path().join("server"),
             control_socket: socket.clone(),
             runtime_bind: "127.0.0.1:0".parse().unwrap(),
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
         },
         server_shutdown.clone(),
     )
@@ -75,6 +78,17 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
     )
     .await
     .unwrap();
+    request(
+        &socket,
+        &ControlRequest::CreateAgent {
+            id: "helper_two".to_string(),
+            display_name: "Helper Two".to_string(),
+            system_prompt: "Reply as the second Agent.".to_string(),
+            model: "opencode/hy3-free".to_string(),
+        },
+    )
+    .await
+    .unwrap();
     let ControlResponse::Room(room) = request(
         &socket,
         &ControlRequest::CreateDirectRoom {
@@ -85,16 +99,16 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
     .unwrap() else {
         panic!("room creation failed")
     };
-    request(
+    let ControlResponse::Room(room_two) = request(
         &socket,
-        &ControlRequest::SendMessage {
-            room_id: room.id.clone(),
-            body: "Please answer through OpenCode.".to_string(),
+        &ControlRequest::CreateDirectRoom {
+            agent_id: "helper_two".to_string(),
         },
     )
     .await
-    .unwrap();
-
+    .unwrap() else {
+        panic!("second room creation failed")
+    };
     let fake_opencode = state.path().join("fake-opencode");
     tokio::fs::write(
         &fake_opencode,
@@ -112,10 +126,32 @@ if [[ "$1 $2" == "auth list" ]]; then
   exit 0
 fi
 prompt="$(cat)"
+if [[ " $* " == *" --agent openwork-triage "* ]]; then
+  if [[ "$prompt" == "Connectivity check. Reply with exactly: OK" ]]; then
+    print -r -- '{"type":"step_start","sessionID":"ses_probe"}'
+    print -r -- '{"type":"text","sessionID":"ses_probe","part":{"text":"OK"}}'
+    exit 0
+  fi
+  if [[ "$prompt" == *"FYI only."* ]]; then
+    print -r -- '{"type":"text","part":{"text":"{\"actionable\":false,\"reason\":\"informational only\",\"promptNote\":\"\"}"}}'
+  else
+    print -r -- '{"type":"text","part":{"text":"{\"actionable\":true,\"reason\":\"direct human request\",\"promptNote\":\"answer the request\"}"}}'
+  fi
+  print -r -- '{"type":"step_finish","part":{"tokens":{"input":4,"output":2,"cache":{"read":0,"write":0}}}}'
+  exit 0
+fi
+if [[ "$prompt" == *"Resume please."* && " $* " == *" --session "* ]]; then
+  print -r -- '{"type":"error","error":{"message":"session not found"}}'
+  exit 1
+fi
 room_id="$(print -r -- "$prompt" | sed -n 's/^room_id: //p' | head -n 1)"
 printf '%s\n%s' 'Agent says `code` $(literal) --as=admin' 'second line' | openwork reply "$room_id" --stdin >/dev/null || exit $?
-print -r -- '{"type":"text","sessionID":"ses_helper","part":{"text":"published"}}'
-print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"input":8,"output":3,"cache":{"read":1,"write":0}}}}'
+session_id="ses_helper"
+if [[ "$prompt" == *"Resume please."* ]]; then
+  session_id="ses_rebuilt"
+fi
+print -r -- "{\"type\":\"text\",\"sessionID\":\"$session_id\",\"part\":{\"text\":\"published\"}}"
+print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\"tokens\":{\"input\":8,\"output\":3,\"cache\":{\"read\":1,\"write\":0}}}}"
 "#,
     )
     .await
@@ -137,13 +173,54 @@ print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"i
             device_token: registration.device_token.unwrap(),
             shim_executable: Path::new(env!("CARGO_BIN_EXE_openwork")).to_path_buf(),
             supervised: false,
-            poll_interval: Duration::from_millis(25),
+            poll_interval: Duration::from_secs(30),
             roster_interval: Duration::from_millis(100),
+            heartbeat_interval: Duration::from_millis(100),
+            probe_interval: Duration::from_millis(250),
         },
         Arc::new(OpenCodeAdapter::with_executable(fake_opencode)),
     );
     let daemon_shutdown_for_task = daemon_shutdown.clone();
     let daemon_task = tokio::spawn(async move { daemon.run(daemon_shutdown_for_task).await });
+
+    let token_file = state
+        .path()
+        .join("computer/agents/helper/bin/.runtime-token");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !token_file.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let second_token_file = state
+        .path()
+        .join("computer/agents/helper_two/bin/.runtime-token");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !second_token_file.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    request(
+        &socket,
+        &ControlRequest::SendMessage {
+            room_id: room.id.clone(),
+            body: "Please answer through OpenCode.".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    request(
+        &socket,
+        &ControlRequest::SendMessage {
+            room_id: room_two.id.clone(),
+            body: "Second Agent, please answer.".to_string(),
+        },
+    )
+    .await
+    .unwrap();
 
     tokio::time::timeout(Duration::from_secs(8), async {
         loop {
@@ -171,6 +248,133 @@ print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"i
     .await
     .unwrap();
 
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let ControlResponse::Messages { messages } = request(
+                &socket,
+                &ControlRequest::ListMessages {
+                    room_id: room_two.id.clone(),
+                },
+            )
+            .await
+            .unwrap() else {
+                panic!("second room message listing failed")
+            };
+            if messages.len() == 2 {
+                assert_eq!(messages[1].author_id, "helper_two");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let roster_pool = PgPool::connect(&database_url).await.unwrap();
+    sqlx::query(
+        "UPDATE collab_agents
+         SET system_prompt = 'Updated second Agent persona.',
+             config_version = config_version + 1
+         WHERE id = 'helper_two'",
+    )
+    .execute(&roster_pool)
+    .await
+    .unwrap();
+    let second_prompt_file = state.path().join("computer/agents/helper_two/AGENTS.md");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let prompt = tokio::fs::read_to_string(&second_prompt_file)
+                .await
+                .unwrap();
+            if prompt.contains("Updated second Agent persona.") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    roster_pool.close().await;
+
+    request(
+        &socket,
+        &ControlRequest::SendMessage {
+            room_id: room.id.clone(),
+            body: "FYI only.".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    let test_pool = PgPool::connect(&database_url).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let last_read_seq: i64 = sqlx::query_scalar(
+                "SELECT last_read_seq FROM collab_room_members
+                 WHERE room_id = $1 AND participant_id = 'helper'",
+            )
+            .bind(&room.id)
+            .fetch_one(&test_pool)
+            .await
+            .unwrap();
+            if last_read_seq == 3 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let ControlResponse::Messages { messages } = request(
+        &socket,
+        &ControlRequest::ListMessages {
+            room_id: room.id.clone(),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("message listing failed")
+    };
+    assert_eq!(messages.len(), 3, "triage=false must skip the main turn");
+    let false_triages: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM collab_triages
+         WHERE agent_id = 'helper' AND actionable = FALSE AND source = 'local_model'",
+    )
+    .fetch_one(&test_pool)
+    .await
+    .unwrap();
+    assert_eq!(false_triages, 1);
+    test_pool.close().await;
+
+    request(
+        &socket,
+        &ControlRequest::SendMessage {
+            room_id: room.id.clone(),
+            body: "Resume please.".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let ControlResponse::Messages { messages } = request(
+                &socket,
+                &ControlRequest::ListMessages {
+                    room_id: room.id.clone(),
+                },
+            )
+            .await
+            .unwrap() else {
+                panic!("message listing failed")
+            };
+            if messages.len() == 5 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+
     let agent_home = state.path().join("computer/agents/helper");
     let standing_prompt = tokio::fs::read_to_string(agent_home.join("AGENTS.md"))
         .await
@@ -183,10 +387,16 @@ print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"i
         .unwrap();
     assert_eq!(token_metadata.permissions().mode() & 0o777, 0o600);
     let session_file = state.path().join("computer/sessions/helper.session");
-    let session = tokio::time::timeout(Duration::from_secs(2), async {
+    let session: serde_json::Value = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             match tokio::fs::read_to_string(&session_file).await {
-                Ok(session) => break session,
+                Ok(session) => {
+                    let session: serde_json::Value = serde_json::from_str(&session).unwrap();
+                    if session["session_id"] == "ses_rebuilt" {
+                        break session;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
@@ -196,10 +406,26 @@ print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"i
     })
     .await
     .unwrap();
-    assert_eq!(session, "ses_helper");
+    assert_eq!(session["engine_id"], "opencode");
+    assert_eq!(session["model"], "opencode/hy3-free");
+    assert_eq!(session["session_id"], "ses_rebuilt");
+    assert!(
+        session["persona_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
 
     daemon_shutdown.cancel();
     daemon_task.await.unwrap().unwrap();
+    let test_pool = PgPool::connect(&database_url).await.unwrap();
+    let computer_status: String =
+        sqlx::query_scalar("SELECT status FROM collab_computers WHERE id = 'local'")
+            .fetch_one(&test_pool)
+            .await
+            .unwrap();
+    assert_eq!(computer_status, "offline");
+    test_pool.close().await;
     server_shutdown.cancel();
     server.shutdown().await.unwrap();
     admin

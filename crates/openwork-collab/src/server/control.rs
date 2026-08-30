@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{ControlRequest, ControlResponse};
 
-use super::storage::CollaborationStore;
+use super::{scheduler::Scheduler, storage::CollaborationStore};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -37,6 +37,7 @@ pub async fn bind(path: &Path) -> Result<UnixListener, std::io::Error> {
 pub async fn serve(
     listener: UnixListener,
     store: CollaborationStore,
+    scheduler: Scheduler,
     runtime_base_url: String,
     shutdown: CancellationToken,
 ) {
@@ -46,9 +47,10 @@ pub async fn serve(
             accepted = listener.accept() => {
                 let Ok((stream, _)) = accepted else { break };
                 let store = store.clone();
+                let scheduler = scheduler.clone();
                 let runtime_base_url = runtime_base_url.clone();
                 tokio::spawn(async move {
-                    let _ = handle(stream, store, runtime_base_url).await;
+                    let _ = handle(stream, store, scheduler, runtime_base_url).await;
                 });
             }
         }
@@ -58,6 +60,7 @@ pub async fn serve(
 async fn handle(
     mut stream: UnixStream,
     store: CollaborationStore,
+    scheduler: Scheduler,
     runtime_base_url: String,
 ) -> Result<(), ControlError> {
     let request: ControlRequest = read_frame(&mut stream).await?;
@@ -92,11 +95,17 @@ async fn handle(
             .await
             .map(ControlResponse::Room)
             .map_err(|error| error.to_string()),
-        ControlRequest::SendMessage { room_id, body } => store
-            .send_user_message(&room_id, &body)
-            .await
-            .map(ControlResponse::Message)
-            .map_err(|error| error.to_string()),
+        ControlRequest::SendMessage { room_id, body } => {
+            match store.send_user_message(&room_id, &body).await {
+                Ok(message) => {
+                    scheduler
+                        .message_committed(&message.id, &message.room_id, &message.author_id)
+                        .await;
+                    Ok(ControlResponse::Message(message))
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }
         ControlRequest::ListMessages { room_id } => store
             .list_messages(&room_id)
             .await

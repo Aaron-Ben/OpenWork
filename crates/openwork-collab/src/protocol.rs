@@ -114,6 +114,7 @@ pub struct HeartbeatRequest {
     pub generation: i64,
     pub daemon_version: String,
     pub supervised: bool,
+    pub status: ComputerStatus,
     pub engine: EngineProbeView,
 }
 
@@ -135,6 +136,7 @@ pub struct AgentAssignment {
     pub system_prompt: String,
     pub engine_id: String,
     pub model: String,
+    pub fast_model: String,
     pub config_version: i64,
 }
 
@@ -149,6 +151,46 @@ pub struct AgentRoster {
 pub struct AgentTokenResponse {
     pub token: String,
     pub expires_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeEvent {
+    pub id: String,
+    pub agent_id: String,
+    pub message_id: String,
+    pub room_id: String,
+    pub reason: String,
+    pub published_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TriagePayload {
+    pub verdict: Option<TriageVerdict>,
+    pub instructions: Option<String>,
+    pub input: Option<String>,
+    pub model: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageVerdict {
+    pub actionable: bool,
+    pub reason: String,
+    pub prompt_note: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageReportRequest {
+    pub run_id: String,
+    pub verdict: TriageVerdict,
+    pub model: String,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub latency_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

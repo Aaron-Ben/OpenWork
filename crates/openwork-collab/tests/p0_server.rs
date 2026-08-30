@@ -37,9 +37,12 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
     let server = CollaborationServer::start(
         ServerOptions {
             database_url: database_url.clone(),
+            redis_url: "redis://127.0.0.1:6379".to_string(),
             state_root: state.path().to_path_buf(),
             control_socket: socket.clone(),
             runtime_bind: "127.0.0.1:0".parse().unwrap(),
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
         },
         shutdown.clone(),
     )
@@ -112,6 +115,7 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
             generation: started.generation,
             daemon_version: "test".to_string(),
             supervised: false,
+            status: openwork_collab::protocol::ComputerStatus::Online,
             engine: EngineProbeView {
                 engine_id: "opencode".to_string(),
                 status: EngineStatus::Ready,
@@ -199,23 +203,37 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
         .await
         .unwrap();
     assert_eq!(cli.exit_code, 0);
+    let finish_request = FinishRunRequest {
+        status: "completed".to_string(),
+        input_tokens: Some(10),
+        cached_input_tokens: Some(2),
+        output_tokens: Some(4),
+        error_code: None,
+        error_message: None,
+        assistant_text: Some("done".to_string()),
+    };
     client
         .post(format!("{base}/runtime/runs/{}/finish", run.id))
         .bearer_auth(&token.token)
-        .json(&FinishRunRequest {
-            status: "completed".to_string(),
-            input_tokens: Some(10),
-            cached_input_tokens: Some(2),
-            output_tokens: Some(4),
-            error_code: None,
-            error_message: None,
-            assistant_text: Some("done".to_string()),
-        })
+        .json(&finish_request)
         .send()
         .await
         .unwrap()
         .error_for_status()
         .unwrap();
+    let retried_finish = client
+        .post(format!("{base}/runtime/runs/{}/finish", run.id))
+        .bearer_auth(&token.token)
+        .json(&finish_request)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<RunView>()
+        .await
+        .unwrap();
+    assert_eq!(retried_finish.status, "completed");
 
     let ControlResponse::Messages { messages } = request(
         &socket,
@@ -339,9 +357,12 @@ async fn runtime_rejects_a_non_loopback_bind_before_opening_external_resources()
     let result = CollaborationServer::start(
         ServerOptions {
             database_url: "postgres://unused".to_string(),
+            redis_url: "redis://127.0.0.1:6379".to_string(),
             state_root: state.path().to_path_buf(),
             control_socket: state.path().join("control.sock"),
             runtime_bind: "0.0.0.0:0".parse().unwrap(),
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
         },
         CancellationToken::new(),
     )
@@ -360,9 +381,12 @@ async fn control_ensures_the_single_local_computer_and_returns_its_secret_once()
     let server = CollaborationServer::start(
         ServerOptions {
             database_url,
+            redis_url: "redis://127.0.0.1:6379".to_string(),
             state_root: state.path().to_path_buf(),
             control_socket: socket.clone(),
             runtime_bind: "127.0.0.1:0".parse().unwrap(),
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
         },
         shutdown.clone(),
     )

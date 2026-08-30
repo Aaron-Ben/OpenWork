@@ -11,6 +11,7 @@ hmac.workspace = true
 libc.workspace = true
 axum = "0.8"
 reqwest.workspace = true
+redis.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -20,6 +21,6 @@ time = { workspace = true, features = ["formatting", "macros", "serde"] }
 tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "signal", "time"] }
 tokio-util.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
+futures-util.workspace = true
+tracing.workspace = true
 tempfile = "3"

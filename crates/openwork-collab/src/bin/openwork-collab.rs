@@ -74,9 +74,12 @@ async fn run_server() -> CliResult<()> {
     let server = CollaborationServer::start(
         ServerOptions {
             database_url: std::env::var("DATABASE_URL")?,
+            redis_url: std::env::var("REDIS_URL")?,
             state_root,
             control_socket: control_socket(),
             runtime_bind,
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
         },
         shutdown.clone(),
     )
@@ -112,6 +115,8 @@ async fn run_computer() -> CliResult<()> {
             supervised: false,
             poll_interval: Duration::from_secs(20),
             roster_interval: Duration::from_secs(60),
+            heartbeat_interval: Duration::from_secs(30),
+            probe_interval: Duration::from_secs(5 * 60),
         },
         Arc::new(OpenCodeAdapter::with_executable(opencode)),
     );
