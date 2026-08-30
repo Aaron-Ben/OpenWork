@@ -7,18 +7,27 @@ use openwork_collab::{
         AgentTokenResponse, COLLAB_PROTOCOL_VERSION, CliRequest, CliResult, CliSideEffect,
         ComputerStatus, ControlRequest, ControlResponse, DeviceStartResponse, EngineInventoryView,
         EngineStatus, FinishRunRequest, HeartbeatRequest, InboxResponse, OpenRunRequest, RunView,
+        TriagePayload, TriageReportRequest,
     },
     server::{CollaborationServer, ServerHandle, ServerOptions, control::request},
 };
 use sqlx::{Executor, PgPool};
+use tokio::{
+    sync::{Mutex, MutexGuard, oneshot},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+static FIXTURE_LOCK: Mutex<()> = Mutex::const_new(());
+
 struct Fixture {
+    _test_guard: MutexGuard<'static, ()>,
     admin: PgPool,
     database: String,
     socket: std::path::PathBuf,
     server: ServerHandle,
+    pool: PgPool,
     client: reqwest::Client,
     base_url: String,
     device_token: String,
@@ -33,6 +42,7 @@ impl Fixture {
     }
 
     async fn start_with_redis(redis_url: String) -> Option<Self> {
+        let test_guard = FIXTURE_LOCK.lock().await;
         let base_database_url = std::env::var("TEST_DATABASE_URL").ok()?;
         let admin = PgPool::connect(&base_database_url).await.unwrap();
         let database = format!("collab_p2_{}", Uuid::new_v4().simple());
@@ -42,6 +52,7 @@ impl Fixture {
             .unwrap();
         let (prefix, _) = base_database_url.rsplit_once('/').unwrap();
         let database_url = format!("{prefix}/{database}");
+        let pool = PgPool::connect(&database_url).await.unwrap();
         let state = tempfile::tempdir().unwrap().keep();
         let socket = state.join("control.sock");
         let shutdown = CancellationToken::new();
@@ -102,10 +113,12 @@ impl Fixture {
             .error_for_status()
             .unwrap();
         Some(Self {
+            _test_guard: test_guard,
             admin,
             database,
             socket,
             server,
+            pool,
             client,
             base_url,
             device_token,
@@ -242,14 +255,296 @@ impl Fixture {
         serde_json::from_str(&body).unwrap()
     }
 
+    async fn triage_payload(&self, token: &str, run_id: &str) -> TriagePayload {
+        self.client
+            .get(format!(
+                "{}/runtime/inbox-triage/payload?run_id={run_id}",
+                self.base_url
+            ))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<TriagePayload>()
+            .await
+            .unwrap()
+    }
+
+    async fn insert_message(&self, room_id: &str, author_id: &str, message_kind: &str, body: &str) {
+        let mut transaction = self.pool.begin().await.unwrap();
+        let sequence: i64 = sqlx::query_scalar(
+            "UPDATE collab_rooms
+             SET next_seq = next_seq + 1,
+                 last_message_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1
+             RETURNING next_seq",
+        )
+        .bind(room_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(format!("msg_{}", Uuid::new_v4().simple()))
+        .bind(room_id)
+        .bind(sequence)
+        .bind(author_id)
+        .bind(message_kind)
+        .bind(body)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+    }
+
     async fn stop(self) {
         self.server.shutdown().await.unwrap();
+        self.pool.close().await;
         self.admin
             .execute(format!("DROP DATABASE {} WITH (FORCE)", self.database).as_str())
             .await
             .unwrap();
         self.admin.close().await;
     }
+}
+
+fn start_wake_stream(
+    base: String,
+    token: String,
+    expected_room_id: String,
+) -> (oneshot::Receiver<()>, JoinHandle<serde_json::Value>) {
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let mut response = client
+            .get(format!("{base}/runtime/wake-stream"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        ready_tx.send(()).unwrap();
+        let mut buffer = String::new();
+        loop {
+            let chunk = response.chunk().await.unwrap().expect("wake stream ended");
+            buffer.push_str(std::str::from_utf8(&chunk).unwrap());
+            while let Some(end) = buffer.find("\n\n") {
+                let event = buffer[..end].to_string();
+                buffer.drain(..end + 2);
+                if !event.contains("event: wake") {
+                    continue;
+                }
+                let data = event
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "))
+                    .expect("wake event has data");
+                let wake: serde_json::Value = serde_json::from_str(data).unwrap();
+                if wake["roomId"] == expected_room_id {
+                    return wake;
+                }
+            }
+        }
+    });
+    (ready_rx, task)
+}
+
+#[tokio::test]
+async fn p2_5_triage_bypasses_the_model_for_human_and_system_messages() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha_token = fixture.create_agent("alpha").await;
+    let beta_token = fixture.create_agent("beta").await;
+
+    let alpha_run = fixture.open_direct_run("alpha", &alpha_token).await;
+    let human = fixture.triage_payload(&alpha_token, &alpha_run).await;
+    let human = human.verdict.expect("human message is deterministic");
+    assert!(human.actionable);
+    assert_eq!(human.source, "deterministic");
+
+    let dm = fixture
+        .cli(
+            &alpha_token,
+            "cli_p25_agent_dm",
+            vec!["dm", "beta", "--", "Can you inspect the failure?"],
+        )
+        .await;
+    let (agent_room, _) = direct_effects(&dm);
+    fixture.finish(&alpha_token, &alpha_run).await;
+
+    let beta_run = fixture.open_inbox_run(&beta_token).await;
+    let agent_only = fixture.triage_payload(&beta_token, &beta_run).await;
+    assert!(agent_only.verdict.is_none());
+    let input = agent_only
+        .input
+        .expect("agent-only traffic uses local triage");
+    assert!(input.contains("room_kind: direct"));
+    assert!(input.contains("message_kind: normal"));
+    assert!(input.contains("author_kind: agent"));
+    assert!(input.contains("author_name: alpha"));
+    fixture
+        .cli(
+            &beta_token,
+            "cli_p25_ack_agent_dm",
+            vec!["ack", &agent_room],
+        )
+        .await;
+    fixture.finish(&beta_token, &beta_run).await;
+
+    fixture
+        .insert_message(
+            &agent_room,
+            "alpha",
+            "normal",
+            "The failure now reproduces twice.",
+        )
+        .await;
+    let follow_up_run = fixture.open_inbox_run(&beta_token).await;
+    let follow_up = fixture.triage_payload(&beta_token, &follow_up_run).await;
+    let follow_up_input = follow_up.input.expect("agent follow-up uses local triage");
+    assert!(follow_up_input.contains("Recent posted context:"));
+    assert!(follow_up_input.contains("Can you inspect the failure?"));
+    assert!(follow_up_input.contains("The failure now reproduces twice."));
+    fixture
+        .cli(
+            &beta_token,
+            "cli_p25_ack_agent_follow_up",
+            vec!["ack", &agent_room],
+        )
+        .await;
+    fixture.finish(&beta_token, &follow_up_run).await;
+
+    fixture
+        .insert_message(&agent_room, "alpha", "system", "alpha updated membership")
+        .await;
+    let system_run = fixture.open_inbox_run(&beta_token).await;
+    let system = fixture.triage_payload(&beta_token, &system_run).await;
+    let system = system
+        .verdict
+        .expect("system-only delivery is deterministic");
+    assert!(!system.actionable);
+    assert_eq!(system.source, "system_only");
+    fixture
+        .client
+        .post(format!("{}/runtime/triage", fixture.base_url))
+        .bearer_auth(&beta_token)
+        .json(&TriageReportRequest {
+            run_id: system_run.clone(),
+            verdict: system,
+            model: "opencode/mimo-v2.5-free".to_string(),
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            latency_ms: Some(0),
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let finished = fixture.finish(&beta_token, &system_run).await;
+    assert_eq!(finished.outcome.as_deref(), Some("silent"));
+
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn p2_5_muted_agent_wakes_only_for_an_exact_id_mention_and_receives_context() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha_token = fixture.create_agent("alpha").await;
+    let beta_token = fixture.create_agent("beta").await;
+    let bootstrap_run = fixture.open_direct_run("alpha", &alpha_token).await;
+    let created = fixture
+        .cli(
+            &alpha_token,
+            "cli_p25_muted_group",
+            vec![
+                "group", "create", "--member", "user", "--member", "beta", "--", "Welcome",
+            ],
+        )
+        .await;
+    let room_id = group_room(&created);
+    fixture.finish(&alpha_token, &bootstrap_run).await;
+
+    let initial_run = fixture.open_inbox_run(&beta_token).await;
+    fixture
+        .cli(&beta_token, "cli_p25_ack_initial", vec!["ack", &room_id])
+        .await;
+    fixture.finish(&beta_token, &initial_run).await;
+    sqlx::query(
+        "UPDATE collab_room_members SET muted = TRUE
+         WHERE room_id = $1 AND participant_id = 'beta'",
+    )
+    .bind(&room_id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+
+    let (ready, mut wake_task) = start_wake_stream(
+        fixture.base_url.clone(),
+        beta_token.clone(),
+        room_id.clone(),
+    );
+    tokio::time::timeout(Duration::from_secs(2), ready)
+        .await
+        .unwrap()
+        .unwrap();
+    request(
+        &fixture.socket,
+        &ControlRequest::SendMessage {
+            room_id: room_id.clone(),
+            body: "Could @beta2 inspect this?".to_string(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut wake_task)
+            .await
+            .is_err()
+    );
+
+    let ControlResponse::Message(mentioned) = request(
+        &fixture.socket,
+        &ControlRequest::SendMessage {
+            room_id: room_id.clone(),
+            body: "Could @beta inspect this?".to_string(),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("mentioned message was not created")
+    };
+    let wake = tokio::time::timeout(Duration::from_secs(5), wake_task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake["agentId"], "beta");
+    assert_eq!(wake["messageId"], mentioned.id);
+
+    let inbox = fixture
+        .client
+        .get(format!("{}/runtime/inbox", fixture.base_url))
+        .bearer_auth(&beta_token)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<InboxResponse>()
+        .await
+        .unwrap();
+    assert_eq!(inbox.messages.len(), 2);
+    assert_eq!(inbox.messages[0].body, "Could @beta2 inspect this?");
+    assert_eq!(inbox.messages[1].body, "Could @beta inspect this?");
+
+    fixture.stop().await;
 }
 
 #[tokio::test]

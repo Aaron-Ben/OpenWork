@@ -166,6 +166,7 @@ impl CollaborationStore {
 
     pub async fn wake_recipients(
         &self,
+        message_id: &str,
         room_id: &str,
         author_id: &str,
     ) -> Result<Vec<String>, sqlx::Error> {
@@ -174,10 +175,21 @@ impl CollaborationStore {
              FROM collab_room_members rm
              JOIN collab_rooms r ON r.id = rm.room_id
              JOIN collab_agents a ON a.id = rm.participant_id
-             WHERE rm.room_id = $1 AND rm.participant_id <> $2 AND a.enabled
-               AND (NOT rm.muted OR r.kind = 'direct')
+             JOIN collab_messages message
+               ON message.id = $1 AND message.room_id = rm.room_id
+             WHERE rm.room_id = $2 AND rm.participant_id <> $3 AND a.enabled
+               AND (
+                   NOT rm.muted OR r.kind = 'direct' OR (
+                       message.kind = 'normal'
+                       AND message.body ~ (
+                           '(^|[^A-Za-z0-9_])@' || rm.participant_id ||
+                           '([^A-Za-z0-9_]|$)'
+                       )
+                   )
+               )
              ORDER BY rm.participant_id",
         )
+        .bind(message_id)
         .bind(room_id)
         .bind(author_id)
         .fetch_all(&self.pool)
@@ -385,7 +397,21 @@ impl CollaborationStore {
              FROM collab_room_members rm
              JOIN collab_rooms r ON r.id = rm.room_id
              JOIN collab_messages m ON m.room_id = rm.room_id
-             WHERE rm.participant_id = $1 AND (NOT rm.muted OR r.kind = 'direct')
+             WHERE rm.participant_id = $1
+               AND (
+                   NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                       SELECT 1
+                       FROM collab_messages mention
+                       WHERE mention.room_id = rm.room_id
+                         AND mention.sequence > rm.last_read_seq
+                         AND mention.author_id <> $1
+                         AND mention.kind = 'normal'
+                         AND mention.body ~ (
+                             '(^|[^A-Za-z0-9_])@' || rm.participant_id ||
+                             '([^A-Za-z0-9_]|$)'
+                         )
+                   )
+               )
                AND m.sequence > rm.last_read_seq AND m.author_id <> $1
              ORDER BY m.created_at, m.room_id, m.sequence
              LIMIT 200",
@@ -463,17 +489,21 @@ impl CollaborationStore {
         .await
     }
 
-    pub async fn triage_messages(
+    pub(super) async fn triage_context(
         &self,
         claims: &AgentClaims,
         run_id: &str,
-    ) -> Result<Vec<MessageView>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, MessageRow>(
-            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.body
+    ) -> Result<TriageContext, sqlx::Error> {
+        let unread = sqlx::query_as::<_, TriageMessage>(
+            "SELECT m.id, m.room_id, room.kind AS room_kind, m.sequence,
+                    m.author_id, author.kind AS author_kind,
+                    author.display_name AS author_name, m.kind AS message_kind, m.body
              FROM collab_runs r
              JOIN collab_run_deliveries d ON d.run_id = r.id
              JOIN collab_messages m ON m.room_id = d.room_id
                 AND m.sequence BETWEEN d.from_seq AND d.up_to_seq
+             JOIN collab_rooms room ON room.id = m.room_id
+             JOIN collab_participants author ON author.id = m.author_id
              WHERE r.id = $1 AND r.agent_id = $2
                AND r.computer_generation = $3 AND r.status = 'running'
                AND m.author_id <> $2
@@ -484,10 +514,41 @@ impl CollaborationStore {
         .bind(claims.generation)
         .fetch_all(&self.pool)
         .await?;
-        if rows.is_empty() {
+        if unread.is_empty() {
             return Err(sqlx::Error::RowNotFound);
         }
-        Ok(rows.into_iter().map(MessageView::from).collect())
+        let recent = sqlx::query_as::<_, TriageMessage>(
+            "SELECT message.id, message.room_id, room.kind AS room_kind,
+                    message.sequence, message.author_id,
+                    author.kind AS author_kind, author.display_name AS author_name,
+                    message.kind AS message_kind, message.body
+             FROM collab_runs run
+             JOIN collab_run_deliveries delivery ON delivery.run_id = run.id
+             JOIN collab_room_members member
+               ON member.room_id = delivery.room_id
+              AND member.participant_id = run.agent_id
+             JOIN LATERAL (
+                 SELECT history.id, history.room_id, history.sequence,
+                        history.author_id, history.kind, history.body
+                 FROM collab_messages history
+                 WHERE history.room_id = delivery.room_id
+                   AND history.sequence < delivery.from_seq
+                   AND history.created_at >= member.joined_at
+                 ORDER BY history.sequence DESC
+                 LIMIT 12
+             ) message ON TRUE
+             JOIN collab_rooms room ON room.id = message.room_id
+             JOIN collab_participants author ON author.id = message.author_id
+             WHERE run.id = $1 AND run.agent_id = $2
+               AND run.computer_generation = $3 AND run.status = 'running'
+             ORDER BY message.room_id, message.sequence",
+        )
+        .bind(run_id)
+        .bind(&claims.sub)
+        .bind(claims.generation)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(TriageContext { unread, recent })
     }
 
     pub async fn record_triage(
@@ -498,9 +559,20 @@ impl CollaborationStore {
         let mut transaction = self.pool.begin().await?;
         self.authorize_agent_transaction(&mut transaction, claims)
             .await?;
+        if !matches!(
+            request.verdict.source.as_str(),
+            "local_model" | "deterministic" | "system_only"
+        ) {
+            return Err(protocol_error("INVALID_ARGUMENT: invalid triage source"));
+        }
+        if request.verdict.source == "system_only" && request.verdict.actionable {
+            return Err(protocol_error(
+                "INVALID_ARGUMENT: system-only triage cannot be actionable",
+            ));
+        }
         let existing: Option<bool> = sqlx::query_scalar(
             "SELECT actionable FROM collab_triages
-             WHERE run_id = $1 AND source = 'local_model'
+             WHERE run_id = $1
              LIMIT 1",
         )
         .bind(&request.run_id)
@@ -534,11 +606,11 @@ impl CollaborationStore {
                     actionable, source, reason, prompt_note, engine_id, model,
                     input_tokens, output_tokens, latency_ms
                  )
-                 SELECT $1, $2, $3, 'local', $4, $5, $6, 'local_model',
-                        $7, $8, 'opencode', $9, $10, $11, $12
+                 SELECT $1, $2, $3, 'local', $4, $5, $6, $7,
+                        $8, $9, 'opencode', $10, $11, $12, $13
                  WHERE NOT EXISTS (
                     SELECT 1 FROM collab_triages
-                    WHERE run_id = $2 AND room_id = $4 AND source = 'local_model'
+                    WHERE run_id = $2 AND room_id = $4
                  )",
             )
             .bind(format!("triage_{}", Uuid::new_v4().simple()))
@@ -547,6 +619,7 @@ impl CollaborationStore {
             .bind(&room_id)
             .bind(up_to_seq)
             .bind(request.verdict.actionable)
+            .bind(&request.verdict.source)
             .bind(&request.verdict.reason)
             .bind(&request.verdict.prompt_note)
             .bind(&request.model)
@@ -904,6 +977,24 @@ struct MessageRow {
     sequence: i64,
     author_id: String,
     body: String,
+}
+
+pub(super) struct TriageContext {
+    pub unread: Vec<TriageMessage>,
+    pub recent: Vec<TriageMessage>,
+}
+
+#[derive(FromRow)]
+pub(super) struct TriageMessage {
+    pub id: String,
+    pub room_id: String,
+    pub room_kind: String,
+    pub sequence: i64,
+    pub author_id: String,
+    pub author_kind: String,
+    pub author_name: String,
+    pub message_kind: String,
+    pub body: String,
 }
 
 #[derive(FromRow)]

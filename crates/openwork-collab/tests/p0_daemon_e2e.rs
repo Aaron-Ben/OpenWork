@@ -116,11 +116,7 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
         r#"#!/bin/zsh
 prompt="$(cat)"
 if [[ " $* " == *" --agent openwork-triage "* ]]; then
-  if [[ "$prompt" == *"FYI only."* ]]; then
-    print -r -- '{"type":"text","part":{"text":"{\"actionable\":false,\"reason\":\"informational only\",\"promptNote\":\"\"}"}}'
-  else
-    print -r -- '{"type":"text","part":{"text":"{\"actionable\":true,\"reason\":\"direct human request\",\"promptNote\":\"answer the request\"}"}}'
-  fi
+  print -r -- '{"type":"text","part":{"text":"{\"actionable\":false,\"reason\":\"agent-only noise\",\"promptNote\":\"\"}"}}'
   print -r -- '{"type":"step_finish","part":{"tokens":{"input":4,"output":2,"cache":{"read":0,"write":0}}}}'
   exit 0
 fi
@@ -318,15 +314,19 @@ print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\
     .unwrap() else {
         panic!("message listing failed")
     };
-    assert_eq!(messages.len(), 3, "triage=false must skip the main turn");
-    let false_triages: i64 = sqlx::query_scalar(
+    assert_eq!(
+        messages.len(),
+        4,
+        "a human message must reach the main turn"
+    );
+    let deterministic_triages: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM collab_triages
-         WHERE agent_id = 'helper' AND actionable = FALSE AND source = 'local_model'",
+         WHERE agent_id = 'helper' AND actionable = TRUE AND source = 'deterministic'",
     )
     .fetch_one(&test_pool)
     .await
     .unwrap();
-    assert_eq!(false_triages, 1);
+    assert!(deterministic_triages >= 2);
     test_pool.close().await;
 
     request(
@@ -350,7 +350,7 @@ print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\
             .unwrap() else {
                 panic!("message listing failed")
             };
-            if messages.len() == 5 {
+            if messages.len() == 6 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -365,6 +365,10 @@ print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\
         .unwrap();
     assert!(standing_prompt.contains("Reply clearly."));
     assert!(standing_prompt.contains("`openwork` CLI"));
+    assert!(standing_prompt.contains("named teammate"));
+    assert!(standing_prompt.contains("actual posted messages"));
+    assert!(standing_prompt.contains("HELD"));
+    assert!(standing_prompt.contains("Do not claim a chat turn"));
     assert!(!standing_prompt.to_ascii_lowercase().contains("mcp"));
     let token_metadata = tokio::fs::metadata(agent_home.join("bin/.runtime-token"))
         .await

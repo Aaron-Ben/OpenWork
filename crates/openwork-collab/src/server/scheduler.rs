@@ -71,7 +71,7 @@ impl Scheduler {
         }
         let recipients = match self
             .store
-            .wake_recipients(&event.room_id, &event.author_id)
+            .wake_recipients(&event.message_id, &event.room_id, &event.author_id)
             .await
         {
             Ok(recipients) => recipients,
