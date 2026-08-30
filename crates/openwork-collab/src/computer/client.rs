@@ -183,7 +183,10 @@ impl AgentClient {
         self.http
             .post(format!("{}/runtime/cli", self.base_url))
             .bearer_auth(self.token())
-            .json(&CliRequest { argv })
+            .json(&CliRequest {
+                request_id: format!("cli_{}", uuid::Uuid::new_v4().simple()),
+                argv,
+            })
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await

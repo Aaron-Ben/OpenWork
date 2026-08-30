@@ -22,6 +22,7 @@ use crate::protocol::{
 
 use super::{
     auth::{AgentClaims, SigningKey},
+    cli::CliDispatcher,
     scheduler::Scheduler,
     storage::CollaborationStore,
     triage::InboxTriage,
@@ -33,9 +34,15 @@ struct RuntimeState {
     signing_key: SigningKey,
     scheduler: Scheduler,
     triage: InboxTriage,
+    cli: CliDispatcher,
 }
 
-pub fn router(store: CollaborationStore, signing_key: SigningKey, scheduler: Scheduler) -> Router {
+pub fn router(
+    store: CollaborationStore,
+    signing_key: SigningKey,
+    scheduler: Scheduler,
+    cli: CliDispatcher,
+) -> Router {
     let triage = InboxTriage::new(store.clone());
     Router::new()
         .route("/health", get(health))
@@ -59,6 +66,7 @@ pub fn router(store: CollaborationStore, signing_key: SigningKey, scheduler: Sch
             signing_key,
             scheduler,
             triage,
+            cli,
         })
 }
 
@@ -220,7 +228,7 @@ async fn run_cli(
     Json(request): Json<CliRequest>,
 ) -> Result<Json<CliResult>, RuntimeError> {
     let claims = agent_claims(&state, &headers).await?;
-    let result = state.store.run_cli(&claims, request.argv).await?;
+    let result = state.cli.execute(&claims, request).await?;
     for effect in &result.side_effects {
         if let CliSideEffect::MessagePublished {
             room_id,

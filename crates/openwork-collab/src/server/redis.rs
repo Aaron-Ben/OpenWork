@@ -139,7 +139,7 @@ impl RedisCoordination {
         .map_err(|_| timeout_error())?
     }
 
-    async fn connection(&self) -> RedisResult<redis::aio::MultiplexedConnection> {
+    pub(crate) async fn connection(&self) -> RedisResult<redis::aio::MultiplexedConnection> {
         tokio::time::timeout(
             REDIS_TIMEOUT,
             self.client.get_multiplexed_async_connection(),

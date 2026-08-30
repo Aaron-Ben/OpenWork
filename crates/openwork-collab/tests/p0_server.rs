@@ -186,6 +186,7 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
         .post(format!("{base}/runtime/cli"))
         .bearer_auth(&token.token)
         .json(&CliRequest {
+            request_id: "cli_p0_reply".to_string(),
             argv: vec![
                 "reply".to_string(),
                 room.id.clone(),

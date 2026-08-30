@@ -5,13 +5,14 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::protocol::{
-    AgentAssignment, AgentView, COLLAB_PROTOCOL_VERSION, CliResult, CliSideEffect, ComputerStatus,
-    ComputerView, DeliveryRange, EngineStatus, FinishRunRequest, HeartbeatRequest, InboxResponse,
+    AgentAssignment, AgentView, COLLAB_PROTOCOL_VERSION, ComputerStatus, ComputerView,
+    DeliveryRange, EngineStatus, FinishRunRequest, HeartbeatRequest, InboxResponse,
     LocalComputerRegistration, MessageView, RoomView, RunView, TriageReportRequest,
     TriggerEnvelope,
 };
 
 use super::auth::AgentClaims;
+use super::rooms::get_or_create_direct_room;
 
 #[derive(Clone)]
 pub struct CollaborationStore {
@@ -111,29 +112,8 @@ impl CollaborationStore {
     }
 
     pub async fn create_direct_room(&self, agent_id: &str) -> Result<RoomView, sqlx::Error> {
-        let room_id = format!("room_{}", Uuid::new_v4().simple());
-        let direct_key = if agent_id < "user" {
-            format!("{agent_id}|user")
-        } else {
-            format!("user|{agent_id}")
-        };
         let mut transaction = self.pool.begin().await?;
-        sqlx::query(
-            "INSERT INTO collab_rooms (id, kind, direct_key)
-             VALUES ($1, 'direct', $2)",
-        )
-        .bind(&room_id)
-        .bind(direct_key)
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(
-            "INSERT INTO collab_room_members (room_id, participant_id)
-             VALUES ($1, 'user'), ($1, $2)",
-        )
-        .bind(&room_id)
-        .bind(agent_id)
-        .execute(&mut *transaction)
-        .await?;
+        let (room_id, _) = get_or_create_direct_room(&mut transaction, "user", agent_id).await?;
         transaction.commit().await?;
         Ok(RoomView {
             id: room_id,
@@ -400,13 +380,14 @@ impl CollaborationStore {
 
     pub async fn inbox(&self, claims: &AgentClaims) -> Result<InboxResponse, sqlx::Error> {
         let rows = sqlx::query_as::<_, InboxRow>(
-            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.body, rm.last_read_seq
+            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.body, rm.last_read_seq,
+                    COUNT(*) OVER() AS total_count
              FROM collab_room_members rm
              JOIN collab_rooms r ON r.id = rm.room_id
              JOIN collab_messages m ON m.room_id = rm.room_id
              WHERE rm.participant_id = $1 AND (NOT rm.muted OR r.kind = 'direct')
                AND m.sequence > rm.last_read_seq AND m.author_id <> $1
-             ORDER BY m.room_id, m.sequence
+             ORDER BY m.created_at, m.room_id, m.sequence
              LIMIT 200",
         )
         .bind(&claims.sub)
@@ -416,8 +397,12 @@ impl CollaborationStore {
             return Ok(InboxResponse {
                 trigger: None,
                 messages: Vec::new(),
+                carried_over: false,
             });
         }
+        let carried_over = rows
+            .first()
+            .is_some_and(|row| row.total_count > rows.len() as i64);
         let mut ranges = BTreeMap::<String, (i64, i64)>::new();
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
@@ -450,11 +435,13 @@ impl CollaborationStore {
                         up_to_seq,
                     })
                     .collect(),
+                carried_over,
                 issued_at: now,
                 expires_at: now + 5 * 60,
                 signature: String::new(),
             }),
             messages,
+            carried_over,
         })
     }
 
@@ -595,10 +582,10 @@ impl CollaborationStore {
         sqlx::query(
             "INSERT INTO collab_runs (
                 id, agent_id, computer_id, room_id, trigger, status,
-                engine_id, model, computer_generation
+                engine_id, model, computer_generation, inbox_carried_over
              )
              SELECT $1, a.id, a.computer_id, $3, $4, 'running',
-                    a.engine_id, a.model, $5
+                    a.engine_id, a.model, $5, $6
              FROM collab_agents a
              WHERE a.id = $2
              ON CONFLICT (id) DO NOTHING",
@@ -608,6 +595,7 @@ impl CollaborationStore {
         .bind(trigger.deliveries.first().map(|delivery| &delivery.room_id))
         .bind(&trigger.trigger)
         .bind(claims.generation)
+        .bind(trigger.carried_over)
         .execute(&mut *transaction)
         .await?;
         for delivery in &trigger.deliveries {
@@ -646,43 +634,8 @@ impl CollaborationStore {
         Ok(RunView {
             id: trigger.dispatch_id.clone(),
             status,
+            outcome: None,
         })
-    }
-
-    pub async fn run_cli(
-        &self,
-        claims: &AgentClaims,
-        argv: Vec<String>,
-    ) -> Result<CliResult, sqlx::Error> {
-        if contains_identity_flag(&argv) {
-            return Ok(cli_error(
-                2,
-                "INVALID_ARGUMENT: identity flags are not accepted",
-            ));
-        }
-        let run_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM collab_runs
-             WHERE agent_id = $1 AND computer_generation = $2 AND status = 'running'",
-        )
-        .bind(&claims.sub)
-        .bind(claims.generation)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(run_id) = run_id else {
-            return Ok(cli_error(3, "UNAUTHENTICATED: no active run"));
-        };
-        match argv.as_slice() {
-            [command, room_id, separator, body]
-                if command == "reply" && separator == "--" && !body.trim().is_empty() =>
-            {
-                self.reply(&run_id, claims, room_id, body).await
-            }
-            [command, room_id] if command == "ack" => self.ack(&run_id, claims, room_id).await,
-            _ => Ok(cli_error(
-                2,
-                "INVALID_ARGUMENT: expected reply <room-id> -- <body> or ack <room-id>",
-            )),
-        }
     }
 
     pub async fn heartbeat_run(
@@ -723,8 +676,8 @@ impl CollaborationStore {
         let mut transaction = self.pool.begin().await?;
         self.authorize_agent_transaction(&mut transaction, claims)
             .await?;
-        let current_status: String = sqlx::query_scalar(
-            "SELECT status FROM collab_runs
+        let (current_status, current_outcome): (String, Option<String>) = sqlx::query_as(
+            "SELECT status, outcome FROM collab_runs
              WHERE id = $1 AND agent_id = $2 AND computer_generation = $3
              FOR UPDATE",
         )
@@ -738,6 +691,7 @@ impl CollaborationStore {
             return Ok(RunView {
                 id: run_id.to_string(),
                 status: current_status,
+                outcome: current_outcome,
             });
         }
         let mut outcome = None;
@@ -776,9 +730,29 @@ impl CollaborationStore {
                     acknowledged |= reason == "ack" || reason == "triage_false";
                 }
             }
+            let action_recorded: bool = sqlx::query_scalar(
+                "SELECT EXISTS (
+                    SELECT 1
+                    FROM collab_cli_requests request,
+                         LATERAL jsonb_array_elements(
+                             COALESCE(request.result -> 'sideEffects', '[]'::jsonb)
+                         ) effect
+                    WHERE request.run_id = $1
+                      AND effect ->> 'type' IN ('message_published', 'reaction_changed')
+                 )",
+            )
+            .bind(run_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+            acted |= action_recorded;
             outcome = Some(if acted {
                 "acted"
-            } else if acknowledged {
+            } else if acknowledged
+                || request
+                    .assistant_text
+                    .as_deref()
+                    .is_none_or(|text| text.trim().is_empty())
+            {
                 "silent"
             } else {
                 "unpublished"
@@ -806,6 +780,7 @@ impl CollaborationStore {
         Ok(RunView {
             id: run_id.to_string(),
             status: terminal_status.to_string(),
+            outcome: outcome.map(str::to_string),
         })
     }
 
@@ -869,114 +844,6 @@ impl CollaborationStore {
             ));
         }
         Ok(())
-    }
-
-    async fn reply(
-        &self,
-        run_id: &str,
-        claims: &AgentClaims,
-        room_id: &str,
-        body: &str,
-    ) -> Result<CliResult, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
-        self.authorize_agent_transaction(&mut transaction, claims)
-            .await?;
-        let row: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT d.up_to_seq, r.next_seq
-             FROM collab_run_deliveries d
-             JOIN collab_rooms r ON r.id = d.room_id
-             JOIN collab_room_members m ON m.room_id = d.room_id AND m.participant_id = $3
-             WHERE d.run_id = $1 AND d.room_id = $2
-             FOR UPDATE OF r",
-        )
-        .bind(run_id)
-        .bind(room_id)
-        .bind(&claims.sub)
-        .fetch_optional(&mut *transaction)
-        .await?;
-        let Some((up_to_seq, current_seq)) = row else {
-            return Ok(cli_error(4, "NOT_FOUND: room is not in the active run"));
-        };
-        if current_seq > up_to_seq {
-            return Ok(cli_error(10, "HELD: room changed after this run began"));
-        }
-        let message_id = format!("msg_{}", Uuid::new_v4().simple());
-        let sequence = current_seq + 1;
-        sqlx::query(
-            "UPDATE collab_rooms SET next_seq = $1,
-                 last_message_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
-                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-             WHERE id = $2",
-        )
-        .bind(sequence)
-        .bind(room_id)
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(
-            "INSERT INTO collab_messages (id, room_id, sequence, author_id, body)
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(&message_id)
-        .bind(room_id)
-        .bind(sequence)
-        .bind(&claims.sub)
-        .bind(body)
-        .execute(&mut *transaction)
-        .await?;
-        sqlx::query(
-            "UPDATE collab_run_deliveries
-             SET eligible_reason = 'action',
-                 eligible_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-             WHERE run_id = $1 AND room_id = $2",
-        )
-        .bind(run_id)
-        .bind(room_id)
-        .execute(&mut *transaction)
-        .await?;
-        transaction.commit().await?;
-        Ok(CliResult {
-            text: format!("Published message {message_id}"),
-            exit_code: 0,
-            side_effects: vec![CliSideEffect::MessagePublished {
-                room_id: room_id.to_string(),
-                message_id,
-                sequence,
-            }],
-        })
-    }
-
-    async fn ack(
-        &self,
-        run_id: &str,
-        claims: &AgentClaims,
-        room_id: &str,
-    ) -> Result<CliResult, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
-        self.authorize_agent_transaction(&mut transaction, claims)
-            .await?;
-        let up_to_seq: Option<i64> = sqlx::query_scalar(
-            "UPDATE collab_run_deliveries
-             SET eligible_reason = 'ack',
-                 eligible_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-             WHERE run_id = $1 AND room_id = $2
-             RETURNING up_to_seq",
-        )
-        .bind(run_id)
-        .bind(room_id)
-        .fetch_optional(&mut *transaction)
-        .await?;
-        let Some(up_to_seq) = up_to_seq else {
-            return Ok(cli_error(4, "NOT_FOUND: room is not in the active run"));
-        };
-        transaction.commit().await?;
-        Ok(CliResult {
-            text: "Acknowledged".to_string(),
-            exit_code: 0,
-            side_effects: vec![CliSideEffect::InboxAcknowledged {
-                room_id: room_id.to_string(),
-                up_to_seq,
-            }],
-        })
     }
 
     async fn insert_message(
@@ -1118,6 +985,7 @@ struct InboxRow {
     author_id: String,
     body: String,
     last_read_seq: i64,
+    total_count: i64,
 }
 
 impl From<MessageRow> for MessageView {
@@ -1177,33 +1045,6 @@ fn engine_status_name(status: EngineStatus) -> &'static str {
         EngineStatus::Unknown => "unknown",
         EngineStatus::Ready => "ready",
         EngineStatus::Missing => "missing",
-    }
-}
-
-fn contains_identity_flag(argv: &[String]) -> bool {
-    argv.iter()
-        .take_while(|argument| argument.as_str() != "--")
-        .any(|argument| {
-            matches!(
-                argument.as_str(),
-                "--as" | "--agent" | "--agent-id" | "--run-id" | "--computer-id"
-            ) || [
-                "--as=",
-                "--agent=",
-                "--agent-id=",
-                "--run-id=",
-                "--computer-id=",
-            ]
-            .iter()
-            .any(|prefix| argument.starts_with(prefix))
-        })
-}
-
-fn cli_error(exit_code: i32, message: &str) -> CliResult {
-    CliResult {
-        text: message.to_string(),
-        exit_code,
-        side_effects: Vec::new(),
     }
 }
 

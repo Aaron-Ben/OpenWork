@@ -47,7 +47,8 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
     let server = CollaborationServer::start(
         ServerOptions {
             database_url: database_url.clone(),
-            redis_url: "redis://127.0.0.1:6379".to_string(),
+            redis_url: std::env::var("TEST_REDIS_URL")
+                .unwrap_or_else(|_| "redis://127.0.0.1:6379/15".to_string()),
             state_root: state.path().join("server"),
             control_socket: socket.clone(),
             runtime_bind: "127.0.0.1:0".parse().unwrap(),

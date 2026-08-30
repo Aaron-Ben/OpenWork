@@ -274,7 +274,12 @@ impl<A: EngineAdapter> AgentRunner<A> {
             .await?;
             return Ok(());
         }
-        let prompt = build_prompt(&self.assignment, &inbox.messages, &verdict.prompt_note);
+        let prompt = build_prompt(
+            &self.assignment,
+            &inbox.messages,
+            &verdict.prompt_note,
+            inbox.carried_over,
+        );
         let session = self.home.load_session().await?;
         let result = self
             .run_main_turn(prompt.clone(), session.clone(), cancellation.clone())
@@ -462,6 +467,7 @@ fn build_prompt(
     assignment: &AgentAssignment,
     messages: &[MessageView],
     triage_note: &str,
+    carried_over: bool,
 ) -> String {
     let mut prompt = format!(
         "You are {}. {}\nHandle the following durable collaboration delivery.\n",
@@ -469,6 +475,11 @@ fn build_prompt(
     );
     if !triage_note.trim().is_empty() {
         prompt.push_str(&format!("Triage focus: {triage_note}\n"));
+    }
+    if carried_over {
+        prompt.push_str(
+            "This is the oldest bounded inbox batch; more unread messages remain for a later run.\n",
+        );
     }
     for message in messages {
         prompt.push_str(&format!(

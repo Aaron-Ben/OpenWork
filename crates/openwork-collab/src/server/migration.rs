@@ -2,6 +2,8 @@ use sqlx::{Executor, PgPool};
 
 const P0_VERSION: i64 = 202_608_300_001;
 const P0_SQL: &str = include_str!("../../migrations/202608300001_collab_p0.sql");
+const P2_VERSION: i64 = 202_608_300_002;
+const P2_SQL: &str = include_str!("../../migrations/202608300002_collab_p2.sql");
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
@@ -28,6 +30,22 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
              VALUES ($1, 'collaboration p0 baseline')",
         )
         .bind(P0_VERSION)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    let applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM collab_schema_migrations WHERE version = $1)",
+    )
+    .bind(P2_VERSION)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if !applied {
+        sqlx::raw_sql(P2_SQL).execute(&mut *transaction).await?;
+        sqlx::query(
+            "INSERT INTO collab_schema_migrations (version, description)
+             VALUES ($1, 'collaboration p2 coordination and cli')",
+        )
+        .bind(P2_VERSION)
         .execute(&mut *transaction)
         .await?;
     }

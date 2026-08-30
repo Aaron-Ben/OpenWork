@@ -195,6 +195,7 @@ pub struct TriageReportRequest {
 pub struct InboxResponse {
     pub trigger: Option<TriggerEnvelope>,
     pub messages: Vec<MessageView>,
+    pub carried_over: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -207,6 +208,7 @@ pub struct TriggerEnvelope {
     pub computer_generation: i64,
     pub trigger: String,
     pub deliveries: Vec<DeliveryRange>,
+    pub carried_over: bool,
     pub issued_at: i64,
     pub expires_at: i64,
     pub signature: String,
@@ -231,11 +233,13 @@ pub struct OpenRunRequest {
 pub struct RunView {
     pub id: String,
     pub status: String,
+    pub outcome: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CliRequest {
+    pub request_id: String,
     pub argv: Vec<String>,
 }
 
@@ -259,6 +263,23 @@ pub enum CliSideEffect {
         room_id: String,
         up_to_seq: i64,
     },
+    ReactionChanged {
+        message_id: String,
+        emoji: String,
+        active: bool,
+    },
+    DirectRoomOpened {
+        room_id: String,
+        participant_id: String,
+    },
+    GroupRoomCreated {
+        room_id: String,
+    },
+    MembershipChanged {
+        room_id: String,
+        participant_id: String,
+        change: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -273,4 +294,5 @@ pub struct FinishRunRequest {
     pub assistant_text: Option<String>,
 }
 
-pub const COLLAB_PROTOCOL_VERSION: u32 = 2;
+pub const CLI_MESSAGE_BODY_MAX_BYTES: usize = 1024 * 1024;
+pub const COLLAB_PROTOCOL_VERSION: u32 = 3;

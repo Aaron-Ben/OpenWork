@@ -1,7 +1,10 @@
 mod auth;
+mod cli;
 pub mod control;
+mod coordination;
 mod migration;
 mod redis;
+mod rooms;
 mod runtime;
 mod scheduler;
 mod storage;
@@ -14,6 +17,8 @@ use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use cli::CliDispatcher;
+use coordination::Coordination;
 use scheduler::Scheduler;
 use storage::CollaborationStore;
 
@@ -60,7 +65,8 @@ impl CollaborationServer {
         let signing_key = auth::load_or_create_signing_key(&options.state_root).await?;
         let (coordination, redis_task) =
             redis::RedisCoordination::start(&options.redis_url, shutdown.clone()).await?;
-        let scheduler = Scheduler::new(store.clone(), coordination);
+        let scheduler = Scheduler::new(store.clone(), coordination.clone());
+        let cli = CliDispatcher::new(pool.clone(), Coordination::new(coordination));
         let scheduler_task = scheduler.start(shutdown.clone());
         let sweep_store = store.clone();
         let sweep_shutdown = shutdown.clone();
@@ -102,7 +108,7 @@ impl CollaborationServer {
 
         let runtime_shutdown = shutdown.clone();
         let runtime_task = tokio::spawn(async move {
-            let app = runtime::router(store, signing_key, scheduler);
+            let app = runtime::router(store, signing_key, scheduler, cli);
             let _ = axum::serve(runtime, app)
                 .with_graceful_shutdown(runtime_shutdown.cancelled_owned())
                 .await;
