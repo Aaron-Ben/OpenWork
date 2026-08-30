@@ -371,6 +371,43 @@ async fn runtime_rejects_a_non_loopback_bind_before_opening_external_resources()
 }
 
 #[tokio::test]
+async fn owner_control_stops_the_server_for_a_launchd_handoff() {
+    let Some((admin, database, database_url)) = create_database().await else {
+        return;
+    };
+    let state = tempfile::tempdir().unwrap();
+    let socket = state.path().join("control.sock");
+    let shutdown = CancellationToken::new();
+    let server = CollaborationServer::start(
+        ServerOptions {
+            database_url,
+            redis_url: "redis://127.0.0.1:6379".to_string(),
+            state_root: state.path().to_path_buf(),
+            control_socket: socket.clone(),
+            runtime_bind: "127.0.0.1:0".parse().unwrap(),
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
+        },
+        shutdown,
+    )
+    .await
+    .unwrap();
+    wait_for_socket(&socket).await;
+
+    let response = request(&socket, &ControlRequest::ShutdownServer)
+        .await
+        .unwrap();
+    assert_eq!(response, ControlResponse::Acknowledged);
+    tokio::time::timeout(Duration::from_secs(5), server.shutdown())
+        .await
+        .expect("Server stopped after owner handoff")
+        .unwrap();
+    assert!(!socket.exists());
+
+    drop_database(admin, &database).await;
+}
+
+#[tokio::test]
 async fn control_ensures_the_single_local_computer_and_returns_its_secret_once() {
     let Some((admin, database, database_url)) = create_database().await else {
         return;

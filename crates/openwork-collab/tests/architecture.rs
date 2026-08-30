@@ -18,6 +18,10 @@ fn p0_has_one_local_opencode_path_and_no_legacy_collaboration_dependencies() {
 
     let computer = source_text(&crate_root.join("src/computer"));
     assert!(!computer.contains("sqlx::"));
+    assert!(!computer.contains("redis::"));
+    let shim = std::fs::read_to_string(crate_root.join("src/computer/shim.rs")).unwrap();
+    assert_eq!(computer.matches("/runtime/cli").count(), 1);
+    assert!(shim.contains("/runtime/cli"));
     let server = source_text(&crate_root.join("src/server"));
     assert!(!server.contains("Command::new"));
 

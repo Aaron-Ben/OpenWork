@@ -23,7 +23,6 @@ pub struct HeldBinding {
     pub run_id: String,
     pub room_id: String,
     pub computer_generation: i64,
-    pub compose_anchor: i64,
     pub shown_peer_max: i64,
 }
 
@@ -58,6 +57,17 @@ impl Coordination {
             .arg(sequence)
             .arg(SEEN_TTL_SECONDS)
             .invoke_async(&mut connection),
+        )
+        .await
+        .map_err(|_| timeout_error())?
+    }
+
+    pub async fn get_seen(&self, agent_id: &str, room_id: &str) -> RedisResult<Option<i64>> {
+        let mut connection = self.redis.connection().await?;
+        let key = format!("openwork:seen:{agent_id}:{room_id}");
+        tokio::time::timeout(
+            REDIS_TIMEOUT,
+            redis::cmd("GET").arg(key).query_async(&mut connection),
         )
         .await
         .map_err(|_| timeout_error())?

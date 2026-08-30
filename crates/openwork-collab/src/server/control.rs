@@ -49,8 +49,16 @@ pub async fn serve(
                 let store = store.clone();
                 let scheduler = scheduler.clone();
                 let runtime_base_url = runtime_base_url.clone();
+                let connection_shutdown = shutdown.clone();
                 tokio::spawn(async move {
-                    let _ = handle(stream, store, scheduler, runtime_base_url).await;
+                    let _ = handle(
+                        stream,
+                        store,
+                        scheduler,
+                        runtime_base_url,
+                        connection_shutdown,
+                    )
+                    .await;
                 });
             }
         }
@@ -62,8 +70,10 @@ async fn handle(
     store: CollaborationStore,
     scheduler: Scheduler,
     runtime_base_url: String,
+    shutdown: CancellationToken,
 ) -> Result<(), ControlError> {
     let request: ControlRequest = read_frame(&mut stream).await?;
+    let shutdown_requested = matches!(&request, ControlRequest::ShutdownServer);
     let response = match request {
         ControlRequest::EnsureLocalComputer => store
             .ensure_local_computer(&runtime_base_url)
@@ -111,9 +121,14 @@ async fn handle(
             .await
             .map(|messages| ControlResponse::Messages { messages })
             .map_err(|error| error.to_string()),
+        ControlRequest::ShutdownServer => Ok(ControlResponse::Acknowledged),
     };
     let response = response.unwrap_or_else(|message| ControlResponse::Error { message });
-    write_frame(&mut stream, &response).await
+    write_frame(&mut stream, &response).await?;
+    if shutdown_requested {
+        shutdown.cancel();
+    }
+    Ok(())
 }
 
 pub async fn request(

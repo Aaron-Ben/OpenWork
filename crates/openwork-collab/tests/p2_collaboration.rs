@@ -808,8 +808,30 @@ async fn held_response_includes_the_peer_sequence_bound_to_its_retry_token() {
         )
         .await;
     assert_eq!(held.exit_code, 10);
-    assert!(held.text.contains("peer update 51"));
+    assert!(held.text.contains("peer update 50"));
+    assert!(!held.text.contains("peer update 51"));
     assert!(held.text.contains("--held-token hold_"));
+    let token = held
+        .text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("--held-token "))
+        .unwrap();
+    let remaining = fixture
+        .cli(
+            &beta_token,
+            "cli_bounded_held_reply_again",
+            vec![
+                "reply",
+                &room_id,
+                "--held-token",
+                token,
+                "--",
+                "Updated answer",
+            ],
+        )
+        .await;
+    assert_eq!(remaining.exit_code, 10);
+    assert!(remaining.text.contains("peer update 51"));
 
     fixture.stop().await;
 }
@@ -1413,6 +1435,14 @@ async fn repeated_glance_observes_new_peer_messages_instead_of_replaying_a_cache
         )
         .await;
     assert!(second.text.contains("Second update"));
+    let informed_reply = fixture
+        .cli(
+            &beta_token,
+            "cli_beta_after_glance",
+            vec!["reply", &room_id, "--", "Beta read both updates"],
+        )
+        .await;
+    assert_eq!(informed_reply.exit_code, 0);
 
     fixture.stop().await;
 }

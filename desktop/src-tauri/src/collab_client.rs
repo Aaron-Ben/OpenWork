@@ -1,12 +1,12 @@
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use openwork_collab::{
+    launchd::{LaunchdEnvironment, LaunchdError, LaunchdRole, LaunchdSupervisor},
     protocol::{ControlRequest, ControlResponse, COLLAB_PROTOCOL_VERSION},
     server::control::{request, ControlError},
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct CollabDaemonClient {
@@ -16,11 +16,39 @@ pub struct CollabDaemonClient {
 impl CollabDaemonClient {
     pub async fn discover_or_start() -> Result<Self, CollabClientError> {
         let state_root = state_root()?;
+        let user_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or(CollabClientError::MissingHome)?;
+        let supervisor = LaunchdSupervisor::new(
+            user_home,
+            state_root.clone(),
+            std::env::current_exe()?,
+            vec!["--openwork-collab-server".to_string()],
+            vec!["--openwork-collab-computer".to_string()],
+            LaunchdEnvironment::from_process()?,
+        )?;
         let client = Self {
             socket_path: state_root.join("server/control.sock"),
         };
-        if client.call(&ControlRequest::ListAgents).await.is_err() {
-            launch_current_executable("--openwork-collab-server")?;
+        let server_was_running = client.call(&ControlRequest::ListAgents).await.is_ok();
+        let server_changed = supervisor.ensure(LaunchdRole::Server).await?;
+        client.wait_until_ready().await?;
+        if server_changed && server_was_running {
+            match client.call(&ControlRequest::ShutdownServer).await {
+                Ok(ControlResponse::Acknowledged) => {}
+                Ok(ControlResponse::Error { message }) => {
+                    return Err(CollabClientError::Rejected(message));
+                }
+                Ok(_) => {
+                    return Err(CollabClientError::Protocol(
+                        "unexpected Server shutdown response".to_string(),
+                    ));
+                }
+                Err(error) => eprintln!(
+                    "existing collaboration Server did not acknowledge launchd handoff: {error}"
+                ),
+            }
+            supervisor.restart(LaunchdRole::Server).await?;
             client.wait_until_ready().await?;
         }
         let registration = match client.call(&ControlRequest::EnsureLocalComputer).await? {
@@ -46,7 +74,7 @@ impl CollabDaemonClient {
                 device_token,
             },
         )?;
-        launch_current_executable("--openwork-collab-computer")?;
+        supervisor.ensure(LaunchdRole::Computer).await?;
         Ok(client)
     }
 
@@ -72,20 +100,6 @@ impl CollabDaemonClient {
             || "Server did not create its control socket".to_string(),
         )))
     }
-}
-
-fn launch_current_executable(role: &str) -> Result<(), CollabClientError> {
-    let executable = std::env::current_exe()?;
-    let mut command = Command::new(executable);
-    command
-        .arg(role)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(false)
-        .process_group(0);
-    command.spawn()?;
-    Ok(())
 }
 
 fn state_root() -> Result<PathBuf, CollabClientError> {
@@ -147,4 +161,6 @@ pub enum CollabClientError {
     Io(#[from] std::io::Error),
     #[error("Local Computer identity could not be encoded: {0}")]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Launchd(#[from] LaunchdError),
 }

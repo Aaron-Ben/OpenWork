@@ -35,7 +35,7 @@ impl CliDispatcher {
         .bind(&claims.sub)
         .fetch_optional(&mut **transaction)
         .await?;
-        let Some((compose_anchor, room_kind)) = row else {
+        let Some((snapshot_anchor, room_kind)) = row else {
             return Ok(cli_error(4, "NOT_FOUND: room is not in the active run"));
         };
         let member_count: i64 =
@@ -50,20 +50,7 @@ impl CliDispatcher {
             ));
         }
         if room_kind == "group" && member_count > 2 {
-            let peer_max = peer_max(transaction, room_id, &claims.sub, compose_anchor).await?;
             match held_token {
-                None if peer_max.is_some() => {
-                    return self
-                        .hold_reply(
-                            transaction,
-                            run_id,
-                            claims,
-                            room_id,
-                            compose_anchor,
-                            peer_max.expect("checked above"),
-                        )
-                        .await;
-                }
                 Some(token) => {
                     let binding = match self
                         .coordination
@@ -89,24 +76,49 @@ impl CliDispatcher {
                         || binding.run_id != run_id
                         || binding.room_id != room_id
                         || binding.computer_generation != claims.generation
-                        || binding.compose_anchor != compose_anchor
                     {
                         return Ok(cli_error(10, "HELD: retry token does not match this run"));
                     }
-                    if peer_max.is_some_and(|sequence| sequence > binding.shown_peer_max) {
+                    if let Some(peer_max) =
+                        peer_max(transaction, room_id, &claims.sub, binding.shown_peer_max).await?
+                    {
                         return self
                             .hold_reply(
                                 transaction,
                                 run_id,
                                 claims,
                                 room_id,
-                                compose_anchor,
-                                peer_max.expect("checked above"),
+                                binding.shown_peer_max,
+                                peer_max,
                             )
                             .await;
                     }
                 }
-                None => {}
+                None => {
+                    let seen_baseline = match self.coordination.get_seen(&claims.sub, room_id).await
+                    {
+                        Ok(Some(sequence)) if sequence > 0 => sequence,
+                        Ok(_) => snapshot_anchor,
+                        Err(error) => {
+                            tracing::warn!(%error, %room_id, "seen lookup failed; using durable run snapshot");
+                            snapshot_anchor
+                        }
+                    };
+                    if let Some(peer_max) =
+                        peer_max(transaction, room_id, &claims.sub, seen_baseline).await?
+                    {
+                        return self
+                            .hold_reply(
+                                transaction,
+                                run_id,
+                                claims,
+                                room_id,
+                                seen_baseline,
+                                peer_max,
+                            )
+                            .await;
+                    }
+                }
             }
         }
         let message_id = format!("msg_{}", Uuid::new_v4().simple());
@@ -137,33 +149,33 @@ impl CliDispatcher {
         run_id: &str,
         claims: &AgentClaims,
         room_id: &str,
-        compose_anchor: i64,
+        seen_baseline: i64,
         peer_max: i64,
     ) -> Result<CliResult, sqlx::Error> {
         let messages: Vec<(i64, String, String)> = sqlx::query_as(
             "SELECT sequence, author_id, body
-             FROM (
-                 SELECT sequence, author_id, body
-                 FROM collab_messages
-                 WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
-                   AND author_id <> $4
-                 ORDER BY sequence DESC LIMIT 50
-             ) recent
-             ORDER BY sequence",
+             FROM collab_messages
+             WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
+               AND author_id <> $4
+             ORDER BY sequence
+             LIMIT 50",
         )
         .bind(room_id)
-        .bind(compose_anchor)
+        .bind(seen_baseline)
         .bind(peer_max)
         .bind(&claims.sub)
         .fetch_all(&mut **transaction)
         .await?;
+        let shown_peer_max = messages
+            .last()
+            .map(|message| message.0)
+            .ok_or(sqlx::Error::RowNotFound)?;
         let binding = HeldBinding {
             agent_id: claims.sub.clone(),
             run_id: run_id.to_string(),
             room_id: room_id.to_string(),
             computer_generation: claims.generation,
-            compose_anchor,
-            shown_peer_max: peer_max,
+            shown_peer_max,
         };
         let token = match self.coordination.issue_held(&binding).await {
             Ok(token) => token,
@@ -177,12 +189,14 @@ impl CliDispatcher {
         };
         if let Err(error) = self
             .coordination
-            .record_seen(&claims.sub, room_id, peer_max)
+            .record_seen(&claims.sub, room_id, shown_peer_max)
             .await
         {
             tracing::warn!(%error, %room_id, "seen update failed open");
         }
-        let mut text = String::from("HELD: room changed after this run began.\nNew messages:\n");
+        let mut text = String::from(
+            "HELD: room changed after the last state shown to this Agent.\nNew messages:\n",
+        );
         for (sequence, author_id, body) in messages {
             let _ = writeln!(text, "[{sequence}] {author_id}: {body}");
         }
@@ -196,14 +210,14 @@ async fn peer_max(
     transaction: &mut Transaction<'_, Postgres>,
     room_id: &str,
     agent_id: &str,
-    compose_anchor: i64,
+    seen_baseline: i64,
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT MAX(sequence) FROM collab_messages
          WHERE room_id = $1 AND sequence > $2 AND author_id <> $3",
     )
     .bind(room_id)
-    .bind(compose_anchor)
+    .bind(seen_baseline)
     .bind(agent_id)
     .fetch_one(&mut **transaction)
     .await

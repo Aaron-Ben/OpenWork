@@ -88,7 +88,10 @@ async fn run_server() -> CliResult<()> {
         "Collaboration Runtime listening on {}",
         server.runtime_addr()
     );
-    tokio::signal::ctrl_c().await?;
+    tokio::select! {
+        _ = shutdown.cancelled() => {}
+        signal = shutdown_signal() => signal?,
+    }
     shutdown.cancel();
     server.shutdown().await?;
     Ok(())
@@ -112,7 +115,7 @@ async fn run_computer() -> CliResult<()> {
             runtime_base_url: identity.runtime_base_url,
             device_token: identity.device_token,
             shim_executable,
-            supervised: false,
+            supervised: std::env::var("OPENWORK_COLLAB_SUPERVISED").as_deref() == Ok("1"),
             poll_interval: Duration::from_secs(20),
             roster_interval: Duration::from_secs(60),
             heartbeat_interval: Duration::from_secs(30),
@@ -120,13 +123,26 @@ async fn run_computer() -> CliResult<()> {
         },
         Arc::new(OpenCodeAdapter::with_executable(opencode)),
     );
+    let run = daemon.run(shutdown.clone());
+    tokio::pin!(run);
     tokio::select! {
-        result = daemon.run(shutdown.clone()) => result.map_err(Into::into),
-        result = tokio::signal::ctrl_c() => {
+        result = &mut run => result.map_err(Into::into),
+        result = shutdown_signal() => {
             result?;
             shutdown.cancel();
+            tokio::time::timeout(Duration::from_secs(20), &mut run)
+                .await
+                .map_err(|_| "Local Computer did not stop within 20 seconds")??;
             Ok(())
         }
+    }
+}
+
+async fn shutdown_signal() -> Result<(), std::io::Error> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
     }
 }
 

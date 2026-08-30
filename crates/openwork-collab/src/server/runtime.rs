@@ -23,6 +23,7 @@ use crate::protocol::{
 use super::{
     auth::{AgentClaims, SigningKey},
     cli::CliDispatcher,
+    coordination::Coordination,
     scheduler::Scheduler,
     storage::CollaborationStore,
     triage::InboxTriage,
@@ -33,6 +34,7 @@ struct RuntimeState {
     store: CollaborationStore,
     signing_key: SigningKey,
     scheduler: Scheduler,
+    coordination: Coordination,
     triage: InboxTriage,
     cli: CliDispatcher,
 }
@@ -41,6 +43,7 @@ pub fn router(
     store: CollaborationStore,
     signing_key: SigningKey,
     scheduler: Scheduler,
+    coordination: Coordination,
     cli: CliDispatcher,
 ) -> Router {
     let triage = InboxTriage::new(store.clone());
@@ -65,6 +68,7 @@ pub fn router(
             store,
             signing_key,
             scheduler,
+            coordination,
             triage,
             cli,
         })
@@ -141,6 +145,16 @@ async fn inbox(
     let claims = agent_claims(&state, &headers).await?;
     let mut response = state.store.inbox(&claims).await?;
     if let Some(trigger) = &mut response.trigger {
+        let updates = trigger.deliveries.iter().map(|delivery| {
+            state
+                .coordination
+                .record_seen(&claims.sub, &delivery.room_id, delivery.up_to_seq)
+        });
+        for result in futures_util::future::join_all(updates).await {
+            if let Err(error) = result {
+                tracing::warn!(%error, agent_id = claims.sub, "inbox seen update failed open");
+            }
+        }
         state.signing_key.sign_trigger(trigger)?;
     }
     Ok(Json(response))

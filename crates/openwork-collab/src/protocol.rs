@@ -22,6 +22,7 @@ pub enum ControlRequest {
     ListMessages {
         room_id: String,
     },
+    ShutdownServer,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub enum ControlResponse {
     Rooms { rooms: Vec<RoomView> },
     Message(MessageView),
     Messages { messages: Vec<MessageView> },
+    Acknowledged,
     Error { message: String },
 }
 
@@ -295,4 +297,4 @@ pub struct FinishRunRequest {
 }
 
 pub const CLI_MESSAGE_BODY_MAX_BYTES: usize = 1024 * 1024;
-pub const COLLAB_PROTOCOL_VERSION: u32 = 3;
+pub const COLLAB_PROTOCOL_VERSION: u32 = 4;

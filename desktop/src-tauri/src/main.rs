@@ -11,6 +11,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 fn main() {
+    let _ = dotenvy::dotenv();
     let invoked_name = std::env::args_os()
         .next()
         .and_then(|path| PathBuf::from(path).file_name().map(|name| name.to_owned()));
@@ -41,20 +42,28 @@ fn run_role(future: impl std::future::Future<Output = Result<(), Box<dyn std::er
 async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let root = state_root()?;
     let shutdown = CancellationToken::new();
-    let _server = CollaborationServer::start(
+    let runtime_bind = std::env::var("OPENWORK_COLLAB_RUNTIME_BIND")
+        .unwrap_or_else(|_| "127.0.0.1:17843".to_string())
+        .parse::<SocketAddr>()?;
+    let server = CollaborationServer::start(
         ServerOptions {
             database_url: std::env::var("DATABASE_URL")?,
             redis_url: std::env::var("REDIS_URL")?,
             state_root: root.join("server"),
             control_socket: root.join("server/control.sock"),
-            runtime_bind: "127.0.0.1:0".parse::<SocketAddr>()?,
+            runtime_bind,
             computer_lease: Duration::from_secs(90),
             offline_sweep_interval: Duration::from_secs(15),
         },
-        shutdown,
+        shutdown.clone(),
     )
     .await?;
-    std::future::pending::<()>().await;
+    tokio::select! {
+        _ = shutdown.cancelled() => {}
+        signal = shutdown_signal() => signal?,
+    }
+    shutdown.cancel();
+    server.shutdown().await?;
     Ok(())
 }
 
@@ -68,23 +77,42 @@ async fn run_computer() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Local Computer identity is incompatible".into());
     }
     let opencode = std::env::var("OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string());
-    ComputerDaemon::new(
+    let shutdown = CancellationToken::new();
+    let daemon = ComputerDaemon::new(
         ComputerOptions {
             state_root: root.join("computer"),
             runtime_base_url: identity.runtime_base_url,
             device_token: identity.device_token,
             shim_executable: std::env::current_exe()?,
-            supervised: false,
+            supervised: std::env::var("OPENWORK_COLLAB_SUPERVISED").as_deref() == Ok("1"),
             poll_interval: Duration::from_secs(20),
             roster_interval: Duration::from_secs(60),
             heartbeat_interval: Duration::from_secs(30),
             engine_rescan_interval: Duration::from_secs(5 * 60),
         },
         Arc::new(OpenCodeAdapter::with_executable(opencode)),
-    )
-    .run(CancellationToken::new())
-    .await?;
+    );
+    let run = daemon.run(shutdown.clone());
+    tokio::pin!(run);
+    tokio::select! {
+        result = &mut run => result?,
+        signal = shutdown_signal() => {
+            signal?;
+            shutdown.cancel();
+            tokio::time::timeout(Duration::from_secs(20), &mut run)
+                .await
+                .map_err(|_| "Local Computer did not stop within 20 seconds")??;
+        }
+    }
     Ok(())
+}
+
+async fn shutdown_signal() -> Result<(), std::io::Error> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
 }
 
 fn state_root() -> Result<PathBuf, Box<dyn std::error::Error>> {

@@ -66,7 +66,8 @@ impl CollaborationServer {
         let (coordination, redis_task) =
             redis::RedisCoordination::start(&options.redis_url, shutdown.clone()).await?;
         let scheduler = Scheduler::new(store.clone(), coordination.clone());
-        let cli = CliDispatcher::new(pool.clone(), Coordination::new(coordination));
+        let coordination = Coordination::new(coordination);
+        let cli = CliDispatcher::new(pool.clone(), coordination.clone());
         let scheduler_task = scheduler.start(shutdown.clone());
         let sweep_store = store.clone();
         let sweep_shutdown = shutdown.clone();
@@ -108,7 +109,7 @@ impl CollaborationServer {
 
         let runtime_shutdown = shutdown.clone();
         let runtime_task = tokio::spawn(async move {
-            let app = runtime::router(store, signing_key, scheduler, cli);
+            let app = runtime::router(store, signing_key, scheduler, coordination, cli);
             let _ = axum::serve(runtime, app)
                 .with_graceful_shutdown(runtime_shutdown.cancelled_owned())
                 .await;

@@ -7,9 +7,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgentAssignment, AgentRoster, AgentTokenResponse, CliRequest, CliResult, DeviceStartResponse,
-    FinishRunRequest, HeartbeatRequest, InboxResponse, OpenRunRequest, RunView, TriagePayload,
-    TriageReportRequest,
+    AgentAssignment, AgentRoster, AgentTokenResponse, DeviceStartResponse, FinishRunRequest,
+    HeartbeatRequest, InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
 };
 
 use super::sse::{SseDecoder, SseParseError};
@@ -176,24 +175,6 @@ impl AgentClient {
             .await
             .and_then(reqwest::Response::error_for_status)?;
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub async fn cli(&self, argv: Vec<String>) -> Result<CliResult, RuntimeClientError> {
-        self.http
-            .post(format!("{}/runtime/cli", self.base_url))
-            .bearer_auth(self.token())
-            .json(&CliRequest {
-                request_id: format!("cli_{}", uuid::Uuid::new_v4().simple()),
-                argv,
-            })
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json()
-            .await
-            .map_err(Into::into)
     }
 
     pub async fn finish_run(
