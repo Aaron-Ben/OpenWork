@@ -15,12 +15,13 @@ use serde_json::json;
 use tokio::sync::broadcast;
 
 use crate::protocol::{
-    AgentRoster, AgentTokenResponse, CliRequest, CliResult, CliSideEffect, DeviceStartResponse,
-    FinishRunRequest, HeartbeatRequest, InboxResponse, OpenRunRequest, RunView, TriagePayload,
-    TriageReportRequest,
+    AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentRoster, AgentTokenResponse,
+    CliRequest, CliResult, CliSideEffect, DeviceStartResponse, FinishRunRequest, HeartbeatRequest,
+    InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
 };
 
 use super::{
+    agenda::Agenda,
     auth::{AgentClaims, SigningKey},
     cli::CliDispatcher,
     coordination::Coordination,
@@ -36,6 +37,7 @@ struct RuntimeState {
     scheduler: Scheduler,
     coordination: Coordination,
     triage: InboxTriage,
+    agenda: Agenda,
     cli: CliDispatcher,
 }
 
@@ -44,6 +46,7 @@ pub fn router(
     signing_key: SigningKey,
     scheduler: Scheduler,
     coordination: Coordination,
+    agenda: Agenda,
     cli: CliDispatcher,
 ) -> Router {
     let triage = InboxTriage::new(store.clone());
@@ -60,6 +63,8 @@ pub fn router(
         .route("/runtime/inbox", get(inbox))
         .route("/runtime/inbox-triage/payload", get(triage_payload))
         .route("/runtime/triage", post(report_triage))
+        .route("/runtime/agenda/payload", get(agenda_payload))
+        .route("/runtime/agenda/decision", post(agenda_decision))
         .route("/runtime/runs", post(open_run))
         .route("/runtime/cli", post(run_cli))
         .route("/runtime/runs/{run_id}/heartbeat", post(heartbeat_run))
@@ -70,6 +75,7 @@ pub fn router(
             scheduler,
             coordination,
             triage,
+            agenda,
             cli,
         })
 }
@@ -184,6 +190,23 @@ async fn report_triage(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn agenda_payload(
+    State(state): State<RuntimeState>,
+    headers: HeaderMap,
+) -> Result<Json<AgendaPayload>, RuntimeError> {
+    let claims = agent_claims(&state, &headers).await?;
+    Ok(Json(state.agenda.payload(&claims).await?))
+}
+
+async fn agenda_decision(
+    State(state): State<RuntimeState>,
+    headers: HeaderMap,
+    Json(request): Json<AgendaDecisionRequest>,
+) -> Result<Json<AgendaDecisionResponse>, RuntimeError> {
+    let claims = agent_claims(&state, &headers).await?;
+    Ok(Json(state.agenda.decide(&claims, request).await?))
+}
+
 async fn wake_stream(
     State(state): State<RuntimeState>,
     headers: HeaderMap,
@@ -230,10 +253,21 @@ async fn open_run(
         || request.trigger.protocol_version != crate::protocol::COLLAB_PROTOCOL_VERSION
         || request.trigger.agent_id != claims.sub
         || request.trigger.computer_generation != claims.generation
+        || !valid_trigger_shape(&request.trigger)
     {
         return Err(RuntimeError::unauthorized("invalid trigger envelope"));
     }
     Ok(Json(state.store.open_run(&claims, &request.trigger).await?))
+}
+
+fn valid_trigger_shape(trigger: &crate::protocol::TriggerEnvelope) -> bool {
+    match trigger.trigger.as_str() {
+        "message" | "rerun" | "reconnect" | "poll" => {
+            !trigger.deliveries.is_empty() && trigger.agenda_focus.is_none()
+        }
+        "agenda" => trigger.deliveries.is_empty() && trigger.agenda_focus.is_some(),
+        _ => false,
+    }
 }
 
 async fn run_cli(

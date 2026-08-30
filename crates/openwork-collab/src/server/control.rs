@@ -6,7 +6,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::protocol::{ControlRequest, ControlResponse};
+use crate::protocol::{COLLAB_PROTOCOL_VERSION, ControlRequest, ControlResponse};
 
 use super::{scheduler::Scheduler, storage::CollaborationStore};
 
@@ -75,6 +75,9 @@ async fn handle(
     let request: ControlRequest = read_frame(&mut stream).await?;
     let shutdown_requested = matches!(&request, ControlRequest::ShutdownServer);
     let response = match request {
+        ControlRequest::Status => Ok(ControlResponse::Status {
+            protocol_version: COLLAB_PROTOCOL_VERSION,
+        }),
         ControlRequest::EnsureLocalComputer => store
             .ensure_local_computer(&runtime_base_url)
             .await
@@ -87,6 +90,11 @@ async fn handle(
             model,
         } => store
             .create_agent(&id, &display_name, &system_prompt, &model)
+            .await
+            .map(ControlResponse::Agent)
+            .map_err(|error| error.to_string()),
+        ControlRequest::SetAgentProactivity { agent_id, enabled } => store
+            .set_agent_proactivity(&agent_id, enabled)
             .await
             .map(ControlResponse::Agent)
             .map_err(|error| error.to_string()),
@@ -120,6 +128,21 @@ async fn handle(
             .list_messages(&room_id)
             .await
             .map(|messages| ControlResponse::Messages { messages })
+            .map_err(|error| error.to_string()),
+        ControlRequest::ListBoards => store
+            .list_boards()
+            .await
+            .map(|boards| ControlResponse::Boards { boards })
+            .map_err(|error| error.to_string()),
+        ControlRequest::CreateBoard { room_id, title } => store
+            .create_board(&room_id, &title)
+            .await
+            .map(ControlResponse::Board)
+            .map_err(|error| error.to_string()),
+        ControlRequest::ListRuns { limit } => store
+            .list_runs(limit)
+            .await
+            .map(|runs| ControlResponse::Runs { runs })
             .map_err(|error| error.to_string()),
         ControlRequest::ShutdownServer => Ok(ControlResponse::Acknowledged),
     };

@@ -49,6 +49,41 @@ async fn shim_transports_p2_bodies_and_held_tokens_as_literal_arguments() {
         address,
         home.path(),
         &token_file,
+        &[
+            "card",
+            "create",
+            "--board",
+            "board_1",
+            "--column",
+            "column_1",
+            "--title",
+            "Ship P3",
+            "--assignee",
+            "beta",
+        ],
+        None,
+    )
+    .await;
+    run_shim(
+        address,
+        home.path(),
+        &token_file,
+        &[
+            "card",
+            "move",
+            "card_1",
+            "--column",
+            "column_2",
+            "--position",
+            "0",
+        ],
+        None,
+    )
+    .await;
+    run_shim(
+        address,
+        home.path(),
+        &token_file,
         &["dm", "beta", "--file", body_file.to_str().unwrap()],
         None,
     )
@@ -66,7 +101,7 @@ async fn shim_transports_p2_bodies_and_held_tokens_as_literal_arguments() {
 
     {
         let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
+        assert_eq!(requests.len(), 5);
         assert!(
             requests
                 .iter()
@@ -83,9 +118,36 @@ async fn shim_transports_p2_bodies_and_held_tokens_as_literal_arguments() {
                 "stdin `$(touch nope)` body\n",
             ]
         );
-        assert_eq!(requests[1].argv, ["dm", "beta", "--", "file `$()` body\n"]);
+        assert_eq!(
+            requests[1].argv,
+            [
+                "card",
+                "create",
+                "--board",
+                "board_1",
+                "--column",
+                "column_1",
+                "--title",
+                "Ship P3",
+                "--assignee",
+                "beta",
+            ]
+        );
         assert_eq!(
             requests[2].argv,
+            [
+                "card",
+                "move",
+                "card_1",
+                "--column",
+                "column_2",
+                "--position",
+                "0"
+            ]
+        );
+        assert_eq!(requests[3].argv, ["dm", "beta", "--", "file `$()` body\n"]);
+        assert_eq!(
+            requests[4].argv,
             [
                 "group",
                 "create",

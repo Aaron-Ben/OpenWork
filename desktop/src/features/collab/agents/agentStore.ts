@@ -10,6 +10,7 @@ interface AgentStoreState {
   error: string | null
   fetchAll: () => Promise<void>
   create: (input: CollabAgentInput) => Promise<void>
+  setProactivity: (agentId: string, enabled: boolean) => Promise<void>
 }
 
 export const useAgentStore = create<AgentStoreState>((set, get) => ({
@@ -28,5 +29,9 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     const agent = await collabCommands.createAgent(input)
     await collabCommands.createDirectRoom(agent.id)
     await Promise.all([get().fetchAll(), useRoomStore.getState().fetchAll()])
+  },
+  setProactivity: async (agentId, enabled) => {
+    await collabCommands.setAgentProactivity(agentId, enabled)
+    await get().fetchAll()
   },
 }))

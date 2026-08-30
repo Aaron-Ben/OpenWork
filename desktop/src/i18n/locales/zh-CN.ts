@@ -330,7 +330,7 @@ export const zhCN = {
   },
   collab: {
     switchTo: '协作模式', backToWorkbench: '返回工作台', brand: '协作',
-    nav: { rooms: '房间', agents: '同事' },
+    nav: { rooms: '房间', agents: '同事', boards: '看板' },
     rooms: {
       title: '房间', empty: '创建同事后会建立一对一房间', loading: '正在加载…',
       messagePlaceholder: '给 OpenCode 同事发消息', send: '发送', noMessages: '还没有消息', user: '你',
@@ -338,6 +338,11 @@ export const zhCN = {
     agents: {
       title: '同事管理', create: '创建同事', save: '保存', id: 'ID', displayName: '名称',
       model: '模型', prompt: 'System Prompt', enabled: '已启用', disabled: '已停用', noAgents: '还没有同事',
+      proactiveOn: '主动检查已开启', proactiveOff: '主动检查已关闭',
+    },
+    boards: {
+      title: '看板与运行', create: '创建看板', room: '所属房间', name: '看板名称',
+      empty: '还没有看板', claimedBy: '认领者', assignedTo: '负责人', unassigned: '未分配', recentRuns: '最近运行',
     },
   },
   tool: {

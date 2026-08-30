@@ -1,5 +1,6 @@
 use openwork_collab::protocol::{
-    AgentView, ComputerView, ControlRequest, ControlResponse, MessageView, RoomView,
+    AgentView, BoardView, ComputerView, ControlRequest, ControlResponse, MessageView, RoomView,
+    RunSummaryView,
 };
 
 use crate::{collab_client::CollabDaemonClient, CommandError};
@@ -10,6 +11,21 @@ pub async fn collab_status(
 ) -> Result<ComputerView, CommandError> {
     match client.call(&ControlRequest::EnsureLocalComputer).await? {
         ControlResponse::LocalComputer(registration) => Ok(registration.computer),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_agent_proactivity_set(
+    client: tauri::State<'_, CollabDaemonClient>,
+    agent_id: String,
+    enabled: bool,
+) -> Result<AgentView, CommandError> {
+    match client
+        .call(&ControlRequest::SetAgentProactivity { agent_id, enabled })
+        .await?
+    {
+        ControlResponse::Agent(agent) => Ok(agent),
         response => Err(unexpected(response)),
     }
 }
@@ -95,6 +111,42 @@ pub async fn collab_message_list(
         .await?
     {
         ControlResponse::Messages { messages } => Ok(messages),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_board_list(
+    client: tauri::State<'_, CollabDaemonClient>,
+) -> Result<Vec<BoardView>, CommandError> {
+    match client.call(&ControlRequest::ListBoards).await? {
+        ControlResponse::Boards { boards } => Ok(boards),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_board_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    title: String,
+) -> Result<BoardView, CommandError> {
+    match client
+        .call(&ControlRequest::CreateBoard { room_id, title })
+        .await?
+    {
+        ControlResponse::Board(board) => Ok(board),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_run_list(
+    client: tauri::State<'_, CollabDaemonClient>,
+    limit: u32,
+) -> Result<Vec<RunSummaryView>, CommandError> {
+    match client.call(&ControlRequest::ListRuns { limit }).await? {
+        ControlResponse::Runs { runs } => Ok(runs),
         response => Err(unexpected(response)),
     }
 }

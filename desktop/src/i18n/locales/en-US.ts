@@ -266,7 +266,7 @@ export const enUS = {
   },
   collab: {
     switchTo: 'Collaboration', backToWorkbench: 'Back to Workbench', brand: 'Collab',
-    nav: { rooms: 'Rooms', agents: 'Teammates' },
+    nav: { rooms: 'Rooms', agents: 'Teammates', boards: 'Boards' },
     rooms: {
       title: 'Rooms', empty: 'Create a teammate to start a direct room', loading: 'Loading…',
       messagePlaceholder: 'Message your OpenCode teammate', send: 'Send', noMessages: 'No messages yet', user: 'You',
@@ -274,6 +274,11 @@ export const enUS = {
     agents: {
       title: 'Teammate management', create: 'Create teammate', save: 'Save', id: 'ID', displayName: 'Name',
       model: 'Model', prompt: 'System prompt', enabled: 'Enabled', disabled: 'Disabled', noAgents: 'No teammates yet',
+      proactiveOn: 'Proactive checks on', proactiveOff: 'Proactive checks off',
+    },
+    boards: {
+      title: 'Boards and runs', create: 'Create board', room: 'Room', name: 'Board name',
+      empty: 'No boards yet', claimedBy: 'Claimed by', assignedTo: 'Assigned to', unassigned: 'Unassigned', recentRuns: 'Recent runs',
     },
   },
   tool: {

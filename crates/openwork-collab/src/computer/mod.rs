@@ -1,3 +1,4 @@
+pub mod agenda;
 mod client;
 pub mod daemon;
 pub mod engine;

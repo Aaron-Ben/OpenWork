@@ -261,7 +261,7 @@ export const zhTW = {
   },
   collab: {
     switchTo: '協作模式', backToWorkbench: '返回工作臺', brand: '協作',
-    nav: { rooms: '房間', agents: '同事' },
+    nav: { rooms: '房間', agents: '同事', boards: '看板' },
     rooms: {
       title: '房間', empty: '建立同事後會建立一對一房間', loading: '正在載入…',
       messagePlaceholder: '給 OpenCode 同事發訊息', send: '發送', noMessages: '還沒有訊息', user: '你',
@@ -269,6 +269,11 @@ export const zhTW = {
     agents: {
       title: '同事管理', create: '建立同事', save: '儲存', id: 'ID', displayName: '名稱',
       model: '模型', prompt: 'System Prompt', enabled: '已啟用', disabled: '已停用', noAgents: '還沒有同事',
+      proactiveOn: '主動檢查已開啟', proactiveOff: '主動檢查已關閉',
+    },
+    boards: {
+      title: '看板與執行', create: '建立看板', room: '所屬房間', name: '看板名稱',
+      empty: '還沒有看板', claimedBy: '認領者', assignedTo: '負責人', unassigned: '未分配', recentRuns: '最近執行',
     },
   },
   tool: {

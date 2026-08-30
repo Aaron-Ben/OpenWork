@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::protocol::WakeEvent;
 
 use super::{
+    coordination::Coordination,
     redis::{MessageNewEvent, RedisCoordination},
     storage::CollaborationStore,
 };
@@ -14,11 +15,20 @@ use super::{
 pub struct Scheduler {
     store: CollaborationStore,
     redis: RedisCoordination,
+    coordination: Coordination,
 }
 
 impl Scheduler {
-    pub fn new(store: CollaborationStore, redis: RedisCoordination) -> Self {
-        Self { store, redis }
+    pub fn new(
+        store: CollaborationStore,
+        redis: RedisCoordination,
+        coordination: Coordination,
+    ) -> Self {
+        Self {
+            store,
+            redis,
+            coordination,
+        }
     }
 
     pub fn start(&self, shutdown: CancellationToken) -> JoinHandle<()> {
@@ -41,6 +51,14 @@ impl Scheduler {
     }
 
     pub async fn message_committed(&self, message_id: &str, room_id: &str, author_id: &str) {
+        match self.store.room_agent_ids(room_id).await {
+            Ok(agent_ids) => {
+                if let Err(error) = self.coordination.reset_agenda_declines(&agent_ids).await {
+                    tracing::warn!(%error, room_id, "agenda decline reset failed closed");
+                }
+            }
+            Err(error) => tracing::warn!(%error, room_id, "agenda member lookup failed"),
+        }
         let event = MessageNewEvent {
             message_id: message_id.to_string(),
             room_id: room_id.to_string(),

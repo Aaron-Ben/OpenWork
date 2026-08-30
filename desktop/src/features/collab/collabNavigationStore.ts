@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type CollabView = 'rooms' | 'agents'
+export type CollabView = 'rooms' | 'agents' | 'boards'
 
 interface CollabNavigationState {
   view: CollabView

@@ -1,3 +1,4 @@
+mod board;
 mod direct;
 mod groups;
 mod mailbox;
@@ -147,9 +148,33 @@ impl CliDispatcher {
                 )
                 .await?
             }
+            [card, action, room_flag, room_id]
+                if card == "card" && action == "list" && room_flag == "--room" =>
+            {
+                board::list(&mut transaction, claims, room_id).await?
+            }
+            argv if argv.starts_with(&["card".to_string(), "create".to_string()]) => {
+                match board::parse_create(argv) {
+                    Ok(command) => {
+                        board::create(&mut transaction, &run_id, claims, command).await?
+                    }
+                    Err(message) => cli_error(2, message),
+                }
+            }
+            [card, action, card_id] if card == "card" && action == "claim" => {
+                board::claim(&mut transaction, &run_id, claims, card_id).await?
+            }
+            argv if argv.starts_with(&["card".to_string(), "move".to_string()]) => {
+                match board::parse_move(argv) {
+                    Ok(command) => {
+                        board::move_card(&mut transaction, &run_id, claims, command).await?
+                    }
+                    Err(message) => cli_error(2, message),
+                }
+            }
             _ => cli_error(
                 2,
-                "INVALID_ARGUMENT: expected inbox, glance, reply, ack, react, dm, or group command",
+                "INVALID_ARGUMENT: expected inbox, glance, reply, ack, react, dm, group, or card command",
             ),
         };
         if mutates {
@@ -168,6 +193,7 @@ fn is_mutating_command(argv: &[String]) -> bool {
     match argv {
         [command] if command == "inbox" => false,
         [command, _] if command == "glance" => false,
+        [card, action, _, _] if card == "card" && action == "list" => false,
         _ => true,
     }
 }

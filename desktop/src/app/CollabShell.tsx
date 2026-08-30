@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AgentManager } from '@/features/collab/agents/AgentManager'
+import { BoardPage } from '@/features/collab/boards/BoardPage'
 import { useAgentStore } from '@/features/collab/agents/agentStore'
 import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
 import { CollabRail } from '@/features/collab/components/CollabRail'
@@ -37,7 +38,7 @@ export function CollabShell() {
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
           )}
         </>
-      ) : <AgentManager />}
+      ) : view === 'agents' ? <AgentManager /> : <BoardPage rooms={rooms} />}
     </main>
   )
 }

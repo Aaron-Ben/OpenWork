@@ -9,6 +9,10 @@ use super::redis::RedisCoordination;
 
 const SEEN_TTL_SECONDS: usize = 10 * 60;
 const HELD_TTL_SECONDS: usize = 2 * 60;
+const AGENDA_RATE_SECONDS: usize = 5 * 60;
+const AGENDA_NUDGE_SECONDS: usize = 45 * 60;
+const AGENDA_DECLINE_SECONDS: usize = 6 * 60 * 60;
+const AGENDA_DECLINE_CAP: i64 = 3;
 const REDIS_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
@@ -133,6 +137,87 @@ impl Coordination {
                 })
             })
             .transpose()
+    }
+
+    pub async fn agenda_allowed(&self, agent_id: &str) -> RedisResult<bool> {
+        let mut connection = self.redis.connection().await?;
+        let count: Option<i64> = tokio::time::timeout(
+            REDIS_TIMEOUT,
+            redis::cmd("GET")
+                .arg(format!("openwork:agenda-declines:{agent_id}"))
+                .query_async(&mut connection),
+        )
+        .await
+        .map_err(|_| timeout_error())??;
+        Ok(count.unwrap_or(0) < AGENDA_DECLINE_CAP)
+    }
+
+    pub async fn record_agenda_decline(&self, agent_id: &str) -> RedisResult<i64> {
+        let mut connection = self.redis.connection().await?;
+        let key = format!("openwork:agenda-declines:{agent_id}");
+        tokio::time::timeout(
+            REDIS_TIMEOUT,
+            Script::new(
+                r#"
+                local count = redis.call('INCR', KEYS[1])
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+                return count
+                "#,
+            )
+            .key(key)
+            .arg(AGENDA_DECLINE_SECONDS)
+            .invoke_async(&mut connection),
+        )
+        .await
+        .map_err(|_| timeout_error())?
+    }
+
+    pub async fn reset_agenda_declines(&self, agent_ids: &[String]) -> RedisResult<()> {
+        if agent_ids.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.redis.connection().await?;
+        let mut command = redis::cmd("DEL");
+        for agent_id in agent_ids {
+            command.arg(format!("openwork:agenda-declines:{agent_id}"));
+        }
+        tokio::time::timeout(REDIS_TIMEOUT, command.query_async::<i64>(&mut connection))
+            .await
+            .map_err(|_| timeout_error())??;
+        Ok(())
+    }
+
+    pub async fn claim_agenda_rate(&self, agent_id: &str) -> RedisResult<bool> {
+        self.claim_once(
+            format!("openwork:agenda-rate:{agent_id}"),
+            AGENDA_RATE_SECONDS,
+        )
+        .await
+    }
+
+    pub async fn claim_room_nudge(&self, room_id: &str) -> RedisResult<bool> {
+        self.claim_once(
+            format!("openwork:agenda-nudge:{room_id}"),
+            AGENDA_NUDGE_SECONDS,
+        )
+        .await
+    }
+
+    async fn claim_once(&self, key: String, ttl_seconds: usize) -> RedisResult<bool> {
+        let mut connection = self.redis.connection().await?;
+        let stored = tokio::time::timeout(
+            REDIS_TIMEOUT,
+            redis::cmd("SET")
+                .arg(key)
+                .arg("1")
+                .arg("NX")
+                .arg("EX")
+                .arg(ttl_seconds)
+                .query_async::<Option<String>>(&mut connection),
+        )
+        .await
+        .map_err(|_| timeout_error())??;
+        Ok(stored.is_some())
     }
 }
 

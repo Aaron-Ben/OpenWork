@@ -1,9 +1,11 @@
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
+    future::Future,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Output,
+    time::Duration,
 };
 
 use tokio::{fs, process::Command};
@@ -11,6 +13,8 @@ use tokio::{fs, process::Command};
 const SERVER_LABEL: &str = "io.openwork.collab.server";
 const COMPUTER_LABEL: &str = "io.openwork.collab.computer";
 const DEFAULT_RUNTIME_BIND: &str = "127.0.0.1:17843";
+const UNLOAD_TIMEOUT: Duration = Duration::from_secs(15);
+const UNLOAD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchdRole {
@@ -153,10 +157,7 @@ impl LaunchdSupervisor {
             LaunchdRole::Server => &self.server_arguments,
             LaunchdRole::Computer => &self.computer_arguments,
         };
-        let mut environment = BTreeMap::from([
-            ("OPENWORK_COLLAB_HOME", state_root.to_string()),
-            ("PATH", self.environment.path.clone()),
-        ]);
+        let mut environment = BTreeMap::from([("OPENWORK_COLLAB_HOME", state_root.to_string())]);
         match role {
             LaunchdRole::Server => {
                 environment.insert("DATABASE_URL", self.environment.database_url.clone());
@@ -167,6 +168,7 @@ impl LaunchdSupervisor {
                 );
             }
             LaunchdRole::Computer => {
+                environment.insert("PATH", self.environment.path.clone());
                 environment.insert("OPENWORK_COLLAB_SUPERVISED", "1".to_string());
                 if let Some(opencode_bin) = &self.environment.opencode_bin {
                     environment.insert("OPENCODE_BIN", opencode_bin.clone());
@@ -232,9 +234,23 @@ impl LaunchdSupervisor {
             return Ok(());
         }
         match self.bootout(role).await {
-            Ok(()) => Ok(()),
+            Ok(()) => self.wait_until_unloaded(role).await,
             Err(_) if !self.is_loaded(role).await => Ok(()),
             Err(error) => Err(error),
+        }
+    }
+
+    async fn wait_until_unloaded(&self, role: LaunchdRole) -> Result<(), LaunchdError> {
+        let supervisor = self.clone();
+        let unloaded = wait_until_unloaded_with(UNLOAD_TIMEOUT, UNLOAD_POLL_INTERVAL, move || {
+            let supervisor = supervisor.clone();
+            async move { supervisor.is_loaded(role).await }
+        })
+        .await;
+        if unloaded {
+            Ok(())
+        } else {
+            Err(LaunchdError::UnloadTimeout(role.label()))
         }
     }
 }
@@ -315,6 +331,28 @@ fn xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+async fn wait_until_unloaded_with<F, Fut>(
+    timeout: Duration,
+    poll_interval: Duration,
+    mut is_loaded: F,
+) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if !is_loaded().await {
+            return true;
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        tokio::time::sleep(poll_interval.min(deadline - now)).await;
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchdError {
     #[error("missing required environment variable {0}")]
@@ -323,15 +361,25 @@ pub enum LaunchdError {
     InvalidConfiguration(String),
     #[error("launchctl failed: {0}")]
     Launchctl(String),
+    #[error("launchd did not finish unloading {0} within 15 seconds")]
+    UnloadTimeout(&'static str),
     #[error("launchd file operation failed: {0}")]
     Io(#[from] std::io::Error),
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, process::Stdio};
+    use std::{
+        io::Write,
+        process::Stdio,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
-    use super::{LaunchdEnvironment, LaunchdRole, LaunchdSupervisor};
+    use super::{LaunchdEnvironment, LaunchdRole, LaunchdSupervisor, wait_until_unloaded_with};
 
     fn supervisor() -> LaunchdSupervisor {
         LaunchdSupervisor::new(
@@ -359,6 +407,7 @@ mod tests {
         assert!(plist.contains("OpenWork &amp; Local"));
         assert!(plist.contains("DATABASE_URL"));
         assert!(plist.contains("OPENWORK_COLLAB_RUNTIME_BIND"));
+        assert!(!plist.contains("<key>PATH</key>"));
         assert!(!plist.contains("OPENCODE_BIN"));
         assert!(!plist.contains("OPENWORK_COLLAB_SUPERVISED"));
     }
@@ -398,5 +447,21 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn unload_waits_until_launchd_finishes_async_cleanup() {
+        let probes = Arc::new(AtomicUsize::new(0));
+        let observed = probes.clone();
+
+        let unloaded =
+            wait_until_unloaded_with(Duration::from_secs(1), Duration::ZERO, move || {
+                let observed = observed.clone();
+                async move { observed.fetch_add(1, Ordering::SeqCst) < 2 }
+            })
+            .await;
+
+        assert!(unloaded);
+        assert_eq!(probes.load(Ordering::SeqCst), 3);
     }
 }

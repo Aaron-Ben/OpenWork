@@ -7,7 +7,7 @@ use sha2::Sha256;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
-use crate::protocol::TriggerEnvelope;
+use crate::protocol::{AgendaCandidateSet, TriggerEnvelope};
 
 type HmacSha256 = Hmac<Sha256>;
 const JWT_HEADER: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
@@ -115,6 +115,24 @@ impl SigningKey {
         let mut unsigned = trigger.clone();
         unsigned.signature.clear();
         self.verify(&serde_json::to_vec(&unsigned)?, &trigger.signature)
+    }
+
+    pub fn sign_agenda_candidates(
+        &self,
+        candidates: &mut AgendaCandidateSet,
+    ) -> Result<(), AuthError> {
+        candidates.signature.clear();
+        candidates.signature = self.sign(&serde_json::to_vec(candidates)?);
+        Ok(())
+    }
+
+    pub fn verify_agenda_candidates(
+        &self,
+        candidates: &AgendaCandidateSet,
+    ) -> Result<(), AuthError> {
+        let mut unsigned = candidates.clone();
+        unsigned.signature.clear();
+        self.verify(&serde_json::to_vec(&unsigned)?, &candidates.signature)
     }
 
     fn sign(&self, bytes: &[u8]) -> String {

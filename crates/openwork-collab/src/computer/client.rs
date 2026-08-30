@@ -7,8 +7,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgentAssignment, AgentRoster, AgentTokenResponse, DeviceStartResponse, FinishRunRequest,
-    HeartbeatRequest, InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
+    AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentAssignment, AgentRoster,
+    AgentTokenResponse, DeviceStartResponse, FinishRunRequest, HeartbeatRequest, InboxResponse,
+    OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
 };
 
 use super::sse::{SseDecoder, SseParseError};
@@ -175,6 +176,36 @@ impl AgentClient {
             .await
             .and_then(reqwest::Response::error_for_status)?;
         Ok(())
+    }
+
+    pub async fn agenda_payload(&self) -> Result<AgendaPayload, RuntimeClientError> {
+        self.http
+            .get(format!("{}/runtime/agenda/payload", self.base_url))
+            .bearer_auth(self.token())
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)?
+            .json()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn decide_agenda(
+        &self,
+        request: &AgendaDecisionRequest,
+    ) -> Result<AgendaDecisionResponse, RuntimeClientError> {
+        self.http
+            .post(format!("{}/runtime/agenda/decision", self.base_url))
+            .bearer_auth(self.token())
+            .json(request)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)?
+            .json()
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn finish_run(

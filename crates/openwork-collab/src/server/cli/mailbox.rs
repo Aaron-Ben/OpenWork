@@ -16,11 +16,16 @@ impl CliDispatcher {
         room_id: &str,
     ) -> Result<CliResult, sqlx::Error> {
         let compose_anchor: Option<i64> = sqlx::query_scalar(
-            "SELECT d.up_to_seq
-             FROM collab_run_deliveries d
+            "SELECT COALESCE(delivery.up_to_seq, run.agenda_anchor_seq)
+             FROM collab_runs run
+             LEFT JOIN collab_run_deliveries delivery
+               ON delivery.run_id = run.id AND delivery.room_id = $2
              JOIN collab_room_members rm
-               ON rm.room_id = d.room_id AND rm.participant_id = $3
-             WHERE d.run_id = $1 AND d.room_id = $2",
+               ON rm.room_id = COALESCE(delivery.room_id, run.room_id)
+              AND rm.participant_id = $3
+             WHERE run.id = $1 AND COALESCE(delivery.room_id, run.room_id) = $2
+               AND run.status = 'running'
+               AND (delivery.room_id IS NOT NULL OR run.trigger = 'agenda')",
         )
         .bind(run_id)
         .bind(room_id)

@@ -5,10 +5,10 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::protocol::{
-    AgentAssignment, AgentView, COLLAB_PROTOCOL_VERSION, ComputerStatus, ComputerView,
-    DeliveryRange, EngineStatus, FinishRunRequest, HeartbeatRequest, InboxResponse,
-    LocalComputerRegistration, MessageView, RoomView, RunView, TriageReportRequest,
-    TriggerEnvelope,
+    AgentAssignment, AgentView, BoardColumnView, BoardView, COLLAB_PROTOCOL_VERSION, CardView,
+    ComputerStatus, ComputerView, DeliveryRange, EngineStatus, FinishRunRequest, HeartbeatRequest,
+    InboxResponse, LocalComputerRegistration, MessageView, RoomView, RunSummaryView, RunView,
+    TriageReportRequest, TriggerEnvelope,
 };
 
 use super::auth::AgentClaims;
@@ -108,7 +108,29 @@ impl CollaborationStore {
             model: model.to_string(),
             config_version: 1,
             enabled: true,
+            scanner_enabled: false,
         })
+    }
+
+    pub async fn set_agent_proactivity(
+        &self,
+        agent_id: &str,
+        enabled: bool,
+    ) -> Result<AgentView, sqlx::Error> {
+        let row = sqlx::query_as::<_, AgentViewRow>(
+            "UPDATE collab_agents
+             SET scanner_enabled = $2, config_version = config_version + 1,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1
+             RETURNING id,
+                 (SELECT display_name FROM collab_participants WHERE id = $1) AS display_name,
+                 system_prompt, engine_id, model, config_version, enabled, scanner_enabled",
+        )
+        .bind(agent_id)
+        .bind(enabled)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.into())
     }
 
     pub async fn create_direct_room(&self, agent_id: &str) -> Result<RoomView, sqlx::Error> {
@@ -125,7 +147,7 @@ impl CollaborationStore {
     pub async fn list_agents(&self) -> Result<Vec<AgentView>, sqlx::Error> {
         sqlx::query_as::<_, AgentViewRow>(
             "SELECT a.id, p.display_name, a.system_prompt, a.engine_id,
-                    a.model, a.config_version, a.enabled
+                    a.model, a.config_version, a.enabled, a.scanner_enabled
              FROM collab_agents a
              JOIN collab_participants p ON p.id = a.id
              ORDER BY a.id",
@@ -133,6 +155,110 @@ impl CollaborationStore {
         .fetch_all(&self.pool)
         .await
         .map(|rows| rows.into_iter().map(AgentView::from).collect())
+    }
+
+    pub async fn create_board(&self, room_id: &str, title: &str) -> Result<BoardView, sqlx::Error> {
+        if title.trim().is_empty() || title.len() > 200 {
+            return Err(protocol_error(
+                "INVALID_ARGUMENT: board title must be 1..200 bytes",
+            ));
+        }
+        let board_id = format!("board_{}", Uuid::new_v4().simple());
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("INSERT INTO collab_boards (id, room_id, title) VALUES ($1, $2, $3)")
+            .bind(&board_id)
+            .bind(room_id)
+            .bind(title.trim())
+            .execute(&mut *transaction)
+            .await?;
+        for (position, title, is_done) in [
+            (0_i32, "To do", false),
+            (1, "Doing", false),
+            (2, "Done", true),
+        ] {
+            sqlx::query(
+                "INSERT INTO collab_board_columns (id, board_id, title, position, is_done)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(format!("column_{}", Uuid::new_v4().simple()))
+            .bind(&board_id)
+            .bind(title)
+            .bind(position)
+            .bind(is_done)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        self.board(&board_id).await
+    }
+
+    pub async fn list_boards(&self) -> Result<Vec<BoardView>, sqlx::Error> {
+        let ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM collab_boards ORDER BY created_at, id")
+                .fetch_all(&self.pool)
+                .await?;
+        let mut boards = Vec::with_capacity(ids.len());
+        for id in ids {
+            boards.push(self.board(&id).await?);
+        }
+        Ok(boards)
+    }
+
+    pub async fn list_runs(&self, limit: u32) -> Result<Vec<RunSummaryView>, sqlx::Error> {
+        let limit = i64::from(limit.clamp(1, 200));
+        sqlx::query_as::<_, RunSummaryRow>(
+            "SELECT id, agent_id, trigger, status, outcome, room_id, focus_card_id,
+                    trigger_reason,
+                    to_char(started_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') || '+08:00' AS started_at
+             FROM collab_runs ORDER BY started_at DESC, id DESC LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| rows.into_iter().map(RunSummaryView::from).collect())
+    }
+
+    async fn board(&self, board_id: &str) -> Result<BoardView, sqlx::Error> {
+        let (id, room_id, title): (String, String, String) =
+            sqlx::query_as("SELECT id, room_id, title FROM collab_boards WHERE id = $1")
+                .bind(board_id)
+                .fetch_one(&self.pool)
+                .await?;
+        let columns = sqlx::query_as::<_, BoardColumnRow>(
+            "SELECT id, title, position, is_done
+             FROM collab_board_columns WHERE board_id = $1 ORDER BY position, id",
+        )
+        .bind(board_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut views = Vec::with_capacity(columns.len());
+        for column in columns {
+            let cards = sqlx::query_as::<_, CardRow>(
+                "SELECT id, title, description, position, assignee_id, claimed_by
+                 FROM collab_cards WHERE board_id = $1 AND column_id = $2
+                 ORDER BY position, id",
+            )
+            .bind(board_id)
+            .bind(&column.id)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(CardView::from)
+            .collect();
+            views.push(BoardColumnView {
+                id: column.id,
+                title: column.title,
+                position: column.position,
+                is_done: column.is_done,
+                cards,
+            });
+        }
+        Ok(BoardView {
+            id,
+            room_id,
+            title,
+            columns: views,
+        })
     }
 
     pub async fn list_rooms(&self) -> Result<Vec<RoomView>, sqlx::Error> {
@@ -192,6 +318,19 @@ impl CollaborationStore {
         .bind(message_id)
         .bind(room_id)
         .bind(author_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn room_agent_ids(&self, room_id: &str) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT agent.id
+             FROM collab_room_members member
+             JOIN collab_agents agent ON agent.id = member.participant_id
+             WHERE member.room_id = $1 AND agent.enabled
+             ORDER BY agent.id",
+        )
+        .bind(room_id)
         .fetch_all(&self.pool)
         .await
     }
@@ -333,7 +472,7 @@ impl CollaborationStore {
         sqlx::query_as::<_, AssignmentRow>(
             "SELECT a.id, p.display_name, a.role, a.bio, a.system_prompt,
                     a.engine_id, a.model, COALESCE(a.fast_model, a.model) AS fast_model,
-                    a.config_version
+                    a.config_version, a.scanner_enabled
              FROM collab_agents a
              JOIN collab_participants p ON p.id = a.id
              WHERE a.computer_id = 'local' AND a.enabled
@@ -461,6 +600,7 @@ impl CollaborationStore {
                         up_to_seq,
                     })
                     .collect(),
+                agenda_focus: None,
                 carried_over,
                 issued_at: now,
                 expires_at: now + 5 * 60,
@@ -652,23 +792,70 @@ impl CollaborationStore {
         let mut transaction = self.pool.begin().await?;
         self.authorize_agent_transaction(&mut transaction, claims)
             .await?;
+        let focus = trigger.agenda_focus.as_ref();
+        if let Some(focus) = focus {
+            let current: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                    SELECT 1
+                    FROM collab_rooms room
+                    JOIN collab_room_members member
+                      ON member.room_id = room.id AND member.participant_id = $2
+                    WHERE room.id = $1 AND room.next_seq = $3
+                      AND (
+                        $4::TEXT IS NULL OR EXISTS (
+                            SELECT 1
+                            FROM collab_cards card
+                            JOIN collab_boards board ON board.id = card.board_id
+                            JOIN collab_board_columns board_column
+                              ON board_column.id = card.column_id AND NOT board_column.is_done
+                            WHERE card.id = $4 AND board.room_id = room.id
+                              AND (
+                                card.claimed_by = $2 OR
+                                (card.claimed_by IS NULL AND card.assignee_id = $2)
+                              )
+                        )
+                      )
+                 )",
+            )
+            .bind(&focus.room_id)
+            .bind(&claims.sub)
+            .bind(focus.room_sequence)
+            .bind(&focus.card_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if !current {
+                return Err(protocol_error(
+                    "CONFLICT: agenda focus changed before the run opened",
+                ));
+            }
+        }
+        let room_id = focus.map(|focus| focus.room_id.as_str()).or_else(|| {
+            trigger
+                .deliveries
+                .first()
+                .map(|delivery| delivery.room_id.as_str())
+        });
         sqlx::query(
             "INSERT INTO collab_runs (
                 id, agent_id, computer_id, room_id, trigger, status,
-                engine_id, model, computer_generation, inbox_carried_over
+                engine_id, model, computer_generation, inbox_carried_over,
+                focus_card_id, agenda_anchor_seq, trigger_reason
              )
              SELECT $1, a.id, a.computer_id, $3, $4, 'running',
-                    a.engine_id, a.model, $5, $6
+                    a.engine_id, a.model, $5, $6, $7, $8, $9
              FROM collab_agents a
              WHERE a.id = $2
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&trigger.dispatch_id)
         .bind(&claims.sub)
-        .bind(trigger.deliveries.first().map(|delivery| &delivery.room_id))
+        .bind(room_id)
         .bind(&trigger.trigger)
         .bind(claims.generation)
         .bind(trigger.carried_over)
+        .bind(focus.and_then(|focus| focus.card_id.as_deref()))
+        .bind(focus.map(|focus| focus.room_sequence))
+        .bind(focus.map(|focus| focus.reason.as_str()))
         .execute(&mut *transaction)
         .await?;
         for delivery in &trigger.deliveries {
@@ -811,7 +998,10 @@ impl CollaborationStore {
                              COALESCE(request.result -> 'sideEffects', '[]'::jsonb)
                          ) effect
                     WHERE request.run_id = $1
-                      AND effect ->> 'type' IN ('message_published', 'reaction_changed')
+                      AND effect ->> 'type' IN (
+                          'message_published', 'reaction_changed',
+                          'card_created', 'card_claimed', 'card_moved'
+                      )
                  )",
             )
             .bind(run_id)
@@ -1008,6 +1198,7 @@ struct AssignmentRow {
     model: String,
     fast_model: String,
     config_version: i64,
+    scanner_enabled: bool,
 }
 
 #[derive(FromRow)]
@@ -1019,6 +1210,7 @@ struct AgentViewRow {
     model: String,
     config_version: i64,
     enabled: bool,
+    scanner_enabled: bool,
 }
 
 impl From<AgentViewRow> for AgentView {
@@ -1031,6 +1223,67 @@ impl From<AgentViewRow> for AgentView {
             model: row.model,
             config_version: row.config_version,
             enabled: row.enabled,
+            scanner_enabled: row.scanner_enabled,
+        }
+    }
+}
+
+#[derive(FromRow)]
+struct BoardColumnRow {
+    id: String,
+    title: String,
+    position: i32,
+    is_done: bool,
+}
+
+#[derive(FromRow)]
+struct CardRow {
+    id: String,
+    title: String,
+    description: Option<String>,
+    position: i32,
+    assignee_id: Option<String>,
+    claimed_by: Option<String>,
+}
+
+impl From<CardRow> for CardView {
+    fn from(row: CardRow) -> Self {
+        Self {
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            position: row.position,
+            assignee_id: row.assignee_id,
+            claimed_by: row.claimed_by,
+        }
+    }
+}
+
+#[derive(FromRow)]
+struct RunSummaryRow {
+    id: String,
+    agent_id: String,
+    trigger: String,
+    status: String,
+    outcome: Option<String>,
+    room_id: Option<String>,
+    focus_card_id: Option<String>,
+    trigger_reason: Option<String>,
+    started_at: String,
+}
+
+impl From<RunSummaryRow> for RunSummaryView {
+    fn from(row: RunSummaryRow) -> Self {
+        Self {
+            id: row.id,
+            agent_id: row.agent_id,
+            trigger: row.trigger,
+            status: row.status,
+            outcome: row.outcome,
+            room_id: row.room_id,
+            focus_card_id: row.focus_card_id,
+            trigger_reason: row.trigger_reason,
+            started_at: row.started_at,
         }
     }
 }
@@ -1064,6 +1317,7 @@ impl From<AssignmentRow> for AgentAssignment {
             model: row.model,
             fast_model: row.fast_model,
             config_version: row.config_version,
+            scanner_enabled: row.scanner_enabled,
         }
     }
 }

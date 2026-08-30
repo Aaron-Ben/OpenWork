@@ -22,13 +22,17 @@ impl CliDispatcher {
         held_token: Option<&str>,
     ) -> Result<CliResult, sqlx::Error> {
         let row: Option<(i64, String)> = sqlx::query_as(
-            "SELECT d.up_to_seq, r.kind
-             FROM collab_run_deliveries d
-             JOIN collab_rooms r ON r.id = d.room_id
+            "SELECT COALESCE(delivery.up_to_seq, run.agenda_anchor_seq), room.kind
+             FROM collab_runs run
+             LEFT JOIN collab_run_deliveries delivery
+               ON delivery.run_id = run.id AND delivery.room_id = $2
+             JOIN collab_rooms room
+               ON room.id = COALESCE(delivery.room_id, run.room_id)
              JOIN collab_room_members own
-               ON own.room_id = d.room_id AND own.participant_id = $3
-             WHERE d.run_id = $1 AND d.room_id = $2
-             FOR UPDATE OF r",
+               ON own.room_id = room.id AND own.participant_id = $3
+             WHERE run.id = $1 AND room.id = $2 AND run.status = 'running'
+               AND (delivery.room_id IS NOT NULL OR run.trigger = 'agenda')
+             FOR UPDATE OF room",
         )
         .bind(run_id)
         .bind(room_id)

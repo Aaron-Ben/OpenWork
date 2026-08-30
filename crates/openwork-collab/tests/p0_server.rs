@@ -440,6 +440,12 @@ async fn control_ensures_the_single_local_computer_and_returns_its_secret_once()
             & 0o777,
         0o600,
     );
+    assert_eq!(
+        request(&socket, &ControlRequest::Status).await.unwrap(),
+        ControlResponse::Status {
+            protocol_version: COLLAB_PROTOCOL_VERSION,
+        }
+    );
 
     let first = request(&socket, &ControlRequest::EnsureLocalComputer)
         .await

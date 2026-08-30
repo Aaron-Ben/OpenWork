@@ -8,16 +8,21 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgentAssignment, FinishRunRequest, MessageView, OpenRunRequest, TriageReportRequest,
+    AgendaDecisionRequest, AgentAssignment, FinishRunRequest, MessageView, OpenRunRequest,
+    TriageReportRequest,
 };
 
 use super::{
+    agenda::parse_agenda_decision,
     client::{AgentClient, DeviceClient, RuntimeClientError},
     engine::{ClassifyRequest, EngineAdapter, EngineError, EngineUsage, TurnRequest, TurnResult},
     home::{AgentHome, HomeError},
     scheduling::{RunnerResources, is_rate_limited},
     triage::parse_triage,
 };
+
+const AGENDA_QUIET_WINDOW: Duration = Duration::from_secs(90);
+const AGENDA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 pub struct AgentRunner<A: EngineAdapter> {
     assignment: AgentAssignment,
@@ -32,6 +37,10 @@ pub struct AgentRunner<A: EngineAdapter> {
     triage_trouble_streak: u32,
     triage_backoff_until: Option<Instant>,
     engine_backoff_until: Option<Instant>,
+    agenda_backoff_until: Option<Instant>,
+    agenda_failure_streak: u32,
+    quiet_since: Instant,
+    last_agenda_check: Option<Instant>,
     pending_finish: Option<(String, FinishRunRequest)>,
 }
 
@@ -101,6 +110,10 @@ impl<A: EngineAdapter> AgentRunner<A> {
             triage_trouble_streak: 0,
             triage_backoff_until: None,
             engine_backoff_until: None,
+            agenda_backoff_until: None,
+            agenda_failure_streak: 0,
+            quiet_since: Instant::now(),
+            last_agenda_check: None,
             pending_finish: None,
         }
     }
@@ -163,8 +176,9 @@ impl<A: EngineAdapter> AgentRunner<A> {
         self.refresh_token_if_needed().await?;
         let inbox = self.client.inbox().await?;
         let Some(trigger) = inbox.trigger else {
-            return Ok(());
+            return self.maybe_agenda(cancellation).await;
         };
+        self.quiet_since = Instant::now();
         let run = self.client.open_run(&OpenRunRequest { trigger }).await?;
         let _run_heartbeat = RunHeartbeat::start(self.client.clone(), run.id.clone());
         let payload = match self.client.triage_payload(&run.id).await {
@@ -280,6 +294,17 @@ impl<A: EngineAdapter> AgentRunner<A> {
             &verdict.prompt_note,
             inbox.carried_over,
         );
+        self.execute_main_run(run.id, prompt, cancellation).await?;
+        self.quiet_since = Instant::now();
+        Ok(())
+    }
+
+    async fn execute_main_run(
+        &mut self,
+        run_id: String,
+        prompt: String,
+        cancellation: CancellationToken,
+    ) -> Result<(), RunnerError> {
         let session = self.home.load_session().await?;
         let result = self
             .run_main_turn(prompt.clone(), session.clone(), cancellation.clone())
@@ -302,7 +327,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
                     self.home.save_session(session_id).await?;
                 }
                 self.finish_or_queue(
-                    run.id.clone(),
+                    run_id.clone(),
                     FinishRunRequest {
                         status: "completed".to_string(),
                         input_tokens: Some(result.usage.input_tokens as i64),
@@ -318,7 +343,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
             Err(error) => {
                 let cancelled = matches!(error, super::engine::EngineError::Cancelled);
                 self.finish_or_queue(
-                    run.id.clone(),
+                    run_id,
                     FinishRunRequest {
                         status: if cancelled { "interrupted" } else { "failed" }.to_string(),
                         input_tokens: None,
@@ -332,6 +357,103 @@ impl<A: EngineAdapter> AgentRunner<A> {
                 .await?;
             }
         }
+        Ok(())
+    }
+
+    async fn maybe_agenda(&mut self, cancellation: CancellationToken) -> Result<(), RunnerError> {
+        let now = Instant::now();
+        if !agenda_due(
+            self.assignment.scanner_enabled,
+            self.quiet_since.elapsed(),
+            self.last_agenda_check.map(|last| last.elapsed()),
+            self.agenda_backoff_until
+                .is_some_and(|deadline| deadline > now),
+        ) {
+            return Ok(());
+        }
+        self.last_agenda_check = Some(Instant::now());
+        let payload = match self.client.agenda_payload().await {
+            Ok(payload) => payload,
+            Err(error) if error.is_terminal_identity_error() => return Err(error.into()),
+            Err(error) => {
+                self.note_agenda_failure();
+                tracing::warn!(agent_id = self.assignment.id, %error, "Agenda payload failed closed");
+                return Ok(());
+            }
+        };
+        if payload.candidate_set.candidates.is_empty() {
+            self.agenda_failure_streak = 0;
+            self.agenda_backoff_until = None;
+            return Ok(());
+        }
+        let classify_started = Instant::now();
+        let result = async {
+            let _permit = self.resources.triage_permit(&cancellation).await?;
+            self.resources.gate(&cancellation).await?;
+            self.adapter
+                .classify(ClassifyRequest {
+                    cwd: self.home.triage_root.clone(),
+                    prompt: payload.classify_prompt,
+                    model: Some(self.assignment.fast_model.clone()),
+                    environment: self.home.environment.clone(),
+                    cancellation: cancellation.clone(),
+                })
+                .await
+        }
+        .await;
+        self.resources.observe_result(&result).await;
+        let result = match result {
+            Ok(result) => result,
+            Err(EngineError::Cancelled) => return Ok(()),
+            Err(error) => {
+                self.note_agenda_failure();
+                tracing::warn!(agent_id = self.assignment.id, %error, "local Agenda classification failed closed");
+                return Ok(());
+            }
+        };
+        let decision = match parse_agenda_decision(&result.text) {
+            Ok(decision) => decision,
+            Err(error) => {
+                self.note_agenda_failure();
+                tracing::warn!(agent_id = self.assignment.id, %error, "local Agenda decision was rejected");
+                return Ok(());
+            }
+        };
+        let response = match self
+            .client
+            .decide_agenda(&AgendaDecisionRequest {
+                candidate_set: payload.candidate_set,
+                decision,
+                model: result
+                    .model
+                    .unwrap_or_else(|| self.assignment.fast_model.clone()),
+                input_tokens: result.usage.input_tokens as i64,
+                output_tokens: result.usage.output_tokens as i64,
+                latency_ms: classify_started.elapsed().as_millis() as i64,
+            })
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if error.is_terminal_identity_error() => return Err(error.into()),
+            Err(error) => {
+                self.note_agenda_failure();
+                tracing::warn!(agent_id = self.assignment.id, %error, "Agenda decision failed closed");
+                return Ok(());
+            }
+        };
+        self.agenda_failure_streak = 0;
+        self.agenda_backoff_until = None;
+        let Some(trigger) = response.trigger else {
+            return Ok(());
+        };
+        let brief = response.focused_brief.ok_or_else(|| {
+            RunnerError::AgendaProtocol("trigger has no focused brief".to_string())
+        })?;
+        let run = self.client.open_run(&OpenRunRequest { trigger }).await?;
+        let _run_heartbeat = RunHeartbeat::start(self.client.clone(), run.id.clone());
+        let prompt = build_agenda_prompt(&self.assignment, &brief);
+        self.execute_main_run(run.id, prompt, cancellation).await?;
+        self.quiet_since = Instant::now();
         Ok(())
     }
 
@@ -410,6 +532,13 @@ impl<A: EngineAdapter> AgentRunner<A> {
         self.triage_backoff_until = Some(Instant::now() + Duration::from_secs(seconds));
     }
 
+    fn note_agenda_failure(&mut self) {
+        self.agenda_failure_streak = self.agenda_failure_streak.saturating_add(1);
+        let exponent = self.agenda_failure_streak.saturating_sub(1).min(4);
+        let seconds = 60_u64.saturating_mul(1_u64 << exponent).min(15 * 60);
+        self.agenda_backoff_until = Some(Instant::now() + Duration::from_secs(seconds));
+    }
+
     async fn refresh_token_if_needed(&mut self) -> Result<(), RunnerError> {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         if !token_needs_refresh(self.token_expires_at, now) {
@@ -463,6 +592,18 @@ fn token_needs_refresh(expires_at: i64, now: i64) -> bool {
     expires_at <= now + 5 * 60
 }
 
+fn agenda_due(
+    enabled: bool,
+    quiet_for: Duration,
+    since_last_check: Option<Duration>,
+    backoff_active: bool,
+) -> bool {
+    enabled
+        && quiet_for >= AGENDA_QUIET_WINDOW
+        && since_last_check.is_none_or(|elapsed| elapsed >= AGENDA_CHECK_INTERVAL)
+        && !backoff_active
+}
+
 fn build_prompt(
     assignment: &AgentAssignment,
     messages: &[MessageView],
@@ -493,6 +634,13 @@ fn build_prompt(
     prompt
 }
 
+fn build_agenda_prompt(assignment: &AgentAssignment, focused_brief: &str) -> String {
+    format!(
+        "You are {}. {}\nHandle this proactive collaboration turn.\n{}\n",
+        assignment.display_name, assignment.system_prompt, focused_brief
+    )
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error(transparent)]
@@ -501,6 +649,8 @@ pub enum RunnerError {
     Home(#[from] HomeError),
     #[error("Agent wake loop stopped unexpectedly")]
     WakeLoopStopped,
+    #[error("Agenda protocol failed: {0}")]
+    AgendaProtocol(String),
 }
 
 impl RunnerError {
@@ -516,13 +666,37 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
-    use super::{next_trigger, token_needs_refresh};
+    use super::{agenda_due, next_trigger, token_needs_refresh};
 
     #[test]
     fn refreshes_agent_token_with_five_minutes_remaining() {
         assert!(!token_needs_refresh(1_301, 1_000));
         assert!(token_needs_refresh(1_300, 1_000));
         assert!(token_needs_refresh(999, 1_000));
+    }
+
+    #[test]
+    fn agenda_requires_enabled_quiet_interval_and_no_backoff() {
+        assert!(!agenda_due(false, Duration::from_secs(120), None, false));
+        assert!(!agenda_due(true, Duration::from_secs(89), None, false));
+        assert!(!agenda_due(
+            true,
+            Duration::from_secs(90),
+            Some(Duration::from_secs(59)),
+            false
+        ));
+        assert!(!agenda_due(
+            true,
+            Duration::from_secs(90),
+            Some(Duration::from_secs(60)),
+            true
+        ));
+        assert!(agenda_due(
+            true,
+            Duration::from_secs(90),
+            Some(Duration::from_secs(60)),
+            false
+        ));
     }
 
     #[tokio::test]

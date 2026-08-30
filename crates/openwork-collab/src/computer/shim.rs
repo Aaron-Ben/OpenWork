@@ -30,7 +30,7 @@ async fn run() -> Result<CliResult, ShimError> {
     if arguments.is_empty() || arguments == ["--help"] || arguments == ["help"] {
         return Ok(CliResult {
             text:
-                "Usage:\n  openwork inbox\n  openwork glance <room-id>\n  openwork reply <room-id> [--held-token <token>] (--stdin | --file <path> | -- <body>)\n  openwork react <message-id> <emoji>\n  openwork ack <room-id>\n  openwork dm <participant-id> (--stdin | --file <path> | -- <body>)\n  openwork group create --member <participant-id>... (--stdin | --file <path> | -- <opening>)\n  openwork group invite <room-id> <participant-id>\n  openwork group leave <room-id>\n  openwork group kick <room-id> <participant-id>"
+                "Usage:\n  openwork inbox\n  openwork glance <room-id>\n  openwork reply <room-id> [--held-token <token>] (--stdin | --file <path> | -- <body>)\n  openwork react <message-id> <emoji>\n  openwork ack <room-id>\n  openwork dm <participant-id> (--stdin | --file <path> | -- <body>)\n  openwork group create --member <participant-id>... (--stdin | --file <path> | -- <opening>)\n  openwork group invite <room-id> <participant-id>\n  openwork group leave <room-id>\n  openwork group kick <room-id> <participant-id>\n  openwork card list --room <room-id>\n  openwork card create --board <id> --column <id> --title <text> [--assignee <id>]\n  openwork card claim <card-id>\n  openwork card move <card-id> --column <id> --position <n>"
                     .to_string(),
             exit_code: 0,
             side_effects: Vec::new(),
@@ -103,6 +103,16 @@ fn valid_bodyless_command(arguments: &[String]) -> bool {
         || matches!(arguments, [group, action, _] if group == "group" && action == "leave")
         || matches!(arguments, [group, action, _, _]
             if group == "group" && matches!(action.as_str(), "invite" | "kick"))
+        || matches!(arguments, [card, action, _]
+            if card == "card" && action == "claim")
+        || matches!(arguments, [card, action, room_flag, _]
+            if card == "card" && action == "list" && room_flag == "--room")
+        || (arguments.starts_with(&["card".to_string(), "create".to_string()])
+            && arguments.len() >= 8
+            && arguments.len().is_multiple_of(2))
+        || matches!(arguments, [card, action, _, column_flag, _, position_flag, _]
+            if card == "card" && action == "move"
+                && column_flag == "--column" && position_flag == "--position")
 }
 
 fn valid_body_command_prefix(arguments: &[String]) -> bool {

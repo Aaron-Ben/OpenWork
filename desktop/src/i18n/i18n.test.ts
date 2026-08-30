@@ -43,11 +43,14 @@ describe('i18n', () => {
     const paths = [
       'collab.nav.rooms',
       'collab.nav.agents',
+      'collab.nav.boards',
       'collab.rooms.title',
       'collab.rooms.messagePlaceholder',
       'collab.agents.title',
       'collab.agents.model',
       'collab.agents.prompt',
+      'collab.boards.title',
+      'collab.boards.recentRuns',
     ] as const
     for (const language of supportedLanguages) {
       const translate = i18n.getFixedT(language)

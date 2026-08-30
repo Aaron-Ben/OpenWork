@@ -16,6 +16,7 @@ export function AgentManager() {
   const agents = useAgentStore((state) => state.agents)
   const create = useAgentStore((state) => state.create)
   const error = useAgentStore((state) => state.error)
+  const setProactivity = useAgentStore((state) => state.setProactivity)
   const [form, setForm] = useState<CollabAgentInput | null>(null)
 
   async function submit(event: React.FormEvent) {
@@ -46,6 +47,9 @@ export function AgentManager() {
               <strong className="block truncate">{agent.displayName}</strong>
               <span className="text-sm text-ink-faint">@{agent.id} · OpenCode · {agent.model} · {agent.enabled ? t('collab.agents.enabled') : t('collab.agents.disabled')}</span>
             </div>
+            <Button type="button" size="sm" variant={agent.scannerEnabled ? 'accent' : 'outline'} onClick={() => void setProactivity(agent.id, !agent.scannerEnabled)}>
+              {agent.scannerEnabled ? t('collab.agents.proactiveOn') : t('collab.agents.proactiveOff')}
+            </Button>
           </article>
         ))}
         {agents.length === 0 ? <p className="py-20 text-center text-sm text-ink-faint">{t('collab.agents.noAgents')}</p> : null}
