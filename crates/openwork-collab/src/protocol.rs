@@ -67,8 +67,6 @@ pub enum EngineStatus {
     Unknown,
     Ready,
     Missing,
-    Unauthenticated,
-    Broken,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -115,15 +113,14 @@ pub struct HeartbeatRequest {
     pub daemon_version: String,
     pub supervised: bool,
     pub status: ComputerStatus,
-    pub engine: EngineProbeView,
+    pub engine: EngineInventoryView,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct EngineProbeView {
+pub struct EngineInventoryView {
     pub engine_id: String,
     pub status: EngineStatus,
-    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -276,4 +273,4 @@ pub struct FinishRunRequest {
     pub assistant_text: Option<String>,
 }
 
-pub const COLLAB_PROTOCOL_VERSION: u32 = 1;
+pub const COLLAB_PROTOCOL_VERSION: u32 = 2;

@@ -5,7 +5,7 @@ use std::{path::Path, time::Duration};
 use openwork_collab::{
     protocol::{
         COLLAB_PROTOCOL_VERSION, ComputerStatus, ControlRequest, ControlResponse,
-        DeviceStartResponse, EngineProbeView, EngineStatus, HeartbeatRequest,
+        DeviceStartResponse, EngineInventoryView, EngineStatus, HeartbeatRequest,
     },
     server::{CollaborationServer, ServerOptions, control::request},
 };
@@ -90,10 +90,9 @@ async fn heartbeat_lease_marks_an_abnormally_stopped_computer_offline() {
             daemon_version: "test".to_string(),
             supervised: false,
             status: ComputerStatus::Online,
-            engine: EngineProbeView {
+            engine: EngineInventoryView {
                 engine_id: "opencode".to_string(),
                 status: EngineStatus::Ready,
-                version: Some("test".to_string()),
             },
         })
         .send()

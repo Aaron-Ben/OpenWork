@@ -5,7 +5,7 @@ use std::{path::Path, time::Duration};
 use openwork_collab::{
     protocol::{
         AgentTokenResponse, COLLAB_PROTOCOL_VERSION, ControlRequest, ControlResponse,
-        DeviceStartResponse, EngineProbeView, EngineStatus, HeartbeatRequest,
+        DeviceStartResponse, EngineInventoryView, EngineStatus, HeartbeatRequest,
     },
     server::{CollaborationServer, ServerOptions, control::request},
 };
@@ -116,7 +116,7 @@ async fn committed_message_is_delivered_as_an_agent_wake_over_redis_and_sse() {
             id: "helper".to_string(),
             display_name: "Helper".to_string(),
             system_prompt: "Help the user.".to_string(),
-            model: "opencode/hy3-free".to_string(),
+            model: "opencode/mimo-v2.5-free".to_string(),
         },
     )
     .await
@@ -155,10 +155,9 @@ async fn committed_message_is_delivered_as_an_agent_wake_over_redis_and_sse() {
             daemon_version: "test".to_string(),
             supervised: false,
             status: openwork_collab::protocol::ComputerStatus::Online,
-            engine: EngineProbeView {
+            engine: EngineInventoryView {
                 engine_id: "opencode".to_string(),
                 status: EngineStatus::Ready,
-                version: Some("test".to_string()),
             },
         })
         .send()

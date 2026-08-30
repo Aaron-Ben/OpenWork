@@ -78,7 +78,7 @@ async fn run_computer() -> Result<(), Box<dyn std::error::Error>> {
             poll_interval: Duration::from_secs(20),
             roster_interval: Duration::from_secs(60),
             heartbeat_interval: Duration::from_secs(30),
-            probe_interval: Duration::from_secs(5 * 60),
+            engine_rescan_interval: Duration::from_secs(5 * 60),
         },
         Arc::new(OpenCodeAdapter::with_executable(opencode)),
     )

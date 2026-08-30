@@ -7,12 +7,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgentAssignment, COLLAB_PROTOCOL_VERSION, ComputerStatus, EngineProbeView, HeartbeatRequest,
+    AgentAssignment, COLLAB_PROTOCOL_VERSION, ComputerStatus, EngineInventoryView, EngineStatus,
+    HeartbeatRequest,
 };
 
 use super::{
     client::{DeviceClient, RuntimeClientError},
-    engine::{EngineAdapter, EngineProbe, EngineProbeStatus},
+    engine::{EngineAdapter, EngineAvailability, EngineInventory},
     home::{HomeError, HomeManager},
     runner::{AgentRunner, RunnerError, RunnerIdentity},
     scheduling::RunnerResources,
@@ -28,7 +29,7 @@ pub struct ComputerOptions {
     pub poll_interval: Duration,
     pub roster_interval: Duration,
     pub heartbeat_interval: Duration,
-    pub probe_interval: Duration,
+    pub engine_rescan_interval: Duration,
 }
 
 pub struct ComputerDaemon<A: EngineAdapter + 'static> {
@@ -44,7 +45,7 @@ struct RunnerHandle {
 
 enum DaemonEvent {
     Roster(Vec<AgentAssignment>),
-    Probe(EngineProbe),
+    Inventory(EngineInventory),
     Fatal(RuntimeClientError),
 }
 
@@ -58,14 +59,14 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
             self.options.runtime_base_url.clone(),
             self.options.device_token.clone(),
         );
-        let probe = self.adapter.probe_behavior().await?;
+        let inventory = self.adapter.inventory().await?;
         let generation = client.start().await?;
         client
             .heartbeat(&heartbeat_request(
                 generation,
                 self.options.supervised,
                 ComputerStatus::Online,
-                &probe,
+                &inventory,
             ))
             .await?;
         let home_manager = HomeManager::new(
@@ -83,7 +84,7 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
             resources: &resources,
         };
         let mut runners = HashMap::<String, RunnerHandle>::new();
-        if probe.status == EngineProbeStatus::Ready {
+        if inventory.availability == EngineAvailability::Available {
             match client.roster(generation).await {
                 Ok(assignments) => runner_factory.reconcile(assignments, &mut runners).await?,
                 Err(error) if error.is_terminal_identity_error() => return Err(error.into()),
@@ -96,12 +97,12 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
 
         let background_shutdown = shutdown.child_token();
         let (events_tx, mut events_rx) = mpsc::channel(16);
-        let (probe_tx, probe_rx) = watch::channel(probe.clone());
+        let (inventory_tx, inventory_rx) = watch::channel(inventory.clone());
         let heartbeat_task = tokio::spawn(heartbeat_loop(
             client.clone(),
             generation,
             self.options.supervised,
-            probe_rx,
+            inventory_rx,
             self.options.heartbeat_interval,
             events_tx.clone(),
             background_shutdown.clone(),
@@ -113,29 +114,29 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
             events_tx.clone(),
             background_shutdown.clone(),
         ));
-        let probe_task = tokio::spawn(probe_loop(
+        let inventory_task = tokio::spawn(engine_rescan_loop(
             self.adapter.clone(),
-            probe_tx,
-            self.options.probe_interval,
+            inventory_tx,
+            self.options.engine_rescan_interval,
             events_tx,
             background_shutdown.clone(),
         ));
-        let mut current_probe = probe;
+        let mut current_inventory = inventory;
         let mut runner_tick = tokio::time::interval(Duration::from_secs(1));
         runner_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let result = 'supervisor: loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break Ok(()),
                 event = events_rx.recv() => match event {
-                    Some(DaemonEvent::Roster(assignments)) if current_probe.status == EngineProbeStatus::Ready => {
+                    Some(DaemonEvent::Roster(assignments)) if current_inventory.availability == EngineAvailability::Available => {
                         if let Err(error) = runner_factory.reconcile(assignments, &mut runners).await {
                             break Err(error);
                         }
                     }
                     Some(DaemonEvent::Roster(_)) => {}
-                    Some(DaemonEvent::Probe(probe)) => {
-                        current_probe = probe;
-                        if current_probe.status != EngineProbeStatus::Ready
+                    Some(DaemonEvent::Inventory(inventory)) => {
+                        current_inventory = inventory;
+                        if current_inventory.availability == EngineAvailability::Missing
                             && let Err(error) = stop_all(&mut runners).await
                         {
                             break Err(error);
@@ -167,14 +168,14 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
         background_shutdown.cancel();
         let _ = heartbeat_task.await;
         let _ = roster_task.await;
-        let _ = probe_task.await;
+        let _ = inventory_task.await;
         let stop_result = stop_all(&mut runners).await;
         if let Err(error) = client
             .heartbeat(&heartbeat_request(
                 generation,
                 self.options.supervised,
                 ComputerStatus::Offline,
-                &current_probe,
+                &current_inventory,
             ))
             .await
         {
@@ -188,7 +189,7 @@ async fn heartbeat_loop(
     client: DeviceClient,
     generation: i64,
     supervised: bool,
-    probe: watch::Receiver<EngineProbe>,
+    inventory: watch::Receiver<EngineInventory>,
     interval: Duration,
     events: mpsc::Sender<DaemonEvent>,
     shutdown: CancellationToken,
@@ -198,12 +199,12 @@ async fn heartbeat_loop(
         if !wait(delay, &shutdown).await {
             return;
         }
-        let current_probe = probe.borrow().clone();
+        let current_inventory = inventory.borrow().clone();
         let request = heartbeat_request(
             generation,
             supervised,
             ComputerStatus::Online,
-            &current_probe,
+            &current_inventory,
         );
         match client.heartbeat(&request).await {
             Ok(()) => delay = interval,
@@ -250,9 +251,9 @@ async fn roster_loop(
     }
 }
 
-async fn probe_loop<A: EngineAdapter + 'static>(
+async fn engine_rescan_loop<A: EngineAdapter + 'static>(
     adapter: Arc<A>,
-    probes: watch::Sender<EngineProbe>,
+    inventories: watch::Sender<EngineInventory>,
     interval: Duration,
     events: mpsc::Sender<DaemonEvent>,
     shutdown: CancellationToken,
@@ -262,16 +263,20 @@ async fn probe_loop<A: EngineAdapter + 'static>(
         if !wait(delay, &shutdown).await {
             return;
         }
-        match adapter.probe().await {
-            Ok(probe) => {
+        match adapter.inventory().await {
+            Ok(inventory) => {
                 delay = interval;
-                probes.send_replace(probe.clone());
-                if events.send(DaemonEvent::Probe(probe)).await.is_err() {
+                inventories.send_replace(inventory.clone());
+                if events
+                    .send(DaemonEvent::Inventory(inventory))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
             Err(error) => {
-                tracing::warn!(%error, "OpenCode probe failed; retrying with backoff");
+                tracing::warn!(%error, "OpenCode inventory scan failed; preserving the last reliable result");
                 delay = next_backoff(delay, interval);
             }
         }
@@ -293,7 +298,7 @@ fn heartbeat_request(
     generation: i64,
     supervised: bool,
     status: ComputerStatus,
-    probe: &EngineProbe,
+    inventory: &EngineInventory,
 ) -> HeartbeatRequest {
     HeartbeatRequest {
         protocol_version: COLLAB_PROTOCOL_VERSION,
@@ -301,10 +306,12 @@ fn heartbeat_request(
         daemon_version: env!("CARGO_PKG_VERSION").to_string(),
         supervised,
         status,
-        engine: EngineProbeView {
+        engine: EngineInventoryView {
             engine_id: "opencode".to_string(),
-            status: probe.status.into(),
-            version: probe.version.clone(),
+            status: match inventory.availability {
+                EngineAvailability::Available => EngineStatus::Ready,
+                EngineAvailability::Missing => EngineStatus::Missing,
+            },
         },
     }
 }
@@ -401,17 +408,6 @@ impl<A: EngineAdapter + 'static> RunnerFactory<'_, A> {
             },
         );
         Ok(())
-    }
-}
-
-impl From<EngineProbeStatus> for crate::protocol::EngineStatus {
-    fn from(status: EngineProbeStatus) -> Self {
-        match status {
-            EngineProbeStatus::Ready => Self::Ready,
-            EngineProbeStatus::Missing => Self::Missing,
-            EngineProbeStatus::Unauthenticated => Self::Unauthenticated,
-            EngineProbeStatus::Broken => Self::Broken,
-        }
     }
 }
 

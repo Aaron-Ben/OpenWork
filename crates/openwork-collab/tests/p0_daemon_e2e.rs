@@ -73,7 +73,7 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
             id: "helper".to_string(),
             display_name: "Helper".to_string(),
             system_prompt: "Reply clearly.".to_string(),
-            model: "opencode/hy3-free".to_string(),
+            model: "opencode/mimo-v2.5-free".to_string(),
         },
     )
     .await
@@ -84,7 +84,7 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
             id: "helper_two".to_string(),
             display_name: "Helper Two".to_string(),
             system_prompt: "Reply as the second Agent.".to_string(),
-            model: "opencode/hy3-free".to_string(),
+            model: "opencode/mimo-v2.5-free".to_string(),
         },
     )
     .await
@@ -113,25 +113,8 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
     tokio::fs::write(
         &fake_opencode,
         r#"#!/bin/zsh
-if [[ "$1" == "--version" ]]; then
-  print -r -- "opencode test"
-  exit 0
-fi
-if [[ "$1 $2" == "run --help" ]]; then
-  print -r -- "--pure --format --auto --model --session"
-  exit 0
-fi
-if [[ "$1 $2" == "auth list" ]]; then
-  print -r -- "1 credentials"
-  exit 0
-fi
 prompt="$(cat)"
 if [[ " $* " == *" --agent openwork-triage "* ]]; then
-  if [[ "$prompt" == "Connectivity check. Reply with exactly: OK" ]]; then
-    print -r -- '{"type":"step_start","sessionID":"ses_probe"}'
-    print -r -- '{"type":"text","sessionID":"ses_probe","part":{"text":"OK"}}'
-    exit 0
-  fi
   if [[ "$prompt" == *"FYI only."* ]]; then
     print -r -- '{"type":"text","part":{"text":"{\"actionable\":false,\"reason\":\"informational only\",\"promptNote\":\"\"}"}}'
   else
@@ -176,7 +159,7 @@ print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\
             poll_interval: Duration::from_secs(30),
             roster_interval: Duration::from_millis(100),
             heartbeat_interval: Duration::from_millis(100),
-            probe_interval: Duration::from_millis(250),
+            engine_rescan_interval: Duration::from_millis(250),
         },
         Arc::new(OpenCodeAdapter::with_executable(fake_opencode)),
     );
@@ -407,7 +390,7 @@ print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\
     .await
     .unwrap();
     assert_eq!(session["engine_id"], "opencode");
-    assert_eq!(session["model"], "opencode/hy3-free");
+    assert_eq!(session["model"], "opencode/mimo-v2.5-free");
     assert_eq!(session["session_id"], "ses_rebuilt");
     assert!(
         session["persona_hash"]

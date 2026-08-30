@@ -14,13 +14,13 @@ describe('P0 collaboration command bridge', () => {
       id: 'helper',
       displayName: 'Helper',
       systemPrompt: 'Help the user.',
-      model: 'opencode/hy3-free',
+      model: 'opencode/mimo-v2.5-free',
     })
     expect(invoke).toHaveBeenCalledWith('collab_agent_create', {
       id: 'helper',
       displayName: 'Helper',
       systemPrompt: 'Help the user.',
-      model: 'opencode/hy3-free',
+      model: 'opencode/mimo-v2.5-free',
     })
   })
 

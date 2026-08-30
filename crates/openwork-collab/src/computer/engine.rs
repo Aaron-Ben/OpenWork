@@ -47,27 +47,20 @@ pub struct ClassifyResult {
     pub usage: EngineUsage,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EngineProbeStatus {
-    Ready,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineAvailability {
+    Available,
     Missing,
-    Unauthenticated,
-    Broken,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineProbe {
-    pub status: EngineProbeStatus,
-    pub version: Option<String>,
-    pub detail: Option<String>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineInventory {
+    pub availability: EngineAvailability,
 }
 
 #[async_trait]
 pub trait EngineAdapter: Send + Sync {
-    async fn probe(&self) -> Result<EngineProbe, EngineError>;
-    async fn probe_behavior(&self) -> Result<EngineProbe, EngineError>;
+    async fn inventory(&self) -> Result<EngineInventory, EngineError>;
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError>;
     async fn run_turn(&self, request: TurnRequest) -> Result<TurnResult, EngineError>;
 }

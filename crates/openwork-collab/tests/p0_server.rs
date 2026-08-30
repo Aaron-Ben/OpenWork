@@ -5,7 +5,7 @@ use std::{path::Path, time::Duration};
 use openwork_collab::{
     protocol::{
         AgentRoster, AgentTokenResponse, COLLAB_PROTOCOL_VERSION, CliRequest, CliResult,
-        ControlRequest, ControlResponse, DeviceStartResponse, EngineProbeView, EngineStatus,
+        ControlRequest, ControlResponse, DeviceStartResponse, EngineInventoryView, EngineStatus,
         FinishRunRequest, HeartbeatRequest, InboxResponse, OpenRunRequest, RunView,
     },
     server::{CollaborationServer, ServerError, ServerOptions, control::request},
@@ -64,14 +64,14 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
             id: "helper".to_string(),
             display_name: "Helper".to_string(),
             system_prompt: "Help the user.".to_string(),
-            model: "opencode/hy3-free".to_string(),
+            model: "opencode/mimo-v2.5-free".to_string(),
         },
     )
     .await
     .unwrap() else {
         panic!("agent creation failed")
     };
-    assert_eq!(agent.model, "opencode/hy3-free");
+    assert_eq!(agent.model, "opencode/mimo-v2.5-free");
     let ControlResponse::Room(room) = request(
         &socket,
         &ControlRequest::CreateDirectRoom {
@@ -116,10 +116,9 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
             daemon_version: "test".to_string(),
             supervised: false,
             status: openwork_collab::protocol::ComputerStatus::Online,
-            engine: EngineProbeView {
+            engine: EngineInventoryView {
                 engine_id: "opencode".to_string(),
                 status: EngineStatus::Ready,
-                version: Some("test".to_string()),
             },
         })
         .send()
@@ -142,7 +141,7 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
         .await
         .unwrap();
     assert_eq!(roster.agents.len(), 1);
-    assert_eq!(roster.agents[0].model, "opencode/hy3-free");
+    assert_eq!(roster.agents[0].model, "opencode/mimo-v2.5-free");
     let token = client
         .post(format!("{base}/api/computers/me/agents/helper/token"))
         .bearer_auth(&device_token)
@@ -255,7 +254,7 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
             .fetch_one(&test_pool)
             .await
             .unwrap();
-    assert_eq!(run_model.as_deref(), Some("opencode/hy3-free"));
+    assert_eq!(run_model.as_deref(), Some("opencode/mimo-v2.5-free"));
     let last_read_seq: i64 = sqlx::query_scalar(
         "SELECT last_read_seq FROM collab_room_members
          WHERE room_id = $1 AND participant_id = 'helper'",

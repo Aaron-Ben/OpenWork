@@ -33,14 +33,12 @@ CREATE TABLE collab_computer_engines (
     computer_id TEXT NOT NULL REFERENCES collab_computers(id) ON DELETE CASCADE,
     engine_id TEXT NOT NULL CHECK (engine_id = 'opencode'),
     status TEXT NOT NULL DEFAULT 'unknown' CHECK (
-        status IN ('unknown', 'ready', 'missing', 'unauthenticated', 'broken')
+        status IN ('unknown', 'ready', 'missing')
     ),
-    version TEXT CHECK (version IS NULL OR btrim(version) <> ''),
     checked_at TIMESTAMP WITHOUT TIME ZONE,
-    probe_version BIGINT NOT NULL DEFAULT 0 CHECK (probe_version >= 0),
     PRIMARY KEY (computer_id, engine_id),
-    CONSTRAINT collab_computer_engines_probe_shape CHECK (
-        (status = 'unknown' AND checked_at IS NULL AND version IS NULL) OR
+    CONSTRAINT collab_computer_engines_inventory_shape CHECK (
+        (status = 'unknown' AND checked_at IS NULL) OR
         (status <> 'unknown' AND checked_at IS NOT NULL)
     )
 );

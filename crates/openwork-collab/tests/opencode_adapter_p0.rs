@@ -3,7 +3,7 @@
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 use openwork_collab::computer::engine::{
-    ClassifyRequest, EngineAdapter, EngineError, EngineProbeStatus, TurnRequest,
+    ClassifyRequest, EngineAdapter, EngineAvailability, EngineError, TurnRequest,
 };
 use openwork_collab::computer::opencode::OpenCodeAdapter;
 use tempfile::TempDir;
@@ -225,26 +225,14 @@ wait
 }
 
 #[tokio::test]
-async fn probe_requires_version_flags_and_auth_behavior() {
+async fn inventory_only_checks_executable_presence() {
     let directory = tempfile::tempdir().unwrap();
-    let executable = directory.path().join("opencode-probe");
+    let executable = directory.path().join("opencode-inventory");
     tokio::fs::write(
         &executable,
         r#"#!/bin/sh
-case "$*" in
-  "--version") echo "opencode 1.2.3" ;;
-  "run --help") echo "--pure --format --auto --model --session" ;;
-  "auth list") echo "1 credential" ;;
-  "run --pure --format json --agent openwork-triage")
-    prompt=$(cat)
-    [ "$prompt" = "Connectivity check. Reply with exactly: OK" ] || exit 92
-    printf '%s\n' \
-      '{"type":"step_start","sessionID":"ses_probe"}' \
-      '{"type":"text","sessionID":"ses_probe","part":{"text":"OK"}}'
-    printf '%s' "$PWD" > "${0%/*}/behavior-probed"
-    ;;
-  *) exit 91 ;;
-esac
+printf '%s' "$*" > "${0%/*}/unexpected-invocation"
+exit 91
 "#,
     )
     .await
@@ -258,17 +246,23 @@ esac
         .await
         .unwrap();
 
-    let probe = OpenCodeAdapter::with_executable(executable)
-        .probe_behavior()
+    let inventory = OpenCodeAdapter::with_executable(executable)
+        .inventory()
         .await
         .unwrap();
-    assert_eq!(probe.status, EngineProbeStatus::Ready);
-    assert_eq!(probe.version.as_deref(), Some("opencode 1.2.3"));
-    assert_eq!(probe.detail, None);
-    let probe_cwd = tokio::fs::read_to_string(directory.path().join("behavior-probed"))
+    assert_eq!(inventory.availability, EngineAvailability::Available);
+    assert!(!directory.path().join("unexpected-invocation").exists());
+}
+
+#[tokio::test]
+async fn inventory_reports_a_missing_executable_without_starting_opencode() {
+    let directory = tempfile::tempdir().unwrap();
+    let inventory = OpenCodeAdapter::with_executable(directory.path().join("not-installed"))
+        .inventory()
         .await
         .unwrap();
-    assert_ne!(PathBuf::from(probe_cwd), directory.path());
+
+    assert_eq!(inventory.availability, EngineAvailability::Missing);
 }
 
 #[tokio::test]
@@ -308,38 +302,6 @@ printf '\n'
     .await
     .unwrap();
     assert!(matches!(result, Err(EngineError::OutputLimit("stdout"))));
-}
-
-#[tokio::test]
-async fn probe_times_out_a_hung_opencode_command() {
-    let directory = tempfile::tempdir().unwrap();
-    let executable = directory.path().join("opencode-hung-probe");
-    tokio::fs::write(
-        &executable,
-        r#"#!/bin/sh
-sleep 60
-"#,
-    )
-    .await
-    .unwrap();
-    let mut permissions = tokio::fs::metadata(&executable)
-        .await
-        .unwrap()
-        .permissions();
-    permissions.set_mode(0o700);
-    tokio::fs::set_permissions(&executable, permissions)
-        .await
-        .unwrap();
-
-    let probe = tokio::time::timeout(
-        std::time::Duration::from_secs(7),
-        OpenCodeAdapter::with_executable(executable).probe(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(probe.status, EngineProbeStatus::Broken);
-    assert!(probe.detail.unwrap().contains("timed out"));
 }
 
 #[tokio::test]

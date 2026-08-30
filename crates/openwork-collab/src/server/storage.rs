@@ -275,15 +275,12 @@ impl CollaborationStore {
         .await?;
         sqlx::query(
             "UPDATE collab_computer_engines
-             SET probe_version = probe_version + CASE
-                    WHEN status IS DISTINCT FROM $1 OR version IS DISTINCT FROM $2 THEN 1 ELSE 0 END,
-                 status = $1, version = $2,
-                 checked_at = CASE WHEN $3 THEN CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             SET status = $1,
+                 checked_at = CASE WHEN $2 THEN CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
                                    ELSE NULL END
              WHERE computer_id = 'local' AND engine_id = 'opencode'",
         )
         .bind(engine_status)
-        .bind(&heartbeat.engine.version)
         .bind(checked)
         .execute(&mut *transaction)
         .await?;
@@ -1180,8 +1177,6 @@ fn engine_status_name(status: EngineStatus) -> &'static str {
         EngineStatus::Unknown => "unknown",
         EngineStatus::Ready => "ready",
         EngineStatus::Missing => "missing",
-        EngineStatus::Unauthenticated => "unauthenticated",
-        EngineStatus::Broken => "broken",
     }
 }
 
@@ -1223,8 +1218,6 @@ fn parse_engine_status(value: &str) -> EngineStatus {
     match value {
         "ready" => EngineStatus::Ready,
         "missing" => EngineStatus::Missing,
-        "unauthenticated" => EngineStatus::Unauthenticated,
-        "broken" => EngineStatus::Broken,
         _ => EngineStatus::Unknown,
     }
 }

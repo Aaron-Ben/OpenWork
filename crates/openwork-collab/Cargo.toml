@@ -23,4 +23,6 @@ tokio-util.workspace = true
 uuid.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
 tempfile = "3"

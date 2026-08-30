@@ -13,8 +13,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::engine::{
-    ClassifyRequest, ClassifyResult, EngineAdapter, EngineError, EngineProbe, EngineProbeStatus,
-    EngineUsage, TurnRequest, TurnResult,
+    ClassifyRequest, ClassifyResult, EngineAdapter, EngineAvailability, EngineError,
+    EngineInventory, EngineUsage, TurnRequest, TurnResult,
 };
 
 const TRIAGE_AGENT: &str = "openwork-triage";
@@ -22,8 +22,7 @@ const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 1024 * 1024;
 const MAX_JSONL_LINE_BYTES: usize = 1024 * 1024;
 const ERROR_TAIL_BYTES: usize = 16 * 1024;
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-const BEHAVIOR_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+const INVENTORY_TIMEOUT: Duration = Duration::from_secs(3);
 const CLASSIFY_TIMEOUT: Duration = Duration::from_secs(60);
 const MAIN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const NO_OUTPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -62,31 +61,6 @@ impl OpenCodeAdapter {
         Self {
             executable: executable.into(),
         }
-    }
-
-    async fn probe_command(&self, arguments: &[&str]) -> Result<CapturedOutput, EngineError> {
-        let mut command = Command::new(&self.executable);
-        command
-            .args(arguments)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        command.process_group(0);
-        let mut child = command.spawn().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                EngineError::Missing(error.to_string())
-            } else {
-                EngineError::Io(error)
-            }
-        })?;
-        capture_output(
-            &mut child,
-            CancellationToken::new(),
-            PROBE_TIMEOUT,
-            PROBE_TIMEOUT,
-        )
-        .await
     }
 
     async fn execute(&self, request: ExecutionRequest) -> Result<TurnResult, EngineError> {
@@ -397,161 +371,29 @@ fn session_invalid_text(text: &str) -> bool {
     .any(|needle| text.contains(needle))
 }
 
-fn broken_probe(version: Option<String>, detail: String) -> EngineProbe {
-    EngineProbe {
-        status: EngineProbeStatus::Broken,
-        version,
-        detail: Some(if detail.trim().is_empty() {
-            "OpenCode probe command failed".to_string()
-        } else {
-            detail
-        }),
-    }
-}
-
-fn authentication_error(error: &EngineError) -> bool {
-    let text = error.to_string().to_ascii_lowercase();
-    [
-        "unauthorized",
-        "unauthenticated",
-        "invalid api key",
-        "not logged in",
-        "not authenticated",
-        "not signed in",
-        "please sign in",
-        "please log in",
-    ]
-    .iter()
-    .any(|needle| text.contains(needle))
-}
-
 #[async_trait]
 impl EngineAdapter for OpenCodeAdapter {
-    async fn probe(&self) -> Result<EngineProbe, EngineError> {
-        let version = match self.probe_command(&["--version"]).await {
-            Ok(output) if output.status.success() => output,
-            Err(EngineError::Missing(detail)) => {
-                return Ok(EngineProbe {
-                    status: EngineProbeStatus::Missing,
-                    version: None,
-                    detail: Some(detail),
-                });
-            }
-            Ok(output) => {
-                return Ok(EngineProbe {
-                    status: EngineProbeStatus::Broken,
-                    version: None,
-                    detail: Some(redact_error_tail(
-                        &output.stderr_tail,
-                        std::path::Path::new(""),
-                    )),
-                });
-            }
-            Err(error) => {
-                return Ok(EngineProbe {
-                    status: EngineProbeStatus::Broken,
-                    version: None,
-                    detail: Some(error.to_string()),
-                });
+    async fn inventory(&self) -> Result<EngineInventory, EngineError> {
+        let mut command = Command::new("/usr/bin/which");
+        command
+            .arg(&self.executable)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let status = tokio::time::timeout(INVENTORY_TIMEOUT, command.status())
+            .await
+            .map_err(|_| EngineError::Timeout("inventory scan"))??;
+        let availability = match status.code() {
+            Some(0) => EngineAvailability::Available,
+            Some(1) => EngineAvailability::Missing,
+            _ => {
+                return Err(EngineError::Process(format!(
+                    "/usr/bin/which failed with {status}"
+                )));
             }
         };
-        let version_text = String::from_utf8_lossy(&version.stdout)
-            .lines()
-            .next()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string);
-        let help = match self.probe_command(&["run", "--help"]).await {
-            Ok(output) if output.status.success() => {
-                String::from_utf8_lossy(&output.stdout).into_owned()
-            }
-            Ok(output) => {
-                return Ok(broken_probe(
-                    version_text,
-                    redact_error_tail(&output.stderr_tail, std::path::Path::new("")),
-                ));
-            }
-            Err(error) => return Ok(broken_probe(version_text, error.to_string())),
-        };
-        for required in ["--pure", "--format", "--auto", "--model", "--session"] {
-            if !help.contains(required) {
-                return Ok(broken_probe(
-                    version_text,
-                    format!("OpenCode run --help is missing required flag {required}"),
-                ));
-            }
-        }
-        match self.probe_command(&["auth", "list"]).await {
-            Ok(output) if output.status.success() => Ok(EngineProbe {
-                status: EngineProbeStatus::Ready,
-                version: version_text,
-                detail: None,
-            }),
-            Ok(output) => Ok(EngineProbe {
-                status: EngineProbeStatus::Unauthenticated,
-                version: version_text,
-                detail: Some(redact_error_tail(
-                    &output.stderr_tail,
-                    std::path::Path::new(""),
-                )),
-            }),
-            Err(error) => Ok(broken_probe(version_text, error.to_string())),
-        }
-    }
-
-    async fn probe_behavior(&self) -> Result<EngineProbe, EngineError> {
-        let light = self.probe().await?;
-        if light.status != EngineProbeStatus::Ready {
-            return Ok(light);
-        }
-        let neutral = tempfile::Builder::new()
-            .prefix("openwork-opencode-probe-")
-            .tempdir()?;
-        let result = self
-            .execute(ExecutionRequest {
-                cwd: neutral.path().to_path_buf(),
-                prompt: "Connectivity check. Reply with exactly: OK".to_string(),
-                args: vec![
-                    "run".to_string(),
-                    "--pure".to_string(),
-                    "--format".to_string(),
-                    "json".to_string(),
-                    "--agent".to_string(),
-                    TRIAGE_AGENT.to_string(),
-                ],
-                model: None,
-                config_content: Some(triage_config_content()),
-                environment: std::collections::BTreeMap::from([
-                    (
-                        "XDG_CONFIG_HOME".to_string(),
-                        neutral.path().to_string_lossy().into_owned(),
-                    ),
-                    (
-                        "OPENCODE_DISABLE_PROJECT_CONFIG".to_string(),
-                        "1".to_string(),
-                    ),
-                ]),
-                cancellation: CancellationToken::new(),
-                absolute_timeout: BEHAVIOR_PROBE_TIMEOUT,
-                require_session: true,
-            })
-            .await;
-        match result {
-            Ok(result) if result.text.trim() == "OK" => Ok(light),
-            Ok(result) => Ok(broken_probe(
-                light.version,
-                format!(
-                    "OpenCode behavioral probe returned unexpected text: {}",
-                    result.text.trim()
-                ),
-            )),
-            Err(error) if authentication_error(&error) => Ok(EngineProbe {
-                status: EngineProbeStatus::Unauthenticated,
-                version: light.version,
-                detail: Some(error.to_string()),
-            }),
-            Err(error) => Ok(broken_probe(light.version, error.to_string())),
-        }
+        Ok(EngineInventory { availability })
     }
 
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError> {
