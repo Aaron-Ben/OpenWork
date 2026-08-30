@@ -20,6 +20,21 @@ pub enum ControlRequest {
     CreateDirectRoom {
         agent_id: String,
     },
+    CreateGroupRoom {
+        title: String,
+        agent_ids: Vec<String>,
+    },
+    ListRoomMembers {
+        room_id: String,
+    },
+    AddGroupMember {
+        room_id: String,
+        agent_id: String,
+    },
+    RemoveGroupMember {
+        room_id: String,
+        agent_id: String,
+    },
     SendMessage {
         room_id: String,
         body: String,
@@ -47,6 +62,7 @@ pub enum ControlResponse {
     Agents { agents: Vec<AgentView> },
     Room(RoomView),
     Rooms { rooms: Vec<RoomView> },
+    Members { members: Vec<ParticipantView> },
     Message(MessageView),
     Messages { messages: Vec<MessageView> },
     Board(BoardView),
@@ -99,6 +115,14 @@ pub struct AgentView {
     pub config_version: i64,
     pub enabled: bool,
     pub scanner_enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticipantView {
+    pub id: String,
+    pub kind: String,
+    pub display_name: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -156,10 +180,13 @@ pub struct RunSummaryView {
     pub agent_id: String,
     pub trigger: String,
     pub status: String,
+    pub model: String,
     pub outcome: Option<String>,
     pub room_id: Option<String>,
     pub focus_card_id: Option<String>,
     pub trigger_reason: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
     pub started_at: String,
 }
 
@@ -465,4 +492,4 @@ pub struct FinishRunRequest {
 }
 
 pub const CLI_MESSAGE_BODY_MAX_BYTES: usize = 1024 * 1024;
-pub const COLLAB_PROTOCOL_VERSION: u32 = 6;
+pub const COLLAB_PROTOCOL_VERSION: u32 = 7;

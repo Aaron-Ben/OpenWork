@@ -17,6 +17,7 @@ export function CollabShell() {
   const selectRoom = useCollabNavigationStore((state) => state.selectRoom)
   const rooms = useRoomStore((state) => state.rooms)
   const fetchRooms = useRoomStore((state) => state.fetchAll)
+  const agents = useAgentStore((state) => state.agents)
   const fetchAgents = useAgentStore((state) => state.fetchAll)
   const activeRoom = rooms.find((room) => room.id === activeRoomId) ?? null
 
@@ -33,8 +34,8 @@ export function CollabShell() {
       <CollabRail view={view} />
       {view === 'rooms' ? (
         <>
-          <RoomList rooms={rooms} activeRoomId={activeRoomId} onSelect={selectRoom} />
-          {activeRoom ? <MessagePane room={activeRoom} /> : (
+          <RoomList rooms={rooms} agents={agents} activeRoomId={activeRoomId} onSelect={selectRoom} />
+          {activeRoom ? <MessagePane room={activeRoom} agents={agents} /> : (
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
           )}
         </>

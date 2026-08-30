@@ -1,5 +1,5 @@
 export const enUS = {
-  common: { confirm: 'Confirm', cancel: 'Cancel' },
+  common: { confirm: 'Confirm', cancel: 'Cancel', close: 'Close' },
   errorBoundary: {
     title: 'UI rendering error',
     description: 'The application encountered a runtime error. Please share the details below with the developers or restart the app.',
@@ -270,6 +270,11 @@ export const enUS = {
     rooms: {
       title: 'Rooms', empty: 'Create a teammate to start a direct room', loading: 'Loading…',
       messagePlaceholder: 'Message your OpenCode teammate', send: 'Send', noMessages: 'No messages yet', user: 'You',
+      createGroup: 'Create group', groupName: 'Group name', selectMembers: 'Choose teammates',
+      minimumMembers: 'Select at least two teammates', manageMembers: 'Members', removeMember: 'Remove {{name}}',
+      selectAgent: 'Choose a teammate', addMember: 'Add', thinking: '{{agents}} thinking…',
+      retrying: '{{agents}} retrying…', rateLimited: '{{agents}} rate limited; retrying shortly',
+      runFailed: '{{agents}} failed: {{message}}', unknownFailure: 'Unknown OpenCode failure',
     },
     agents: {
       title: 'Teammate management', create: 'Create teammate', save: 'Save', id: 'ID', displayName: 'Name',

@@ -1,5 +1,5 @@
 export const zhTW = {
-  common: { confirm: '確認', cancel: '取消' },
+  common: { confirm: '確認', cancel: '取消', close: '關閉' },
   errorBoundary: {
     title: '介面渲染錯誤',
     description: '應用程式發生執行階段錯誤。請將下方資訊回報給開發者，或重新啟動應用程式。',
@@ -265,6 +265,11 @@ export const zhTW = {
     rooms: {
       title: '房間', empty: '建立同事後會建立一對一房間', loading: '正在載入…',
       messagePlaceholder: '給 OpenCode 同事發訊息', send: '發送', noMessages: '還沒有訊息', user: '你',
+      createGroup: '建立群聊', groupName: '群聊名稱', selectMembers: '選擇同事',
+      minimumMembers: '至少選擇兩位同事', manageMembers: '成員管理', removeMember: '移除 {{name}}',
+      selectAgent: '選擇同事', addMember: '加入', thinking: '{{agents}} 正在思考…',
+      retrying: '{{agents}} 正在重試…', rateLimited: '{{agents}} 觸發模型限流，稍後重試',
+      runFailed: '{{agents}} 執行失敗：{{message}}', unknownFailure: '未知 OpenCode 錯誤',
     },
     agents: {
       title: '同事管理', create: '建立同事', save: '儲存', id: 'ID', displayName: '名稱',

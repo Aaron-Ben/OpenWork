@@ -24,6 +24,12 @@ export interface CollabRoom {
   title: string | null
 }
 
+export interface CollabParticipant {
+  id: string
+  kind: 'user' | 'agent'
+  displayName: string
+}
+
 export interface CollabMessage {
   id: string
   roomId: string
@@ -61,10 +67,13 @@ export interface CollabRun {
   agentId: string
   trigger: string
   status: string
+  model: string
   outcome: string | null
   roomId: string | null
   focusCardId: string | null
   triggerReason: string | null
+  errorCode: string | null
+  errorMessage: string | null
   startedAt: string
 }
 
@@ -83,6 +92,14 @@ export const collabCommands = {
   listRooms: (): Promise<CollabRoom[]> => invoke('collab_room_list'),
   createDirectRoom: (agentId: string): Promise<CollabRoom> =>
     invoke('collab_direct_room_create', { agentId }),
+  createGroupRoom: (title: string, agentIds: string[]): Promise<CollabRoom> =>
+    invoke('collab_group_room_create', { title, agentIds }),
+  listRoomMembers: (roomId: string): Promise<CollabParticipant[]> =>
+    invoke('collab_room_member_list', { roomId }),
+  addGroupMember: (roomId: string, agentId: string): Promise<CollabParticipant[]> =>
+    invoke('collab_group_member_add', { roomId, agentId }),
+  removeGroupMember: (roomId: string, agentId: string): Promise<CollabParticipant[]> =>
+    invoke('collab_group_member_remove', { roomId, agentId }),
   sendMessage: (roomId: string, body: string): Promise<CollabMessage> =>
     invoke('collab_message_send', { roomId, body }),
   listMessages: (roomId: string): Promise<CollabMessage[]> =>

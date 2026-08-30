@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fmt::Write as _, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+    time::Duration,
+};
 
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -7,8 +11,8 @@ use uuid::Uuid;
 use crate::protocol::{
     AgentAssignment, AgentView, BoardColumnView, BoardView, COLLAB_PROTOCOL_VERSION, CardView,
     ComputerStatus, ComputerView, DeliveryRange, EngineStatus, FinishRunRequest, HeartbeatRequest,
-    InboxResponse, LocalComputerRegistration, MessageView, RoomView, RunSummaryView, RunView,
-    TriageReportRequest, TriggerEnvelope,
+    InboxResponse, LocalComputerRegistration, MessageView, ParticipantView, RoomView,
+    RunSummaryView, RunView, TriageReportRequest, TriggerEnvelope,
 };
 
 use super::auth::AgentClaims;
@@ -144,6 +148,219 @@ impl CollaborationStore {
         })
     }
 
+    pub async fn create_group_room(
+        &self,
+        title: &str,
+        agent_ids: &[String],
+    ) -> Result<RoomView, sqlx::Error> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > 120 {
+            return Err(protocol_error(
+                "INVALID_ARGUMENT: group title must be 1..120 bytes",
+            ));
+        }
+        let agent_ids: BTreeSet<String> = agent_ids
+            .iter()
+            .filter(|id| !id.is_empty())
+            .cloned()
+            .collect();
+        if agent_ids.len() < 2 {
+            return Err(protocol_error(
+                "INVALID_ARGUMENT: a user group needs at least two Agents",
+            ));
+        }
+        let agent_ids: Vec<String> = agent_ids.into_iter().collect();
+        let mut transaction = self.pool.begin().await?;
+        let valid_agent_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM collab_agents
+             WHERE id = ANY($1) AND enabled ORDER BY id",
+        )
+        .bind(&agent_ids)
+        .fetch_all(&mut *transaction)
+        .await?;
+        if valid_agent_ids != agent_ids {
+            return Err(protocol_error(
+                "NOT_FOUND: one or more selected Agents do not exist or are disabled",
+            ));
+        }
+        let room_id = format!("room_{}", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO collab_rooms (id, kind, title) VALUES ($1, 'group', $2)")
+            .bind(&room_id)
+            .bind(title)
+            .execute(&mut *transaction)
+            .await?;
+        let mut member_ids = Vec::with_capacity(agent_ids.len() + 1);
+        member_ids.push("user".to_string());
+        member_ids.extend(agent_ids);
+        for member_id in member_ids {
+            sqlx::query(
+                "INSERT INTO collab_room_members (room_id, participant_id, last_read_seq)
+                 VALUES ($1, $2, 0)",
+            )
+            .bind(&room_id)
+            .bind(member_id)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(RoomView {
+            id: room_id,
+            kind: "group".to_string(),
+            title: Some(title.to_string()),
+        })
+    }
+
+    pub async fn list_room_members(
+        &self,
+        room_id: &str,
+    ) -> Result<Vec<ParticipantView>, sqlx::Error> {
+        let visible: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_rooms room
+                JOIN collab_room_members viewer
+                  ON viewer.room_id = room.id AND viewer.participant_id = 'user'
+                WHERE room.id = $1 AND room.kind = 'group'
+             )",
+        )
+        .bind(room_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !visible {
+            return Err(protocol_error("NOT_FOUND: group is not visible"));
+        }
+        sqlx::query_as::<_, ParticipantRow>(
+            "SELECT participant.id, participant.kind, participant.display_name
+             FROM collab_room_members member
+             JOIN collab_participants participant ON participant.id = member.participant_id
+             WHERE member.room_id = $1
+             ORDER BY CASE WHEN participant.id = 'user' THEN 0 ELSE 1 END,
+                      participant.display_name, participant.id",
+        )
+        .bind(room_id)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
+    }
+
+    pub async fn add_group_member(
+        &self,
+        room_id: &str,
+        agent_id: &str,
+    ) -> Result<(Vec<ParticipantView>, Option<MessageView>), sqlx::Error> {
+        self.change_group_member(room_id, agent_id, true).await
+    }
+
+    pub async fn remove_group_member(
+        &self,
+        room_id: &str,
+        agent_id: &str,
+    ) -> Result<(Vec<ParticipantView>, Option<MessageView>), sqlx::Error> {
+        self.change_group_member(room_id, agent_id, false).await
+    }
+
+    async fn change_group_member(
+        &self,
+        room_id: &str,
+        agent_id: &str,
+        adding: bool,
+    ) -> Result<(Vec<ParticipantView>, Option<MessageView>), sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+        let current_sequence: Option<i64> = sqlx::query_scalar(
+            "SELECT room.next_seq
+             FROM collab_rooms room
+             JOIN collab_room_members viewer
+               ON viewer.room_id = room.id AND viewer.participant_id = 'user'
+             WHERE room.id = $1 AND room.kind = 'group'
+             FOR UPDATE OF room",
+        )
+        .bind(room_id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let Some(current_sequence) = current_sequence else {
+            return Err(protocol_error("NOT_FOUND: group is not visible"));
+        };
+        let agent_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_agents WHERE id = $1 AND ($2 = FALSE OR enabled)
+             )",
+        )
+        .bind(agent_id)
+        .bind(adding)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if !agent_exists {
+            return Err(protocol_error(
+                "NOT_FOUND: Agent does not exist or is disabled",
+            ));
+        }
+        let is_member: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_room_members
+                WHERE room_id = $1 AND participant_id = $2
+             )",
+        )
+        .bind(room_id)
+        .bind(agent_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if is_member == adding {
+            transaction.commit().await?;
+            return Ok((self.list_room_members(room_id).await?, None));
+        }
+        if adding {
+            sqlx::query(
+                "INSERT INTO collab_room_members (room_id, participant_id, last_read_seq)
+                 VALUES ($1, $2, $3)",
+            )
+            .bind(room_id)
+            .bind(agent_id)
+            .bind(current_sequence)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        let message_id = format!("msg_{}", Uuid::new_v4().simple());
+        let sequence: i64 = sqlx::query_scalar(
+            "UPDATE collab_rooms
+             SET next_seq = next_seq + 1,
+                 last_message_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1 RETURNING next_seq",
+        )
+        .bind(room_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let action = if adding { "invited" } else { "removed" };
+        let body = format!("user {action} {agent_id}");
+        sqlx::query(
+            "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+             VALUES ($1, $2, $3, 'user', 'system', $4)",
+        )
+        .bind(&message_id)
+        .bind(room_id)
+        .bind(sequence)
+        .bind(&body)
+        .execute(&mut *transaction)
+        .await?;
+        if !adding {
+            sqlx::query(
+                "DELETE FROM collab_room_members WHERE room_id = $1 AND participant_id = $2",
+            )
+            .bind(room_id)
+            .bind(agent_id)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        let message = MessageView {
+            id: message_id,
+            room_id: room_id.to_string(),
+            sequence,
+            author_id: "user".to_string(),
+            body,
+        };
+        Ok((self.list_room_members(room_id).await?, Some(message)))
+    }
+
     pub async fn list_agents(&self) -> Result<Vec<AgentView>, sqlx::Error> {
         sqlx::query_as::<_, AgentViewRow>(
             "SELECT a.id, p.display_name, a.system_prompt, a.engine_id,
@@ -207,8 +424,8 @@ impl CollaborationStore {
     pub async fn list_runs(&self, limit: u32) -> Result<Vec<RunSummaryView>, sqlx::Error> {
         let limit = i64::from(limit.clamp(1, 200));
         sqlx::query_as::<_, RunSummaryRow>(
-            "SELECT id, agent_id, trigger, status, outcome, room_id, focus_card_id,
-                    trigger_reason,
+            "SELECT id, agent_id, trigger, status, model, outcome, room_id, focus_card_id,
+                    trigger_reason, error_code, error_message,
                     to_char(started_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') || '+08:00' AS started_at
              FROM collab_runs ORDER BY started_at DESC, id DESC LIMIT $1",
         )
@@ -1213,6 +1430,23 @@ struct AgentViewRow {
     scanner_enabled: bool,
 }
 
+#[derive(FromRow)]
+struct ParticipantRow {
+    id: String,
+    kind: String,
+    display_name: String,
+}
+
+impl From<ParticipantRow> for ParticipantView {
+    fn from(row: ParticipantRow) -> Self {
+        Self {
+            id: row.id,
+            kind: row.kind,
+            display_name: row.display_name,
+        }
+    }
+}
+
 impl From<AgentViewRow> for AgentView {
     fn from(row: AgentViewRow) -> Self {
         Self {
@@ -1265,10 +1499,13 @@ struct RunSummaryRow {
     agent_id: String,
     trigger: String,
     status: String,
+    model: String,
     outcome: Option<String>,
     room_id: Option<String>,
     focus_card_id: Option<String>,
     trigger_reason: Option<String>,
+    error_code: Option<String>,
+    error_message: Option<String>,
     started_at: String,
 }
 
@@ -1279,10 +1516,13 @@ impl From<RunSummaryRow> for RunSummaryView {
             agent_id: row.agent_id,
             trigger: row.trigger,
             status: row.status,
+            model: row.model,
             outcome: row.outcome,
             room_id: row.room_id,
             focus_card_id: row.focus_card_id,
             trigger_reason: row.trigger_reason,
+            error_code: row.error_code,
+            error_message: row.error_message,
             started_at: row.started_at,
         }
     }

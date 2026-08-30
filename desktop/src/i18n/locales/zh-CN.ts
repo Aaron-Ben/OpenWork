@@ -2,6 +2,7 @@ export const zhCN = {
   common: {
     confirm: '确认',
     cancel: '取消',
+    close: '关闭',
   },
   errorBoundary: {
     title: '界面渲染出错',
@@ -334,6 +335,11 @@ export const zhCN = {
     rooms: {
       title: '房间', empty: '创建同事后会建立一对一房间', loading: '正在加载…',
       messagePlaceholder: '给 OpenCode 同事发消息', send: '发送', noMessages: '还没有消息', user: '你',
+      createGroup: '创建群聊', groupName: '群聊名称', selectMembers: '选择同事',
+      minimumMembers: '至少选择两位同事', manageMembers: '成员管理', removeMember: '移除 {{name}}',
+      selectAgent: '选择同事', addMember: '添加', thinking: '{{agents}} 正在思考…',
+      retrying: '{{agents}} 正在重试…', rateLimited: '{{agents}} 触发模型限流，稍后重试',
+      runFailed: '{{agents}} 运行失败：{{message}}', unknownFailure: '未知 OpenCode 错误',
     },
     agents: {
       title: '同事管理', create: '创建同事', save: '保存', id: 'ID', displayName: '名称',

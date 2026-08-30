@@ -230,18 +230,24 @@ impl<A: EngineAdapter> AgentRunner<A> {
                     Ok(verdict) => (verdict, result.usage, result.model.unwrap_or(payload.model)),
                     Err(error) => {
                         self.note_triage_failure();
-                        self.finish_triage_failure(&run.id, error.to_string(), false)
+                        self.finish_triage_failure(&run.id, error.to_string(), false, false)
                             .await?;
                         return Ok(());
                     }
                 },
                 Err(error) => {
                     let interrupted = matches!(error, EngineError::Cancelled);
+                    let rate_limited = is_rate_limited(&error);
                     if !interrupted {
                         self.note_triage_failure();
                     }
-                    self.finish_triage_failure(&run.id, error.to_string(), interrupted)
-                        .await?;
+                    self.finish_triage_failure(
+                        &run.id,
+                        error.to_string(),
+                        interrupted,
+                        rate_limited,
+                    )
+                    .await?;
                     return Ok(());
                 }
             }
@@ -342,6 +348,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
             }
             Err(error) => {
                 let cancelled = matches!(error, super::engine::EngineError::Cancelled);
+                let rate_limited = is_rate_limited(&error);
                 self.finish_or_queue(
                     run_id,
                     FinishRunRequest {
@@ -349,7 +356,14 @@ impl<A: EngineAdapter> AgentRunner<A> {
                         input_tokens: None,
                         cached_input_tokens: None,
                         output_tokens: None,
-                        error_code: Some("ENGINE_ERROR".to_string()),
+                        error_code: Some(
+                            if rate_limited {
+                                "ENGINE_RATE_LIMITED"
+                            } else {
+                                "ENGINE_ERROR"
+                            }
+                            .to_string(),
+                        ),
                         error_message: Some(error.to_string()),
                         assistant_text: None,
                     },
@@ -485,6 +499,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
         run_id: &str,
         message: String,
         interrupted: bool,
+        rate_limited: bool,
     ) -> Result<(), RunnerError> {
         self.finish_or_queue(
             run_id.to_string(),
@@ -493,7 +508,14 @@ impl<A: EngineAdapter> AgentRunner<A> {
                 input_tokens: None,
                 cached_input_tokens: None,
                 output_tokens: None,
-                error_code: Some("TRIAGE_ERROR".to_string()),
+                error_code: Some(
+                    if rate_limited {
+                        "TRIAGE_RATE_LIMITED"
+                    } else {
+                        "TRIAGE_ERROR"
+                    }
+                    .to_string(),
+                ),
                 error_message: Some(message),
                 assistant_text: None,
             },

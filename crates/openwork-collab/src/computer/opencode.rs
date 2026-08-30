@@ -118,13 +118,24 @@ impl OpenCodeAdapter {
         }
         drop(stdin);
 
-        let output = capture_output(
+        let output = match capture_output(
             &mut child,
             request.cancellation,
             request.absolute_timeout,
             NO_OUTPUT_TIMEOUT.min(request.absolute_timeout),
         )
-        .await?;
+        .await
+        {
+            Ok(output) => output,
+            Err(EngineError::Reported(detail)) => {
+                let detail = redact_error_tail(detail.as_bytes(), &request.cwd);
+                if resuming && session_invalid_text(&detail) {
+                    return Err(EngineError::SessionInvalid(detail));
+                }
+                return Err(EngineError::Reported(detail));
+            }
+            Err(error) => return Err(error),
+        };
         let parsed = parse_output(&output.stdout, request.model).map_err(|error| match error {
             EngineError::Reported(detail) => {
                 EngineError::Reported(redact_error_tail(detail.as_bytes(), &request.cwd))
@@ -182,6 +193,7 @@ async fn capture_output(
     let mut stdout_total = 0_usize;
     let mut stderr_total = 0_usize;
     let mut line_bytes = 0_usize;
+    let mut inspected_stdout_bytes = 0_usize;
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut status = None;
@@ -233,6 +245,24 @@ async fn capture_output(
                             }
                         } else {
                             stdout_bytes.extend_from_slice(&stdout_buffer[..read]);
+                            while let Some(relative_end) = stdout_bytes[inspected_stdout_bytes..]
+                                .iter()
+                                .position(|byte| *byte == b'\n')
+                            {
+                                let line_end = inspected_stdout_bytes + relative_end;
+                                if terminal_error.is_none()
+                                    && let Some(error) = reported_jsonl_error(
+                                        &stdout_bytes[inspected_stdout_bytes..line_end],
+                                    )
+                                {
+                                    terminal_error = Some(error);
+                                    signal_process_group(process_group, libc::SIGINT);
+                                    force_kill_at = Some(
+                                        tokio::time::Instant::now() + Duration::from_secs(2),
+                                    );
+                                }
+                                inspected_stdout_bytes = line_end + 1;
+                            }
                         }
                     }
                     Err(error) => {
@@ -330,6 +360,12 @@ fn append_tail(output: &mut Vec<u8>, chunk: &[u8], limit: usize) {
         output.drain(..overflow);
     }
     output.extend_from_slice(chunk);
+}
+
+fn reported_jsonl_error(line: &[u8]) -> Option<EngineError> {
+    let event: Value = serde_json::from_slice(line).ok()?;
+    (event.get("type").and_then(Value::as_str) == Some("error"))
+        .then(|| EngineError::Reported(error_text(event.get("error"))))
 }
 
 fn redact_error_tail(stderr: &[u8], cwd: &std::path::Path) -> String {

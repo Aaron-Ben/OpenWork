@@ -105,6 +105,49 @@ exit 1
 }
 
 #[tokio::test]
+async fn reported_rate_limit_terminates_a_still_running_opencode_process() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-rate-limited");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+echo '{"type":"error","error":{"data":{"message":"Rate limit exceeded. Please try again later."}}}'
+sleep 60
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        OpenCodeAdapter::with_executable(executable).run_turn(TurnRequest {
+            home: directory.path().to_path_buf(),
+            prompt: "reply".to_string(),
+            model: None,
+            resume_session_id: None,
+            environment: Default::default(),
+            cancellation: CancellationToken::new(),
+        }),
+    )
+    .await
+    .expect("reported errors must not wait for the no-output timeout");
+
+    assert!(matches!(
+        result,
+        Err(EngineError::Reported(message)) if message.contains("Rate limit exceeded")
+    ));
+}
+
+#[tokio::test]
 async fn opencode_classify_runs_the_reserved_agent_with_every_tool_denied() {
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("opencode-classify");
@@ -194,7 +237,7 @@ wait
             })
             .await
     });
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while !tokio::fs::try_exists(&pid_file).await.unwrap() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

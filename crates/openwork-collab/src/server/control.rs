@@ -113,6 +113,42 @@ async fn handle(
             .await
             .map(ControlResponse::Room)
             .map_err(|error| error.to_string()),
+        ControlRequest::CreateGroupRoom { title, agent_ids } => store
+            .create_group_room(&title, &agent_ids)
+            .await
+            .map(ControlResponse::Room)
+            .map_err(|error| error.to_string()),
+        ControlRequest::ListRoomMembers { room_id } => store
+            .list_room_members(&room_id)
+            .await
+            .map(|members| ControlResponse::Members { members })
+            .map_err(|error| error.to_string()),
+        ControlRequest::AddGroupMember { room_id, agent_id } => {
+            match store.add_group_member(&room_id, &agent_id).await {
+                Ok((members, message)) => {
+                    if let Some(message) = message {
+                        scheduler
+                            .message_committed(&message.id, &message.room_id, &message.author_id)
+                            .await;
+                    }
+                    Ok(ControlResponse::Members { members })
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        ControlRequest::RemoveGroupMember { room_id, agent_id } => {
+            match store.remove_group_member(&room_id, &agent_id).await {
+                Ok((members, message)) => {
+                    if let Some(message) = message {
+                        scheduler
+                            .message_committed(&message.id, &message.room_id, &message.author_id)
+                            .await;
+                    }
+                    Ok(ControlResponse::Members { members })
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }
         ControlRequest::SendMessage { room_id, body } => {
             match store.send_user_message(&room_id, &body).await {
                 Ok(message) => {

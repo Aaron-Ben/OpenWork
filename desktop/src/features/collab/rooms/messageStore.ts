@@ -1,10 +1,11 @@
 import { create } from 'zustand'
 
-import { collabCommands, type CollabMessage } from '@/bridge/collab'
+import { collabCommands, type CollabMessage, type CollabRun } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
 
 export interface MessageWindow {
   messages: CollabMessage[]
+  runs: CollabRun[]
   loading: boolean
   error: string | null
 }
@@ -18,11 +19,14 @@ interface MessageStoreState {
 export const useMessageStore = create<MessageStoreState>((set, get) => ({
   byRoom: {},
   open: async (roomId) => {
-    const current = get().byRoom[roomId] ?? { messages: [], loading: false, error: null }
+    const current = get().byRoom[roomId] ?? { messages: [], runs: [], loading: false, error: null }
     set({ byRoom: { ...get().byRoom, [roomId]: { ...current, loading: true, error: null } } })
     try {
-      const messages = await collabCommands.listMessages(roomId)
-      set({ byRoom: { ...get().byRoom, [roomId]: { messages, loading: false, error: null } } })
+      const [messages, runs] = await Promise.all([
+        collabCommands.listMessages(roomId),
+        collabCommands.listRuns(),
+      ])
+      set({ byRoom: { ...get().byRoom, [roomId]: { messages, runs, loading: false, error: null } } })
     } catch (error) {
       set({ byRoom: { ...get().byRoom, [roomId]: { ...current, loading: false, error: resolveErrorMessage(error) } } })
     }

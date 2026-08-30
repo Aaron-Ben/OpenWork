@@ -32,4 +32,25 @@ describe('P0 collaboration command bridge', () => {
       body: 'hello @helper',
     })
   })
+
+  it('maps user group creation and membership changes to explicit control commands', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+
+    await collabCommands.createGroupRoom('Launch room', ['alpha', 'beta'])
+    await collabCommands.addGroupMember('room_1', 'gamma')
+    await collabCommands.removeGroupMember('room_1', 'alpha')
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'collab_group_room_create', {
+      title: 'Launch room',
+      agentIds: ['alpha', 'beta'],
+    })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'collab_group_member_add', {
+      roomId: 'room_1',
+      agentId: 'gamma',
+    })
+    expect(invoke).toHaveBeenNthCalledWith(3, 'collab_group_member_remove', {
+      roomId: 'room_1',
+      agentId: 'alpha',
+    })
+  })
 })

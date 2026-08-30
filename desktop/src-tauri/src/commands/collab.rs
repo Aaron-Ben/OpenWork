@@ -1,6 +1,6 @@
 use openwork_collab::protocol::{
-    AgentView, BoardView, ComputerView, ControlRequest, ControlResponse, MessageView, RoomView,
-    RunSummaryView,
+    AgentView, BoardView, ComputerView, ControlRequest, ControlResponse, MessageView,
+    ParticipantView, RoomView, RunSummaryView,
 };
 
 use crate::{collab_client::CollabDaemonClient, CommandError};
@@ -82,6 +82,65 @@ pub async fn collab_direct_room_create(
         .await?
     {
         ControlResponse::Room(room) => Ok(room),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_group_room_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    title: String,
+    agent_ids: Vec<String>,
+) -> Result<RoomView, CommandError> {
+    match client
+        .call(&ControlRequest::CreateGroupRoom { title, agent_ids })
+        .await?
+    {
+        ControlResponse::Room(room) => Ok(room),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_room_member_list(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+) -> Result<Vec<ParticipantView>, CommandError> {
+    match client
+        .call(&ControlRequest::ListRoomMembers { room_id })
+        .await?
+    {
+        ControlResponse::Members { members } => Ok(members),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_group_member_add(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    agent_id: String,
+) -> Result<Vec<ParticipantView>, CommandError> {
+    match client
+        .call(&ControlRequest::AddGroupMember { room_id, agent_id })
+        .await?
+    {
+        ControlResponse::Members { members } => Ok(members),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_group_member_remove(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    agent_id: String,
+) -> Result<Vec<ParticipantView>, CommandError> {
+    match client
+        .call(&ControlRequest::RemoveGroupMember { room_id, agent_id })
+        .await?
+    {
+        ControlResponse::Members { members } => Ok(members),
         response => Err(unexpected(response)),
     }
 }

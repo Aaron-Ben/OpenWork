@@ -333,6 +333,137 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
     drop_database(admin, &database).await;
 }
 
+#[tokio::test]
+async fn user_control_creates_a_group_and_manages_agent_members() {
+    let Some((admin, database, database_url)) = create_database().await else {
+        return;
+    };
+    let state = tempfile::tempdir().unwrap();
+    let socket = state.path().join("control.sock");
+    let shutdown = CancellationToken::new();
+    let server = CollaborationServer::start(
+        ServerOptions {
+            database_url,
+            redis_url: "redis://127.0.0.1:6379".to_string(),
+            state_root: state.path().to_path_buf(),
+            control_socket: socket.clone(),
+            runtime_bind: "127.0.0.1:0".parse().unwrap(),
+            computer_lease: Duration::from_secs(90),
+            offline_sweep_interval: Duration::from_secs(15),
+        },
+        shutdown.clone(),
+    )
+    .await
+    .unwrap();
+    wait_for_socket(&socket).await;
+    request(&socket, &ControlRequest::EnsureLocalComputer)
+        .await
+        .unwrap();
+    for id in ["alpha", "beta", "gamma"] {
+        let response = request(
+            &socket,
+            &ControlRequest::CreateAgent {
+                id: id.to_string(),
+                display_name: id.to_uppercase(),
+                system_prompt: format!("You are {id}."),
+                model: "deepseek/deepseek-v4-flash".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(response, ControlResponse::Agent(_)));
+    }
+
+    let invalid = request(
+        &socket,
+        &ControlRequest::CreateGroupRoom {
+            title: "Too small".to_string(),
+            agent_ids: vec!["alpha".to_string()],
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(invalid, ControlResponse::Error { message } if message.contains("at least two"))
+    );
+
+    let ControlResponse::Room(room) = request(
+        &socket,
+        &ControlRequest::CreateGroupRoom {
+            title: "Launch room".to_string(),
+            agent_ids: vec!["beta".to_string(), "alpha".to_string()],
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("group creation failed")
+    };
+    assert_eq!(room.kind, "group");
+    assert_eq!(room.title.as_deref(), Some("Launch room"));
+
+    let ControlResponse::Members { members } = request(
+        &socket,
+        &ControlRequest::ListRoomMembers {
+            room_id: room.id.clone(),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("member listing failed")
+    };
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| member.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["user", "alpha", "beta"]
+    );
+
+    let ControlResponse::Members { members } = request(
+        &socket,
+        &ControlRequest::AddGroupMember {
+            room_id: room.id.clone(),
+            agent_id: "gamma".to_string(),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("member invite failed")
+    };
+    assert!(members.iter().any(|member| member.id == "gamma"));
+
+    let ControlResponse::Members { members } = request(
+        &socket,
+        &ControlRequest::RemoveGroupMember {
+            room_id: room.id.clone(),
+            agent_id: "alpha".to_string(),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("member removal failed")
+    };
+    assert!(!members.iter().any(|member| member.id == "alpha"));
+
+    let ControlResponse::Messages { messages } = request(
+        &socket,
+        &ControlRequest::ListMessages {
+            room_id: room.id.clone(),
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("group messages could not be listed")
+    };
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].body, "user invited gamma");
+    assert_eq!(messages[1].body, "user removed alpha");
+
+    shutdown.cancel();
+    server.shutdown().await.unwrap();
+    drop_database(admin, &database).await;
+}
+
 async fn drop_database(admin: PgPool, database: &str) {
     admin
         .execute(format!("DROP DATABASE {database} WITH (FORCE)").as_str())
