@@ -268,7 +268,7 @@ export const zhTW = {
     },
     agents: {
       title: '同事管理', create: '建立同事', save: '儲存', id: 'ID', displayName: '名稱',
-      prompt: 'System Prompt', enabled: '已啟用', disabled: '已停用', noAgents: '還沒有同事',
+      model: '模型', prompt: 'System Prompt', enabled: '已啟用', disabled: '已停用', noAgents: '還沒有同事',
     },
   },
   tool: {

@@ -273,7 +273,7 @@ export const enUS = {
     },
     agents: {
       title: 'Teammate management', create: 'Create teammate', save: 'Save', id: 'ID', displayName: 'Name',
-      prompt: 'System prompt', enabled: 'Enabled', disabled: 'Disabled', noAgents: 'No teammates yet',
+      model: 'Model', prompt: 'System prompt', enabled: 'Enabled', disabled: 'Disabled', noAgents: 'No teammates yet',
     },
   },
   tool: {

@@ -10,6 +10,7 @@ pub enum ControlRequest {
         id: String,
         display_name: String,
         system_prompt: String,
+        model: String,
     },
     CreateDirectRoom {
         agent_id: String,
@@ -77,7 +78,7 @@ pub struct AgentView {
     pub display_name: String,
     pub system_prompt: String,
     pub engine_id: String,
-    pub model: Option<String>,
+    pub model: String,
     pub config_version: i64,
     pub enabled: bool,
 }
@@ -133,7 +134,7 @@ pub struct AgentAssignment {
     pub bio: Option<String>,
     pub system_prompt: String,
     pub engine_id: String,
-    pub model: Option<String>,
+    pub model: String,
     pub config_version: i64,
 }
 

@@ -70,6 +70,7 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
             id: "helper".to_string(),
             display_name: "Helper".to_string(),
             system_prompt: "Reply clearly.".to_string(),
+            model: "opencode/hy3-free".to_string(),
         },
     )
     .await
@@ -181,12 +182,21 @@ print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"i
         .await
         .unwrap();
     assert_eq!(token_metadata.permissions().mode() & 0o777, 0o600);
-    assert_eq!(
-        tokio::fs::read_to_string(state.path().join("computer/sessions/helper.session"))
-            .await
-            .unwrap(),
-        "ses_helper"
-    );
+    let session_file = state.path().join("computer/sessions/helper.session");
+    let session = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match tokio::fs::read_to_string(&session_file).await {
+                Ok(session) => break session,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => panic!("session could not be read: {error}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(session, "ses_helper");
 
     daemon_shutdown.cancel();
     daemon_task.await.unwrap().unwrap();

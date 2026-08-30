@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { deriveAgentSlug } from './agentId'
 import { useAgentStore } from './agentStore'
 
+const DEFAULT_MODEL = 'opencode/hy3-free'
+
 export function AgentManager() {
   const { t } = useTranslation()
   const agents = useAgentStore((state) => state.agents)
@@ -31,7 +33,7 @@ export function AgentManager() {
     <section className="min-w-0 flex-1 overflow-y-auto bg-paper">
       <header data-tauri-drag-region="deep" className="flex h-12 items-center justify-between border-b border-line px-6">
         <h1 className="font-serif text-lg font-semibold">{t('collab.agents.title')}</h1>
-        <Button type="button" size="sm" onClick={() => setForm({ id: '', displayName: '', systemPrompt: '' })}>
+        <Button type="button" size="sm" onClick={() => setForm({ id: '', displayName: '', systemPrompt: '', model: DEFAULT_MODEL })}>
           <Plus size={15} />{t('collab.agents.create')}
         </Button>
       </header>
@@ -42,7 +44,7 @@ export function AgentManager() {
             <span className="grid size-10 place-items-center rounded-full bg-clay/10 text-clay"><Bot size={19} /></span>
             <div className="min-w-0 flex-1">
               <strong className="block truncate">{agent.displayName}</strong>
-              <span className="text-sm text-ink-faint">@{agent.id} · OpenCode · {agent.enabled ? t('collab.agents.enabled') : t('collab.agents.disabled')}</span>
+              <span className="text-sm text-ink-faint">@{agent.id} · OpenCode · {agent.model} · {agent.enabled ? t('collab.agents.enabled') : t('collab.agents.disabled')}</span>
             </div>
           </article>
         ))}
@@ -58,13 +60,16 @@ export function AgentManager() {
             <Field label={t('collab.agents.id')}>
               <Input required pattern="[a-z][a-z0-9_]{0,47}" value={effectiveId} onChange={(event) => setForm({ ...form, id: event.target.value })} readOnly={derivedId !== null} />
             </Field>
+            <Field label={t('collab.agents.model')}>
+              <Input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} />
+            </Field>
             <Field label={t('collab.agents.prompt')}>
               <Textarea required rows={5} value={form.systemPrompt} onChange={(event) => setForm({ ...form, systemPrompt: event.target.value })} />
             </Field>
             <p className="text-xs text-ink-faint">Local Computer · OpenCode CLI</p>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="ghost" onClick={() => setForm(null)}>{t('common.cancel')}</Button>
-              <Button type="submit" variant="accent" disabled={!effectiveId}>{t('collab.agents.save')}</Button>
+              <Button type="submit" variant="accent" disabled={!effectiveId || !form.model.trim()}>{t('collab.agents.save')}</Button>
             </div>
           </form>
         </div>

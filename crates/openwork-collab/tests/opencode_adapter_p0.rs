@@ -3,7 +3,7 @@
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
 use openwork_collab::computer::engine::{
-    ClassifyRequest, EngineAdapter, EngineProbeStatus, TurnRequest,
+    ClassifyRequest, EngineAdapter, EngineError, EngineProbeStatus, TurnRequest,
 };
 use openwork_collab::computer::opencode::OpenCodeAdapter;
 use tempfile::TempDir;
@@ -62,6 +62,46 @@ async fn opencode_run_turn_uses_stdin_and_returns_resumable_structured_result() 
     assert_eq!(result.usage.output_tokens, 5);
     assert_eq!(result.usage.cached_input_tokens, 7);
     assert_eq!(result.usage.cache_creation_input_tokens, 5);
+}
+
+#[tokio::test]
+async fn opencode_nonzero_exit_preserves_a_reported_json_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-provider-error");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+echo '{"type":"error","error":{"data":{"message":"Insufficient balance"}}}'
+exit 1
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let result = OpenCodeAdapter::with_executable(executable)
+        .run_turn(TurnRequest {
+            home: directory.path().to_path_buf(),
+            prompt: "reply".to_string(),
+            model: None,
+            resume_session_id: None,
+            environment: Default::default(),
+            cancellation: CancellationToken::new(),
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(EngineError::Reported(message)) if message == "Insufficient balance"
+    ));
 }
 
 #[tokio::test]
@@ -182,19 +222,15 @@ wait
 }
 
 #[tokio::test]
-async fn probe_checks_the_required_cli_surface_and_existing_auth() {
+async fn probe_treats_a_resolvable_executable_as_ready_without_invoking_cli_commands() {
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("opencode-probe");
+    let invocation_log = directory.path().join("probe.log");
     tokio::fs::write(
         &executable,
         r#"#!/bin/sh
-echo "$*" >> "$(dirname "$0")/probe.log"
-case "$*" in
-  "--version") echo '1.18.18' ;;
-  "run --help") echo '--pure --format --auto --model --session' ;;
-  "auth list") echo '1 credentials' ;;
-  *) exit 9 ;;
-esac
+echo "$*" > "$(dirname "$0")/probe.log"
+exit 91
 "#,
     )
     .await
@@ -213,8 +249,7 @@ esac
         .await
         .unwrap();
     assert_eq!(probe.status, EngineProbeStatus::Ready);
-    let calls = tokio::fs::read_to_string(directory.path().join("probe.log"))
-        .await
-        .unwrap();
-    assert_eq!(calls, "--version\nrun --help\nauth list\n");
+    assert_eq!(probe.version, None);
+    assert_eq!(probe.detail, None);
+    assert!(!tokio::fs::try_exists(invocation_log).await.unwrap());
 }

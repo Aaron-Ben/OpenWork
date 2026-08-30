@@ -46,6 +46,7 @@ describe('i18n', () => {
       'collab.rooms.title',
       'collab.rooms.messagePlaceholder',
       'collab.agents.title',
+      'collab.agents.model',
       'collab.agents.prompt',
     ] as const
     for (const language of supportedLanguages) {

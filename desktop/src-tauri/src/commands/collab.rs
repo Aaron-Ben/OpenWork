@@ -30,12 +30,14 @@ pub async fn collab_agent_create(
     id: String,
     display_name: String,
     system_prompt: String,
+    model: String,
 ) -> Result<AgentView, CommandError> {
     match client
         .call(&ControlRequest::CreateAgent {
             id,
             display_name,
             system_prompt,
+            model,
         })
         .await?
     {

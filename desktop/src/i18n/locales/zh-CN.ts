@@ -337,7 +337,7 @@ export const zhCN = {
     },
     agents: {
       title: '同事管理', create: '创建同事', save: '保存', id: 'ID', displayName: '名称',
-      prompt: 'System Prompt', enabled: '已启用', disabled: '已停用', noAgents: '还没有同事',
+      model: '模型', prompt: 'System Prompt', enabled: '已启用', disabled: '已停用', noAgents: '还没有同事',
     },
   },
   tool: {

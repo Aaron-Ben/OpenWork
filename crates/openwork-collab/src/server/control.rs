@@ -71,8 +71,9 @@ async fn handle(
             id,
             display_name,
             system_prompt,
+            model,
         } => store
-            .create_agent(&id, &display_name, &system_prompt)
+            .create_agent(&id, &display_name, &system_prompt, &model)
             .await
             .map(ControlResponse::Agent)
             .map_err(|error| error.to_string()),

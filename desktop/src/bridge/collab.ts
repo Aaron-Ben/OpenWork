@@ -5,7 +5,7 @@ export interface CollabAgent {
   displayName: string
   systemPrompt: string
   engineId: 'opencode'
-  model: string | null
+  model: string
   configVersion: number
   enabled: boolean
 }
@@ -14,6 +14,7 @@ export interface CollabAgentInput {
   id: string
   displayName: string
   systemPrompt: string
+  model: string
 }
 
 export interface CollabRoom {
@@ -38,6 +39,7 @@ export const collabCommands = {
       id: agent.id,
       displayName: agent.displayName,
       systemPrompt: agent.systemPrompt,
+      model: agent.model,
     }),
   listRooms: (): Promise<CollabRoom[]> => invoke('collab_room_list'),
   createDirectRoom: (agentId: string): Promise<CollabRoom> =>

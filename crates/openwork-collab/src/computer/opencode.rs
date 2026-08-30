@@ -92,8 +92,12 @@ impl OpenCodeAdapter {
         if cancelled {
             return Err(EngineError::Cancelled);
         }
+        let parsed = parse_output(&output.stdout, request.model);
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if !output.status.success() {
+            if matches!(&parsed, Err(EngineError::Reported(_))) {
+                return parsed;
+            }
             return Err(EngineError::Process(if stderr.is_empty() {
                 format!("exit status {}", output.status)
             } else {
@@ -101,70 +105,30 @@ impl OpenCodeAdapter {
             }));
         }
 
-        parse_output(&output.stdout, request.model)
+        parsed
     }
 }
 
 #[async_trait]
 impl EngineAdapter for OpenCodeAdapter {
     async fn probe(&self) -> Result<EngineProbe, EngineError> {
-        let version = Command::new(&self.executable)
-            .arg("--version")
+        let resolution = Command::new("/usr/bin/which")
+            .arg(&self.executable)
             .output()
-            .await
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    EngineError::Missing(error.to_string())
-                } else {
-                    EngineError::Io(error)
-                }
-            })?;
-        if !version.status.success() {
+            .await?;
+        if !resolution.status.success() {
             return Ok(EngineProbe {
-                status: EngineProbeStatus::Broken,
+                status: EngineProbeStatus::Missing,
                 version: None,
-                detail: Some(String::from_utf8_lossy(&version.stderr).trim().to_string()),
-            });
-        }
-        let version_text = String::from_utf8_lossy(&version.stdout).trim().to_string();
-        let help = Command::new(&self.executable)
-            .args(["run", "--help"])
-            .output()
-            .await?;
-        let help_text = String::from_utf8_lossy(&help.stdout);
-        let missing_flags: Vec<&str> = ["--pure", "--format", "--auto", "--model", "--session"]
-            .into_iter()
-            .filter(|flag| !help_text.contains(flag))
-            .collect();
-        if !help.status.success() || !missing_flags.is_empty() {
-            return Ok(EngineProbe {
-                status: EngineProbeStatus::Broken,
-                version: Some(version_text),
-                detail: Some(if missing_flags.is_empty() {
-                    "opencode run --help failed".to_string()
-                } else {
-                    format!(
-                        "opencode run is missing required flags: {}",
-                        missing_flags.join(", ")
-                    )
-                }),
-            });
-        }
-        let auth = Command::new(&self.executable)
-            .args(["auth", "list"])
-            .output()
-            .await?;
-        let auth_text = String::from_utf8_lossy(&auth.stdout).to_ascii_lowercase();
-        if !auth.status.success() || auth_text.contains("0 credentials") {
-            return Ok(EngineProbe {
-                status: EngineProbeStatus::Unauthenticated,
-                version: Some(version_text),
-                detail: Some("OpenCode has no usable local credentials".to_string()),
+                detail: Some(format!(
+                    "{} is not executable or is not on PATH",
+                    self.executable.display()
+                )),
             });
         }
         Ok(EngineProbe {
             status: EngineProbeStatus::Ready,
-            version: Some(version_text),
+            version: None,
             detail: None,
         })
     }

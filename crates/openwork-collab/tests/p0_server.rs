@@ -55,18 +55,20 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
         panic!("local computer registration failed")
     };
     let device_token = registration.device_token.unwrap();
-    let ControlResponse::Agent(_) = request(
+    let ControlResponse::Agent(agent) = request(
         &socket,
         &ControlRequest::CreateAgent {
             id: "helper".to_string(),
             display_name: "Helper".to_string(),
             system_prompt: "Help the user.".to_string(),
+            model: "opencode/hy3-free".to_string(),
         },
     )
     .await
     .unwrap() else {
         panic!("agent creation failed")
     };
+    assert_eq!(agent.model, "opencode/hy3-free");
     let ControlResponse::Room(room) = request(
         &socket,
         &ControlRequest::CreateDirectRoom {
@@ -136,6 +138,7 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
         .await
         .unwrap();
     assert_eq!(roster.agents.len(), 1);
+    assert_eq!(roster.agents[0].model, "opencode/hy3-free");
     let token = client
         .post(format!("{base}/api/computers/me/agents/helper/token"))
         .bearer_auth(&device_token)
@@ -228,6 +231,13 @@ async fn runtime_opens_a_delivery_publishes_a_reply_and_settles_the_message() {
     assert_eq!(messages[1].author_id, "helper");
     assert_eq!(messages[1].body, "Of course.");
     let test_pool = PgPool::connect(&database_url).await.unwrap();
+    let run_model: Option<String> =
+        sqlx::query_scalar("SELECT model FROM collab_runs WHERE id = $1")
+            .bind(&run.id)
+            .fetch_one(&test_pool)
+            .await
+            .unwrap();
+    assert_eq!(run_model.as_deref(), Some("opencode/hy3-free"));
     let last_read_seq: i64 = sqlx::query_scalar(
         "SELECT last_read_seq FROM collab_room_members
          WHERE room_id = $1 AND participant_id = 'helper'",

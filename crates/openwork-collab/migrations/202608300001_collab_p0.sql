@@ -53,7 +53,7 @@ CREATE TABLE collab_agents (
     bio TEXT,
     system_prompt TEXT NOT NULL CHECK (btrim(system_prompt) <> ''),
     engine_id TEXT NOT NULL CHECK (engine_id = 'opencode'),
-    model TEXT CHECK (model IS NULL OR btrim(model) <> ''),
+    model TEXT NOT NULL CHECK (btrim(model) <> ''),
     fast_model TEXT CHECK (fast_model IS NULL OR btrim(fast_model) <> ''),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     scanner_enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -130,7 +130,7 @@ CREATE TABLE collab_runs (
         status IN ('running', 'completed', 'failed', 'cancelled', 'interrupted')
     ),
     engine_id TEXT NOT NULL CHECK (engine_id = 'opencode'),
-    model TEXT,
+    model TEXT NOT NULL CONSTRAINT collab_runs_model_nonempty CHECK (btrim(model) <> ''),
     computer_generation BIGINT NOT NULL CHECK (computer_generation > 0),
     started_at TIMESTAMP WITHOUT TIME ZONE NOT NULL
         DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'),

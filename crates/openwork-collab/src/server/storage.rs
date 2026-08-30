@@ -76,6 +76,7 @@ impl CollaborationStore {
         id: &str,
         display_name: &str,
         system_prompt: &str,
+        model: &str,
     ) -> Result<AgentView, sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
         sqlx::query(
@@ -88,11 +89,12 @@ impl CollaborationStore {
         .await?;
         sqlx::query(
             "INSERT INTO collab_agents (
-                id, computer_id, system_prompt, engine_id
-             ) VALUES ($1, 'local', $2, 'opencode')",
+                id, computer_id, system_prompt, engine_id, model
+             ) VALUES ($1, 'local', $2, 'opencode', $3)",
         )
         .bind(id)
         .bind(system_prompt)
+        .bind(model)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
@@ -101,7 +103,7 @@ impl CollaborationStore {
             display_name: display_name.to_string(),
             system_prompt: system_prompt.to_string(),
             engine_id: "opencode".to_string(),
-            model: None,
+            model: model.to_string(),
             config_version: 1,
             enabled: true,
         })
@@ -397,8 +399,12 @@ impl CollaborationStore {
         sqlx::query(
             "INSERT INTO collab_runs (
                 id, agent_id, computer_id, room_id, trigger, status,
-                engine_id, computer_generation
-             ) VALUES ($1, $2, 'local', $3, $4, 'running', 'opencode', $5)
+                engine_id, model, computer_generation
+             )
+             SELECT $1, a.id, a.computer_id, $3, $4, 'running',
+                    a.engine_id, a.model, $5
+             FROM collab_agents a
+             WHERE a.id = $2
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&trigger.dispatch_id)
@@ -820,7 +826,7 @@ struct AssignmentRow {
     bio: Option<String>,
     system_prompt: String,
     engine_id: String,
-    model: Option<String>,
+    model: String,
     config_version: i64,
 }
 
@@ -830,7 +836,7 @@ struct AgentViewRow {
     display_name: String,
     system_prompt: String,
     engine_id: String,
-    model: Option<String>,
+    model: String,
     config_version: i64,
     enabled: bool,
 }

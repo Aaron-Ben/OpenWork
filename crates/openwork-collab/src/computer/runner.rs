@@ -81,7 +81,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
             .run_turn(TurnRequest {
                 home: self.home.root.clone(),
                 prompt: build_prompt(&self.assignment, &inbox.messages),
-                model: self.assignment.model.clone(),
+                model: Some(self.assignment.model.clone()),
                 resume_session_id: session,
                 environment: self.home.environment.clone(),
                 cancellation,

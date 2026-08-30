@@ -32,12 +32,14 @@ async fn run() -> CliResult<()> {
         Some("agent-create") => {
             let id = required(&mut arguments, "agent id")?;
             let display_name = required(&mut arguments, "display name")?;
+            let model = required(&mut arguments, "model")?;
             let system_prompt = required(&mut arguments, "system prompt")?;
             print_response(
                 control(ControlRequest::CreateAgent {
                     id,
                     display_name,
                     system_prompt,
+                    model,
                 })
                 .await?,
             )
@@ -161,7 +163,7 @@ fn print_usage() {
            openwork-collab server\n\
            openwork-collab computer\n\
            openwork-collab ensure-local-computer\n\
-           openwork-collab agent-create <id> <display-name> <system-prompt>\n\
+           openwork-collab agent-create <id> <display-name> <model> <system-prompt>\n\
            openwork-collab dm-create <agent-id>\n\
            openwork-collab send <room-id> <body>\n\
            openwork-collab messages <room-id>"
