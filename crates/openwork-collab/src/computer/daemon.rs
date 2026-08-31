@@ -22,6 +22,9 @@ use super::{
     scheduling::RunnerResources,
 };
 
+const RUNNER_SHUTDOWN_GRACE: Duration = Duration::from_secs(15);
+const RUNNER_FORCE_REAP_TIMEOUT: Duration = Duration::from_secs(1);
+
 #[derive(Clone, Debug)]
 pub struct ComputerOptions {
     pub openwork_root: PathBuf,
@@ -42,13 +45,14 @@ pub struct ComputerDaemon {
 
 struct RunnerHandle {
     assignment: AgentAssignment,
-    shutdown: CancellationToken,
+    stop_requested: CancellationToken,
+    force_cancel: CancellationToken,
     task: JoinHandle<Result<(), RunnerError>>,
 }
 
 enum DaemonEvent {
     Roster(Vec<AgentAssignment>),
-    Inventory(EngineProbe),
+    Inventory(Vec<EngineProbe>),
     Fatal(RuntimeClientError),
 }
 
@@ -56,12 +60,6 @@ enum DaemonEvent {
 struct EngineProbe {
     readiness: EngineReadinessView,
     observation: EngineObservation,
-}
-
-impl EngineProbe {
-    fn runnable(&self) -> bool {
-        self.readiness.status == EngineStatus::Ready
-    }
 }
 
 impl ComputerDaemon {
@@ -75,8 +73,8 @@ impl ComputerDaemon {
             self.options.runtime_session_id.clone(),
             self.options.computer_secret.clone(),
         );
-        let inventory_adapter = self.engines.require(&EngineId::opencode())?;
-        let inventory = probe_engine(&inventory_adapter).await;
+        let inventory_adapters = self.engines.adapters();
+        let inventory = probe_engines(&inventory_adapters).await;
         client
             .report_inventory(&inventory_report(&inventory))
             .await?;
@@ -97,13 +95,9 @@ impl ComputerDaemon {
         };
         let mut runners = HashMap::<String, RunnerHandle>::new();
         let snapshot = client.desired_agents().await?;
-        let runner_statuses = if inventory.runnable() {
-            runner_factory
-                .reconcile(snapshot.agents, &mut runners)
-                .await?
-        } else {
-            Vec::new()
-        };
+        let runner_statuses = runner_factory
+            .reconcile(snapshot.agents, &inventory, &mut runners)
+            .await?;
         let initial_actual = actual_state(&inventory, runner_statuses);
         client.heartbeat(&initial_actual).await?;
 
@@ -134,7 +128,7 @@ impl ComputerDaemon {
         ));
         let inventory_task = tokio::spawn(engine_rescan_loop(
             client.clone(),
-            inventory_adapter,
+            inventory_adapters,
             self.options.engine_rescan_interval,
             events_tx,
             background_shutdown.clone(),
@@ -147,10 +141,11 @@ impl ComputerDaemon {
             tokio::select! {
                 _ = shutdown.cancelled() => break Ok(()),
                 event = events_rx.recv() => match event {
-                    Some(DaemonEvent::Roster(assignments))
-                        if current_inventory.runnable() =>
-                    {
-                        match runner_factory.reconcile(assignments, &mut runners).await {
+                    Some(DaemonEvent::Roster(assignments)) => {
+                        match runner_factory
+                            .reconcile(assignments, &current_inventory, &mut runners)
+                            .await
+                        {
                             Ok(statuses) => {
                                 current_runner_statuses = statuses;
                                 actual_tx.send_replace(actual_state(
@@ -161,30 +156,22 @@ impl ComputerDaemon {
                             Err(error) => break Err(error),
                         }
                     }
-                    Some(DaemonEvent::Roster(_)) => {}
                     Some(DaemonEvent::Inventory(inventory)) => {
                         current_inventory = inventory;
-                        if current_inventory.runnable() {
-                            match client.desired_agents().await {
-                                Ok(snapshot) => match runner_factory
-                                    .reconcile(snapshot.agents, &mut runners)
-                                    .await
-                                {
-                                    Ok(statuses) => current_runner_statuses = statuses,
-                                    Err(error) => break Err(error),
-                                },
-                                Err(error) if error.is_terminal_identity_error() => {
-                                    break Err(error.into());
-                                }
-                                Err(error) => {
-                                    tracing::warn!(%error, "Engine recovered but desired Agent snapshot failed");
-                                }
+                        match client.desired_agents().await {
+                            Ok(snapshot) => match runner_factory
+                                .reconcile(snapshot.agents, &current_inventory, &mut runners)
+                                .await
+                            {
+                                Ok(statuses) => current_runner_statuses = statuses,
+                                Err(error) => break Err(error),
+                            },
+                            Err(error) if error.is_terminal_identity_error() => {
+                                break Err(error.into());
                             }
-                        } else {
-                            if let Err(error) = stop_all(&mut runners).await {
-                                tracing::warn!(%error, "Runners required forced stop after Engine became unavailable");
+                            Err(error) => {
+                                tracing::warn!(%error, "Engine inventory changed but desired Agent snapshot failed");
                             }
-                            current_runner_statuses.clear();
                         }
                         actual_tx.send_replace(actual_state(
                             &current_inventory,
@@ -241,11 +228,15 @@ impl ComputerDaemon {
         };
 
         background_shutdown.cancel();
+        management_task.abort();
+        heartbeat_task.abort();
+        roster_task.abort();
+        inventory_task.abort();
+        let stop_result = stop_all(&mut runners).await;
         let _ = management_task.await;
         let _ = heartbeat_task.await;
         let _ = roster_task.await;
         let _ = inventory_task.await;
-        let stop_result = stop_all(&mut runners).await;
         result.and(stop_result)
     }
 }
@@ -329,7 +320,7 @@ async fn roster_loop(
 
 async fn engine_rescan_loop(
     client: ComputerClient,
-    adapter: Arc<dyn EngineAdapter>,
+    adapters: Vec<Arc<dyn EngineAdapter>>,
     interval: Duration,
     events: mpsc::Sender<DaemonEvent>,
     shutdown: CancellationToken,
@@ -338,7 +329,7 @@ async fn engine_rescan_loop(
         if !wait(interval, &shutdown).await {
             return;
         }
-        let inventory = probe_engine(&adapter).await;
+        let inventory = probe_engines(&adapters).await;
         if let Err(error) = client.report_inventory(&inventory_report(&inventory)).await {
             if error.is_terminal_identity_error() {
                 let _ = events.send(DaemonEvent::Fatal(error)).await;
@@ -356,6 +347,10 @@ async fn engine_rescan_loop(
     }
 }
 
+async fn probe_engines(adapters: &[Arc<dyn EngineAdapter>]) -> Vec<EngineProbe> {
+    futures_util::future::join_all(adapters.iter().map(probe_engine)).await
+}
+
 async fn probe_engine(adapter: &Arc<dyn EngineAdapter>) -> EngineProbe {
     let (status, last_error) = match adapter.probe().await {
         Ok(EngineInventory {
@@ -370,13 +365,14 @@ async fn probe_engine(adapter: &Arc<dyn EngineAdapter>) -> EngineProbe {
         }
     };
     let checked_at = time::OffsetDateTime::now_utc().unix_timestamp();
+    let engine_id = adapter.id().to_string();
     EngineProbe {
         readiness: EngineReadinessView {
-            engine_id: EngineId::opencode().to_string(),
+            engine_id: engine_id.clone(),
             status,
         },
         observation: EngineObservation {
-            engine_id: EngineId::opencode().to_string(),
+            engine_id,
             status,
             version: None,
             checked_at,
@@ -385,19 +381,25 @@ async fn probe_engine(adapter: &Arc<dyn EngineAdapter>) -> EngineProbe {
     }
 }
 
-fn inventory_report(inventory: &EngineProbe) -> EngineInventoryReport {
+fn inventory_report(inventory: &[EngineProbe]) -> EngineInventoryReport {
     EngineInventoryReport {
-        engines: vec![inventory.observation.clone()],
+        engines: inventory
+            .iter()
+            .map(|probe| probe.observation.clone())
+            .collect(),
     }
 }
 
 fn actual_state(
-    inventory: &EngineProbe,
+    inventory: &[EngineProbe],
     mut runners: Vec<RunnerStatusView>,
 ) -> ComputerHeartbeatRequest {
     runners.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
     ComputerHeartbeatRequest {
-        engine_readiness: vec![inventory.readiness.clone()],
+        engine_readiness: inventory
+            .iter()
+            .map(|probe| probe.readiness.clone())
+            .collect(),
         runners,
     }
 }
@@ -440,7 +442,8 @@ fn next_backoff(current: Duration, base: Duration) -> Duration {
 }
 
 async fn stop_runner(mut handle: RunnerHandle) -> Result<(), ComputerError> {
-    handle.shutdown.cancel();
+    handle.stop_requested.cancel();
+    handle.force_cancel.cancel();
     match tokio::time::timeout(Duration::from_secs(15), &mut handle.task).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(error))) => Err(error.into()),
@@ -454,27 +457,56 @@ async fn stop_runner(mut handle: RunnerHandle) -> Result<(), ComputerError> {
 }
 
 async fn stop_all(runners: &mut HashMap<String, RunnerHandle>) -> Result<(), ComputerError> {
-    for handle in runners.values() {
-        handle.shutdown.cancel();
+    stop_all_with_grace(runners, RUNNER_SHUTDOWN_GRACE).await
+}
+
+async fn stop_all_with_grace(
+    runners: &mut HashMap<String, RunnerHandle>,
+    grace: Duration,
+) -> Result<(), ComputerError> {
+    let mut handles = runners
+        .drain()
+        .map(|(_, handle)| handle)
+        .collect::<Vec<_>>();
+    for handle in &handles {
+        handle.stop_requested.cancel();
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + grace;
+    while handles.iter().any(|handle| !handle.task.is_finished())
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    if handles.iter().any(|handle| !handle.task.is_finished()) {
+        for handle in &handles {
+            if !handle.task.is_finished() {
+                handle.force_cancel.cancel();
+            }
+        }
+    }
+    let forced_deadline = tokio::time::Instant::now() + RUNNER_FORCE_REAP_TIMEOUT;
+    while handles.iter().any(|handle| !handle.task.is_finished())
+        && tokio::time::Instant::now() < forced_deadline
+    {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
     let mut first_error = None;
-    for (_, mut handle) in runners.drain() {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        match tokio::time::timeout(remaining, &mut handle.task).await {
-            Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) if first_error.is_none() => {
+    for handle in handles.drain(..) {
+        if !handle.task.is_finished() {
+            handle.task.abort();
+            let _ = handle.task.await;
+            if first_error.is_none() {
+                first_error = Some(ComputerError::ShutdownTimeout);
+            }
+            continue;
+        }
+        match handle.task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) if first_error.is_none() => {
                 first_error = Some(ComputerError::Runner(error));
             }
-            Ok(Err(error)) if first_error.is_none() => {
+            Err(error) if first_error.is_none() => {
                 first_error = Some(ComputerError::Task(error));
-            }
-            Err(_) => {
-                handle.task.abort();
-                let _ = handle.task.await;
-                if first_error.is_none() {
-                    first_error = Some(ComputerError::ShutdownTimeout);
-                }
             }
             _ => {}
         }
@@ -494,6 +526,7 @@ impl RunnerFactory<'_> {
     async fn reconcile(
         &self,
         assignments: Vec<AgentAssignment>,
+        inventory: &[EngineProbe],
         runners: &mut HashMap<String, RunnerHandle>,
     ) -> Result<Vec<RunnerStatusView>, ComputerError> {
         let desired = assignments
@@ -504,9 +537,10 @@ impl RunnerFactory<'_> {
         let removed = runners
             .keys()
             .filter(|id| {
-                desired
-                    .get(id.as_str())
-                    .is_none_or(|assignment| **assignment != runners[*id].assignment)
+                desired.get(id.as_str()).is_none_or(|assignment| {
+                    **assignment != runners[*id].assignment
+                        || !engine_runnable(inventory, &assignment.engine_id)
+                })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -519,6 +553,18 @@ impl RunnerFactory<'_> {
         }
         for assignment in assignments {
             if !runners.contains_key(&assignment.id) {
+                if !engine_runnable(inventory, &assignment.engine_id) {
+                    failures.push(RunnerStatusView {
+                        agent_id: assignment.id,
+                        config_revision: assignment.config_revision,
+                        state: RunnerState::Error,
+                        last_error: Some(format!(
+                            "Engine {} is not ready in this RuntimeSession",
+                            assignment.engine_id
+                        )),
+                    });
+                    continue;
+                }
                 match self.start(assignment.clone(), runners).await {
                     Ok(()) => {}
                     Err(error) if error.is_fenced() => return Err(error),
@@ -570,8 +616,10 @@ impl RunnerFactory<'_> {
                 environment: home.environment.clone(),
             })
             .await?;
-        let runner_shutdown = CancellationToken::new();
-        let task_shutdown = runner_shutdown.clone();
+        let stop_requested = CancellationToken::new();
+        let task_stop_requested = stop_requested.clone();
+        let force_cancel = CancellationToken::new();
+        let task_force_cancel = force_cancel.clone();
         let id = assignment.id.clone();
         let handle_assignment = assignment.clone();
         let runner = AgentRunner::new(
@@ -589,17 +637,25 @@ impl RunnerFactory<'_> {
             self.poll_interval,
             self.resources.clone(),
         );
-        let task = tokio::spawn(async move { runner.run(task_shutdown).await });
+        let task =
+            tokio::spawn(async move { runner.run(task_stop_requested, task_force_cancel).await });
         runners.insert(
             id,
             RunnerHandle {
                 assignment: handle_assignment,
-                shutdown: runner_shutdown,
+                stop_requested,
+                force_cancel,
                 task,
             },
         );
         Ok(())
     }
+}
+
+fn engine_runnable(inventory: &[EngineProbe], engine_id: &str) -> bool {
+    inventory.iter().any(|probe| {
+        probe.readiness.engine_id == engine_id && probe.readiness.status == EngineStatus::Ready
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -629,5 +685,131 @@ impl ComputerError {
             Self::Runner(error) => error.is_fenced(),
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn assignment(id: &str) -> AgentAssignment {
+        AgentAssignment {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            role: None,
+            persona: "test".to_string(),
+            engine_id: "fake".to_string(),
+            main_model_id: "main".to_string(),
+            triage_model_id: "triage".to_string(),
+            config_revision: 1,
+            agenda_enabled: false,
+        }
+    }
+
+    #[test]
+    fn engine_readiness_is_scoped_per_assignment() {
+        let inventory = vec![
+            EngineProbe {
+                readiness: EngineReadinessView {
+                    engine_id: "fake".to_string(),
+                    status: EngineStatus::Ready,
+                },
+                observation: EngineObservation {
+                    engine_id: "fake".to_string(),
+                    status: EngineStatus::Ready,
+                    version: None,
+                    checked_at: 1,
+                    last_error: None,
+                },
+            },
+            EngineProbe {
+                readiness: EngineReadinessView {
+                    engine_id: "missing".to_string(),
+                    status: EngineStatus::Missing,
+                },
+                observation: EngineObservation {
+                    engine_id: "missing".to_string(),
+                    status: EngineStatus::Missing,
+                    version: None,
+                    checked_at: 1,
+                    last_error: None,
+                },
+            },
+        ];
+
+        assert!(engine_runnable(&inventory, "fake"));
+        assert!(!engine_runnable(&inventory, "missing"));
+        assert!(!engine_runnable(&inventory, "unregistered"));
+        assert_eq!(
+            actual_state(&inventory, Vec::new()).engine_readiness.len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_gives_active_work_a_grace_period() {
+        let stop_requested = CancellationToken::new();
+        let force_cancel = CancellationToken::new();
+        let observed_force = Arc::new(AtomicBool::new(false));
+        let task_force = force_cancel.clone();
+        let task_observed_force = observed_force.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(30)) => Ok(()),
+                _ = task_force.cancelled() => {
+                    task_observed_force.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        });
+        let mut runners = HashMap::from([(
+            "agent-a".to_string(),
+            RunnerHandle {
+                assignment: assignment("agent-a"),
+                stop_requested,
+                force_cancel,
+                task,
+            },
+        )]);
+
+        stop_all_with_grace(&mut runners, Duration::from_millis(200))
+            .await
+            .expect("graceful shutdown");
+
+        assert!(!observed_force.load(Ordering::SeqCst));
+        assert!(runners.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_force_cancels_only_after_the_shared_deadline() {
+        let started = tokio::time::Instant::now();
+        let mut runners = HashMap::new();
+        for id in ["agent-a", "agent-b"] {
+            let stop_requested = CancellationToken::new();
+            let force_cancel = CancellationToken::new();
+            let task_force = force_cancel.clone();
+            let task = tokio::spawn(async move {
+                task_force.cancelled().await;
+                Ok(())
+            });
+            runners.insert(
+                id.to_string(),
+                RunnerHandle {
+                    assignment: assignment(id),
+                    stop_requested,
+                    force_cancel,
+                    task,
+                },
+            );
+        }
+
+        stop_all_with_grace(&mut runners, Duration::from_millis(50))
+            .await
+            .expect("forced runners should still shut down cleanly");
+
+        assert!(started.elapsed() >= Duration::from_millis(50));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert!(runners.is_empty());
     }
 }

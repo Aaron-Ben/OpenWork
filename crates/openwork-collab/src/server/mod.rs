@@ -4,6 +4,7 @@ mod agents;
 mod auth;
 mod board;
 mod climate;
+mod command_requests;
 mod coordination;
 mod db;
 mod desktop_commands;
@@ -54,6 +55,7 @@ pub struct ServerHandle {
     shutdown: CancellationToken,
     failed: CancellationToken,
     pool: PgPool,
+    runtime_session_id: String,
     tasks: Vec<JoinHandle<()>>,
     runtime_addr: SocketAddr,
 }
@@ -159,6 +161,7 @@ impl CollaborationServer {
             shutdown,
             failed,
             pool,
+            runtime_session_id: session.id().to_string(),
             tasks,
             runtime_addr,
         })
@@ -179,6 +182,9 @@ impl ServerHandle {
         for task in self.tasks {
             task.await?;
         }
+        Runs::new(self.pool.clone())
+            .interrupt_session(&self.runtime_session_id)
+            .await?;
         self.pool.close().await;
         Ok(())
     }

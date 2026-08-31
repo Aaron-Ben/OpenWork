@@ -3,12 +3,15 @@
 mod agent;
 mod computer;
 mod desktop;
+mod engine;
 mod error;
 mod events;
+pub mod sse;
 
 pub use agent::*;
 pub use computer::*;
 pub use desktop::*;
+pub use engine::*;
 pub use error::*;
 pub use events::*;
 

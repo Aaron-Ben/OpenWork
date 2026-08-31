@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 #[test]
-fn r3_has_one_local_engine_path_and_separate_server_computer_facades() {
+fn one_local_engine_path_keeps_separate_server_and_computer_facades() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(crate_root.join("Cargo.toml")).unwrap();
     for dependency in [
@@ -27,7 +27,7 @@ fn r3_has_one_local_engine_path_and_separate_server_computer_facades() {
 }
 
 #[test]
-fn r3_has_no_obsolete_identity_transport_or_cli_path() {
+fn product_has_no_retired_identity_transport_or_cli_path() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for removed in [
         "src/launchd.rs",
@@ -51,7 +51,7 @@ fn r3_has_no_obsolete_identity_transport_or_cli_path() {
     ] {
         assert!(
             !source.contains(forbidden),
-            "obsolete R3 source path survived: {forbidden}"
+            "retired collaboration source path survived: {forbidden}"
         );
     }
 
@@ -67,13 +67,13 @@ fn r3_has_no_obsolete_identity_transport_or_cli_path() {
     ] {
         assert!(
             !migrations.contains(forbidden),
-            "obsolete R3 schema survived: {forbidden}"
+            "retired collaboration schema survived: {forbidden}"
         );
     }
 }
 
 #[test]
-fn r1_business_modules_still_own_persistence_without_a_universal_store() {
+fn business_modules_own_persistence_without_a_universal_store() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let server_root = crate_root.join("src/server");
     assert!(!server_root.join("storage.rs").exists());
@@ -85,10 +85,59 @@ fn r1_business_modules_still_own_persistence_without_a_universal_store() {
             "transport/orchestration adapter owns business SQL: {adapter}"
         );
     }
+    let commands = std::fs::read_to_string(server_root.join("agent_commands.rs")).unwrap();
+    for forbidden in ["sqlx::query", "FromRow", "struct MessageRow", "INSERT INTO"] {
+        assert!(
+            !commands.contains(forbidden),
+            "AgentCommands still owns business persistence: {forbidden}"
+        );
+    }
+    for owner in ["command_requests.rs", "messages.rs", "rooms.rs", "runs.rs"] {
+        assert!(
+            server_root.join(owner).exists(),
+            "SQL owner is missing: {owner}"
+        );
+    }
 }
 
 #[test]
-fn r4_keeps_persistent_home_separate_from_runtime_credentials() {
+fn engine_selection_is_server_neutral_and_computer_registry_owned() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let agents = std::fs::read_to_string(crate_root.join("src/server/agents.rs")).unwrap();
+    let inventory = std::fs::read_to_string(crate_root.join("src/server/inventory.rs")).unwrap();
+    let daemon = std::fs::read_to_string(crate_root.join("src/computer/daemon.rs")).unwrap();
+    for source in [&agents, &inventory, &daemon] {
+        assert!(!source.contains("engine_id != \"opencode\""));
+        assert!(!source.contains("EngineId::opencode()"));
+    }
+    assert!(crate_root.join("src/protocol/engine.rs").exists());
+    assert!(daemon.contains("self.engines.adapters()"));
+    assert!(daemon.contains("engine_runnable(inventory, &assignment.engine_id)"));
+}
+
+#[test]
+fn all_sse_consumers_share_the_protocol_reconnect_loop() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_root.parent().unwrap().parent().unwrap();
+    assert!(crate_root.join("src/protocol/sse.rs").exists());
+    assert!(!crate_root.join("src/computer/sse.rs").exists());
+
+    let collab = source_text(&crate_root.join("src"));
+    let desktop_path = workspace_root.join("desktop/src-tauri/src/collab_client.rs");
+    let desktop = std::fs::read_to_string(desktop_path).unwrap();
+    assert!(!desktop.contains("computer::"));
+    assert!(desktop.contains("reconnecting_invalidation_loop"));
+    assert_eq!(
+        collab
+            .matches("async fn reconnecting_invalidation_loop")
+            .count(),
+        1,
+        "SSE reconnect loop must have one implementation"
+    );
+}
+
+#[test]
+fn persistent_home_stays_separate_from_runtime_credentials() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let home = std::fs::read_to_string(crate_root.join("src/computer/home.rs")).unwrap();
     let implementation = home.split("#[cfg(all(test").next().unwrap();
@@ -114,7 +163,7 @@ fn r4_keeps_persistent_home_separate_from_runtime_credentials() {
     ] {
         assert!(
             implementation.contains(required),
-            "R4 home shape is missing: {required}"
+            "Agent home shape is missing: {required}"
         );
     }
     let protocol = source_text(&crate_root.join("src/protocol"));
@@ -124,7 +173,7 @@ fn r4_keeps_persistent_home_separate_from_runtime_credentials() {
 }
 
 #[test]
-fn r5_keeps_agent_commands_typed_and_group_membership_user_owned() {
+fn agent_commands_are_typed_and_group_membership_is_user_owned() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let agent_protocol = std::fs::read_to_string(crate_root.join("src/protocol/agent.rs")).unwrap();
     let shim = std::fs::read_to_string(crate_root.join("src/computer/shim.rs")).unwrap();
@@ -140,7 +189,7 @@ fn r5_keeps_agent_commands_typed_and_group_membership_user_owned() {
     ] {
         assert!(
             agent_protocol.contains(required),
-            "R5 AgentCommand is missing {required}"
+            "AgentCommand is missing {required}"
         );
     }
     for forbidden in ["GroupCreate", "GroupInvite", "GroupLeave", "GroupKick"] {
@@ -160,7 +209,7 @@ fn r5_keeps_agent_commands_typed_and_group_membership_user_owned() {
 }
 
 #[test]
-fn r6_keeps_board_structure_user_owned_and_card_order_server_owned() {
+fn board_structure_is_user_owned_and_card_order_is_server_owned() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let agent_protocol = std::fs::read_to_string(crate_root.join("src/protocol/agent.rs")).unwrap();
     for required in [
@@ -174,7 +223,7 @@ fn r6_keeps_board_structure_user_owned_and_card_order_server_owned() {
     ] {
         assert!(
             agent_protocol.contains(required),
-            "R6 Agent Card surface is missing {required}"
+            "Agent Card surface is missing {required}"
         );
     }
     for forbidden in [
@@ -198,6 +247,60 @@ fn r6_keeps_board_structure_user_owned_and_card_order_server_owned() {
     assert!(migration.contains("is_terminal BOOLEAN NOT NULL"));
     assert!(migration.contains("UNIQUE (board_id, position) DEFERRABLE"));
     assert!(migration.contains("UNIQUE (column_id, position) DEFERRABLE"));
+}
+
+#[test]
+fn owning_docs_and_product_sources_have_no_retired_collaboration_shape() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_root.parent().unwrap().parent().unwrap();
+    let mut current = source_text(&crate_root.join("src"));
+    current.push_str(&source_files(&crate_root.join("migrations"), "sql"));
+    current.push_str(&std::fs::read_to_string(crate_root.join("README.md")).unwrap());
+    for document in [
+        "docs/architecture.md",
+        "docs/collaboration.md",
+        "docs/collaboration-desktop.md",
+        "docs/collaboration-data-model.md",
+    ] {
+        current.push_str(&std::fs::read_to_string(workspace_root.join(document)).unwrap());
+    }
+    let normalized = current.to_ascii_lowercase();
+    for forbidden in [
+        "launchd",
+        "control.sock",
+        "collab_computers",
+        "computer_id",
+        "device_token",
+        "daemon_generation",
+        "system_prompt",
+        "bio",
+        "collab_reactions",
+        "collab_events",
+        "collab_agent_command_requests",
+        "claimed_by",
+        "claimed_at",
+        "is_done",
+        "memory/",
+        "notes/",
+        "skills/",
+        "clirequest { argv }",
+    ] {
+        assert!(
+            !normalized.contains(forbidden),
+            "retired collaboration term survived in product or owning docs: {forbidden}"
+        );
+    }
+    for removed in [
+        "docs/collaboration-r0-baseline.md",
+        "docs/collaboration-target-architecture.md",
+        "crates/openwork-collab/tests/r0_baseline.rs",
+        "crates/openwork-collab/tests/fixtures/r0-baseline.json",
+    ] {
+        assert!(
+            !workspace_root.join(removed).exists(),
+            "temporary collaboration artifact survived: {removed}"
+        );
+    }
 }
 
 fn source_text(root: &Path) -> String {

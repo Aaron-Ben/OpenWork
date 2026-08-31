@@ -123,9 +123,13 @@ impl AgentRunner {
         }
     }
 
-    pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), RunnerError> {
+    pub async fn run(
+        mut self,
+        stop_requested: CancellationToken,
+        force_cancel: CancellationToken,
+    ) -> Result<(), RunnerError> {
         let (rerun_requested_tx, mut rerun_requested_rx) = mpsc::channel(1);
-        let wake_shutdown = shutdown.child_token();
+        let wake_shutdown = stop_requested.child_token();
         let wake_client = self.client.clone();
         let wake_task_shutdown = wake_shutdown.clone();
         let wake_task = tokio::spawn(async move {
@@ -137,15 +141,15 @@ impl AgentRunner {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let result = 'runner: loop {
             let Some(debounce) =
-                next_trigger(&mut rerun_requested_rx, &mut interval, &shutdown).await?
+                next_trigger(&mut rerun_requested_rx, &mut interval, &stop_requested).await?
             else {
                 break 'runner Ok(());
             };
-            if debounce && !debounce_wakes(&mut rerun_requested_rx, &shutdown).await {
+            if debounce && !debounce_wakes(&mut rerun_requested_rx, &stop_requested).await {
                 break 'runner Ok(());
             }
             loop {
-                match self.drive_once(shutdown.clone()).await {
+                match self.drive_once(force_cancel.clone()).await {
                     Ok(()) => {}
                     Err(error) if error.is_fenced() => break 'runner Err(error),
                     Err(error) => tracing::warn!(
@@ -154,7 +158,7 @@ impl AgentRunner {
                         "Agent turn attempt failed; unread inbox remains durable"
                     ),
                 }
-                if shutdown.is_cancelled() {
+                if stop_requested.is_cancelled() {
                     break 'runner Ok(());
                 }
                 if rerun_requested_rx.try_recv().is_err() {
@@ -794,6 +798,18 @@ mod tests {
         );
 
         let trigger = next_trigger(&mut wakes, &mut interval, &shutdown).await;
+
+        assert!(matches!(trigger, Ok(None)));
+    }
+
+    #[tokio::test]
+    async fn stop_request_wins_over_a_ready_poll_tick() {
+        let (_sender, mut wakes) = mpsc::channel(1);
+        let stop_requested = CancellationToken::new();
+        stop_requested.cancel();
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+
+        let trigger = next_trigger(&mut wakes, &mut interval, &stop_requested).await;
 
         assert!(matches!(trigger, Ok(None)));
     }

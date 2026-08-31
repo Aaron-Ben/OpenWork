@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -10,42 +9,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct EngineId(String);
-
-impl EngineId {
-    pub fn new(value: impl Into<String>) -> Result<Self, EngineIdError> {
-        let value = value.into();
-        let valid = !value.is_empty()
-            && value.len() <= 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-            && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase);
-        if !valid {
-            return Err(EngineIdError(value));
-        }
-        Ok(Self(value))
-    }
-
-    pub fn opencode() -> Self {
-        Self("opencode".to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for EngineId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("invalid Engine id {0:?}")]
-pub struct EngineIdError(String);
+pub use crate::protocol::{EngineId, EngineIdError};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -163,6 +127,12 @@ impl EngineRegistry {
             .ok_or_else(|| EngineError::NotRegistered {
                 engine_id: id.clone(),
             })
+    }
+
+    pub fn adapters(&self) -> Vec<Arc<dyn EngineAdapter>> {
+        let mut adapters = self.adapters.values().cloned().collect::<Vec<_>>();
+        adapters.sort_by_key(|adapter| adapter.id());
+        adapters
     }
 }
 

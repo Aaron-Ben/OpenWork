@@ -7,6 +7,7 @@ mod event_bridge;
 use openwork_core::{OpenWorkCore, OpenWorkCoreConfig};
 use tauri::Manager;
 
+pub use collab_client::{CollabClientError, CollabDaemonClient};
 pub use error::{CommandError, CommandErrorCode};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

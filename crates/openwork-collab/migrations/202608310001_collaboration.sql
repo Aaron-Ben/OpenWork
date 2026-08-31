@@ -1,4 +1,4 @@
--- R3 is the single approved Collaboration schema reset. Existing collab_*
+-- Collaboration owns one self-contained schema. Existing collab_*
 -- business tables are discarded as one namespace; no legacy schema is
 -- migrated or retained behind compatibility columns.
 DO $$

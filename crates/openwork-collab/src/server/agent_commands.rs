@@ -1,11 +1,8 @@
-use std::fmt::Write as _;
-
-use sha2::{Digest, Sha256};
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::protocol::{
     AgentCommand, AgentCommandEffect, AgentCommandRequest, AgentCommandResponse,
-    AgentCommandResult, MessageView, ParticipantView, entity_id,
+    AgentCommandResult, MessageView,
 };
 
 use super::{
@@ -13,9 +10,11 @@ use super::{
     auth::{AgentClaims, authorize_agent_transaction},
     board::{Board, BoardOperationError},
     climate::{Climate, ClimateOperationError},
+    command_requests::CommandRequests,
     coordination::{Coordination, HeldBinding},
     messages::Messages,
     rooms::{Rooms, get_or_create_direct_room},
+    runs::Runs,
 };
 
 #[derive(Clone)]
@@ -34,14 +33,14 @@ impl AgentCommands {
         claims: &AgentClaims,
         request: AgentCommandRequest,
     ) -> Result<AgentCommandResponse, sqlx::Error> {
-        if !valid_request_id(&request.request_id) {
+        if !CommandRequests::valid_id(&request.request_id) {
             return Ok(error("INVALID_ARGUMENT", "invalid request id"));
         }
         let mut transaction = self.pool.begin().await?;
         authorize_agent_transaction(&mut transaction, claims).await?;
         let mutating = request.command.is_mutating();
         let run_id = if request.command.requires_active_run() {
-            let Some(run_id) = active_run(&mut transaction, claims).await? else {
+            let Some(run_id) = Runs::active_in(&mut transaction, claims).await? else {
                 return Ok(error("UNAUTHENTICATED", "no active Run for this Agent"));
             };
             Some(run_id)
@@ -52,10 +51,10 @@ impl AgentCommands {
             let run_id = run_id
                 .as_deref()
                 .expect("every mutating AgentCommand requires an active Run");
-            let semantic_hash = digest(
+            let semantic_hash = CommandRequests::semantic_hash(
                 &serde_json::to_vec(&request.command).expect("AgentCommand is serializable"),
             );
-            if let Some(result) = reserve_request(
+            if let Some(result) = CommandRequests::reserve_in(
                 &mut transaction,
                 run_id,
                 claims,
@@ -71,12 +70,16 @@ impl AgentCommands {
 
         let response = match request.command {
             AgentCommand::Inbox => {
-                current_inbox(
+                let (carried_over, messages) = Runs::inbox_in(
                     &mut transaction,
                     run_id.as_deref().expect("Inbox requires an active Run"),
                     claims,
                 )
-                .await?
+                .await?;
+                success(AgentCommandResult::Inbox {
+                    carried_over,
+                    messages,
+                })
             }
             AgentCommand::Rooms => success(AgentCommandResult::Rooms {
                 rooms: Rooms::list_for_agent_in(&mut transaction, &claims.sub).await?,
@@ -124,12 +127,22 @@ impl AgentCommands {
                 .await?
             }
             AgentCommand::Ack { room_id } => {
-                ack(
+                let up_to_seq = Runs::acknowledge_in(
                     &mut transaction,
                     run_id.as_deref().expect("Ack requires an active Run"),
                     &room_id,
                 )
-                .await?
+                .await?;
+                match up_to_seq {
+                    Some(up_to_seq) => AgentCommandResponse {
+                        result: AgentCommandResult::Acknowledged {
+                            room_id: room_id.clone(),
+                            up_to_seq,
+                        },
+                        effects: vec![AgentCommandEffect::InboxAcknowledged { room_id, up_to_seq }],
+                    },
+                    None => error("NOT_FOUND", "Room is not in the active Run"),
+                }
             }
             AgentCommand::DirectMessage {
                 participant_id,
@@ -297,7 +310,7 @@ impl AgentCommands {
             }
         };
         if mutating {
-            save_result(
+            CommandRequests::save_in(
                 &mut transaction,
                 run_id
                     .as_deref()
@@ -318,55 +331,14 @@ impl AgentCommands {
         claims: &AgentClaims,
         room_id: &str,
     ) -> Result<AgentCommandResponse, sqlx::Error> {
-        let compose_anchor: Option<i64> = sqlx::query_scalar(
-            "SELECT COALESCE(delivery.up_to_seq, run.agenda_anchor_seq)
-             FROM collab_runs run
-             LEFT JOIN collab_run_deliveries delivery
-               ON delivery.run_id = run.id AND delivery.room_id = $2
-             JOIN collab_room_members member
-               ON member.room_id = COALESCE(delivery.room_id, run.room_id)
-              AND member.participant_id = $3
-             WHERE run.id = $1 AND COALESCE(delivery.room_id, run.room_id) = $2
-               AND run.status = 'running'
-               AND (delivery.room_id IS NOT NULL OR run.trigger = 'agenda')",
-        )
-        .bind(run_id)
-        .bind(room_id)
-        .bind(&claims.sub)
-        .fetch_optional(&mut **transaction)
-        .await?;
+        let compose_anchor =
+            Runs::glance_anchor_in(transaction, run_id, room_id, &claims.sub).await?;
         let Some(compose_anchor) = compose_anchor else {
             return Ok(error("NOT_FOUND", "Room is not in the active Run"));
         };
-        let messages = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body FROM (
-                SELECT id, room_id, sequence, author_id, body
-                FROM collab_messages
-                WHERE room_id = $1 AND sequence > $2 AND author_id <> $3
-                ORDER BY sequence DESC LIMIT 50
-             ) recent ORDER BY sequence",
-        )
-        .bind(room_id)
-        .bind(compose_anchor)
-        .bind(&claims.sub)
-        .fetch_all(&mut **transaction)
-        .await?
-        .into_iter()
-        .map(MessageView::from)
-        .collect::<Vec<_>>();
-        let members = sqlx::query_as::<_, ParticipantRow>(
-            "SELECT participant.id, participant.kind, participant.display_name
-             FROM collab_room_members member
-             JOIN collab_participants participant ON participant.id = member.participant_id
-             WHERE member.room_id = $1
-             ORDER BY participant.kind, participant.display_name, participant.id",
-        )
-        .bind(room_id)
-        .fetch_all(&mut **transaction)
-        .await?
-        .into_iter()
-        .map(ParticipantView::from)
-        .collect::<Vec<_>>();
+        let messages =
+            Messages::glance_in(transaction, room_id, compose_anchor, &claims.sub).await?;
+        let members = Rooms::list_members_for_agent_in(transaction, &claims.sub, room_id).await?;
         if let Some(peer_max) = messages.last().map(|message| message.sequence)
             && let Err(error) = self
                 .coordination
@@ -392,34 +364,13 @@ impl AgentCommands {
         body: &str,
         held_token: Option<&str>,
     ) -> Result<AgentCommandResponse, sqlx::Error> {
-        if !valid_message_body(body) {
+        if !Messages::valid_body(body) {
             return Ok(error("INVALID_ARGUMENT", "message body is invalid"));
         }
-        let row: Option<(i64, String)> = sqlx::query_as(
-            "SELECT COALESCE(delivery.up_to_seq, run.agenda_anchor_seq), room.kind
-             FROM collab_runs run
-             LEFT JOIN collab_run_deliveries delivery
-               ON delivery.run_id = run.id AND delivery.room_id = $2
-             JOIN collab_rooms room ON room.id = COALESCE(delivery.room_id, run.room_id)
-             JOIN collab_room_members own
-               ON own.room_id = room.id AND own.participant_id = $3
-             WHERE run.id = $1 AND room.id = $2 AND run.status = 'running'
-               AND (delivery.room_id IS NOT NULL OR run.trigger = 'agenda')
-             FOR UPDATE OF room",
-        )
-        .bind(run_id)
-        .bind(room_id)
-        .bind(&claims.sub)
-        .fetch_optional(&mut **transaction)
-        .await?;
-        let Some((snapshot_anchor, room_kind)) = row else {
+        let context = Runs::reply_context_in(transaction, run_id, room_id, &claims.sub).await?;
+        let Some((snapshot_anchor, room_kind, member_count)) = context else {
             return Ok(error("NOT_FOUND", "Room is not in the active Run"));
         };
-        let member_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM collab_room_members WHERE room_id = $1")
-                .bind(room_id)
-                .fetch_one(&mut **transaction)
-                .await?;
         if room_kind == "direct" && held_token.is_some() {
             return Ok(error(
                 "INVALID_ARGUMENT",
@@ -451,8 +402,13 @@ impl AgentCommands {
                     {
                         return Ok(error("HELD", "retry token does not match this Run"));
                     }
-                    if let Some(peer_max) =
-                        peer_max(transaction, room_id, &claims.sub, binding.shown_peer_max).await?
+                    if let Some(peer_max) = Messages::peer_max_in(
+                        transaction,
+                        room_id,
+                        &claims.sub,
+                        binding.shown_peer_max,
+                    )
+                    .await?
                     {
                         return self
                             .hold_reply(
@@ -477,7 +433,8 @@ impl AgentCommands {
                         }
                     };
                     if let Some(peer_max) =
-                        peer_max(transaction, room_id, &claims.sub, seen_baseline).await?
+                        Messages::peer_max_in(transaction, room_id, &claims.sub, seen_baseline)
+                            .await?
                     {
                         return self
                             .hold_reply(
@@ -493,8 +450,8 @@ impl AgentCommands {
                 }
             }
         }
-        let message = insert_message(transaction, room_id, &claims.sub, "normal", body).await?;
-        mark_delivery_action(transaction, run_id, room_id).await?;
+        let message = Messages::insert_agent_in(transaction, room_id, &claims.sub, body).await?;
+        Runs::mark_delivery_action_in(transaction, run_id, room_id).await?;
         Ok(AgentCommandResponse {
             result: AgentCommandResult::MessagePublished {
                 message: message.clone(),
@@ -512,22 +469,9 @@ impl AgentCommands {
         seen_baseline: i64,
         peer_max: i64,
     ) -> Result<AgentCommandResponse, sqlx::Error> {
-        let messages = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body
-             FROM collab_messages
-             WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
-               AND author_id <> $4
-             ORDER BY sequence LIMIT 50",
-        )
-        .bind(room_id)
-        .bind(seen_baseline)
-        .bind(peer_max)
-        .bind(&claims.sub)
-        .fetch_all(&mut **transaction)
-        .await?
-        .into_iter()
-        .map(MessageView::from)
-        .collect::<Vec<_>>();
+        let messages =
+            Messages::between_in(transaction, room_id, seen_baseline, peer_max, &claims.sub)
+                .await?;
         let shown_peer_max = messages
             .last()
             .map(|message| message.sequence)
@@ -564,97 +508,6 @@ impl AgentCommands {
     }
 }
 
-async fn active_run(
-    transaction: &mut Transaction<'_, Postgres>,
-    claims: &AgentClaims,
-) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT run.id
-         FROM collab_runs run
-         JOIN collab_agent_profiles profile ON profile.agent_id = run.agent_id
-         WHERE run.agent_id = $1 AND run.runtime_session_id = $2
-           AND run.status = 'running' AND profile.archived_at IS NULL
-         FOR UPDATE OF run",
-    )
-    .bind(&claims.sub)
-    .bind(&claims.runtime_session_id)
-    .fetch_optional(&mut **transaction)
-    .await
-}
-
-async fn current_inbox(
-    transaction: &mut Transaction<'_, Postgres>,
-    run_id: &str,
-    claims: &AgentClaims,
-) -> Result<AgentCommandResponse, sqlx::Error> {
-    let carried_over: bool = sqlx::query_scalar(
-        "SELECT inbox_carried_over FROM collab_runs
-         WHERE id = $1 AND agent_id = $2 AND runtime_session_id = $3
-           AND status = 'running'",
-    )
-    .bind(run_id)
-    .bind(&claims.sub)
-    .bind(&claims.runtime_session_id)
-    .fetch_one(&mut **transaction)
-    .await?;
-    let messages = sqlx::query_as::<_, MessageRow>(
-        "SELECT message.id, message.room_id, message.sequence,
-                message.author_id, message.body
-         FROM collab_run_deliveries delivery
-         JOIN collab_runs run ON run.id = delivery.run_id
-         JOIN collab_messages message ON message.room_id = delivery.room_id
-           AND message.sequence BETWEEN delivery.from_seq AND delivery.up_to_seq
-         WHERE delivery.run_id = $1 AND run.agent_id = $2
-           AND run.runtime_session_id = $3 AND run.status = 'running'
-           AND message.author_id <> $2
-         ORDER BY delivery.room_id, message.sequence",
-    )
-    .bind(run_id)
-    .bind(&claims.sub)
-    .bind(&claims.runtime_session_id)
-    .fetch_all(&mut **transaction)
-    .await?
-    .into_iter()
-    .map(MessageView::from)
-    .collect();
-    Ok(success(AgentCommandResult::Inbox {
-        carried_over,
-        messages,
-    }))
-}
-
-async fn ack(
-    transaction: &mut Transaction<'_, Postgres>,
-    run_id: &str,
-    room_id: &str,
-) -> Result<AgentCommandResponse, sqlx::Error> {
-    let up_to_seq: Option<i64> = sqlx::query_scalar(
-        "UPDATE collab_run_deliveries
-         SET eligible_reason = CASE WHEN eligible_reason = 'action' THEN 'action' ELSE 'ack' END,
-             eligible_at = COALESCE(
-                 eligible_at, CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-             )
-         WHERE run_id = $1 AND room_id = $2 RETURNING up_to_seq",
-    )
-    .bind(run_id)
-    .bind(room_id)
-    .fetch_optional(&mut **transaction)
-    .await?;
-    let Some(up_to_seq) = up_to_seq else {
-        return Ok(error("NOT_FOUND", "Room is not in the active Run"));
-    };
-    Ok(AgentCommandResponse {
-        result: AgentCommandResult::Acknowledged {
-            room_id: room_id.to_string(),
-            up_to_seq,
-        },
-        effects: vec![AgentCommandEffect::InboxAcknowledged {
-            room_id: room_id.to_string(),
-            up_to_seq,
-        }],
-    })
-}
-
 async fn direct_message(
     transaction: &mut Transaction<'_, Postgres>,
     run_id: &str,
@@ -665,20 +518,10 @@ async fn direct_message(
     if participant_id == claims.sub {
         return Ok(error("INVALID_ARGUMENT", "cannot DM yourself"));
     }
-    if !valid_message_body(body) {
+    if !Messages::valid_body(body) {
         return Ok(error("INVALID_ARGUMENT", "message body is invalid"));
     }
-    let participant_active: bool = sqlx::query_scalar(
-        "SELECT EXISTS(
-            SELECT 1 FROM collab_participants participant
-            LEFT JOIN collab_agent_profiles profile ON profile.agent_id = participant.id
-            WHERE participant.id = $1
-              AND (participant.kind = 'user' OR profile.archived_at IS NULL)
-         )",
-    )
-    .bind(participant_id)
-    .fetch_one(&mut **transaction)
-    .await?;
+    let participant_active = Agents::is_active_participant_in(transaction, participant_id).await?;
     if !participant_active {
         return Ok(error(
             "NOT_FOUND",
@@ -687,8 +530,8 @@ async fn direct_message(
     }
     let (room_id, _) =
         get_or_create_direct_room(transaction, &claims.sub, participant_id, &claims.sub).await?;
-    let message = insert_message(transaction, &room_id, &claims.sub, "normal", body).await?;
-    mark_delivery_action(transaction, run_id, &room_id).await?;
+    let message = Messages::insert_agent_in(transaction, &room_id, &claims.sub, body).await?;
+    Runs::mark_delivery_action_in(transaction, run_id, &room_id).await?;
     Ok(AgentCommandResponse {
         result: AgentCommandResult::DirectMessageSent {
             room_id: room_id.clone(),
@@ -702,173 +545,6 @@ async fn direct_message(
             message_effect(&message),
         ],
     })
-}
-
-async fn insert_message(
-    transaction: &mut Transaction<'_, Postgres>,
-    room_id: &str,
-    author_id: &str,
-    kind: &str,
-    body: &str,
-) -> Result<MessageView, sqlx::Error> {
-    let sequence: i64 = sqlx::query_scalar(
-        "UPDATE collab_rooms
-         SET next_seq = next_seq + 1,
-             last_message_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
-             updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-         WHERE id = $1 RETURNING next_seq",
-    )
-    .bind(room_id)
-    .fetch_one(&mut **transaction)
-    .await?;
-    let id = entity_id("msg");
-    sqlx::query(
-        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
-         VALUES ($1, $2, $3, $4, $5, $6)",
-    )
-    .bind(&id)
-    .bind(room_id)
-    .bind(sequence)
-    .bind(author_id)
-    .bind(kind)
-    .bind(body)
-    .execute(&mut **transaction)
-    .await?;
-    Ok(MessageView {
-        id,
-        room_id: room_id.to_string(),
-        sequence,
-        author_id: author_id.to_string(),
-        body: body.to_string(),
-    })
-}
-
-async fn mark_delivery_action(
-    transaction: &mut Transaction<'_, Postgres>,
-    run_id: &str,
-    room_id: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE collab_run_deliveries
-         SET eligible_reason = 'action',
-             eligible_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-         WHERE run_id = $1 AND room_id = $2",
-    )
-    .bind(run_id)
-    .bind(room_id)
-    .execute(&mut **transaction)
-    .await?;
-    Ok(())
-}
-
-async fn peer_max(
-    transaction: &mut Transaction<'_, Postgres>,
-    room_id: &str,
-    agent_id: &str,
-    seen_baseline: i64,
-) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT MAX(sequence) FROM collab_messages
-         WHERE room_id = $1 AND sequence > $2 AND author_id <> $3",
-    )
-    .bind(room_id)
-    .bind(seen_baseline)
-    .bind(agent_id)
-    .fetch_one(&mut **transaction)
-    .await
-}
-
-async fn reserve_request(
-    transaction: &mut Transaction<'_, Postgres>,
-    run_id: &str,
-    claims: &AgentClaims,
-    request_id: &str,
-    semantic_hash: &str,
-) -> Result<Option<AgentCommandResponse>, sqlx::Error> {
-    let inserted: Option<String> = sqlx::query_scalar(
-        "INSERT INTO collab_command_requests (
-            id, runtime_session_id, run_id, request_id, actor_id, semantic_hash
-         ) VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT DO NOTHING RETURNING id",
-    )
-    .bind(entity_id("cmd"))
-    .bind(&claims.runtime_session_id)
-    .bind(run_id)
-    .bind(request_id)
-    .bind(&claims.sub)
-    .bind(semantic_hash)
-    .fetch_optional(&mut **transaction)
-    .await?;
-    if inserted.is_some() {
-        return Ok(None);
-    }
-    let existing: Option<(String, Option<serde_json::Value>)> = sqlx::query_as(
-        "SELECT semantic_hash, result FROM collab_command_requests
-         WHERE run_id = $1 AND request_id = $2 FOR UPDATE",
-    )
-    .bind(run_id)
-    .bind(request_id)
-    .fetch_optional(&mut **transaction)
-    .await?;
-    let Some((existing_hash, result)) = existing else {
-        return Err(sqlx::Error::Protocol(
-            "CONFLICT: command request collision".to_string(),
-        ));
-    };
-    if existing_hash != semantic_hash {
-        return Ok(Some(error(
-            "CONFLICT",
-            "request id was already used for a different command",
-        )));
-    }
-    let Some(result) = result else {
-        return Ok(Some(error("CONFLICT", "command request is still running")));
-    };
-    serde_json::from_value(result)
-        .map(Some)
-        .map_err(|error| sqlx::Error::Protocol(format!("invalid stored command result: {error}")))
-}
-
-async fn save_result(
-    transaction: &mut Transaction<'_, Postgres>,
-    run_id: &str,
-    request_id: &str,
-    result: &AgentCommandResponse,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE collab_command_requests SET result = $3
-         WHERE run_id = $1 AND request_id = $2",
-    )
-    .bind(run_id)
-    .bind(request_id)
-    .bind(serde_json::to_value(result).expect("AgentCommandResponse is serializable"))
-    .execute(&mut **transaction)
-    .await?;
-    Ok(())
-}
-
-fn valid_request_id(request_id: &str) -> bool {
-    request_id.len() == 36
-        && request_id.starts_with("req-")
-        && request_id[4..]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-}
-
-fn valid_message_body(body: &str) -> bool {
-    !body.trim().is_empty()
-        && body.len() <= crate::protocol::MESSAGE_BODY_MAX_BYTES
-        && !body.as_bytes().contains(&0)
-}
-
-fn digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(7 + digest.len() * 2);
-    encoded.push_str("sha256:");
-    for byte in digest {
-        let _ = write!(encoded, "{byte:02x}");
-    }
-    encoded
 }
 
 fn success(result: AgentCommandResult) -> AgentCommandResponse {
@@ -890,44 +566,6 @@ fn message_effect(message: &MessageView) -> AgentCommandEffect {
         room_id: message.room_id.clone(),
         message_id: message.id.clone(),
         sequence: message.sequence,
-    }
-}
-
-#[derive(FromRow)]
-struct MessageRow {
-    id: String,
-    room_id: String,
-    sequence: i64,
-    author_id: String,
-    body: String,
-}
-
-impl From<MessageRow> for MessageView {
-    fn from(row: MessageRow) -> Self {
-        Self {
-            id: row.id,
-            room_id: row.room_id,
-            sequence: row.sequence,
-            author_id: row.author_id,
-            body: row.body,
-        }
-    }
-}
-
-#[derive(FromRow)]
-struct ParticipantRow {
-    id: String,
-    kind: String,
-    display_name: String,
-}
-
-impl From<ParticipantRow> for ParticipantView {
-    fn from(row: ParticipantRow) -> Self {
-        Self {
-            id: row.id,
-            kind: row.kind,
-            display_name: row.display_name,
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 use std::{
     sync::{Arc, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use tokio::sync::mpsc;
@@ -9,10 +9,9 @@ use tokio_util::sync::CancellationToken;
 use crate::protocol::{
     AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentTokenResponse,
     ComputerHeartbeatRequest, DesiredAgents, EngineInventoryReport, FinishRunRequest,
-    InboxResponse, InvalidationEvent, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
+    InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
+    sse::reconnecting_invalidation_loop,
 };
-
-use super::sse::{SseDecoder, SseParseError};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -113,13 +112,17 @@ impl ComputerClient {
         invalidations: mpsc::Sender<()>,
         shutdown: CancellationToken,
     ) {
-        reconnecting_sse_loop(
+        let credential = SseCredential::Static(self.computer_secret.clone());
+        reconnecting_invalidation_loop(
             self.http.clone(),
             format!("{}/computer/events", self.base_url),
-            SseCredential::Static(self.computer_secret.clone()),
+            move || credential.current(),
             "management",
-            invalidations,
             shutdown,
+            move |_| {
+                request_rerun(&invalidations);
+                !invalidations.is_closed()
+            },
         )
         .await;
     }
@@ -226,13 +229,17 @@ impl AgentClient {
     }
 
     pub async fn wake_loop(&self, rerun_requested: mpsc::Sender<()>, shutdown: CancellationToken) {
-        reconnecting_sse_loop(
+        let credential = SseCredential::Refreshing(self.token.clone());
+        reconnecting_invalidation_loop(
             self.http.clone(),
             format!("{}/agent/events", self.base_url),
-            SseCredential::Refreshing(self.token.clone()),
+            move || credential.current(),
             "agent",
-            rerun_requested,
             shutdown,
+            move |_| {
+                request_rerun(&rerun_requested);
+                !rerun_requested.is_closed()
+            },
         )
         .await;
     }
@@ -295,79 +302,6 @@ impl AgentClient {
     }
 }
 
-async fn reconnecting_sse_loop(
-    http: reqwest::Client,
-    url: String,
-    credential: SseCredential,
-    event_name: &'static str,
-    invalidations: mpsc::Sender<()>,
-    shutdown: CancellationToken,
-) {
-    let mut backoff = Duration::from_secs(1);
-    loop {
-        if shutdown.is_cancelled() || invalidations.is_closed() {
-            return;
-        }
-        let connected_at = Instant::now();
-        if let Err(error) = sse_once(
-            &http,
-            &url,
-            &credential.current(),
-            event_name,
-            &invalidations,
-            &shutdown,
-        )
-        .await
-        {
-            tracing::warn!(%error, %event_name, "Collaboration SSE disconnected");
-        }
-        if shutdown.is_cancelled() || invalidations.is_closed() {
-            return;
-        }
-        if connected_at.elapsed() >= Duration::from_secs(60) {
-            backoff = Duration::from_secs(1);
-        }
-        tokio::select! {
-            _ = shutdown.cancelled() => return,
-            _ = tokio::time::sleep(backoff) => {}
-        }
-        backoff = (backoff * 2).min(Duration::from_secs(30));
-    }
-}
-
-async fn sse_once(
-    http: &reqwest::Client,
-    url: &str,
-    token: &str,
-    event_name: &str,
-    invalidations: &mpsc::Sender<()>,
-    shutdown: &CancellationToken,
-) -> Result<(), RuntimeClientError> {
-    let mut response = http
-        .get(url)
-        .bearer_auth(token)
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut decoder = SseDecoder::default();
-    loop {
-        let chunk = tokio::select! {
-            _ = shutdown.cancelled() => return Ok(()),
-            chunk = response.chunk() => chunk?,
-        };
-        let Some(chunk) = chunk else {
-            return Ok(());
-        };
-        for event in decoder.push(&chunk)? {
-            if event.event.as_deref() != Some(event_name) {
-                continue;
-            }
-            serde_json::from_str::<InvalidationEvent>(&event.data)?;
-            request_rerun(invalidations);
-        }
-    }
-}
-
 fn request_rerun(invalidations: &mpsc::Sender<()>) {
     let _ = invalidations.try_send(());
 }
@@ -384,10 +318,6 @@ fn retryable_finish_error(error: &reqwest::Error) -> bool {
 pub enum RuntimeClientError {
     #[error("Collaboration Runtime request failed: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("Collaboration SSE was invalid: {0}")]
-    Sse(#[from] SseParseError),
-    #[error("Collaboration payload was invalid: {0}")]
-    Json(#[from] serde_json::Error),
     #[error("Server returned a different RuntimeSession")]
     SessionMismatch,
 }
@@ -400,7 +330,6 @@ impl RuntimeClientError {
                 error.status(),
                 Some(reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::CONFLICT)
             ),
-            Self::Sse(_) | Self::Json(_) => false,
         }
     }
 
@@ -411,16 +340,29 @@ impl RuntimeClientError {
                     || status == reqwest::StatusCode::REQUEST_TIMEOUT
                     || status == reqwest::StatusCode::TOO_MANY_REQUESTS
             }),
-            Self::Sse(_) | Self::Json(_) | Self::SessionMismatch => false,
+            Self::SessionMismatch => false,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, RwLock};
+    use std::sync::{
+        Arc, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    };
 
+    use axum::{
+        Router,
+        body::Body,
+        extract::State,
+        http::{Response, header},
+        routing::get,
+    };
     use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::protocol::sse::reconnecting_invalidation_loop;
 
     use super::{SseCredential, request_rerun};
 
@@ -443,5 +385,89 @@ mod tests {
 
         assert_eq!(receiver.recv().await, Some(()));
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn management_and_agent_sse_reconnect_independently_after_disconnects() {
+        #[derive(Clone, Default)]
+        struct Requests {
+            management: Arc<AtomicUsize>,
+            agent: Arc<AtomicUsize>,
+        }
+
+        async fn finite_event(
+            State(counter): State<Arc<AtomicUsize>>,
+            event_name: &'static str,
+        ) -> Response<Body> {
+            let sequence = counter.fetch_add(1, Ordering::SeqCst) + 1;
+            let body = format!(
+                "event: {event_name}\ndata: {{\"id\":\"event-{sequence}\",\"kind\":\"message\",\"subjectId\":null,\"revision\":null,\"publishedAt\":1}}\n\n"
+            );
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from(body))
+                .unwrap()
+        }
+
+        async fn management(State(requests): State<Requests>) -> Response<Body> {
+            finite_event(State(requests.management), "management").await
+        }
+
+        async fn agent(State(requests): State<Requests>) -> Response<Body> {
+            finite_event(State(requests.agent), "agent").await
+        }
+
+        let requests = Requests::default();
+        let app = Router::new()
+            .route("/management", get(management))
+            .route("/agent", get(agent))
+            .with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let shutdown = CancellationToken::new();
+        let (management_tx, mut management_rx) = mpsc::channel(4);
+        let (agent_tx, mut agent_rx) = mpsc::channel(4);
+        let management_shutdown = shutdown.clone();
+        let agent_shutdown = shutdown.clone();
+        let management_loop = tokio::spawn(reconnecting_invalidation_loop(
+            reqwest::Client::new(),
+            format!("http://{address}/management"),
+            || "management-secret".to_string(),
+            "management",
+            management_shutdown,
+            move |_| {
+                request_rerun(&management_tx);
+                !management_tx.is_closed()
+            },
+        ));
+        let agent_loop = tokio::spawn(reconnecting_invalidation_loop(
+            reqwest::Client::new(),
+            format!("http://{address}/agent"),
+            || "agent-token".to_string(),
+            "agent",
+            agent_shutdown,
+            move |_| {
+                request_rerun(&agent_tx);
+                !agent_tx.is_closed()
+            },
+        ));
+
+        tokio::time::timeout(std::time::Duration::from_secs(4), async {
+            assert_eq!(management_rx.recv().await, Some(()));
+            assert_eq!(agent_rx.recv().await, Some(()));
+            assert_eq!(management_rx.recv().await, Some(()));
+            assert_eq!(agent_rx.recv().await, Some(()));
+        })
+        .await
+        .expect("SSE clients did not reconnect after finite responses closed");
+
+        assert!(requests.management.load(Ordering::SeqCst) >= 2);
+        assert!(requests.agent.load(Ordering::SeqCst) >= 2);
+        shutdown.cancel();
+        management_loop.await.unwrap();
+        agent_loop.await.unwrap();
+        server.abort();
+        let _ = server.await;
     }
 }

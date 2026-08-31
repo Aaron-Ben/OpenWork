@@ -36,5 +36,9 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 
 [dev-dependencies]
+axum = "0.8"
+redis.workspace = true
+sqlx.workspace = true
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
+uuid.workspace = true

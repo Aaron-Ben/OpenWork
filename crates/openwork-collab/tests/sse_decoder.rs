@@ -1,4 +1,4 @@
-use openwork_collab::computer::sse::SseDecoder;
+use openwork_collab::protocol::sse::SseDecoder;
 
 #[test]
 fn decoder_reassembles_fragmented_utf8_and_multiple_sse_events() {

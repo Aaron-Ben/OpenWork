@@ -4,7 +4,8 @@ use openwork_collab::{
     protocol::{
         AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
         AgentTokenResponse, BoardView, DesiredAgents, DesktopCommand, DesktopCommandRequest,
-        DesktopCommandResult, FinishRunRequest, InboxResponse, OpenRunRequest, RunView, request_id,
+        DesktopCommandResult, FinishRunRequest, InboxResponse, OpenRunRequest, RunView, entity_id,
+        request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -37,7 +38,7 @@ impl Fixture {
         let redis_url = std::env::var("TEST_REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6379/15".to_string());
         let admin = PgPool::connect(&base).await.unwrap();
-        let database = format!("collab_r3_{}", Uuid::new_v4().simple());
+        let database = format!("collab_protocol_{}", Uuid::new_v4().simple());
         admin
             .execute(format!("CREATE DATABASE {database}").as_str())
             .await
@@ -117,7 +118,7 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn r3_scopes_credentials_runs_typed_commands_and_rejects_old_sessions() {
+async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions() {
     let Some(fixture) = Fixture::start().await else {
         return;
     };
@@ -128,7 +129,7 @@ async fn r3_scopes_credentials_runs_typed_commands_and_rejects_old_sessions() {
             display_name: "Équipe Démo".to_string(),
             role: Some("Researcher".to_string()),
             persona: "Investigate carefully.".to_string(),
-            engine_id: "opencode".to_string(),
+            engine_id: "codex".to_string(),
             main_model_id: "local/main".to_string(),
             triage_model_id: "local/triage".to_string(),
         },
@@ -219,6 +220,7 @@ async fn r3_scopes_credentials_runs_typed_commands_and_rejects_old_sessions() {
         .unwrap();
     assert_eq!(desired.runtime_session_id, fixture.runtime_session_id);
     assert_eq!(desired.agents.len(), 1);
+    assert_eq!(desired.agents[0].engine_id, "codex");
     assert_eq!(desired.agents[0].main_model_id, "local/main");
 
     let room = fixture
@@ -452,12 +454,35 @@ async fn r3_scopes_credentials_runs_typed_commands_and_rejects_old_sessions() {
         .error_for_status()
         .unwrap();
 
+    let shutdown_run_id = entity_id("run");
+    sqlx::query(
+        "INSERT INTO collab_runs (
+            id, agent_id, runtime_session_id, trigger, status, engine_id,
+            main_model_id, triage_model_id, runtime_config_snapshot
+         ) VALUES ($1, $2, $3, 'poll', 'running', 'codex',
+                   'test/main', 'test/triage', '{}'::jsonb)",
+    )
+    .bind(&shutdown_run_id)
+    .bind(&agent.id)
+    .bind(&fixture.runtime_session_id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+
     let database_url = fixture.database_url.clone();
     let redis_url = fixture.redis_url.clone();
     let old_token = token.token;
     let desktop_secret = fixture.desktop_secret.clone();
     let computer_secret = fixture.computer_secret.clone();
     fixture.server.shutdown().await.unwrap();
+    let (status, error_code): (String, Option<String>) =
+        sqlx::query_as("SELECT status, error_code FROM collab_runs WHERE id = $1")
+            .bind(&shutdown_run_id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "interrupted");
+    assert_eq!(error_code.as_deref(), Some("RUNTIME_SESSION_STOPPED"));
 
     let replacement_credentials = RuntimeCredentials::generate();
     assert_ne!(

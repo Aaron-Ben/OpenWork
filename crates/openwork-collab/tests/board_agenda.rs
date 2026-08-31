@@ -35,7 +35,7 @@ impl Fixture {
         let redis_url = std::env::var("TEST_REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6379/15".to_string());
         let admin = PgPool::connect(&base).await.unwrap();
-        let database = format!("collab_r6_{}", Uuid::new_v4().simple());
+        let database = format!("collab_board_agenda_{}", Uuid::new_v4().simple());
         admin
             .execute(format!("CREATE DATABASE {database}").as_str())
             .await

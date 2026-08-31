@@ -20,10 +20,7 @@ impl Messages {
         room_id: &str,
         body: &str,
     ) -> Result<MessageView, sqlx::Error> {
-        if body.trim().is_empty()
-            || body.len() > crate::protocol::MESSAGE_BODY_MAX_BYTES
-            || body.as_bytes().contains(&0)
-        {
+        if !Self::valid_body(body) {
             return Err(sqlx::Error::Protocol(
                 "INVALID_ARGUMENT: message body is invalid".to_string(),
             ));
@@ -35,7 +32,7 @@ impl Messages {
             "local-user",
             "normal",
             body,
-            Some(&message_id),
+            &message_id,
         )
         .await?;
         Ok(MessageView {
@@ -45,6 +42,91 @@ impl Messages {
             author_id: "local-user".to_string(),
             body: body.to_string(),
         })
+    }
+
+    pub(crate) fn valid_body(body: &str) -> bool {
+        !body.trim().is_empty()
+            && body.len() <= crate::protocol::MESSAGE_BODY_MAX_BYTES
+            && !body.as_bytes().contains(&0)
+    }
+
+    pub(crate) async fn insert_agent_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        author_id: &str,
+        body: &str,
+    ) -> Result<MessageView, sqlx::Error> {
+        let id = entity_id("msg");
+        let sequence = insert(transaction, room_id, author_id, "normal", body, &id).await?;
+        Ok(MessageView {
+            id,
+            room_id: room_id.to_string(),
+            sequence,
+            author_id: author_id.to_string(),
+            body: body.to_string(),
+        })
+    }
+
+    pub(crate) async fn glance_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        compose_anchor: i64,
+        agent_id: &str,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body FROM (
+                SELECT id, room_id, sequence, author_id, body
+                FROM collab_messages
+                WHERE room_id = $1 AND sequence > $2 AND author_id <> $3
+                ORDER BY sequence DESC LIMIT 50
+             ) recent ORDER BY sequence",
+        )
+        .bind(room_id)
+        .bind(compose_anchor)
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn between_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        after_sequence: i64,
+        up_to_sequence: i64,
+        agent_id: &str,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body
+             FROM collab_messages
+             WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
+               AND author_id <> $4
+             ORDER BY sequence LIMIT 50",
+        )
+        .bind(room_id)
+        .bind(after_sequence)
+        .bind(up_to_sequence)
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn peer_max_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        agent_id: &str,
+        seen_baseline: i64,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT MAX(sequence) FROM collab_messages
+             WHERE room_id = $1 AND sequence > $2 AND author_id <> $3",
+        )
+        .bind(room_id)
+        .bind(seen_baseline)
+        .bind(agent_id)
+        .fetch_one(&mut **transaction)
+        .await
     }
 
     pub(crate) async fn list(&self, room_id: &str) -> Result<Vec<MessageView>, sqlx::Error> {
@@ -225,7 +307,7 @@ async fn insert(
     author_id: &str,
     kind: &str,
     body: &str,
-    message_id: Option<&str>,
+    message_id: &str,
 ) -> Result<i64, sqlx::Error> {
     let sequence: i64 = sqlx::query_scalar(
         "UPDATE collab_rooms
@@ -237,14 +319,6 @@ async fn insert(
     .bind(room_id)
     .fetch_one(&mut **transaction)
     .await?;
-    let generated;
-    let message_id = match message_id {
-        Some(message_id) => message_id,
-        None => {
-            generated = entity_id("msg");
-            &generated
-        }
-    };
     sqlx::query(
         "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
          VALUES ($1, $2, $3, $4, $5, $6)",

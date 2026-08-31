@@ -102,6 +102,15 @@ async fn registry_creates_one_stateful_runtime_per_agent() {
         .unwrap();
     registry.register(FakeEngineAdapter::new()).unwrap();
 
+    assert_eq!(
+        registry
+            .adapters()
+            .into_iter()
+            .map(|adapter| adapter.id().to_string())
+            .collect::<Vec<_>>(),
+        ["fake", "opencode"]
+    );
+
     let adapter = registry.require(&EngineId::new("fake").unwrap()).unwrap();
     let mut first = adapter
         .create_agent_runtime(runtime_config("agent-a"))

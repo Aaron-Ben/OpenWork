@@ -54,7 +54,7 @@ async fn run_smoke(
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379/15".to_string());
     let admin = PgPool::connect(&base).await.unwrap();
-    let database = format!("collab_r3_daemon_{}", Uuid::new_v4().simple());
+    let database = format!("collab_runtime_e2e_{}", Uuid::new_v4().simple());
     admin
         .execute(format!("CREATE DATABASE {database}").as_str())
         .await
@@ -223,20 +223,23 @@ async fn desktop_server_computer_and_fake_opencode_settle_a_reply() {
 }
 
 #[tokio::test]
+#[ignore = "requires explicit authorization for an external OpenCode model request"]
 async fn desktop_server_computer_and_real_opencode_smoke() {
-    if std::env::var("R3_REAL_OPENCODE_SMOKE").as_deref() != Ok("1") {
-        return;
-    }
+    assert_eq!(
+        std::env::var("OPENWORK_REAL_OPENCODE_SMOKE").as_deref(),
+        Ok("1"),
+        "set OPENWORK_REAL_OPENCODE_SMOKE=1 to confirm the external model request"
+    );
     let executable = std::env::var_os("OPENCODE_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("opencode"));
-    let model = std::env::var("R3_REAL_OPENCODE_MODEL")
-        .unwrap_or_else(|_| "opencode/mimo-v2.5-free".to_string());
+    let model = std::env::var("OPENWORK_REAL_OPENCODE_MODEL")
+        .unwrap_or_else(|_| "deepseek/deepseek-v4-flash".to_string());
     run_smoke(
         Some(executable),
         &model,
-        "Use the openwork reply command to reply with exactly: R3 real smoke OK",
-        "R3 real smoke OK",
+        "Use the openwork reply command to reply with exactly: OpenWork real smoke OK",
+        "OpenWork real smoke OK",
         false,
         Duration::from_secs(180),
     )

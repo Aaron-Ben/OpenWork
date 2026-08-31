@@ -35,7 +35,7 @@ impl Fixture {
         let redis_url = std::env::var("TEST_REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6379/15".to_string());
         let admin = PgPool::connect(&base).await.unwrap();
-        let database = format!("collab_r5_{}", Uuid::new_v4().simple());
+        let database = format!("collab_messaging_{}", Uuid::new_v4().simple());
         admin
             .execute(format!("CREATE DATABASE {database}").as_str())
             .await
@@ -498,7 +498,7 @@ async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration(
 }
 
 #[tokio::test]
-async fn direct_room_reads_and_private_directional_climate_form_one_r5_loop() {
+async fn direct_room_reads_and_private_directional_climate_form_one_loop() {
     let Some(fixture) = Fixture::start().await else {
         return;
     };

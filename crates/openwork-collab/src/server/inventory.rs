@@ -1,6 +1,6 @@
 use sqlx::{FromRow, PgPool};
 
-use crate::protocol::{EngineInventoryView, EngineObservation, EngineStatus};
+use crate::protocol::{EngineId, EngineInventoryView, EngineObservation, EngineStatus};
 
 #[derive(Clone)]
 pub(crate) struct EngineInventory {
@@ -19,9 +19,9 @@ impl EngineInventory {
     ) -> Result<(), sqlx::Error> {
         let mut transaction = self.pool.begin().await?;
         for observation in observations {
-            if observation.engine_id.trim().is_empty() {
+            if EngineId::new(observation.engine_id.trim()).is_err() {
                 return Err(sqlx::Error::Protocol(
-                    "INVALID_ARGUMENT: Engine id cannot be empty".to_string(),
+                    "INVALID_ARGUMENT: Engine id is invalid".to_string(),
                 ));
             }
             let status = status_name(observation.status);

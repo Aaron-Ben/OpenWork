@@ -2,7 +2,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 use uuid::Uuid;
 
-use crate::protocol::{AgentAssignment, AgentView, ParticipantView};
+use crate::protocol::{AgentAssignment, AgentView, EngineId, ParticipantView};
 
 #[derive(Clone)]
 pub(crate) struct Agents {
@@ -29,9 +29,8 @@ impl Agents {
         let engine_id = required(engine_id, "Engine id")?;
         let main_model_id = required(main_model_id, "main model id")?;
         let triage_model_id = required(triage_model_id, "triage model id")?;
-        if engine_id != "opencode" {
-            return Err(protocol_error("INVALID_ARGUMENT: unsupported Engine"));
-        }
+        EngineId::new(engine_id)
+            .map_err(|_| protocol_error("INVALID_ARGUMENT: invalid Engine id"))?;
         let base = agent_slug(display_name);
         for attempt in 0..32 {
             let id = if attempt == 0 {
@@ -118,9 +117,8 @@ impl Agents {
         let engine_id = required(engine_id, "Engine id")?;
         let main_model_id = required(main_model_id, "main model id")?;
         let triage_model_id = required(triage_model_id, "triage model id")?;
-        if engine_id != "opencode" {
-            return Err(protocol_error("INVALID_ARGUMENT: unsupported Engine"));
-        }
+        EngineId::new(engine_id)
+            .map_err(|_| protocol_error("INVALID_ARGUMENT: invalid Engine id"))?;
         let participant = sqlx::query(
             "UPDATE collab_participants
              SET display_name = $2
@@ -244,6 +242,23 @@ impl Agents {
         .fetch_all(&mut **transaction)
         .await
         .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
+    }
+
+    pub(crate) async fn is_active_participant_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        participant_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_participants participant
+                LEFT JOIN collab_agent_profiles profile ON profile.agent_id = participant.id
+                WHERE participant.id = $1
+                  AND (participant.kind = 'user' OR profile.archived_at IS NULL)
+             )",
+        )
+        .bind(participant_id)
+        .fetch_one(&mut **transaction)
+        .await
     }
 
     pub(crate) async fn is_active(&self, agent_id: &str) -> Result<bool, sqlx::Error> {

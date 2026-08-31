@@ -1,6 +1,6 @@
 use sqlx::{FromRow, PgPool};
 
-use crate::protocol::{FinishRunRequest, RunSummaryView, RunView, TriggerEnvelope};
+use crate::protocol::{FinishRunRequest, MessageView, RunSummaryView, RunView, TriggerEnvelope};
 
 use super::auth::{AgentClaims, authorize_agent_transaction};
 
@@ -31,6 +31,169 @@ impl Runs {
         .execute(&self.pool)
         .await
         .map(|result| result.rows_affected())
+    }
+
+    pub(crate) async fn interrupt_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<u64, sqlx::Error> {
+        sqlx::query(
+            "UPDATE collab_runs
+             SET status = 'interrupted',
+                 ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 heartbeat_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 error_code = 'RUNTIME_SESSION_STOPPED',
+                 error_message = 'Runtime session stopped before the run finished'
+             WHERE status = 'running' AND runtime_session_id = $1",
+        )
+        .bind(runtime_session_id)
+        .execute(&self.pool)
+        .await
+        .map(|result| result.rows_affected())
+    }
+
+    pub(crate) async fn active_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        claims: &AgentClaims,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT run.id
+             FROM collab_runs run
+             JOIN collab_agent_profiles profile ON profile.agent_id = run.agent_id
+             WHERE run.agent_id = $1 AND run.runtime_session_id = $2
+               AND run.status = 'running' AND profile.archived_at IS NULL
+             FOR UPDATE OF run",
+        )
+        .bind(&claims.sub)
+        .bind(&claims.runtime_session_id)
+        .fetch_optional(&mut **transaction)
+        .await
+    }
+
+    pub(crate) async fn inbox_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_id: &str,
+        claims: &AgentClaims,
+    ) -> Result<(bool, Vec<MessageView>), sqlx::Error> {
+        let carried_over: bool = sqlx::query_scalar(
+            "SELECT inbox_carried_over FROM collab_runs
+             WHERE id = $1 AND agent_id = $2 AND runtime_session_id = $3
+               AND status = 'running'",
+        )
+        .bind(run_id)
+        .bind(&claims.sub)
+        .bind(&claims.runtime_session_id)
+        .fetch_one(&mut **transaction)
+        .await?;
+        let messages = sqlx::query_as::<_, RunInboxMessageRow>(
+            "SELECT message.id, message.room_id, message.sequence,
+                    message.author_id, message.body
+             FROM collab_run_deliveries delivery
+             JOIN collab_runs run ON run.id = delivery.run_id
+             JOIN collab_messages message ON message.room_id = delivery.room_id
+               AND message.sequence BETWEEN delivery.from_seq AND delivery.up_to_seq
+             WHERE delivery.run_id = $1 AND run.agent_id = $2
+               AND run.runtime_session_id = $3 AND run.status = 'running'
+               AND message.author_id <> $2
+             ORDER BY delivery.room_id, message.sequence",
+        )
+        .bind(run_id)
+        .bind(&claims.sub)
+        .bind(&claims.runtime_session_id)
+        .fetch_all(&mut **transaction)
+        .await?
+        .into_iter()
+        .map(MessageView::from)
+        .collect();
+        Ok((carried_over, messages))
+    }
+
+    pub(crate) async fn glance_anchor_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_id: &str,
+        room_id: &str,
+        agent_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT COALESCE(delivery.up_to_seq, run.agenda_anchor_seq)
+             FROM collab_runs run
+             LEFT JOIN collab_run_deliveries delivery
+               ON delivery.run_id = run.id AND delivery.room_id = $2
+             JOIN collab_room_members member
+               ON member.room_id = COALESCE(delivery.room_id, run.room_id)
+              AND member.participant_id = $3
+             WHERE run.id = $1 AND COALESCE(delivery.room_id, run.room_id) = $2
+               AND run.status = 'running'
+               AND (delivery.room_id IS NOT NULL OR run.trigger = 'agenda')",
+        )
+        .bind(run_id)
+        .bind(room_id)
+        .bind(agent_id)
+        .fetch_optional(&mut **transaction)
+        .await
+    }
+
+    pub(crate) async fn reply_context_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_id: &str,
+        room_id: &str,
+        agent_id: &str,
+    ) -> Result<Option<(i64, String, i64)>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT COALESCE(delivery.up_to_seq, run.agenda_anchor_seq), room.kind,
+                    (SELECT COUNT(*) FROM collab_room_members WHERE room_id = room.id)
+             FROM collab_runs run
+             LEFT JOIN collab_run_deliveries delivery
+               ON delivery.run_id = run.id AND delivery.room_id = $2
+             JOIN collab_rooms room ON room.id = COALESCE(delivery.room_id, run.room_id)
+             JOIN collab_room_members own
+               ON own.room_id = room.id AND own.participant_id = $3
+             WHERE run.id = $1 AND room.id = $2 AND run.status = 'running'
+               AND (delivery.room_id IS NOT NULL OR run.trigger = 'agenda')
+             FOR UPDATE OF room",
+        )
+        .bind(run_id)
+        .bind(room_id)
+        .bind(agent_id)
+        .fetch_optional(&mut **transaction)
+        .await
+    }
+
+    pub(crate) async fn acknowledge_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_id: &str,
+        room_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "UPDATE collab_run_deliveries
+             SET eligible_reason = CASE WHEN eligible_reason = 'action' THEN 'action' ELSE 'ack' END,
+                 eligible_at = COALESCE(
+                     eligible_at, CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+                 )
+             WHERE run_id = $1 AND room_id = $2 RETURNING up_to_seq",
+        )
+        .bind(run_id)
+        .bind(room_id)
+        .fetch_optional(&mut **transaction)
+        .await
+    }
+
+    pub(crate) async fn mark_delivery_action_in(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_id: &str,
+        room_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE collab_run_deliveries
+             SET eligible_reason = 'action',
+                 eligible_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE run_id = $1 AND room_id = $2",
+        )
+        .bind(run_id)
+        .bind(room_id)
+        .execute(&mut **transaction)
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn list(&self, limit: u32) -> Result<Vec<RunSummaryView>, sqlx::Error> {
@@ -345,6 +508,27 @@ struct RunSummaryRow {
     error_code: Option<String>,
     error_message: Option<String>,
     started_at: String,
+}
+
+#[derive(FromRow)]
+struct RunInboxMessageRow {
+    id: String,
+    room_id: String,
+    sequence: i64,
+    author_id: String,
+    body: String,
+}
+
+impl From<RunInboxMessageRow> for MessageView {
+    fn from(row: RunInboxMessageRow) -> Self {
+        Self {
+            id: row.id,
+            room_id: row.room_id,
+            sequence: row.sequence,
+            author_id: row.author_id,
+            body: row.body,
+        }
+    }
 }
 
 impl From<RunSummaryRow> for RunSummaryView {

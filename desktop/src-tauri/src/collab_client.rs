@@ -8,11 +8,10 @@ use std::{
 };
 
 use openwork_collab::{
-    computer::sse::{SseDecoder, SseParseError},
     protocol::{
-        request_id, ApiError, ComputerProcessBootstrap, ComputerProcessReady, DesktopCommand,
-        DesktopCommandRequest, DesktopCommandResult, InvalidationEvent, RuntimeStatusView,
-        ServerProcessBootstrap, ServerProcessReady,
+        request_id, sse::reconnecting_invalidation_loop, ApiError, ComputerProcessBootstrap,
+        ComputerProcessReady, DesktopCommand, DesktopCommandRequest, DesktopCommandResult,
+        InvalidationEvent, RuntimeStatusView, ServerProcessBootstrap, ServerProcessReady,
     },
     server::RuntimeCredentials,
 };
@@ -70,9 +69,16 @@ struct ProcessGroup {
 impl CollabDaemonClient {
     pub async fn discover_or_start() -> Result<Self, CollabClientError> {
         let state_root = state_root()?;
+        let executable = std::env::current_exe()?;
+        Self::start(state_root, executable).await
+    }
+
+    pub async fn start(
+        state_root: PathBuf,
+        executable: PathBuf,
+    ) -> Result<Self, CollabClientError> {
         secure_directory(&state_root).await?;
         let runtime_ownership = acquire_runtime_ownership(&state_root)?;
-        let executable = std::env::current_exe()?;
         let (supervisor_tx, supervisor_rx) = mpsc::channel(1);
         let (invalidations, _) = broadcast::channel(128);
         let inner = Arc::new(ClientInner {
@@ -440,55 +446,19 @@ async fn desktop_sse_loop(
     invalidations: broadcast::Sender<InvalidationEvent>,
     shutdown: CancellationToken,
 ) {
-    let mut backoff = Duration::from_secs(1);
-    loop {
-        let connected_at = tokio::time::Instant::now();
-        if let Err(error) = desktop_sse_once(&connection, &invalidations, &shutdown).await {
-            tracing::warn!(%error, "Desktop collaboration SSE disconnected");
-        }
-        if shutdown.is_cancelled() {
-            return;
-        }
-        if connected_at.elapsed() >= Duration::from_secs(60) {
-            backoff = Duration::from_secs(1);
-        }
-        tokio::select! {
-            _ = shutdown.cancelled() => return,
-            _ = tokio::time::sleep(backoff) => {}
-        }
-        backoff = (backoff * 2).min(Duration::from_secs(30));
-    }
-}
-
-async fn desktop_sse_once(
-    connection: &DesktopConnection,
-    invalidations: &broadcast::Sender<InvalidationEvent>,
-    shutdown: &CancellationToken,
-) -> Result<(), CollabClientError> {
-    let mut response = connection
-        .http
-        .get(format!("{}/desktop/events", connection.base_url))
-        .bearer_auth(&connection.desktop_secret)
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut decoder = SseDecoder::default();
-    loop {
-        let chunk = tokio::select! {
-            _ = shutdown.cancelled() => return Ok(()),
-            chunk = response.chunk() => chunk?,
-        };
-        let Some(chunk) = chunk else {
-            return Ok(());
-        };
-        for event in decoder.push(&chunk)? {
-            if event.event.as_deref() != Some("desktop") {
-                continue;
-            }
-            let invalidation = serde_json::from_str::<InvalidationEvent>(&event.data)?;
+    let token = connection.desktop_secret;
+    reconnecting_invalidation_loop(
+        connection.http,
+        format!("{}/desktop/events", connection.base_url),
+        move || token.clone(),
+        "desktop",
+        shutdown,
+        move |invalidation| {
             let _ = invalidations.send(invalidation);
-        }
-    }
+            true
+        },
+    )
+    .await;
 }
 
 fn group_exited(group: &mut ProcessGroup) -> Result<bool, std::io::Error> {
@@ -628,16 +598,35 @@ pub enum CollabClientError {
     Io(#[from] std::io::Error),
     #[error("collaboration payload was invalid: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("collaboration SSE was invalid: {0}")]
-    Sse(#[from] SseParseError),
     #[error("collaboration HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        process::Stdio,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
+
+    use axum::{
+        body::Body,
+        extract::State,
+        http::{header, Response},
+        routing::get,
+        Router,
+    };
+    use tokio::{process::Command, sync::broadcast};
+    use tokio_util::sync::CancellationToken;
+
     use super::{
-        acquire_runtime_ownership, loopback_base_url, prepare_runtime_root, CollabClientError,
+        acquire_runtime_ownership, desktop_sse_loop, loopback_base_url, prepare_runtime_root,
+        start_group, stop_child, CollabClientError, DesktopConnection,
     };
 
     #[test]
@@ -678,5 +667,140 @@ mod tests {
         ));
         drop(first);
         acquire_runtime_ownership(directory.path()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_server_ready_fails_startup_and_removes_the_runtime_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_root = directory.path().join(".openwork");
+        let executable = directory.path().join("invalid-server-ready");
+        tokio::fs::write(
+            &executable,
+            b"#!/bin/sh\nread -r _bootstrap\nprintf '%s\\n' '{\"runtimeSessionId\":\"wrong\",\"baseUrl\":\"http://127.0.0.1:43129\"}'\ntrap 'exit 0' TERM\nwhile :; do :; done\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+        let (invalidations, _) = broadcast::channel(4);
+
+        let error = match start_group(&state_root, &executable, invalidations).await {
+            Ok(_) => panic!("invalid Server ready metadata must reject startup"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, CollabClientError::Protocol(_)));
+        let runtime = state_root.join("runtime");
+        assert!(runtime.is_dir());
+        assert_eq!(std::fs::read_dir(runtime).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn invalid_computer_ready_stops_server_and_removes_the_runtime_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_root = directory.path().join(".openwork");
+        let executable = directory.path().join("invalid-computer-ready");
+        tokio::fs::write(
+            &executable,
+            b"#!/bin/sh\nread -r bootstrap\nsession=$(printf '%s\\n' \"$bootstrap\" | sed -n 's/.*\"runtimeSessionId\":\"\\([^\"]*\\)\".*/\\1/p')\ncase \"$1\" in\n  --openwork-collab-server)\n    printf '%s\\n' \"$$\" > \"$0.server.pid\"\n    printf '{\"runtimeSessionId\":\"%s\",\"baseUrl\":\"http://127.0.0.1:43129\"}\\n' \"$session\"\n    ;;\n  --openwork-collab-computer)\n    printf '%s\\n' \"$$\" > \"$0.computer.pid\"\n    printf '%s\\n' '{\"runtimeSessionId\":\"wrong\"}'\n    ;;\nesac\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+        let (invalidations, _) = broadcast::channel(4);
+
+        let error = match start_group(&state_root, &executable, invalidations).await {
+            Ok(_) => panic!("invalid Computer ready metadata must reject startup"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, CollabClientError::Protocol(_)));
+        let runtime = state_root.join("runtime");
+        assert!(runtime.is_dir());
+        assert_eq!(std::fs::read_dir(runtime).unwrap().count(), 0);
+        for suffix in ["server.pid", "computer.pid"] {
+            let pid = std::fs::read_to_string(format!("{}.{suffix}", executable.display()))
+                .unwrap()
+                .trim()
+                .parse::<i32>()
+                .unwrap();
+            let result = unsafe { libc::kill(pid, 0) };
+            assert_ne!(result, 0, "{suffix} process survived failed startup");
+        }
+    }
+
+    #[tokio::test]
+    async fn bounded_stop_force_kills_a_child_that_ignores_sigterm() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("ignore-term");
+        tokio::fs::write(
+            &executable,
+            b"#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+        let mut child = Command::new(&executable)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        stop_child(&mut child, Duration::from_millis(100))
+            .await
+            .unwrap();
+
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn desktop_sse_reconnects_after_the_stream_closes() {
+        async fn finite_event(State(requests): State<Arc<AtomicUsize>>) -> Response<Body> {
+            let sequence = requests.fetch_add(1, Ordering::SeqCst) + 1;
+            let body = format!(
+                "event: desktop\ndata: {{\"id\":\"event-{sequence}\",\"kind\":\"runtime_ready\",\"subjectId\":null,\"revision\":null,\"publishedAt\":1}}\n\n"
+            );
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from(body))
+                .unwrap()
+        }
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/desktop/events", get(finite_event))
+            .with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connection = DesktopConnection {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            runtime_session_id: "runtime-test".to_string(),
+            desktop_secret: "desktop-secret".to_string(),
+        };
+        let (invalidations, mut receiver) = broadcast::channel(4);
+        let shutdown = CancellationToken::new();
+        let loop_shutdown = shutdown.clone();
+        let task = tokio::spawn(desktop_sse_loop(connection, invalidations, loop_shutdown));
+
+        tokio::time::timeout(Duration::from_secs(4), async {
+            assert_eq!(receiver.recv().await.unwrap().id, "event-1");
+            assert_eq!(receiver.recv().await.unwrap().id, "event-2");
+        })
+        .await
+        .expect("Desktop SSE did not reconnect after a finite response closed");
+
+        assert!(requests.load(Ordering::SeqCst) >= 2);
+        shutdown.cancel();
+        task.await.unwrap();
+        server.abort();
+        let _ = server.await;
     }
 }

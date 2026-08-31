@@ -499,7 +499,7 @@ mod tests {
     use crate::protocol::AgentCommand;
 
     #[tokio::test]
-    async fn parses_r5_read_and_climate_commands() {
+    async fn parses_read_and_climate_commands() {
         assert_eq!(
             parse_command(vec!["rooms".to_string()]).await.unwrap(),
             AgentCommand::Rooms
@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parses_the_complete_r6_card_surface_without_structure_or_delete_commands() {
+    async fn parses_the_complete_card_surface_without_structure_or_delete_commands() {
         assert_eq!(
             parse_command(vec![
                 "board".to_string(),
@@ -599,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn bounds_r5_numeric_arguments() {
+    fn bounds_numeric_arguments() {
         assert_eq!(parse_tail("1").unwrap(), 1);
         assert_eq!(parse_tail("200").unwrap(), 200);
         assert!(parse_tail("0").is_err());
