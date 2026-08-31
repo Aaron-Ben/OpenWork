@@ -1,21 +1,55 @@
 import { invoke } from '@tauri-apps/api/core'
 
+export interface CollabRuntimeStatus {
+  runtimeSessionId: string
+  startedAt: number
+  lastComputerHeartbeat: number | null
+  engines: CollabEngineInventory[]
+  engineReadiness: CollabEngineReadiness[]
+  runners: CollabRunnerStatus[]
+}
+
+export interface CollabEngineInventory {
+  engineId: string
+  status: 'unknown' | 'ready' | 'missing' | 'error'
+  version: string | null
+  checkedAt: number
+  lastError: string | null
+  observedSessionId: string
+}
+
+export interface CollabEngineReadiness {
+  engineId: string
+  status: 'unknown' | 'ready' | 'missing' | 'error'
+}
+
+export interface CollabRunnerStatus {
+  agentId: string
+  configRevision: number
+  state: 'running' | 'error'
+  lastError: string | null
+}
+
 export interface CollabAgent {
   id: string
   displayName: string
-  systemPrompt: string
+  role: string | null
+  persona: string
   engineId: 'opencode'
-  model: string
-  configVersion: number
-  enabled: boolean
-  scannerEnabled: boolean
+  mainModelId: string
+  triageModelId: string
+  configRevision: number
+  agendaEnabled: boolean
+  archivedAt: string | null
 }
 
 export interface CollabAgentInput {
-  id: string
   displayName: string
-  systemPrompt: string
-  model: string
+  role: string | null
+  persona: string
+  engineId: 'opencode'
+  mainModelId: string
+  triageModelId: string
 }
 
 export interface CollabRoom {
@@ -40,34 +74,39 @@ export interface CollabMessage {
 
 export interface CollabCard {
   id: string
+  boardId: string
+  columnId: string
   title: string
   description: string | null
   position: number
   assigneeId: string | null
-  claimedBy: string | null
+  createdBy: string
 }
 
 export interface CollabBoardColumn {
   id: string
   title: string
   position: number
-  isDone: boolean
+  isTerminal: boolean
   cards: CollabCard[]
 }
 
 export interface CollabBoard {
   id: string
-  roomId: string
   title: string
+  description: string | null
+  createdBy: string
   columns: CollabBoardColumn[]
 }
 
 export interface CollabRun {
   id: string
   agentId: string
+  runtimeSessionId: string
   trigger: string
   status: string
-  model: string
+  engineId: string
+  mainModelId: string
   outcome: string | null
   roomId: string | null
   focusCardId: string | null
@@ -78,17 +117,35 @@ export interface CollabRun {
 }
 
 export const collabCommands = {
-  status: (): Promise<unknown> => invoke('collab_status'),
+  status: (): Promise<CollabRuntimeStatus> => invoke('collab_status'),
   listAgents: (): Promise<CollabAgent[]> => invoke('collab_agent_list'),
   createAgent: (agent: CollabAgentInput): Promise<CollabAgent> =>
     invoke('collab_agent_create', {
-      id: agent.id,
       displayName: agent.displayName,
-      systemPrompt: agent.systemPrompt,
-      model: agent.model,
+      role: agent.role,
+      persona: agent.persona,
+      engineId: agent.engineId,
+      mainModelId: agent.mainModelId,
+      triageModelId: agent.triageModelId,
     }),
-  setAgentProactivity: (agentId: string, enabled: boolean): Promise<CollabAgent> =>
-    invoke('collab_agent_proactivity_set', { agentId, enabled }),
+  updateAgent: (agentId: string, agent: CollabAgentInput): Promise<CollabAgent> =>
+    invoke('collab_agent_update', {
+      input: {
+        agentId,
+        displayName: agent.displayName,
+        role: agent.role,
+        persona: agent.persona,
+        engineId: agent.engineId,
+        mainModelId: agent.mainModelId,
+        triageModelId: agent.triageModelId,
+      },
+    }),
+  setAgentAgenda: (agentId: string, enabled: boolean): Promise<CollabAgent> =>
+    invoke('collab_agent_agenda_set', { agentId, enabled }),
+  archiveAgent: (agentId: string): Promise<CollabAgent> =>
+    invoke('collab_agent_archive', { agentId }),
+  restoreAgent: (agentId: string): Promise<CollabAgent> =>
+    invoke('collab_agent_restore', { agentId }),
   listRooms: (): Promise<CollabRoom[]> => invoke('collab_room_list'),
   createDirectRoom: (agentId: string): Promise<CollabRoom> =>
     invoke('collab_direct_room_create', { agentId }),
@@ -105,7 +162,37 @@ export const collabCommands = {
   listMessages: (roomId: string): Promise<CollabMessage[]> =>
     invoke('collab_message_list', { roomId }),
   listBoards: (): Promise<CollabBoard[]> => invoke('collab_board_list'),
-  createBoard: (roomId: string, title: string): Promise<CollabBoard> =>
-    invoke('collab_board_create', { roomId, title }),
+  createBoard: (title: string, description: string | null = null): Promise<CollabBoard> =>
+    invoke('collab_board_create', { title, description }),
+  updateBoard: (
+    boardId: string,
+    title: string,
+    description: string | null,
+  ): Promise<CollabBoard> => invoke('collab_board_update', { boardId, title, description }),
+  deleteBoard: (boardId: string): Promise<string> =>
+    invoke('collab_board_delete', { boardId }),
+  createBoardColumn: (
+    boardId: string,
+    title: string,
+    isTerminal: boolean,
+  ): Promise<CollabBoard> =>
+    invoke('collab_board_column_create', { boardId, title, isTerminal }),
+  updateBoardColumn: (
+    columnId: string,
+    title: string,
+    isTerminal: boolean,
+  ): Promise<CollabBoard> =>
+    invoke('collab_board_column_update', { columnId, title, isTerminal }),
+  moveBoardColumn: (
+    columnId: string,
+    beforeColumnId: string | null,
+  ): Promise<CollabBoard> =>
+    invoke('collab_board_column_move', { columnId, beforeColumnId }),
+  deleteBoardColumn: (columnId: string): Promise<CollabBoard> =>
+    invoke('collab_board_column_delete', { columnId }),
+  assignCard: (cardId: string, assigneeId: string | null): Promise<CollabCard> =>
+    invoke('collab_card_assign', { cardId, assigneeId }),
+  deleteCard: (cardId: string): Promise<string> =>
+    invoke('collab_card_delete', { cardId }),
   listRuns: (limit = 50): Promise<CollabRun[]> => invoke('collab_run_list', { limit }),
 }

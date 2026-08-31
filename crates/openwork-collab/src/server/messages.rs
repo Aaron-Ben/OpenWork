@@ -1,0 +1,497 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::protocol::{DeliveryRange, InboxResponse, MessageView, TriggerEnvelope, entity_id};
+use sqlx::{FromRow, PgPool, Postgres, Transaction};
+
+use super::{auth::AgentClaims, climate::Climate};
+
+const INBOX_MESSAGE_LIMIT: usize = 200;
+
+#[derive(Clone)]
+pub(crate) struct Messages {
+    pool: PgPool,
+}
+
+impl Messages {
+    pub(crate) fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub(crate) async fn send_user_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        body: &str,
+    ) -> Result<MessageView, sqlx::Error> {
+        if !Self::valid_body(body) {
+            return Err(sqlx::Error::Protocol(
+                "INVALID_ARGUMENT: message body is invalid".to_string(),
+            ));
+        }
+        let message_id = entity_id("msg");
+        let sequence = insert(
+            transaction,
+            room_id,
+            "local-user",
+            "normal",
+            body,
+            &message_id,
+        )
+        .await?;
+        Ok(MessageView {
+            id: message_id,
+            room_id: room_id.to_string(),
+            sequence,
+            author_id: "local-user".to_string(),
+            body: body.to_string(),
+        })
+    }
+
+    pub(crate) fn valid_body(body: &str) -> bool {
+        !body.trim().is_empty()
+            && body.len() <= crate::protocol::MESSAGE_BODY_MAX_BYTES
+            && !body.as_bytes().contains(&0)
+    }
+
+    pub(crate) async fn insert_agent_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        author_id: &str,
+        body: &str,
+    ) -> Result<MessageView, sqlx::Error> {
+        let id = entity_id("msg");
+        let sequence = insert(transaction, room_id, author_id, "normal", body, &id).await?;
+        Ok(MessageView {
+            id,
+            room_id: room_id.to_string(),
+            sequence,
+            author_id: author_id.to_string(),
+            body: body.to_string(),
+        })
+    }
+
+    pub(crate) async fn glance_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        compose_anchor: i64,
+        agent_id: &str,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body FROM (
+                SELECT id, room_id, sequence, author_id, body
+                FROM collab_messages
+                WHERE room_id = $1 AND sequence > $2 AND author_id <> $3
+                ORDER BY sequence DESC LIMIT 50
+             ) recent ORDER BY sequence",
+        )
+        .bind(room_id)
+        .bind(compose_anchor)
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn between_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        after_sequence: i64,
+        up_to_sequence: i64,
+        agent_id: &str,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body
+             FROM collab_messages
+             WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
+               AND author_id <> $4
+             ORDER BY sequence LIMIT 50",
+        )
+        .bind(room_id)
+        .bind(after_sequence)
+        .bind(up_to_sequence)
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn peer_max_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        agent_id: &str,
+        seen_baseline: i64,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT MAX(sequence) FROM collab_messages
+             WHERE room_id = $1 AND sequence > $2 AND author_id <> $3",
+        )
+        .bind(room_id)
+        .bind(seen_baseline)
+        .bind(agent_id)
+        .fetch_one(&mut **transaction)
+        .await
+    }
+
+    pub(crate) async fn agent_loop_capped_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        hard_cap: i64,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) >= $2
+             FROM collab_messages message
+             JOIN collab_participants author ON author.id = message.author_id
+             WHERE message.room_id = $1
+               AND message.sequence > COALESCE((
+                   SELECT MAX(previous.sequence)
+                   FROM collab_messages previous
+                   JOIN collab_participants previous_author
+                     ON previous_author.id = previous.author_id
+                   WHERE previous.room_id = $1 AND previous_author.kind <> 'agent'
+               ), 0)
+               AND author.kind = 'agent' AND message.kind <> 'system'",
+        )
+        .bind(room_id)
+        .bind(hard_cap)
+        .fetch_one(&mut **transaction)
+        .await
+    }
+
+    pub(crate) async fn list(&self, room_id: &str) -> Result<Vec<MessageView>, sqlx::Error> {
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body
+             FROM collab_messages WHERE room_id = $1 ORDER BY sequence",
+        )
+        .bind(room_id)
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn list_for_agent_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        agent_id: &str,
+        room_id: &str,
+        tail: u32,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        let membership: Option<(time::PrimitiveDateTime, String)> = sqlx::query_as(
+            "SELECT member.joined_at, room.kind
+             FROM collab_room_members member
+             JOIN collab_rooms room ON room.id = member.room_id
+             WHERE member.room_id = $1 AND member.participant_id = $2",
+        )
+        .bind(room_id)
+        .bind(agent_id)
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let Some((joined_at, room_kind)) = membership else {
+            return Err(sqlx::Error::Protocol(
+                "NOT_FOUND: Room is not visible to this Agent".to_string(),
+            ));
+        };
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body FROM (
+                SELECT message.id, message.room_id, message.sequence,
+                       message.author_id, message.body
+                FROM collab_messages message
+                WHERE message.room_id = $1
+                  AND ($3 = 'direct' OR message.created_at >= $2)
+                ORDER BY message.sequence DESC
+                LIMIT $4
+             ) recent
+             ORDER BY sequence",
+        )
+        .bind(room_id)
+        .bind(joined_at)
+        .bind(room_kind)
+        .bind(i64::from(tail.clamp(1, 200)))
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn wake_recipients(
+        &self,
+        message_id: &str,
+        room_id: &str,
+        author_id: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT rm.participant_id
+             FROM collab_room_members rm
+             JOIN collab_rooms r ON r.id = rm.room_id
+             JOIN collab_agent_profiles a ON a.agent_id = rm.participant_id
+             JOIN collab_messages message
+               ON message.id = $1 AND message.room_id = rm.room_id
+             WHERE rm.room_id = $2 AND rm.participant_id <> $3 AND a.archived_at IS NULL
+               AND (
+                   NOT rm.muted OR r.kind = 'direct' OR (
+                       message.kind = 'normal'
+                       AND message.body ~ (
+                           '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                           '([^A-Za-z0-9_-]|$)'
+                       )
+                   )
+               )
+             ORDER BY rm.participant_id",
+        )
+        .bind(message_id)
+        .bind(room_id)
+        .bind(author_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub(crate) async fn inbox(&self, claims: &AgentClaims) -> Result<InboxResponse, sqlx::Error> {
+        let unread_rooms = sqlx::query_as::<_, UnreadRoomRow>(
+            "WITH unread AS (
+                SELECT m.room_id, rm.last_read_seq, COUNT(*) AS unread_count,
+                       MIN(m.created_at) AS oldest_at
+                FROM collab_room_members rm
+                JOIN collab_rooms r ON r.id = rm.room_id
+                JOIN collab_messages m ON m.room_id = rm.room_id
+                WHERE rm.participant_id = $1
+                  AND (
+                      NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                          SELECT 1
+                          FROM collab_messages mention
+                          WHERE mention.room_id = rm.room_id
+                            AND mention.sequence > rm.last_read_seq
+                            AND mention.author_id <> $1
+                            AND mention.kind = 'normal'
+                            AND mention.body ~ (
+                                '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                                '([^A-Za-z0-9_-]|$)'
+                            )
+                      )
+                  )
+                  AND m.sequence > rm.last_read_seq AND m.author_id <> $1
+                GROUP BY m.room_id, rm.last_read_seq
+             ), counted AS (
+                SELECT room_id, last_read_seq, unread_count, oldest_at,
+                       SUM(unread_count) OVER()::BIGINT AS total_count,
+                       COUNT(*) OVER() AS total_rooms
+                FROM unread
+             )
+             SELECT room_id, last_read_seq, unread_count, total_count, total_rooms
+             FROM counted
+             ORDER BY oldest_at, room_id
+             LIMIT $2",
+        )
+        .bind(&claims.sub)
+        .bind(INBOX_MESSAGE_LIMIT as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        if unread_rooms.is_empty() {
+            return Ok(InboxResponse {
+                trigger: None,
+                messages: Vec::new(),
+                climates: Vec::new(),
+                carried_over: false,
+            });
+        }
+        let allocations = water_fill(
+            &unread_rooms
+                .iter()
+                .map(|room| room.unread_count as usize)
+                .collect::<Vec<_>>(),
+            INBOX_MESSAGE_LIMIT,
+        );
+        let room_ids = unread_rooms
+            .iter()
+            .map(|room| room.room_id.clone())
+            .collect::<Vec<_>>();
+        let allocations = allocations
+            .into_iter()
+            .map(|allocation| allocation as i64)
+            .collect::<Vec<_>>();
+        let rows = sqlx::query_as::<_, InboxRow>(
+            "WITH allocation AS (
+                SELECT *
+                FROM UNNEST($2::TEXT[], $3::BIGINT[]) AS selected(room_id, take_count)
+             ), ranked AS (
+                SELECT m.id, m.room_id, m.sequence, m.author_id, m.body,
+                       rm.last_read_seq, m.created_at, allocation.take_count,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY m.room_id ORDER BY m.sequence
+                       ) AS room_position
+                FROM allocation
+                JOIN collab_room_members rm ON rm.room_id = allocation.room_id
+                JOIN collab_rooms r ON r.id = rm.room_id
+                JOIN collab_messages m ON m.room_id = rm.room_id
+                WHERE rm.participant_id = $1
+                  AND (
+                      NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                          SELECT 1
+                          FROM collab_messages mention
+                          WHERE mention.room_id = rm.room_id
+                            AND mention.sequence > rm.last_read_seq
+                            AND mention.author_id <> $1
+                            AND mention.kind = 'normal'
+                            AND mention.body ~ (
+                                '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                                '([^A-Za-z0-9_-]|$)'
+                            )
+                      )
+                  )
+                  AND m.sequence > rm.last_read_seq AND m.author_id <> $1
+             )
+             SELECT id, room_id, sequence, author_id, body, last_read_seq
+             FROM ranked
+             WHERE room_position <= take_count
+             ORDER BY created_at, room_id, sequence",
+        )
+        .bind(&claims.sub)
+        .bind(&room_ids)
+        .bind(&allocations)
+        .fetch_all(&self.pool)
+        .await?;
+        let total_count = unread_rooms[0].total_count;
+        let total_rooms = unread_rooms[0].total_rooms;
+        let carried_over =
+            total_count > rows.len() as i64 || total_rooms > unread_rooms.len() as i64;
+        let mut ranges = BTreeMap::<String, (i64, i64)>::new();
+        let mut participant_ids = BTreeSet::<String>::new();
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            ranges
+                .entry(row.room_id.clone())
+                .and_modify(|range| range.1 = row.sequence)
+                .or_insert((row.last_read_seq + 1, row.sequence));
+            participant_ids.insert(row.author_id.clone());
+            messages.push(MessageView {
+                id: row.id,
+                room_id: row.room_id,
+                sequence: row.sequence,
+                author_id: row.author_id,
+                body: row.body,
+            });
+        }
+        let participant_ids = participant_ids.into_iter().collect::<Vec<_>>();
+        let climates = Climate::for_participants(&self.pool, &claims.sub, &participant_ids).await?;
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        Ok(InboxResponse {
+            trigger: Some(TriggerEnvelope {
+                dispatch_id: entity_id("run"),
+                agent_id: claims.sub.clone(),
+                runtime_session_id: claims.runtime_session_id.clone(),
+                trigger: "message".to_string(),
+                deliveries: ranges
+                    .into_iter()
+                    .map(|(room_id, (from_seq, up_to_seq))| DeliveryRange {
+                        room_id,
+                        from_seq,
+                        up_to_seq,
+                    })
+                    .collect(),
+                agenda_focus: None,
+                carried_over,
+                issued_at: now,
+                expires_at: now + 5 * 60,
+                signature: String::new(),
+            }),
+            messages,
+            climates,
+            carried_over,
+        })
+    }
+}
+
+async fn insert(
+    transaction: &mut Transaction<'_, Postgres>,
+    room_id: &str,
+    author_id: &str,
+    kind: &str,
+    body: &str,
+    message_id: &str,
+) -> Result<i64, sqlx::Error> {
+    let sequence: i64 = sqlx::query_scalar(
+        "UPDATE collab_rooms
+         SET next_seq = next_seq + 1,
+             last_message_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+             updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+         WHERE id = $1 RETURNING next_seq",
+    )
+    .bind(room_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(message_id)
+    .bind(room_id)
+    .bind(sequence)
+    .bind(author_id)
+    .bind(kind)
+    .bind(body)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(sequence)
+}
+
+#[derive(FromRow)]
+struct MessageRow {
+    id: String,
+    room_id: String,
+    sequence: i64,
+    author_id: String,
+    body: String,
+}
+
+impl From<MessageRow> for MessageView {
+    fn from(row: MessageRow) -> Self {
+        Self {
+            id: row.id,
+            room_id: row.room_id,
+            sequence: row.sequence,
+            author_id: row.author_id,
+            body: row.body,
+        }
+    }
+}
+
+#[derive(FromRow)]
+struct InboxRow {
+    id: String,
+    room_id: String,
+    sequence: i64,
+    author_id: String,
+    body: String,
+    last_read_seq: i64,
+}
+
+#[derive(FromRow)]
+struct UnreadRoomRow {
+    room_id: String,
+    unread_count: i64,
+    total_count: i64,
+    total_rooms: i64,
+}
+
+fn water_fill(counts: &[usize], budget: usize) -> Vec<usize> {
+    let mut order = (0..counts.len()).collect::<Vec<_>>();
+    order.sort_by_key(|index| (counts[*index], *index));
+    let mut allocations = vec![0; counts.len()];
+    let mut remaining = budget;
+    let mut unserved = counts.len();
+    for index in order {
+        let fair_share = remaining / unserved;
+        let allocated = counts[index].min(fair_share);
+        allocations[index] = allocated;
+        remaining -= allocated;
+        unserved -= 1;
+    }
+    allocations
+}
+
+#[cfg(test)]
+mod tests {
+    use super::water_fill;
+
+    #[test]
+    fn inbox_budget_water_fills_quiet_rooms_before_busy_rooms() {
+        assert_eq!(water_fill(&[200, 1], 200), vec![199, 1]);
+        assert_eq!(water_fill(&[100, 2, 3], 10), vec![5, 2, 3]);
+        assert_eq!(water_fill(&[2, 3], 10), vec![2, 3]);
+    }
+}

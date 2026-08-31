@@ -50,8 +50,8 @@ describe('i18n', () => {
       'collab.rooms.manageMembers',
       'collab.rooms.rateLimited',
       'collab.agents.title',
-      'collab.agents.model',
-      'collab.agents.prompt',
+      'collab.agents.mainModel',
+      'collab.agents.persona',
       'collab.boards.title',
       'collab.boards.recentRuns',
     ] as const

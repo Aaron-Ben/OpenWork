@@ -1,4 +1,5 @@
 mod collab_client;
+mod collab_event_bridge;
 mod commands;
 mod error;
 mod event_bridge;
@@ -6,13 +7,14 @@ mod event_bridge;
 use openwork_core::{OpenWorkCore, OpenWorkCoreConfig};
 use tauri::Manager;
 
+pub use collab_client::{CollabClientError, CollabDaemonClient};
 pub use error::{CommandError, CommandErrorCode};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     load_development_env();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -26,6 +28,7 @@ pub fn run() {
             let collab = tauri::async_runtime::block_on(
                 collab_client::CollabDaemonClient::discover_or_start(),
             )?;
+            collab_event_bridge::spawn(app.handle().clone(), collab.subscribe_invalidations());
             app.manage(collab);
             app.manage(core);
             Ok(())
@@ -34,7 +37,10 @@ pub fn run() {
             commands::collab::collab_status,
             commands::collab::collab_agent_list,
             commands::collab::collab_agent_create,
-            commands::collab::collab_agent_proactivity_set,
+            commands::collab::collab_agent_update,
+            commands::collab::collab_agent_agenda_set,
+            commands::collab::collab_agent_archive,
+            commands::collab::collab_agent_restore,
             commands::collab::collab_room_list,
             commands::collab::collab_direct_room_create,
             commands::collab::collab_group_room_create,
@@ -45,6 +51,14 @@ pub fn run() {
             commands::collab::collab_message_list,
             commands::collab::collab_board_list,
             commands::collab::collab_board_create,
+            commands::collab::collab_board_update,
+            commands::collab::collab_board_delete,
+            commands::collab::collab_board_column_create,
+            commands::collab::collab_board_column_update,
+            commands::collab::collab_board_column_move,
+            commands::collab::collab_board_column_delete,
+            commands::collab::collab_card_assign,
+            commands::collab::collab_card_delete,
             commands::collab::collab_run_list,
             commands::skills::list_skills,
             commands::skills::set_skill_disabled,
@@ -81,8 +95,23 @@ pub fn run() {
             commands::runtime::runtime_trace_payload_get,
             commands::runtime::runtime_trace_compactions,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    let (collab, exit_code) =
+        run_return_with_managed_state::<_, collab_client::CollabDaemonClient>(app);
+    tauri::async_runtime::block_on(collab.shutdown());
+    std::process::exit(exit_code);
+}
+
+fn run_return_with_managed_state<R, T>(app: tauri::App<R>) -> (T, i32)
+where
+    R: tauri::Runtime,
+    T: Clone + Send + Sync + 'static,
+{
+    let handle = app.handle().clone();
+    let exit_code = app.run_return(|_, _| {});
+    let state = handle.state::<T>().inner().clone();
+    (state, exit_code)
 }
 
 #[cfg(debug_assertions)]
@@ -95,3 +124,38 @@ fn load_development_env() {
 
 #[cfg(not(debug_assertions))]
 fn load_development_env() {}
+
+#[cfg(test)]
+mod tests {
+    use tauri::Manager;
+
+    use super::run_return_with_managed_state;
+
+    #[derive(Clone)]
+    struct SetupManagedState;
+
+    #[test]
+    fn managed_state_is_read_after_setup_runs() {
+        let (setup_tx, setup_rx) = std::sync::mpsc::channel();
+        let app = tauri::test::mock_builder()
+            .setup(move |app| {
+                assert!(app.manage(SetupManagedState));
+                setup_tx.send(()).unwrap();
+                Ok(())
+            })
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "lifecycle", Default::default())
+            .build()
+            .unwrap();
+        let closer = std::thread::spawn(move || {
+            setup_rx.recv().unwrap();
+            window.close().unwrap();
+        });
+
+        let (_, exit_code) = run_return_with_managed_state::<_, SetupManagedState>(app);
+
+        closer.join().unwrap();
+        assert_eq!(exit_code, 0);
+    }
+}

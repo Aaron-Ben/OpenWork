@@ -8,28 +8,30 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgendaDecisionRequest, AgentAssignment, FinishRunRequest, MessageView, OpenRunRequest,
-    TriageReportRequest,
+    AgendaDecisionRequest, AgentAssignment, ClimateView, FinishRunRequest, MessageView,
+    OpenRunRequest, TriageReportRequest,
 };
 
 use super::{
     agenda::parse_agenda_decision,
-    client::{AgentClient, DeviceClient, RuntimeClientError},
-    engine::{ClassifyRequest, EngineAdapter, EngineError, EngineUsage, TurnRequest, TurnResult},
+    client::{AgentClient, ComputerClient, RuntimeClientError},
+    engine::{
+        AgentEngineRuntime, ClassifyRequest, EngineAdapter, EngineError, EngineUsage, TurnRequest,
+        TurnResult,
+    },
     home::{AgentHome, HomeError},
-    scheduling::{RunnerResources, is_rate_limited},
+    scheduling::RunnerResources,
     triage::parse_triage,
 };
 
 const AGENDA_QUIET_WINDOW: Duration = Duration::from_secs(90);
 const AGENDA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
-pub struct AgentRunner<A: EngineAdapter> {
+pub struct AgentRunner {
     assignment: AgentAssignment,
-    device: DeviceClient,
-    generation: i64,
+    computer: ComputerClient,
     client: AgentClient,
-    adapter: Arc<A>,
+    engine: RunnerEngine,
     home: AgentHome,
     poll_interval: Duration,
     token_expires_at: i64,
@@ -45,9 +47,13 @@ pub struct AgentRunner<A: EngineAdapter> {
 }
 
 pub(super) struct RunnerIdentity {
-    pub device: DeviceClient,
-    pub generation: i64,
+    pub computer: ComputerClient,
     pub token_expires_at: i64,
+}
+
+pub(super) struct RunnerEngine {
+    pub adapter: Arc<dyn EngineAdapter>,
+    pub runtime: Box<dyn AgentEngineRuntime>,
 }
 
 struct RunHeartbeat {
@@ -87,22 +93,21 @@ impl Drop for RunHeartbeat {
     }
 }
 
-impl<A: EngineAdapter> AgentRunner<A> {
+impl AgentRunner {
     pub fn new(
         assignment: AgentAssignment,
         identity: RunnerIdentity,
         client: AgentClient,
-        adapter: Arc<A>,
+        engine: RunnerEngine,
         home: AgentHome,
         poll_interval: Duration,
         resources: RunnerResources,
     ) -> Self {
         Self {
             assignment,
-            device: identity.device,
-            generation: identity.generation,
+            computer: identity.computer,
             client,
-            adapter,
+            engine,
             home,
             poll_interval,
             token_expires_at: identity.token_expires_at,
@@ -118,25 +123,36 @@ impl<A: EngineAdapter> AgentRunner<A> {
         }
     }
 
-    pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), RunnerError> {
-        let (wake_tx, mut wake_rx) = mpsc::channel(1);
-        let wake_shutdown = shutdown.child_token();
+    pub async fn run(
+        mut self,
+        stop_requested: CancellationToken,
+        force_cancel: CancellationToken,
+    ) -> Result<(), RunnerError> {
+        let (rerun_requested_tx, mut rerun_requested_rx) = mpsc::channel(1);
+        let wake_shutdown = stop_requested.child_token();
+        // A Runner task may panic inside an Engine adapter. Keep the SSE child
+        // task lifecycle-bound even when normal async cleanup is skipped.
+        let _wake_shutdown_guard = wake_shutdown.clone().drop_guard();
         let wake_client = self.client.clone();
         let wake_task_shutdown = wake_shutdown.clone();
         let wake_task = tokio::spawn(async move {
-            wake_client.wake_loop(wake_tx, wake_task_shutdown).await;
+            wake_client
+                .wake_loop(rerun_requested_tx, wake_task_shutdown)
+                .await;
         });
         let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let result = 'runner: loop {
-            let Some(debounce) = next_trigger(&mut wake_rx, &mut interval, &shutdown).await? else {
+            let Some(debounce) =
+                next_trigger(&mut rerun_requested_rx, &mut interval, &stop_requested).await?
+            else {
                 break 'runner Ok(());
             };
-            if debounce && !debounce_wakes(&mut wake_rx, &shutdown).await {
+            if debounce && !debounce_wakes(&mut rerun_requested_rx, &stop_requested).await {
                 break 'runner Ok(());
             }
             loop {
-                match self.drive_once(shutdown.clone()).await {
+                match self.drive_once(force_cancel.clone()).await {
                     Ok(()) => {}
                     Err(error) if error.is_fenced() => break 'runner Err(error),
                     Err(error) => tracing::warn!(
@@ -145,18 +161,19 @@ impl<A: EngineAdapter> AgentRunner<A> {
                         "Agent turn attempt failed; unread inbox remains durable"
                     ),
                 }
-                if shutdown.is_cancelled() {
+                if stop_requested.is_cancelled() {
                     break 'runner Ok(());
                 }
-                if wake_rx.try_recv().is_err() {
+                if rerun_requested_rx.try_recv().is_err() {
                     break;
                 }
             }
         };
         wake_shutdown.cancel();
-        drop(wake_rx);
+        drop(rerun_requested_rx);
         let _ = wake_task.await;
-        result
+        let engine_shutdown = self.engine.runtime.shutdown().await;
+        result.and(engine_shutdown.map_err(RunnerError::Engine))
     }
 
     async fn drive_once(&mut self, cancellation: CancellationToken) -> Result<(), RunnerError> {
@@ -213,9 +230,11 @@ impl<A: EngineAdapter> AgentRunner<A> {
             let result = async {
                 let _permit = self.resources.triage_permit(&cancellation).await?;
                 self.resources.gate(&cancellation).await?;
-                self.adapter
+                self.engine
+                    .adapter
                     .classify(ClassifyRequest {
-                        cwd: self.home.triage_root.clone(),
+                        cwd: self.home.work_root.clone(),
+                        config_root: self.home.config_root.clone(),
                         prompt,
                         model: Some(payload.model.clone()),
                         environment: self.home.environment.clone(),
@@ -237,7 +256,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
                 },
                 Err(error) => {
                     let interrupted = matches!(error, EngineError::Cancelled);
-                    let rate_limited = is_rate_limited(&error);
+                    let rate_limited = error.is_rate_limited();
                     if !interrupted {
                         self.note_triage_failure();
                     }
@@ -297,6 +316,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
         let prompt = build_prompt(
             &self.assignment,
             &inbox.messages,
+            &inbox.climates,
             &verdict.prompt_note,
             inbox.carried_over,
         );
@@ -311,27 +331,19 @@ impl<A: EngineAdapter> AgentRunner<A> {
         prompt: String,
         cancellation: CancellationToken,
     ) -> Result<(), RunnerError> {
-        let session = self.home.load_session().await?;
-        let result = self
-            .run_main_turn(prompt.clone(), session.clone(), cancellation.clone())
-            .await;
-        let result = if session.is_some() && matches!(&result, Err(EngineError::SessionInvalid(_)))
-        {
-            self.home.clear_session().await?;
-            self.run_main_turn(prompt, None, cancellation).await
-        } else {
-            result
-        };
+        let result = self.run_main_turn(prompt, cancellation).await;
         if let Err(error) = &result
-            && is_rate_limited(error)
+            && error.is_rate_limited()
         {
-            self.engine_backoff_until = Some(Instant::now() + Duration::from_secs(60));
+            self.engine_backoff_until = Some(
+                Instant::now()
+                    + error
+                        .retry_after()
+                        .unwrap_or_else(|| Duration::from_secs(60)),
+            );
         }
         match result {
             Ok(result) => {
-                if let Some(session_id) = &result.session_id {
-                    self.home.save_session(session_id).await?;
-                }
                 self.finish_or_queue(
                     run_id.clone(),
                     FinishRunRequest {
@@ -347,8 +359,8 @@ impl<A: EngineAdapter> AgentRunner<A> {
                 .await?;
             }
             Err(error) => {
-                let cancelled = matches!(error, super::engine::EngineError::Cancelled);
-                let rate_limited = is_rate_limited(&error);
+                let cancelled = matches!(error, EngineError::Cancelled);
+                let rate_limited = error.is_rate_limited();
                 self.finish_or_queue(
                     run_id,
                     FinishRunRequest {
@@ -377,7 +389,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
     async fn maybe_agenda(&mut self, cancellation: CancellationToken) -> Result<(), RunnerError> {
         let now = Instant::now();
         if !agenda_due(
-            self.assignment.scanner_enabled,
+            self.assignment.agenda_enabled,
             self.quiet_since.elapsed(),
             self.last_agenda_check.map(|last| last.elapsed()),
             self.agenda_backoff_until
@@ -404,11 +416,13 @@ impl<A: EngineAdapter> AgentRunner<A> {
         let result = async {
             let _permit = self.resources.triage_permit(&cancellation).await?;
             self.resources.gate(&cancellation).await?;
-            self.adapter
+            self.engine
+                .adapter
                 .classify(ClassifyRequest {
-                    cwd: self.home.triage_root.clone(),
+                    cwd: self.home.work_root.clone(),
+                    config_root: self.home.config_root.clone(),
                     prompt: payload.classify_prompt,
-                    model: Some(self.assignment.fast_model.clone()),
+                    model: Some(self.assignment.triage_model_id.clone()),
                     environment: self.home.environment.clone(),
                     cancellation: cancellation.clone(),
                 })
@@ -440,7 +454,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
                 decision,
                 model: result
                     .model
-                    .unwrap_or_else(|| self.assignment.fast_model.clone()),
+                    .unwrap_or_else(|| self.assignment.triage_model_id.clone()),
                 input_tokens: result.usage.input_tokens as i64,
                 output_tokens: result.usage.output_tokens as i64,
                 latency_ms: classify_started.elapsed().as_millis() as i64,
@@ -472,21 +486,17 @@ impl<A: EngineAdapter> AgentRunner<A> {
     }
 
     async fn run_main_turn(
-        &self,
+        &mut self,
         prompt: String,
-        resume_session_id: Option<String>,
         cancellation: CancellationToken,
     ) -> Result<TurnResult, EngineError> {
         let _permit = self.resources.main_permit(&cancellation).await?;
         self.resources.gate(&cancellation).await?;
         let result = self
-            .adapter
+            .engine
+            .runtime
             .run_turn(TurnRequest {
-                home: self.home.root.clone(),
                 prompt,
-                model: Some(self.assignment.model.clone()),
-                resume_session_id,
-                environment: self.home.environment.clone(),
                 cancellation,
             })
             .await;
@@ -566,10 +576,7 @@ impl<A: EngineAdapter> AgentRunner<A> {
         if !token_needs_refresh(self.token_expires_at, now) {
             return Ok(());
         }
-        let response = self
-            .device
-            .mint_agent_token(&self.assignment.id, self.generation)
-            .await?;
+        let response = self.computer.mint_agent_token(&self.assignment.id).await?;
         self.home.save_runtime_token(&response.token).await?;
         self.client.replace_token(response.token);
         self.token_expires_at = response.expires_at;
@@ -629,12 +636,13 @@ fn agenda_due(
 fn build_prompt(
     assignment: &AgentAssignment,
     messages: &[MessageView],
+    climates: &[ClimateView],
     triage_note: &str,
     carried_over: bool,
 ) -> String {
     let mut prompt = format!(
         "You are {}. {}\nHandle the following durable collaboration delivery.\n",
-        assignment.display_name, assignment.system_prompt
+        assignment.display_name, assignment.persona
     );
     if !triage_note.trim().is_empty() {
         prompt.push_str(&format!("Triage focus: {triage_note}\n"));
@@ -643,6 +651,20 @@ fn build_prompt(
         prompt.push_str(
             "This is the oldest bounded inbox batch; more unread messages remain for a later run.\n",
         );
+    }
+    if !climates.is_empty() {
+        prompt.push_str(
+            "Private Climate context follows. These are your subjective current impressions, not objective facts.\n",
+        );
+        for climate in climates {
+            prompt.push_str(&format!(
+                "about {}: affinity={}, trust={}, note={}\n",
+                climate.about_participant_id,
+                climate.affinity,
+                climate.trust,
+                climate.last_note.as_deref().unwrap_or("none"),
+            ));
+        }
     }
     for message in messages {
         prompt.push_str(&format!(
@@ -659,7 +681,7 @@ fn build_prompt(
 fn build_agenda_prompt(assignment: &AgentAssignment, focused_brief: &str) -> String {
     format!(
         "You are {}. {}\nHandle this proactive collaboration turn.\n{}\n",
-        assignment.display_name, assignment.system_prompt, focused_brief
+        assignment.display_name, assignment.persona, focused_brief
     )
 }
 
@@ -669,6 +691,8 @@ pub enum RunnerError {
     Runtime(#[from] RuntimeClientError),
     #[error(transparent)]
     Home(#[from] HomeError),
+    #[error(transparent)]
+    Engine(#[from] EngineError),
     #[error("Agent wake loop stopped unexpectedly")]
     WakeLoopStopped,
     #[error("Agenda protocol failed: {0}")]
@@ -677,7 +701,10 @@ pub enum RunnerError {
 
 impl RunnerError {
     pub(super) fn is_fenced(&self) -> bool {
-        self.to_string().contains("409 Conflict")
+        matches!(
+            self,
+            Self::Runtime(error) if error.is_terminal_identity_error()
+        )
     }
 }
 
@@ -685,10 +712,11 @@ impl RunnerError {
 mod tests {
     use std::time::Duration;
 
+    use crate::protocol::{AgentAssignment, ClimateView, MessageView};
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
-    use super::{agenda_due, next_trigger, token_needs_refresh};
+    use super::{agenda_due, build_prompt, next_trigger, token_needs_refresh};
 
     #[test]
     fn refreshes_agent_token_with_five_minutes_remaining() {
@@ -721,6 +749,46 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn main_prompt_projects_only_the_current_private_climate_snapshot() {
+        let assignment = AgentAssignment {
+            id: "alpha".to_string(),
+            display_name: "Alpha".to_string(),
+            role: None,
+            persona: "Investigate carefully.".to_string(),
+            engine_id: "opencode".to_string(),
+            main_model_id: "local/main".to_string(),
+            triage_model_id: "local/triage".to_string(),
+            config_revision: 1,
+            agenda_enabled: false,
+        };
+        let prompt = build_prompt(
+            &assignment,
+            &[MessageView {
+                id: "msg-1".to_string(),
+                room_id: "room-1".to_string(),
+                sequence: 1,
+                author_id: "beta".to_string(),
+                body: "Please review this.".to_string(),
+            }],
+            &[ClimateView {
+                agent_id: "alpha".to_string(),
+                about_participant_id: "beta".to_string(),
+                affinity: 0.75,
+                trust: 0.5,
+                last_note: Some("Strong technically; verify estimates.".to_string()),
+                updated_at: "2026-08-31T20:00:00+08:00".to_string(),
+            }],
+            "",
+            false,
+        );
+
+        assert!(prompt.contains("subjective current impressions"));
+        assert!(prompt.contains("about beta: affinity=0.75, trust=0.5"));
+        assert!(prompt.contains("Strong technically; verify estimates."));
+        assert!(prompt.contains("Please review this."));
+    }
+
     #[tokio::test]
     async fn closed_wake_channel_is_graceful_during_shutdown() {
         let (sender, mut wakes) = mpsc::channel(1);
@@ -733,6 +801,18 @@ mod tests {
         );
 
         let trigger = next_trigger(&mut wakes, &mut interval, &shutdown).await;
+
+        assert!(matches!(trigger, Ok(None)));
+    }
+
+    #[tokio::test]
+    async fn stop_request_wins_over_a_ready_poll_tick() {
+        let (_sender, mut wakes) = mpsc::channel(1);
+        let stop_requested = CancellationToken::new();
+        stop_requested.cancel();
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+
+        let trigger = next_trigger(&mut wakes, &mut interval, &stop_requested).await;
 
         assert!(matches!(trigger, Ok(None)));
     }

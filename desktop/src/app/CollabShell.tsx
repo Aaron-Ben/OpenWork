@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AgentManager } from '@/features/collab/agents/AgentManager'
+import { listenToCollabInvalidations } from '@/bridge/collabEvents'
 import { BoardPage } from '@/features/collab/boards/BoardPage'
 import { useAgentStore } from '@/features/collab/agents/agentStore'
 import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
@@ -9,6 +10,7 @@ import { CollabRail } from '@/features/collab/components/CollabRail'
 import { MessagePane } from '@/features/collab/rooms/MessagePane'
 import { RoomList } from '@/features/collab/rooms/RoomList'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
+import { useCollabRuntimeStore } from '@/features/collab/runtimeStore'
 
 export function CollabShell() {
   const { t } = useTranslation()
@@ -19,11 +21,31 @@ export function CollabShell() {
   const fetchRooms = useRoomStore((state) => state.fetchAll)
   const agents = useAgentStore((state) => state.agents)
   const fetchAgents = useAgentStore((state) => state.fetchAll)
+  const fetchRuntime = useCollabRuntimeStore((state) => state.fetch)
   const activeRoom = rooms.find((room) => room.id === activeRoomId) ?? null
 
   useEffect(() => {
-    void Promise.all([fetchRooms(), fetchAgents()])
-  }, [fetchAgents, fetchRooms])
+    void Promise.all([fetchRooms(), fetchAgents(), fetchRuntime()])
+  }, [fetchAgents, fetchRooms, fetchRuntime])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void listenToCollabInvalidations((invalidation) => {
+      if (invalidation.kind === 'message') return
+      void fetchRuntime()
+      if (invalidation.kind === 'runtime_ready' || invalidation.kind === 'agent_config') {
+        void fetchAgents()
+      }
+    }).then((stop) => {
+      if (disposed) stop()
+      else unlisten = stop
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [fetchAgents, fetchRuntime])
 
   useEffect(() => {
     if (!activeRoomId && rooms[0]) selectRoom(rooms[0].id)
@@ -39,7 +61,7 @@ export function CollabShell() {
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
           )}
         </>
-      ) : view === 'agents' ? <AgentManager /> : <BoardPage rooms={rooms} />}
+      ) : view === 'agents' ? <AgentManager /> : <BoardPage />}
     </main>
   )
 }

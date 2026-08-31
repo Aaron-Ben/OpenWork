@@ -1,31 +1,33 @@
+use crate::protocol::{WakeEvent, entity_id};
 use time::OffsetDateTime;
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
-
-use crate::protocol::WakeEvent;
 
 use super::{
     coordination::Coordination,
+    messages::Messages,
     redis::{MessageNewEvent, RedisCoordination},
-    storage::CollaborationStore,
+    rooms::Rooms,
 };
 
 #[derive(Clone)]
 pub struct Scheduler {
-    store: CollaborationStore,
+    rooms: Rooms,
+    messages: Messages,
     redis: RedisCoordination,
     coordination: Coordination,
 }
 
 impl Scheduler {
-    pub fn new(
-        store: CollaborationStore,
+    pub(crate) fn new(
+        rooms: Rooms,
+        messages: Messages,
         redis: RedisCoordination,
         coordination: Coordination,
     ) -> Self {
         Self {
-            store,
+            rooms,
+            messages,
             redis,
             coordination,
         }
@@ -51,7 +53,7 @@ impl Scheduler {
     }
 
     pub async fn message_committed(&self, message_id: &str, room_id: &str, author_id: &str) {
-        match self.store.room_agent_ids(room_id).await {
+        match self.rooms.agent_ids(room_id).await {
             Ok(agent_ids) => {
                 if let Err(error) = self.coordination.reset_agenda_declines(&agent_ids).await {
                     tracing::warn!(%error, room_id, "agenda decline reset failed closed");
@@ -70,12 +72,8 @@ impl Scheduler {
         }
     }
 
-    pub fn subscribe_wakes(&self) -> broadcast::Receiver<WakeEvent> {
-        self.redis.subscribe_wakes()
-    }
-
-    pub fn redis_connected(&self) -> bool {
-        self.redis.is_connected()
+    pub fn subscribe_wakes(&self, agent_id: &str) -> broadcast::Receiver<WakeEvent> {
+        self.redis.subscribe_wakes(agent_id)
     }
 
     async fn schedule(&self, event: MessageNewEvent) {
@@ -88,7 +86,7 @@ impl Scheduler {
             }
         }
         let recipients = match self
-            .store
+            .messages
             .wake_recipients(&event.message_id, &event.room_id, &event.author_id)
             .await
         {
@@ -99,7 +97,7 @@ impl Scheduler {
             }
         };
         for agent_id in recipients {
-            if event.author_id != "user" {
+            if event.author_id != "local-user" {
                 match self.redis.allow_agent_authored_wake(&agent_id).await {
                     Ok(true) => {}
                     Ok(false) => continue,
@@ -109,7 +107,7 @@ impl Scheduler {
                 }
             }
             let wake = WakeEvent {
-                id: Uuid::new_v4().to_string(),
+                id: entity_id("event"),
                 agent_id,
                 message_id: event.message_id.clone(),
                 room_id: event.room_id.clone(),

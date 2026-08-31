@@ -1,14 +1,11 @@
 use std::fmt::Write as _;
 
-use sqlx::{FromRow, PgPool};
-use time::OffsetDateTime;
-use uuid::Uuid;
-
 use crate::protocol::{
     AgendaCandidate, AgendaCandidateSet, AgendaDecision, AgendaDecisionRequest,
-    AgendaDecisionResponse, AgendaFocus, AgendaPayload, COLLAB_PROTOCOL_VERSION, MessageView,
-    TriggerEnvelope,
+    AgendaDecisionResponse, AgendaFocus, AgendaPayload, MessageView, TriggerEnvelope, entity_id,
 };
+use sqlx::{FromRow, PgPool};
+use time::OffsetDateTime;
 
 use super::{
     auth::{AgentClaims, SigningKey},
@@ -38,6 +35,9 @@ impl Agenda {
     }
 
     pub async fn payload(&self, claims: &AgentClaims) -> Result<AgendaPayload, sqlx::Error> {
+        if !self.enabled(&claims.sub).await? {
+            return self.signed_payload(claims, Vec::new());
+        }
         if !self
             .coordination
             .agenda_allowed(&claims.sub)
@@ -59,12 +59,17 @@ impl Agenda {
         claims: &AgentClaims,
         request: AgendaDecisionRequest,
     ) -> Result<AgendaDecisionResponse, sqlx::Error> {
+        if !self.enabled(&claims.sub).await? {
+            return Err(protocol_error(
+                "CONFLICT: Agenda is disabled for this Agent",
+            ));
+        }
         self.signing_key
             .verify_agenda_candidates(&request.candidate_set)
             .map_err(auth_error)?;
         let now = OffsetDateTime::now_utc().unix_timestamp();
         if request.candidate_set.agent_id != claims.sub
-            || request.candidate_set.computer_generation != claims.generation
+            || request.candidate_set.runtime_session_id != claims.runtime_session_id
             || request.candidate_set.expires_at <= now
             || request.candidate_set.issued_at > now + 30
         {
@@ -142,9 +147,10 @@ impl Agenda {
                     });
                 }
                 if matches!(candidate, AgendaCandidate::StalledRoom { .. })
+                    && let Some(room_id) = focus.room_id.as_deref()
                     && !self
                         .coordination
-                        .claim_room_nudge(&focus.room_id)
+                        .claim_room_nudge(room_id)
                         .await
                         .map_err(coordination_error)?
                 {
@@ -158,11 +164,9 @@ impl Agenda {
                     .reset_agenda_declines(std::slice::from_ref(&claims.sub))
                     .await;
                 let mut trigger = TriggerEnvelope {
-                    protocol_version: COLLAB_PROTOCOL_VERSION,
-                    dispatch_id: format!("run_{}", Uuid::new_v4().simple()),
+                    dispatch_id: entity_id("run"),
                     agent_id: claims.sub.clone(),
-                    computer_id: "local".to_string(),
-                    computer_generation: claims.generation,
+                    runtime_session_id: claims.runtime_session_id.clone(),
                     trigger: "agenda".to_string(),
                     deliveries: Vec::new(),
                     agenda_focus: Some(focus.clone()),
@@ -207,9 +211,9 @@ impl Agenda {
     ) -> Result<AgendaPayload, sqlx::Error> {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         let mut candidate_set = AgendaCandidateSet {
-            id: format!("agenda_{}", Uuid::new_v4().simple()),
+            id: entity_id("agenda"),
             agent_id: claims.sub.clone(),
-            computer_generation: claims.generation,
+            runtime_session_id: claims.runtime_session_id.clone(),
             candidates,
             issued_at: now,
             expires_at: now + CANDIDATE_TTL_SECONDS,
@@ -225,24 +229,30 @@ impl Agenda {
         })
     }
 
+    async fn enabled(&self, agent_id: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT config.agenda_enabled
+             FROM collab_agent_runtime_configs config
+             JOIN collab_agent_profiles profile ON profile.agent_id = config.agent_id
+             WHERE config.agent_id = $1 AND profile.archived_at IS NULL",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|enabled| enabled.unwrap_or(false))
+    }
+
     async fn card_candidates(&self, agent_id: &str) -> Result<Vec<AgendaCandidate>, sqlx::Error> {
         let rows = sqlx::query_as::<_, CardCandidateRow>(
-            "SELECT card.id AS card_id, board.room_id, card.title,
+            "SELECT card.id AS card_id, card.title,
                     board_column.title AS column_title,
-                    CASE WHEN card.claimed_by = $1 THEN 'claimed' ELSE 'assigned' END AS assignment,
-                    floor(extract(epoch FROM card.updated_at))::BIGINT AS updated_at,
-                    room.next_seq AS room_sequence
+                    'assigned'::TEXT AS assignment,
+                    floor(extract(epoch FROM card.updated_at))::BIGINT AS updated_at
              FROM collab_cards card
-             JOIN collab_boards board ON board.id = card.board_id
              JOIN collab_board_columns board_column
-               ON board_column.id = card.column_id AND NOT board_column.is_done
-             JOIN collab_rooms room ON room.id = board.room_id
-             JOIN collab_room_members member
-               ON member.room_id = board.room_id AND member.participant_id = $1
-             WHERE card.claimed_by = $1
-                OR (card.claimed_by IS NULL AND card.assignee_id = $1)
-             ORDER BY CASE WHEN card.assignee_id = $1 AND card.claimed_by IS NULL THEN 0 ELSE 1 END,
-                      card.updated_at, card.id
+               ON board_column.id = card.column_id AND NOT board_column.is_terminal
+             WHERE card.assignee_id = $1
+             ORDER BY card.updated_at, card.id
              LIMIT $2",
         )
         .bind(agent_id)
@@ -251,17 +261,16 @@ impl Agenda {
         .await?;
         let mut candidates = Vec::with_capacity(rows.len());
         for row in rows {
-            let recent_context = self.recent_messages(&row.room_id).await?;
             candidates.push(AgendaCandidate::AssignedCard {
                 candidate_id: format!("card:{}:{}", row.card_id, row.updated_at),
                 card_id: row.card_id,
-                room_id: row.room_id,
+                room_id: None,
                 title: row.title,
                 column: row.column_title,
                 assignment: row.assignment,
                 updated_at: row.updated_at,
-                room_sequence: row.room_sequence,
-                recent_context,
+                room_sequence: None,
+                recent_context: Vec::new(),
             });
         }
         Ok(candidates)
@@ -296,24 +305,13 @@ impl Agenda {
         .await?;
         let mut candidates = Vec::with_capacity(rows.len());
         for row in rows {
-            let open_cards: Vec<String> = sqlx::query_scalar(
-                "SELECT card.title
-                 FROM collab_cards card
-                 JOIN collab_boards board ON board.id = card.board_id
-                 JOIN collab_board_columns board_column
-                   ON board_column.id = card.column_id AND NOT board_column.is_done
-                 WHERE board.room_id = $1 ORDER BY card.updated_at, card.id LIMIT 8",
-            )
-            .bind(&row.room_id)
-            .fetch_all(&self.pool)
-            .await?;
             let recent_context = self.recent_messages(&row.room_id).await?;
             candidates.push(AgendaCandidate::StalledRoom {
                 candidate_id: format!("room:{}:{}", row.room_id, row.last_sequence),
                 room_id: row.room_id,
                 last_sequence: row.last_sequence,
                 last_activity_at: row.last_activity_at,
-                open_cards,
+                open_cards: Vec::new(),
                 recent_context,
             });
         }
@@ -345,29 +343,21 @@ impl Agenda {
         match candidate {
             AgendaCandidate::AssignedCard {
                 card_id,
-                room_id,
                 updated_at,
                 ..
             } => {
-                let current: Option<(i64, i64)> = sqlx::query_as(
-                    "SELECT floor(extract(epoch FROM card.updated_at))::BIGINT, room.next_seq
+                let current: Option<i64> = sqlx::query_scalar(
+                    "SELECT floor(extract(epoch FROM card.updated_at))::BIGINT
                      FROM collab_cards card
-                     JOIN collab_boards board ON board.id = card.board_id
                      JOIN collab_board_columns board_column
-                       ON board_column.id = card.column_id AND NOT board_column.is_done
-                     JOIN collab_rooms room ON room.id = board.room_id
-                     JOIN collab_room_members member
-                       ON member.room_id = board.room_id AND member.participant_id = $2
-                     WHERE card.id = $1 AND board.room_id = $3
-                       AND (card.claimed_by = $2
-                            OR (card.claimed_by IS NULL AND card.assignee_id = $2))",
+                       ON board_column.id = card.column_id AND NOT board_column.is_terminal
+                     WHERE card.id = $1 AND card.assignee_id = $2",
                 )
                 .bind(card_id)
                 .bind(&claims.sub)
-                .bind(room_id)
                 .fetch_optional(&self.pool)
                 .await?;
-                let Some((current_updated, room_sequence)) = current else {
+                let Some(current_updated) = current else {
                     return Err(protocol_error(
                         "CONFLICT: agenda card is no longer actionable",
                     ));
@@ -378,9 +368,9 @@ impl Agenda {
                     ));
                 }
                 Ok(AgendaFocus {
-                    room_id: room_id.clone(),
+                    room_id: None,
                     card_id: Some(card_id.clone()),
-                    room_sequence,
+                    room_sequence: None,
                     reason: reason.to_string(),
                 })
             }
@@ -414,9 +404,9 @@ impl Agenda {
                     ));
                 }
                 Ok(AgendaFocus {
-                    room_id: room_id.clone(),
+                    room_id: Some(room_id.clone()),
                     card_id: None,
-                    room_sequence: *last_sequence,
+                    room_sequence: Some(*last_sequence),
                     reason: reason.to_string(),
                 })
             }
@@ -429,16 +419,13 @@ impl Agenda {
         kind: &str,
         payload: serde_json::Value,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO collab_events (id, agent_id, computer_id, kind, payload)
-             VALUES ($1, $2, 'local', $3, $4)",
-        )
-        .bind(format!("event_{}", Uuid::new_v4().simple()))
-        .bind(&claims.sub)
-        .bind(kind)
-        .bind(payload)
-        .execute(&self.pool)
-        .await?;
+        tracing::info!(
+            agent_id = claims.sub,
+            runtime_session_id = claims.runtime_session_id,
+            event = kind,
+            payload = %payload,
+            "Agenda decision"
+        );
         Ok(())
     }
 }
@@ -469,7 +456,7 @@ fn classify_prompt(candidates: &[AgendaCandidate]) -> String {
 fn focused_brief(candidate: &AgendaCandidate, focus: &AgendaFocus) -> String {
     let mut brief = format!(
         "Trigger: agenda\nFocus room: {}\nFocus card: {}\nWhy now: {}\n",
-        focus.room_id,
+        focus.room_id.as_deref().unwrap_or("none"),
         focus.card_id.as_deref().unwrap_or("none"),
         focus.reason
     );
@@ -494,12 +481,10 @@ fn focused_brief(candidate: &AgendaCandidate, focus: &AgendaFocus) -> String {
 #[derive(FromRow)]
 struct CardCandidateRow {
     card_id: String,
-    room_id: String,
     title: String,
     column_title: String,
     assignment: String,
     updated_at: i64,
-    room_sequence: i64,
 }
 
 #[derive(FromRow)]

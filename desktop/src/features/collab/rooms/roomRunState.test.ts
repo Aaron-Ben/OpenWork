@@ -5,11 +5,13 @@ import { roomRunState } from './roomRunState'
 
 function run(overrides: Partial<CollabRun> = {}): CollabRun {
   return {
-    id: 'run_1',
+    id: 'run-1',
     agentId: 'alpha',
+    runtimeSessionId: 'runtime-test',
     trigger: 'message',
     status: 'running',
-    model: 'deepseek/deepseek-v4-flash',
+    engineId: 'opencode',
+    mainModelId: 'deepseek/deepseek-v4-flash',
     outcome: null,
     roomId: 'room_1',
     focusCardId: null,
