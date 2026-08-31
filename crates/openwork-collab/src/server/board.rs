@@ -444,7 +444,7 @@ impl Board {
     pub(crate) async fn delete_card_in(
         transaction: &mut Transaction<'_, Postgres>,
         card_id: &str,
-    ) -> Result<(), BoardOperationError> {
+    ) -> Result<String, BoardOperationError> {
         sqlx::query("SET CONSTRAINTS collab_cards_position_unique DEFERRED")
             .execute(&mut **transaction)
             .await?;
@@ -479,7 +479,7 @@ impl Board {
         }
         let cards = locked_card_ids(transaction, &column_id).await?;
         renumber(transaction, &column_id, &cards).await?;
-        Ok(())
+        Ok(board_id)
     }
 
     pub(crate) async fn claim_card_in(

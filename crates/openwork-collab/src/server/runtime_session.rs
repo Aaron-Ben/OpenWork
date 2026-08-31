@@ -197,6 +197,30 @@ impl RuntimeSession {
         let _ = self.inner.desktop_events.send(event);
     }
 
+    pub(crate) fn publish_room(&self, room_id: Option<&str>) {
+        let _ = self.inner.desktop_events.send(event(
+            InvalidationKind::Room,
+            room_id.map(str::to_string),
+            None,
+        ));
+    }
+
+    pub(crate) fn publish_message(&self, room_id: &str, sequence: i64) {
+        let _ = self.inner.desktop_events.send(event(
+            InvalidationKind::Message,
+            Some(room_id.to_string()),
+            Some(sequence),
+        ));
+    }
+
+    pub(crate) fn publish_board(&self, board_id: Option<&str>) {
+        let _ = self.inner.desktop_events.send(event(
+            InvalidationKind::Board,
+            board_id.map(str::to_string),
+            None,
+        ));
+    }
+
     pub(crate) fn publish_inventory(&self, engine_id: &str) {
         let event = event(
             InvalidationKind::EngineInventory,
@@ -325,5 +349,26 @@ mod tests {
             events.try_recv(),
             Err(tokio::sync::broadcast::error::TryRecvError::Empty)
         ));
+    }
+
+    #[tokio::test]
+    async fn domain_invalidations_keep_the_affected_subject_and_revision() {
+        let session = RuntimeSession::new(RuntimeCredentials::generate()).unwrap();
+        let mut events = session.subscribe_desktop();
+
+        session.publish_room(Some("room-a"));
+        session.publish_message("room-a", 42);
+        session.publish_board(Some("board-a"));
+
+        let room = events.recv().await.unwrap();
+        let message = events.recv().await.unwrap();
+        let board = events.recv().await.unwrap();
+        assert_eq!(room.kind, InvalidationKind::Room);
+        assert_eq!(room.subject_id.as_deref(), Some("room-a"));
+        assert_eq!(message.kind, InvalidationKind::Message);
+        assert_eq!(message.subject_id.as_deref(), Some("room-a"));
+        assert_eq!(message.revision, Some(42));
+        assert_eq!(board.kind, InvalidationKind::Board);
+        assert_eq!(board.subject_id.as_deref(), Some("board-a"));
     }
 }

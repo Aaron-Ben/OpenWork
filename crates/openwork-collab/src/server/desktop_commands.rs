@@ -40,6 +40,13 @@ enum PostCommitEffect {
         message_id: String,
         room_id: String,
         author_id: String,
+        sequence: i64,
+    },
+    RoomChanged {
+        room_id: Option<String>,
+    },
+    BoardChanged {
+        board_id: Option<String>,
     },
 }
 
@@ -213,26 +220,26 @@ impl DesktopCommands {
                 let effect = agent_effect(&agent);
                 (DesktopCommandResult::Agent(agent), vec![effect])
             }
-            DesktopCommand::CreateDirectRoom { agent_id } => (
-                DesktopCommandResult::Room(Rooms::create_direct_in(transaction, &agent_id).await?),
-                Vec::new(),
-            ),
-            DesktopCommand::CreateGroupRoom { title, agent_ids } => (
-                DesktopCommandResult::Room(
-                    Rooms::create_group_in(transaction, &title, &agent_ids).await?,
-                ),
-                Vec::new(),
-            ),
+            DesktopCommand::CreateDirectRoom { agent_id } => {
+                let room = Rooms::create_direct_in(transaction, &agent_id).await?;
+                room_result(room)
+            }
+            DesktopCommand::CreateGroupRoom { title, agent_ids } => {
+                let room = Rooms::create_group_in(transaction, &title, &agent_ids).await?;
+                room_result(room)
+            }
             DesktopCommand::AddGroupMember { room_id, agent_id } => {
                 let (members, message) =
                     Rooms::change_member_in(transaction, &room_id, &agent_id, true).await?;
-                let effects = message.into_iter().map(message_effect).collect();
+                let mut effects: Vec<_> = message.into_iter().map(message_effect).collect();
+                effects.push(room_effect(Some(room_id)));
                 (DesktopCommandResult::Members { members }, effects)
             }
             DesktopCommand::RemoveGroupMember { room_id, agent_id } => {
                 let (members, message) =
                     Rooms::change_member_in(transaction, &room_id, &agent_id, false).await?;
-                let effects = message.into_iter().map(message_effect).collect();
+                let mut effects: Vec<_> = message.into_iter().map(message_effect).collect();
+                effects.push(room_effect(Some(room_id)));
                 (DesktopCommandResult::Members { members }, effects)
             }
             DesktopCommand::SendMessage { room_id, body } => {
@@ -240,97 +247,87 @@ impl DesktopCommands {
                 let effect = message_effect(message.clone());
                 (DesktopCommandResult::Message(message), vec![effect])
             }
-            DesktopCommand::CreateBoard { title, description } => (
-                DesktopCommandResult::Board(
+            DesktopCommand::CreateBoard { title, description } => {
+                let board =
                     Board::create_in(transaction, &title, description.as_deref(), "local-user")
-                        .await?,
-                ),
-                Vec::new(),
-            ),
+                        .await?;
+                board_result(board)
+            }
             DesktopCommand::UpdateBoard {
                 board_id,
                 title,
                 description,
-            } => (
-                DesktopCommandResult::Board(
+            } => {
+                let board =
                     Board::update_in(transaction, &board_id, &title, description.as_deref())
                         .await
-                        .map_err(board_error)?,
-                ),
-                Vec::new(),
-            ),
+                        .map_err(board_error)?;
+                board_result(board)
+            }
             DesktopCommand::DeleteBoard { board_id } => {
                 Board::delete_in(transaction, &board_id)
                     .await
                     .map_err(board_error)?;
+                let effect = board_effect(Some(board_id.clone()));
                 (
                     DesktopCommandResult::Deleted {
                         entity_id: board_id,
                     },
-                    Vec::new(),
+                    vec![effect],
                 )
             }
             DesktopCommand::CreateBoardColumn {
                 board_id,
                 title,
                 is_terminal,
-            } => (
-                DesktopCommandResult::Board(
-                    Board::create_column_in(transaction, &board_id, &title, is_terminal)
-                        .await
-                        .map_err(board_error)?,
-                ),
-                Vec::new(),
-            ),
+            } => {
+                let board = Board::create_column_in(transaction, &board_id, &title, is_terminal)
+                    .await
+                    .map_err(board_error)?;
+                board_result(board)
+            }
             DesktopCommand::UpdateBoardColumn {
                 column_id,
                 title,
                 is_terminal,
-            } => (
-                DesktopCommandResult::Board(
-                    Board::update_column_in(transaction, &column_id, &title, is_terminal)
-                        .await
-                        .map_err(board_error)?,
-                ),
-                Vec::new(),
-            ),
+            } => {
+                let board = Board::update_column_in(transaction, &column_id, &title, is_terminal)
+                    .await
+                    .map_err(board_error)?;
+                board_result(board)
+            }
             DesktopCommand::MoveBoardColumn {
                 column_id,
                 before_column_id,
-            } => (
-                DesktopCommandResult::Board(
+            } => {
+                let board =
                     Board::move_column_in(transaction, &column_id, before_column_id.as_deref())
                         .await
-                        .map_err(board_error)?,
-                ),
-                Vec::new(),
-            ),
-            DesktopCommand::DeleteBoardColumn { column_id } => (
-                DesktopCommandResult::Board(
-                    Board::delete_column_in(transaction, &column_id)
-                        .await
-                        .map_err(board_error)?,
-                ),
-                Vec::new(),
-            ),
+                        .map_err(board_error)?;
+                board_result(board)
+            }
+            DesktopCommand::DeleteBoardColumn { column_id } => {
+                let board = Board::delete_column_in(transaction, &column_id)
+                    .await
+                    .map_err(board_error)?;
+                board_result(board)
+            }
             DesktopCommand::AssignCard {
                 card_id,
                 assignee_id,
-            } => (
-                DesktopCommandResult::Card(
-                    Board::assign_card_in(transaction, &card_id, assignee_id.as_deref())
-                        .await
-                        .map_err(board_error)?,
-                ),
-                Vec::new(),
-            ),
+            } => {
+                let card = Board::assign_card_in(transaction, &card_id, assignee_id.as_deref())
+                    .await
+                    .map_err(board_error)?;
+                card_result(card)
+            }
             DesktopCommand::DeleteCard { card_id } => {
-                Board::delete_card_in(transaction, &card_id)
+                let board_id = Board::delete_card_in(transaction, &card_id)
                     .await
                     .map_err(board_error)?;
                 (
                     DesktopCommandResult::Deleted { entity_id: card_id },
-                    Vec::new(),
+                    vec![board_effect(Some(board_id))],
                 )
             }
             _ => {
@@ -352,10 +349,18 @@ impl DesktopCommands {
                     message_id,
                     room_id,
                     author_id,
+                    sequence,
                 } => {
+                    self.session.publish_message(&room_id, sequence);
                     self.scheduler
                         .message_committed(&message_id, &room_id, &author_id)
                         .await;
+                }
+                PostCommitEffect::RoomChanged { room_id } => {
+                    self.session.publish_room(room_id.as_deref());
+                }
+                PostCommitEffect::BoardChanged { board_id } => {
+                    self.session.publish_board(board_id.as_deref());
                 }
             }
         }
@@ -439,7 +444,33 @@ fn message_effect(message: crate::protocol::MessageView) -> PostCommitEffect {
         message_id: message.id,
         room_id: message.room_id,
         author_id: message.author_id,
+        sequence: message.sequence,
     }
+}
+
+fn room_result(room: crate::protocol::RoomView) -> (DesktopCommandResult, Vec<PostCommitEffect>) {
+    let effect = room_effect(Some(room.id.clone()));
+    (DesktopCommandResult::Room(room), vec![effect])
+}
+
+fn room_effect(room_id: Option<String>) -> PostCommitEffect {
+    PostCommitEffect::RoomChanged { room_id }
+}
+
+fn board_result(
+    board: crate::protocol::BoardView,
+) -> (DesktopCommandResult, Vec<PostCommitEffect>) {
+    let effect = board_effect(Some(board.id.clone()));
+    (DesktopCommandResult::Board(board), vec![effect])
+}
+
+fn card_result(card: crate::protocol::CardView) -> (DesktopCommandResult, Vec<PostCommitEffect>) {
+    let effect = board_effect(Some(card.board_id.clone()));
+    (DesktopCommandResult::Card(card), vec![effect])
+}
+
+fn board_effect(board_id: Option<String>) -> PostCommitEffect {
+    PostCommitEffect::BoardChanged { board_id }
 }
 
 fn board_error(error: BoardOperationError) -> sqlx::Error {

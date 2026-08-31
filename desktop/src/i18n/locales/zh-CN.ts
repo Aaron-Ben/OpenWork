@@ -3,6 +3,9 @@ export const zhCN = {
     confirm: '确认',
     cancel: '取消',
     close: '关闭',
+    save: '保存',
+    delete: '删除',
+    loading: '正在加载…',
   },
   errorBoundary: {
     title: '界面渲染出错',
@@ -340,6 +343,7 @@ export const zhCN = {
       selectAgent: '选择同事', addMember: '添加', thinking: '{{agents}} 正在思考…',
       retrying: '{{agents}} 正在重试…', rateLimited: '{{agents}} 触发模型限流，稍后重试',
       runFailed: '{{agents}} 运行失败：{{message}}', unknownFailure: '未知 OpenCode 错误',
+      resizeSidebar: '调整房间列表宽度', scrollToLatest: '回到最新消息',
     },
     agents: {
       title: '同事管理', create: '创建同事', edit: '编辑同事', save: '保存', displayName: '名称', role: '角色（可选）',
@@ -348,6 +352,7 @@ export const zhCN = {
       running: 'Runner 正在运行', starting: 'Runner 正在启动', restarting: 'Runner 正在应用最新配置',
       runnerError: 'Runner 启动失败', engineMissing: '未安装 OpenCode', engineError: 'OpenCode 可用性检查失败',
       runtimeReady: '本机 Runtime 已就绪', runtimeStarting: '本机 Runtime 正在启动',
+      openChat: '打开对话', activeCount: '{{count}} 位活跃同事', runningCount: '{{count}} 个 Runner 运行中',
     },
     boards: {
       title: '看板', create: '创建看板', name: '看板名称', description: '描述（可选）',
@@ -355,17 +360,25 @@ export const zhCN = {
       addColumn: '添加列', columnName: '列名称', terminal: '终态列', terminalPrompt: '这个列是否代表任务已结束？',
       editBoard: '编辑看板', deleteBoard: '删除看板', editColumn: '编辑列', deleteColumn: '删除列', deleteCard: '删除卡片',
       moveLeft: '向左移动', moveRight: '向右移动',
-      deleteBoardPrompt: '仅无卡片的看板可以删除。确认删除？',
-      deleteColumnPrompt: '仅空列可以删除。确认删除？', deleteCardPrompt: '确认永久删除这张卡片？',
+      allBoards: '全部看板', cardCount: '{{count}} 张卡片', emptyColumn: '这一列还没有卡片', resizeSidebar: '调整看板列表宽度',
+      terminalDescription: 'Agent 把卡片移动到这里后，任务会被视为完成。',
+      deleteBoardPrompt: '仅无卡片的看板可以删除。确认删除“{{name}}”？',
+      deleteColumnPrompt: '仅空列可以删除。确认删除“{{name}}”？', deleteCardPrompt: '确认永久删除“{{name}}”？',
     },
     observability: {
       title: '运行观测', subtitle: '每个 Agent Turn 的执行轨迹', refresh: '刷新',
+      autoRefresh: '自动刷新', resizeSidebar: '调整运行列表宽度',
       agentFilter: '同事', statusFilter: '状态', allAgents: '全部同事', allStatuses: '全部状态',
       loading: '正在加载…', empty: '还没有运行记录', selectRun: '选择一次运行查看轨迹',
       duration: '耗时', tokens: 'Token', tools: '命令', inbox: '收件', events: '事件', trigger: '触发方式',
       engine: 'Engine', configuredModel: '配置模型', observedModel: '实际模型', startedAt: '开始时间',
       timeline: '执行时间线', noEvents: '没有事件', rawData: '结构化数据', unknownError: '未知错误',
       milliseconds: '{{count}} ms',
+      detail: {
+        room: '房间', model: '模型', reason: '原因', latency: '延迟', inputTokens: '输入 Token',
+        cachedInputTokens: '缓存输入', outputTokens: '输出 Token', responseSize: '响应大小',
+        requestId: '请求 ID', result: '结果', retryAfter: '重试等待', outcome: '结果状态',
+      },
       status: { running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' },
       event: {
         run_opened: 'Run 已打开', triage_started: '开始判断是否需要响应',

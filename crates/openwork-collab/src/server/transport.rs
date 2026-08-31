@@ -307,16 +307,31 @@ async fn agent_command(
     let claims = agent_claims(&state, &headers).await?;
     let response = state.agent_commands.execute(&claims, request).await?;
     for effect in &response.effects {
-        if let AgentCommandEffect::MessagePublished {
-            room_id,
-            message_id,
-            ..
-        } = effect
-        {
-            state
-                .scheduler
-                .message_committed(message_id, room_id, &claims.sub)
-                .await;
+        match effect {
+            AgentCommandEffect::MessagePublished {
+                room_id,
+                message_id,
+                sequence,
+            } => {
+                state.session.publish_message(room_id, *sequence);
+                state
+                    .scheduler
+                    .message_committed(message_id, room_id, &claims.sub)
+                    .await;
+            }
+            AgentCommandEffect::DirectRoomOpened { room_id, .. } => {
+                state.session.publish_room(Some(room_id));
+            }
+            AgentCommandEffect::CardCreated { board_id, .. } => {
+                state.session.publish_board(Some(board_id));
+            }
+            AgentCommandEffect::CardAssigned { .. }
+            | AgentCommandEffect::CardUpdated { .. }
+            | AgentCommandEffect::CardMoved { .. } => {
+                state.session.publish_board(None);
+            }
+            AgentCommandEffect::InboxAcknowledged { .. }
+            | AgentCommandEffect::ClimateUpdated { .. } => {}
         }
     }
     Ok(Json(response))

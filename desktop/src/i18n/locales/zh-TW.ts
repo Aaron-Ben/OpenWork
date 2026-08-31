@@ -1,5 +1,5 @@
 export const zhTW = {
-  common: { confirm: '確認', cancel: '取消', close: '關閉' },
+  common: { confirm: '確認', cancel: '取消', close: '關閉', save: '儲存', delete: '刪除', loading: '正在載入…' },
   errorBoundary: {
     title: '介面渲染錯誤',
     description: '應用程式發生執行階段錯誤。請將下方資訊回報給開發者，或重新啟動應用程式。',
@@ -270,6 +270,7 @@ export const zhTW = {
       selectAgent: '選擇同事', addMember: '加入', thinking: '{{agents}} 正在思考…',
       retrying: '{{agents}} 正在重試…', rateLimited: '{{agents}} 觸發模型限流，稍後重試',
       runFailed: '{{agents}} 執行失敗：{{message}}', unknownFailure: '未知 OpenCode 錯誤',
+      resizeSidebar: '調整房間列表寬度', scrollToLatest: '回到最新訊息',
     },
     agents: {
       title: '同事管理', create: '建立同事', edit: '編輯同事', save: '儲存', displayName: '名稱', role: '角色（可選）',
@@ -278,6 +279,7 @@ export const zhTW = {
       running: 'Runner 正在執行', starting: 'Runner 正在啟動', restarting: 'Runner 正在套用最新設定',
       runnerError: 'Runner 啟動失敗', engineMissing: '尚未安裝 OpenCode', engineError: 'OpenCode 可用性檢查失敗',
       runtimeReady: '本機 Runtime 已就緒', runtimeStarting: '本機 Runtime 正在啟動',
+      openChat: '開啟對話', activeCount: '{{count}} 位活躍同事', runningCount: '{{count}} 個 Runner 執行中',
     },
     boards: {
       title: '看板', create: '建立看板', name: '看板名稱', description: '描述（選填）',
@@ -285,17 +287,25 @@ export const zhTW = {
       addColumn: '新增欄', columnName: '欄名稱', terminal: '終態欄', terminalPrompt: '這個欄是否代表工作已完成？',
       editBoard: '編輯看板', deleteBoard: '刪除看板', editColumn: '編輯欄', deleteColumn: '刪除欄', deleteCard: '刪除卡片',
       moveLeft: '向左移動', moveRight: '向右移動',
-      deleteBoardPrompt: '只有沒有卡片的看板可以刪除。確認刪除？',
-      deleteColumnPrompt: '只有空欄可以刪除。確認刪除？', deleteCardPrompt: '確認永久刪除這張卡片？',
+      allBoards: '全部看板', cardCount: '{{count}} 張卡片', emptyColumn: '此欄尚無卡片', resizeSidebar: '調整看板列表寬度',
+      terminalDescription: 'Agent 將卡片移到此處後，任務會被視為完成。',
+      deleteBoardPrompt: '只有沒有卡片的看板可以刪除。確認刪除「{{name}}」？',
+      deleteColumnPrompt: '只有空欄可以刪除。確認刪除「{{name}}」？', deleteCardPrompt: '確認永久刪除「{{name}}」？',
     },
     observability: {
       title: '執行觀測', subtitle: '每個 Agent Turn 的執行軌跡', refresh: '重新整理',
+      autoRefresh: '自動重新整理', resizeSidebar: '調整執行列表寬度',
       agentFilter: '同事', statusFilter: '狀態', allAgents: '全部同事', allStatuses: '全部狀態',
       loading: '正在載入…', empty: '還沒有執行記錄', selectRun: '選擇一次執行查看軌跡',
       duration: '耗時', tokens: 'Token', tools: '命令', inbox: '收件', events: '事件', trigger: '觸發方式',
       engine: 'Engine', configuredModel: '設定模型', observedModel: '實際模型', startedAt: '開始時間',
       timeline: '執行時間線', noEvents: '沒有事件', rawData: '結構化資料', unknownError: '未知錯誤',
       milliseconds: '{{count}} ms',
+      detail: {
+        room: '房間', model: '模型', reason: '原因', latency: '延遲', inputTokens: '輸入 Token',
+        cachedInputTokens: '快取輸入', outputTokens: '輸出 Token', responseSize: '回應大小',
+        requestId: '請求 ID', result: '結果', retryAfter: '重試等待', outcome: '結果狀態',
+      },
       status: { running: '執行中', completed: '已完成', failed: '失敗', cancelled: '已取消', interrupted: '已中斷' },
       event: {
         run_opened: 'Run 已開啟', triage_started: '開始判斷是否需要回應',

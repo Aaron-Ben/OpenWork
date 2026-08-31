@@ -1,12 +1,13 @@
-import { Bot, Pencil, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { CollabAgent, CollabAgentInput, CollabRuntimeStatus } from '@/bridge/collab'
+import type { CollabAgent, CollabAgentInput } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useCollabRuntimeStore } from '@/features/collab/runtimeStore'
+import { AgentCard } from './AgentCard'
 import { useAgentStore } from './agentStore'
 
 const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'
@@ -44,8 +45,6 @@ export function AgentManager() {
   const create = useAgentStore((state) => state.create)
   const update = useAgentStore((state) => state.update)
   const error = useAgentStore((state) => state.error)
-  const setAgenda = useAgentStore((state) => state.setAgenda)
-  const setArchived = useAgentStore((state) => state.setArchived)
   const runtime = useCollabRuntimeStore((state) => state.status)
   const runtimeError = useCollabRuntimeStore((state) => state.error)
   const [form, setForm] = useState<AgentFormState | null>(null)
@@ -78,53 +77,29 @@ export function AgentManager() {
           </Button>
         </div>
       </header>
-      <div className="mx-auto grid max-w-4xl gap-3 p-6">
+      <div className="mx-auto grid max-w-6xl gap-5 p-6">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {runtimeError ? <p className="text-sm text-red-600">{runtimeError}</p> : null}
-        {agents.map((agent) => {
-          const archived = agent.archivedAt !== null
-          const actual = actualState(runtime, agent)
-          const actualLabel = archived
-            ? null
-            : actual.kind === 'running'
-              ? t('collab.agents.running')
-              : actual.kind === 'error'
-                ? `${t('collab.agents.runnerError')}: ${actual.detail ?? t('collab.rooms.unknownFailure')}`
-                : t(`collab.agents.${actual.kind}`)
-          return (
-            <article key={agent.id} className="flex items-center gap-4 rounded-2xl border border-line bg-paper-hover p-4">
-              <span className="grid size-10 place-items-center rounded-full bg-clay/10 text-clay"><Bot size={19} /></span>
-              <div className="min-w-0 flex-1">
-                <strong className="block truncate">{agent.displayName}</strong>
-                <span className="text-sm text-ink-faint">
-                  @{agent.id} · OpenCode · {agent.mainModelId} · {archived ? t('collab.agents.archived') : t('collab.agents.active')}
-                </span>
-                {actualLabel ? <span className="block truncate text-xs text-ink-faint" title={actualLabel}>{actualLabel}</span> : null}
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                aria-label={t('collab.agents.edit')}
-                onClick={() => setForm({ agentId: agent.id, input: editableAgent(agent) })}
-              >
-                <Pencil size={15} />
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={archived}
-                variant={agent.agendaEnabled ? 'accent' : 'outline'}
-                onClick={() => void setAgenda(agent.id, !agent.agendaEnabled)}
-              >
-                {agent.agendaEnabled ? t('collab.agents.proactiveOn') : t('collab.agents.proactiveOff')}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void setArchived(agent.id, !archived)}>
-                {archived ? t('collab.agents.restore') : t('collab.agents.archive')}
-              </Button>
-            </article>
-          )
-        })}
+        {agents.length > 0 ? (
+          <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
+            <span className="rounded-full border border-line bg-paper-hover px-3 py-1.5">
+              {t('collab.agents.activeCount', { count: agents.filter((agent) => agent.archivedAt === null).length })}
+            </span>
+            <span className="rounded-full border border-status-success-border bg-status-success-soft px-3 py-1.5 text-status-success-ink">
+              {t('collab.agents.runningCount', { count: runtime?.runners.filter((runner) => runner.state === 'running').length ?? 0 })}
+            </span>
+          </div>
+        ) : null}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {agents.map((agent) => (
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              runtime={runtime}
+              onEdit={() => setForm({ agentId: agent.id, input: editableAgent(agent) })}
+            />
+          ))}
+        </div>
         {agents.length === 0 ? <p className="py-20 text-center text-sm text-ink-faint">{t('collab.agents.noAgents')}</p> : null}
       </div>
       {form ? (
@@ -156,27 +131,6 @@ export function AgentManager() {
       ) : null}
     </section>
   )
-}
-
-type ActualState =
-  | { kind: 'running' }
-  | { kind: 'starting' | 'restarting' | 'engineMissing' | 'engineError' }
-  | { kind: 'error'; detail: string | null }
-
-function actualState(runtime: CollabRuntimeStatus | null, agent: CollabAgent): ActualState {
-  const runner = runtime?.runners.find((candidate) => candidate.agentId === agent.id)
-  if (runner?.state === 'error') {
-    return { kind: 'error', detail: runner.lastError }
-  }
-  if (runner?.state === 'running') {
-    return runner.configRevision === agent.configRevision
-      ? { kind: 'running' }
-      : { kind: 'restarting' }
-  }
-  const readiness = runtime?.engineReadiness.find((engine) => engine.engineId === agent.engineId)
-  if (readiness?.status === 'missing') return { kind: 'engineMissing' }
-  if (readiness?.status === 'error') return { kind: 'engineError' }
-  return { kind: 'starting' }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

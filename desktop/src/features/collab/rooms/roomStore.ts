@@ -21,6 +21,7 @@ interface RoomStoreState {
   error: string | null
   fetchAll: () => Promise<void>
   createGroup: (title: string, agentIds: string[]) => Promise<CollabRoom | null>
+  openDirect: (agentId: string) => Promise<CollabRoom | null>
   fetchMembers: (roomId: string) => Promise<void>
   addMember: (roomId: string, agentId: string) => Promise<void>
   removeMember: (roomId: string, agentId: string) => Promise<void>
@@ -43,6 +44,17 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
     set({ error: null })
     try {
       const room = await collabCommands.createGroupRoom(title, agentIds)
+      await get().fetchAll()
+      return room
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
+      return null
+    }
+  },
+  openDirect: async (agentId) => {
+    set({ error: null })
+    try {
+      const room = await collabCommands.createDirectRoom(agentId)
       await get().fetchAll()
       return room
     } catch (error) {

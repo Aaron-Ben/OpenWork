@@ -5,7 +5,9 @@ export const COLLAB_INVALIDATION_EVENT = 'openwork://collaboration-invalidation'
 export type CollabInvalidationKind =
   | 'runtime_ready'
   | 'agent_config'
+  | 'room'
   | 'message'
+  | 'board'
   | 'engine_inventory'
   | 'runner_status'
 

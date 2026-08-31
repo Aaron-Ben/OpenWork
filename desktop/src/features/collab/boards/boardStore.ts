@@ -2,16 +2,16 @@ import { create } from 'zustand'
 
 import {
   collabCommands,
-  type CollabAgent,
   type CollabBoard,
 } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
 
 interface BoardStoreState {
   boards: CollabBoard[]
-  agents: CollabAgent[]
+  selectedBoardId: string | null
   loading: boolean
   error: string | null
+  selectBoard: (boardId: string) => void
   fetchAll: () => Promise<void>
   createBoard: (title: string, description: string | null) => Promise<void>
   updateBoard: (boardId: string, title: string, description: string | null) => Promise<void>
@@ -24,25 +24,39 @@ interface BoardStoreState {
   deleteCard: (cardId: string) => Promise<void>
 }
 
+let fetchVersion = 0
+
 export const useBoardStore = create<BoardStoreState>((set, get) => ({
   boards: [],
-  agents: [],
+  selectedBoardId: null,
   loading: false,
   error: null,
+  selectBoard: (selectedBoardId) => set({ selectedBoardId }),
   fetchAll: async () => {
+    const version = ++fetchVersion
     set({ loading: true, error: null })
     try {
-      const [boards, agents] = await Promise.all([
-        collabCommands.listBoards(),
-        collabCommands.listAgents(),
-      ])
-      set({ boards, agents, loading: false })
+      const boards = await collabCommands.listBoards()
+      if (version !== fetchVersion) return
+      const selectedBoardId = boards.some((board) => board.id === get().selectedBoardId)
+        ? get().selectedBoardId
+        : boards[0]?.id ?? null
+      set({ boards, selectedBoardId, loading: false })
     } catch (error) {
-      set({ error: resolveErrorMessage(error), loading: false })
+      if (version === fetchVersion) set({ error: resolveErrorMessage(error), loading: false })
     }
   },
-  createBoard: async (title, description) => mutate(set, get, () =>
-    collabCommands.createBoard(title, description)),
+  createBoard: async (title, description) => {
+    set({ error: null })
+    try {
+      const board = await collabCommands.createBoard(title, description)
+      await get().fetchAll()
+      set({ selectedBoardId: board.id })
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
+      throw error
+    }
+  },
   updateBoard: async (boardId, title, description) => mutate(set, get, () =>
     collabCommands.updateBoard(boardId, title, description)),
   deleteBoard: async (boardId) => mutate(set, get, () =>

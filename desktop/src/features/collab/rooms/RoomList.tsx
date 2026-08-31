@@ -38,7 +38,7 @@ export function RoomList({ rooms, agents, activeRoomId, onSelect }: {
   }
 
   return (
-    <aside className="flex h-full w-64 min-w-52 max-w-96 shrink-0 resize-x flex-col overflow-auto border-r border-line bg-paper-hover">
+    <aside className="flex h-full w-full flex-col overflow-auto border-r border-line bg-paper-hover">
       <header className="flex h-12 shrink-0 items-center justify-between px-4">
         <h1 className="font-serif text-lg font-semibold">{t('collab.rooms.title')}</h1>
         <Button type="button" variant="ghost" size="icon" className="size-8" disabled={agents.filter((agent) => agent.archivedAt === null).length < 2} aria-label={t('collab.rooms.createGroup')} onClick={() => setCreating(true)}>
@@ -69,7 +69,7 @@ export function RoomList({ rooms, agents, activeRoomId, onSelect }: {
               <legend className="mb-1 text-xs font-medium text-ink-muted">{t('collab.rooms.selectMembers')}</legend>
               {agents.filter((agent) => agent.archivedAt === null).map((agent) => (
                 <label key={agent.id} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2 text-sm">
-                  <input type="checkbox" checked={selected.includes(agent.id)} onChange={() => toggle(agent.id)} />
+                  <input className="size-4 accent-clay" type="checkbox" checked={selected.includes(agent.id)} onChange={() => toggle(agent.id)} />
                   <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
                   <span className="text-xs text-ink-faint">@{agent.id}</span>
                 </label>

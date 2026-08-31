@@ -104,8 +104,18 @@ impl Rooms {
 
     pub(crate) async fn list(&self) -> Result<Vec<RoomView>, sqlx::Error> {
         sqlx::query_as::<_, RoomRow>(
-            "SELECT id, kind, title FROM collab_rooms
-             ORDER BY COALESCE(last_message_at, created_at) DESC",
+            "SELECT room.id, room.kind,
+                    CASE WHEN room.kind = 'direct' THEN (
+                        SELECT participant.display_name
+                        FROM collab_room_members member
+                        JOIN collab_participants participant
+                          ON participant.id = member.participant_id
+                        WHERE member.room_id = room.id
+                          AND member.participant_id <> 'local-user'
+                        ORDER BY participant.id LIMIT 1
+                    ) ELSE room.title END AS title
+             FROM collab_rooms room
+             ORDER BY COALESCE(room.last_message_at, room.created_at) DESC",
         )
         .fetch_all(&self.pool)
         .await

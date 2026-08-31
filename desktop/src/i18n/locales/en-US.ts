@@ -1,5 +1,5 @@
 export const enUS = {
-  common: { confirm: 'Confirm', cancel: 'Cancel', close: 'Close' },
+  common: { confirm: 'Confirm', cancel: 'Cancel', close: 'Close', save: 'Save', delete: 'Delete', loading: 'Loading…' },
   errorBoundary: {
     title: 'UI rendering error',
     description: 'The application encountered a runtime error. Please share the details below with the developers or restart the app.',
@@ -275,6 +275,7 @@ export const enUS = {
       selectAgent: 'Choose a teammate', addMember: 'Add', thinking: '{{agents}} thinking…',
       retrying: '{{agents}} retrying…', rateLimited: '{{agents}} rate limited; retrying shortly',
       runFailed: '{{agents}} failed: {{message}}', unknownFailure: 'Unknown OpenCode failure',
+      resizeSidebar: 'Resize room list', scrollToLatest: 'Scroll to latest message',
     },
     agents: {
       title: 'Teammate management', create: 'Create teammate', edit: 'Edit teammate', save: 'Save', displayName: 'Name', role: 'Role (optional)',
@@ -283,6 +284,7 @@ export const enUS = {
       running: 'Runner is active', starting: 'Runner is starting', restarting: 'Runner is applying the latest configuration',
       runnerError: 'Runner failed', engineMissing: 'OpenCode is not installed', engineError: 'OpenCode readiness check failed',
       runtimeReady: 'Local Runtime ready', runtimeStarting: 'Local Runtime starting',
+      openChat: 'Open chat', activeCount: '{{count}} active teammates', runningCount: '{{count}} runners active',
     },
     boards: {
       title: 'Boards', create: 'Create board', name: 'Board name', description: 'Description (optional)',
@@ -290,17 +292,25 @@ export const enUS = {
       addColumn: 'Add column', columnName: 'Column name', terminal: 'Terminal column', terminalPrompt: 'Does this column mean the work is finished?',
       editBoard: 'Edit board', deleteBoard: 'Delete board', editColumn: 'Edit column', deleteColumn: 'Delete column', deleteCard: 'Delete card',
       moveLeft: 'Move left', moveRight: 'Move right',
-      deleteBoardPrompt: 'Only a board with no cards can be deleted. Delete it?',
-      deleteColumnPrompt: 'Only an empty column can be deleted. Delete it?', deleteCardPrompt: 'Permanently delete this card?',
+      allBoards: 'All boards', cardCount: '{{count}} cards', emptyColumn: 'No cards in this column', resizeSidebar: 'Resize board list',
+      terminalDescription: 'A task is complete after an Agent moves its card into this column.',
+      deleteBoardPrompt: 'Only a board with no cards can be deleted. Delete “{{name}}”?',
+      deleteColumnPrompt: 'Only an empty column can be deleted. Delete “{{name}}”?', deleteCardPrompt: 'Permanently delete “{{name}}”?',
     },
     observability: {
       title: 'Run observability', subtitle: 'Execution traces for every Agent Turn', refresh: 'Refresh',
+      autoRefresh: 'Auto refresh', resizeSidebar: 'Resize run list',
       agentFilter: 'Teammate', statusFilter: 'Status', allAgents: 'All teammates', allStatuses: 'All statuses',
       loading: 'Loading…', empty: 'No runs yet', selectRun: 'Select a run to inspect its trace',
       duration: 'Duration', tokens: 'Tokens', tools: 'Commands', inbox: 'Inbox', events: 'Events', trigger: 'Trigger',
       engine: 'Engine', configuredModel: 'Configured model', observedModel: 'Observed model', startedAt: 'Started',
       timeline: 'Execution timeline', noEvents: 'No events', rawData: 'Structured data', unknownError: 'Unknown error',
       milliseconds: '{{count}} ms',
+      detail: {
+        room: 'Room', model: 'Model', reason: 'Reason', latency: 'Latency', inputTokens: 'Input tokens',
+        cachedInputTokens: 'Cached input', outputTokens: 'Output tokens', responseSize: 'Response size',
+        requestId: 'Request ID', result: 'Result', retryAfter: 'Retry after', outcome: 'Outcome',
+      },
       status: { running: 'Running', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' },
       event: {
         run_opened: 'Run opened', triage_started: 'Response triage started',

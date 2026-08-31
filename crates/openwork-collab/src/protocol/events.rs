@@ -15,7 +15,9 @@ pub struct InvalidationEvent {
 pub enum InvalidationKind {
     RuntimeReady,
     AgentConfig,
+    Room,
     Message,
+    Board,
     EngineInventory,
     RunnerStatus,
 }

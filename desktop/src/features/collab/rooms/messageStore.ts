@@ -16,19 +16,31 @@ interface MessageStoreState {
   send: (roomId: string, body: string) => Promise<void>
 }
 
+const openVersions = new Map<string, number>()
+
 export const useMessageStore = create<MessageStoreState>((set, get) => ({
   byRoom: {},
   open: async (roomId) => {
+    const version = (openVersions.get(roomId) ?? 0) + 1
+    openVersions.set(roomId, version)
     const current = get().byRoom[roomId] ?? { messages: [], runs: [], loading: false, error: null }
-    set({ byRoom: { ...get().byRoom, [roomId]: { ...current, loading: true, error: null } } })
+    set({
+      byRoom: {
+        ...get().byRoom,
+        [roomId]: { ...current, loading: current.messages.length === 0, error: null },
+      },
+    })
     try {
       const [messages, runs] = await Promise.all([
         collabCommands.listMessages(roomId),
         collabCommands.listRuns(),
       ])
+      if (openVersions.get(roomId) !== version) return
       set({ byRoom: { ...get().byRoom, [roomId]: { messages, runs, loading: false, error: null } } })
     } catch (error) {
-      set({ byRoom: { ...get().byRoom, [roomId]: { ...current, loading: false, error: resolveErrorMessage(error) } } })
+      if (openVersions.get(roomId) !== version) return
+      const latest = get().byRoom[roomId] ?? current
+      set({ byRoom: { ...get().byRoom, [roomId]: { ...latest, loading: false, error: resolveErrorMessage(error) } } })
     }
   },
   send: async (roomId, body) => {
