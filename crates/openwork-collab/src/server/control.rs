@@ -8,9 +8,45 @@ use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{COLLAB_PROTOCOL_VERSION, ControlRequest, ControlResponse};
 
-use super::{scheduler::Scheduler, storage::CollaborationStore};
+use super::{
+    agents::Agents, board::Board, computers::Computers, messages::Messages, rooms::Rooms,
+    runs::Runs, scheduler::Scheduler,
+};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone)]
+pub(crate) struct ControlState {
+    agents: Agents,
+    board: Board,
+    computers: Computers,
+    rooms: Rooms,
+    messages: Messages,
+    runs: Runs,
+    scheduler: Scheduler,
+}
+
+impl ControlState {
+    pub(crate) fn new(
+        agents: Agents,
+        board: Board,
+        computers: Computers,
+        rooms: Rooms,
+        messages: Messages,
+        runs: Runs,
+        scheduler: Scheduler,
+    ) -> Self {
+        Self {
+            agents,
+            board,
+            computers,
+            rooms,
+            messages,
+            runs,
+            scheduler,
+        }
+    }
+}
 
 pub async fn bind(path: &Path) -> Result<UnixListener, std::io::Error> {
     if tokio::fs::try_exists(path).await? {
@@ -34,10 +70,9 @@ pub async fn bind(path: &Path) -> Result<UnixListener, std::io::Error> {
     Ok(listener)
 }
 
-pub async fn serve(
+pub(crate) async fn serve(
     listener: UnixListener,
-    store: CollaborationStore,
-    scheduler: Scheduler,
+    state: ControlState,
     runtime_base_url: String,
     shutdown: CancellationToken,
 ) {
@@ -46,15 +81,13 @@ pub async fn serve(
             _ = shutdown.cancelled() => break,
             accepted = listener.accept() => {
                 let Ok((stream, _)) = accepted else { break };
-                let store = store.clone();
-                let scheduler = scheduler.clone();
+                let state = state.clone();
                 let runtime_base_url = runtime_base_url.clone();
                 let connection_shutdown = shutdown.clone();
                 tokio::spawn(async move {
                     let _ = handle(
                         stream,
-                        store,
-                        scheduler,
+                        state,
                         runtime_base_url,
                         connection_shutdown,
                     )
@@ -67,19 +100,27 @@ pub async fn serve(
 
 async fn handle(
     mut stream: UnixStream,
-    store: CollaborationStore,
-    scheduler: Scheduler,
+    state: ControlState,
     runtime_base_url: String,
     shutdown: CancellationToken,
 ) -> Result<(), ControlError> {
+    let ControlState {
+        agents,
+        board,
+        computers,
+        rooms,
+        messages,
+        runs,
+        scheduler,
+    } = state;
     let request: ControlRequest = read_frame(&mut stream).await?;
     let shutdown_requested = matches!(&request, ControlRequest::ShutdownServer);
     let response = match request {
         ControlRequest::Status => Ok(ControlResponse::Status {
             protocol_version: COLLAB_PROTOCOL_VERSION,
         }),
-        ControlRequest::EnsureLocalComputer => store
-            .ensure_local_computer(&runtime_base_url)
+        ControlRequest::EnsureLocalComputer => computers
+            .ensure_local(&runtime_base_url)
             .await
             .map(ControlResponse::LocalComputer)
             .map_err(|error| error.to_string()),
@@ -88,43 +129,43 @@ async fn handle(
             display_name,
             system_prompt,
             model,
-        } => store
-            .create_agent(&id, &display_name, &system_prompt, &model)
+        } => agents
+            .create(&id, &display_name, &system_prompt, &model)
             .await
             .map(ControlResponse::Agent)
             .map_err(|error| error.to_string()),
-        ControlRequest::SetAgentProactivity { agent_id, enabled } => store
-            .set_agent_proactivity(&agent_id, enabled)
+        ControlRequest::SetAgentProactivity { agent_id, enabled } => agents
+            .set_proactivity(&agent_id, enabled)
             .await
             .map(ControlResponse::Agent)
             .map_err(|error| error.to_string()),
-        ControlRequest::ListAgents => store
-            .list_agents()
+        ControlRequest::ListAgents => agents
+            .list()
             .await
             .map(|agents| ControlResponse::Agents { agents })
             .map_err(|error| error.to_string()),
-        ControlRequest::ListRooms => store
-            .list_rooms()
+        ControlRequest::ListRooms => rooms
+            .list()
             .await
             .map(|rooms| ControlResponse::Rooms { rooms })
             .map_err(|error| error.to_string()),
-        ControlRequest::CreateDirectRoom { agent_id } => store
-            .create_direct_room(&agent_id)
+        ControlRequest::CreateDirectRoom { agent_id } => rooms
+            .create_direct(&agent_id)
             .await
             .map(ControlResponse::Room)
             .map_err(|error| error.to_string()),
-        ControlRequest::CreateGroupRoom { title, agent_ids } => store
-            .create_group_room(&title, &agent_ids)
+        ControlRequest::CreateGroupRoom { title, agent_ids } => rooms
+            .create_group(&title, &agent_ids)
             .await
             .map(ControlResponse::Room)
             .map_err(|error| error.to_string()),
-        ControlRequest::ListRoomMembers { room_id } => store
-            .list_room_members(&room_id)
+        ControlRequest::ListRoomMembers { room_id } => rooms
+            .list_members(&room_id)
             .await
             .map(|members| ControlResponse::Members { members })
             .map_err(|error| error.to_string()),
         ControlRequest::AddGroupMember { room_id, agent_id } => {
-            match store.add_group_member(&room_id, &agent_id).await {
+            match rooms.add_member(&room_id, &agent_id).await {
                 Ok((members, message)) => {
                     if let Some(message) = message {
                         scheduler
@@ -137,7 +178,7 @@ async fn handle(
             }
         }
         ControlRequest::RemoveGroupMember { room_id, agent_id } => {
-            match store.remove_group_member(&room_id, &agent_id).await {
+            match rooms.remove_member(&room_id, &agent_id).await {
                 Ok((members, message)) => {
                     if let Some(message) = message {
                         scheduler
@@ -150,7 +191,7 @@ async fn handle(
             }
         }
         ControlRequest::SendMessage { room_id, body } => {
-            match store.send_user_message(&room_id, &body).await {
+            match messages.send_user(&room_id, &body).await {
                 Ok(message) => {
                     scheduler
                         .message_committed(&message.id, &message.room_id, &message.author_id)
@@ -160,23 +201,23 @@ async fn handle(
                 Err(error) => Err(error.to_string()),
             }
         }
-        ControlRequest::ListMessages { room_id } => store
-            .list_messages(&room_id)
+        ControlRequest::ListMessages { room_id } => messages
+            .list(&room_id)
             .await
             .map(|messages| ControlResponse::Messages { messages })
             .map_err(|error| error.to_string()),
-        ControlRequest::ListBoards => store
-            .list_boards()
+        ControlRequest::ListBoards => board
+            .list()
             .await
             .map(|boards| ControlResponse::Boards { boards })
             .map_err(|error| error.to_string()),
-        ControlRequest::CreateBoard { room_id, title } => store
-            .create_board(&room_id, &title)
+        ControlRequest::CreateBoard { room_id, title } => board
+            .create(&room_id, &title)
             .await
             .map(ControlResponse::Board)
             .map_err(|error| error.to_string()),
-        ControlRequest::ListRuns { limit } => store
-            .list_runs(limit)
+        ControlRequest::ListRuns { limit } => runs
+            .list(limit)
             .await
             .map(|runs| ControlResponse::Runs { runs })
             .map_err(|error| error.to_string()),

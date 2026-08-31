@@ -1,47 +1,19 @@
 #![cfg(unix)]
 
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+mod support;
+
+use std::os::unix::fs::PermissionsExt;
 
 use openwork_collab::computer::engine::{
     ClassifyRequest, EngineAdapter, EngineAvailability, EngineError, TurnRequest,
 };
 use openwork_collab::computer::opencode::OpenCodeAdapter;
-use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
-
-async fn fake_opencode(directory: &TempDir) -> PathBuf {
-    let executable = directory.path().join("opencode");
-    tokio::fs::write(
-        &executable,
-        r#"#!/bin/sh
-prompt=$(cat)
-if [ "$prompt" != "continue the work" ]; then
-  echo '{"type":"error","error":{"message":"prompt was not delivered through stdin"}}'
-  exit 0
-fi
-printf '%s\n' \
-  '{"type":"step_start","sessionID":"ses_local"}' \
-  '{"type":"text","sessionID":"ses_local","part":{"text":"done"}}' \
-  '{"type":"step_finish","sessionID":"ses_local","part":{"tokens":{"input":11,"output":3,"reasoning":2,"cache":{"read":7,"write":5}}}}'
-"#,
-    )
-    .await
-    .unwrap();
-    let mut permissions = tokio::fs::metadata(&executable)
-        .await
-        .unwrap()
-        .permissions();
-    permissions.set_mode(0o700);
-    tokio::fs::set_permissions(&executable, permissions)
-        .await
-        .unwrap();
-    executable
-}
 
 #[tokio::test]
 async fn opencode_run_turn_uses_stdin_and_returns_resumable_structured_result() {
     let directory = tempfile::tempdir().unwrap();
-    let executable = fake_opencode(&directory).await;
+    let executable = support::fake_opencode(&directory).await;
     let adapter = OpenCodeAdapter::with_executable(executable);
 
     let result = adapter

@@ -41,6 +41,23 @@ fn p0_has_one_local_opencode_path_and_no_legacy_collaboration_dependencies() {
     }
 }
 
+#[test]
+fn r1_server_business_modules_own_persistence_without_a_universal_store() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let server_root = crate_root.join("src/server");
+    assert!(!server_root.join("storage.rs").exists());
+
+    let server = source_text(&server_root);
+    assert!(!server.contains("CollaborationStore"));
+    for adapter in ["control.rs", "runtime.rs", "scheduler.rs"] {
+        let source = std::fs::read_to_string(server_root.join(adapter)).unwrap();
+        assert!(
+            !source.contains("sqlx::query"),
+            "transport/orchestration adapter owns business SQL: {adapter}"
+        );
+    }
+}
+
 fn source_text(root: &Path) -> String {
     let mut text = String::new();
     let mut pending = vec![root.to_path_buf()];

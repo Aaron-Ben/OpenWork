@@ -1,14 +1,19 @@
 mod agenda;
+mod agents;
 mod auth;
+mod board;
 mod cli;
+mod computers;
 pub mod control;
 mod coordination;
+mod db;
+mod messages;
 mod migration;
 mod redis;
 mod rooms;
+mod runs;
 mod runtime;
 mod scheduler;
-mod storage;
 mod triage;
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
@@ -19,10 +24,16 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use agenda::Agenda;
+use agents::Agents;
+use board::Board;
 use cli::CliDispatcher;
+use computers::Computers;
 use coordination::Coordination;
+use messages::Messages;
+use rooms::Rooms;
+use runs::Runs;
 use scheduler::Scheduler;
-use storage::CollaborationStore;
+use triage::InboxTriage;
 
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
@@ -61,19 +72,29 @@ impl CollaborationServer {
                 .await?;
         }
 
-        let pool = PgPool::connect(&options.database_url).await?;
-        migration::migrate(&pool).await?;
-        let store = CollaborationStore::new(pool.clone());
+        let pool = db::connect(&options.database_url).await?;
+        let agents = Agents::new(pool.clone());
+        let board = Board::new(pool.clone());
+        let computers = Computers::new(pool.clone());
+        let rooms = Rooms::new(pool.clone());
+        let messages = Messages::new(pool.clone());
+        let runs = Runs::new(pool.clone());
+        let triage = InboxTriage::new(pool.clone());
         let signing_key = auth::load_or_create_signing_key(&options.state_root).await?;
         let (coordination, redis_task) =
             redis::RedisCoordination::start(&options.redis_url, shutdown.clone()).await?;
         let redis_coordination = coordination;
         let coordination = Coordination::new(redis_coordination.clone());
-        let scheduler = Scheduler::new(store.clone(), redis_coordination, coordination.clone());
+        let scheduler = Scheduler::new(
+            rooms.clone(),
+            messages.clone(),
+            redis_coordination,
+            coordination.clone(),
+        );
         let cli = CliDispatcher::new(pool.clone(), coordination.clone());
         let agenda = Agenda::new(pool.clone(), coordination.clone(), signing_key.clone());
         let scheduler_task = scheduler.start(shutdown.clone());
-        let sweep_store = store.clone();
+        let sweep_computers = computers.clone();
         let sweep_shutdown = shutdown.clone();
         let computer_lease = options.computer_lease;
         let offline_sweep_interval = options.offline_sweep_interval;
@@ -84,7 +105,7 @@ impl CollaborationServer {
                 tokio::select! {
                     _ = sweep_shutdown.cancelled() => return,
                     _ = interval.tick() => {
-                        if let Err(error) = sweep_store.sweep_offline_computer(computer_lease).await {
+                        if let Err(error) = sweep_computers.sweep_offline(computer_lease).await {
                             tracing::warn!(%error, "Local Computer offline sweep failed");
                         }
                     }
@@ -98,22 +119,33 @@ impl CollaborationServer {
         let runtime_base_url = format!("http://{runtime_addr}");
 
         let control_shutdown = shutdown.clone();
-        let control_store = store.clone();
-        let control_scheduler = scheduler.clone();
+        let control_state = control::ControlState::new(
+            agents.clone(),
+            board,
+            computers.clone(),
+            rooms,
+            messages.clone(),
+            runs.clone(),
+            scheduler.clone(),
+        );
         let control_task = tokio::spawn(async move {
-            control::serve(
-                control,
-                control_store,
-                control_scheduler,
-                runtime_base_url,
-                control_shutdown,
-            )
-            .await;
+            control::serve(control, control_state, runtime_base_url, control_shutdown).await;
         });
 
         let runtime_shutdown = shutdown.clone();
         let runtime_task = tokio::spawn(async move {
-            let app = runtime::router(store, signing_key, scheduler, coordination, agenda, cli);
+            let app = runtime::router(runtime::RuntimeState {
+                agents,
+                computers,
+                messages,
+                runs,
+                signing_key,
+                scheduler,
+                coordination,
+                triage,
+                agenda,
+                cli,
+            });
             let _ = axum::serve(runtime, app)
                 .with_graceful_shutdown(runtime_shutdown.cancelled_owned())
                 .await;

@@ -1,5 +1,7 @@
 #![cfg(target_os = "macos")]
 
+mod support;
+
 use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
 
 use openwork_collab::{
@@ -110,40 +112,7 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
     .unwrap() else {
         panic!("second room creation failed")
     };
-    let fake_opencode = state.path().join("fake-opencode");
-    tokio::fs::write(
-        &fake_opencode,
-        r#"#!/bin/zsh
-prompt="$(cat)"
-if [[ " $* " == *" --agent openwork-triage "* ]]; then
-  print -r -- '{"type":"text","part":{"text":"{\"actionable\":false,\"reason\":\"agent-only noise\",\"promptNote\":\"\"}"}}'
-  print -r -- '{"type":"step_finish","part":{"tokens":{"input":4,"output":2,"cache":{"read":0,"write":0}}}}'
-  exit 0
-fi
-if [[ "$prompt" == *"Resume please."* && " $* " == *" --session "* ]]; then
-  print -r -- '{"type":"error","error":{"message":"session not found"}}'
-  exit 1
-fi
-room_id="$(print -r -- "$prompt" | sed -n 's/^room_id: //p' | head -n 1)"
-printf '%s\n%s' 'Agent says `code` $(literal) --as=admin' 'second line' | openwork reply "$room_id" --stdin >/dev/null || exit $?
-session_id="ses_helper"
-if [[ "$prompt" == *"Resume please."* ]]; then
-  session_id="ses_rebuilt"
-fi
-print -r -- "{\"type\":\"text\",\"sessionID\":\"$session_id\",\"part\":{\"text\":\"published\"}}"
-print -r -- "{\"type\":\"step_finish\",\"sessionID\":\"$session_id\",\"part\":{\"tokens\":{\"input\":8,\"output\":3,\"cache\":{\"read\":1,\"write\":0}}}}"
-"#,
-    )
-    .await
-    .unwrap();
-    let mut permissions = tokio::fs::metadata(&fake_opencode)
-        .await
-        .unwrap()
-        .permissions();
-    permissions.set_mode(0o700);
-    tokio::fs::set_permissions(&fake_opencode, permissions)
-        .await
-        .unwrap();
+    let fake_opencode = support::fake_opencode(&state).await;
 
     let daemon_shutdown = CancellationToken::new();
     let daemon = ComputerDaemon::new(

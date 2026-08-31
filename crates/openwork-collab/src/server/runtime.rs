@@ -22,34 +22,32 @@ use crate::protocol::{
 
 use super::{
     agenda::Agenda,
+    agents::Agents,
     auth::{AgentClaims, SigningKey},
     cli::CliDispatcher,
+    computers::Computers,
     coordination::Coordination,
+    messages::Messages,
+    runs::Runs,
     scheduler::Scheduler,
-    storage::CollaborationStore,
     triage::InboxTriage,
 };
 
 #[derive(Clone)]
-struct RuntimeState {
-    store: CollaborationStore,
-    signing_key: SigningKey,
-    scheduler: Scheduler,
-    coordination: Coordination,
-    triage: InboxTriage,
-    agenda: Agenda,
-    cli: CliDispatcher,
+pub(crate) struct RuntimeState {
+    pub(crate) agents: Agents,
+    pub(crate) computers: Computers,
+    pub(crate) messages: Messages,
+    pub(crate) runs: Runs,
+    pub(crate) signing_key: SigningKey,
+    pub(crate) scheduler: Scheduler,
+    pub(crate) coordination: Coordination,
+    pub(crate) triage: InboxTriage,
+    pub(crate) agenda: Agenda,
+    pub(crate) cli: CliDispatcher,
 }
 
-pub fn router(
-    store: CollaborationStore,
-    signing_key: SigningKey,
-    scheduler: Scheduler,
-    coordination: Coordination,
-    agenda: Agenda,
-    cli: CliDispatcher,
-) -> Router {
-    let triage = InboxTriage::new(store.clone());
+pub(crate) fn router(state: RuntimeState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/computers/me/start", post(start_computer))
@@ -69,15 +67,7 @@ pub fn router(
         .route("/runtime/cli", post(run_cli))
         .route("/runtime/runs/{run_id}/heartbeat", post(heartbeat_run))
         .route("/runtime/runs/{run_id}/finish", post(finish_run))
-        .with_state(RuntimeState {
-            store,
-            signing_key,
-            scheduler,
-            coordination,
-            triage,
-            agenda,
-            cli,
-        })
+        .with_state(state)
 }
 
 async fn health(State(state): State<RuntimeState>) -> Json<serde_json::Value> {
@@ -91,7 +81,7 @@ async fn start_computer(
     State(state): State<RuntimeState>,
     headers: HeaderMap,
 ) -> Result<Json<DeviceStartResponse>, RuntimeError> {
-    let generation = state.store.start_computer(bearer(&headers)?).await?;
+    let generation = state.computers.start(bearer(&headers)?).await?;
     Ok(Json(DeviceStartResponse { generation }))
 }
 
@@ -100,7 +90,10 @@ async fn heartbeat(
     headers: HeaderMap,
     Json(request): Json<HeartbeatRequest>,
 ) -> Result<StatusCode, RuntimeError> {
-    state.store.heartbeat(bearer(&headers)?, &request).await?;
+    state
+        .computers
+        .heartbeat(bearer(&headers)?, &request)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -114,10 +107,11 @@ async fn roster(
     headers: HeaderMap,
     Query(query): Query<GenerationQuery>,
 ) -> Result<Json<AgentRoster>, RuntimeError> {
-    let agents = state
-        .store
-        .roster(bearer(&headers)?, query.generation)
+    state
+        .computers
+        .authorize_device(bearer(&headers)?, query.generation)
         .await?;
+    let agents = state.agents.assignments().await?;
     Ok(Json(AgentRoster { agents }))
 }
 
@@ -133,7 +127,7 @@ async fn mint_agent_token(
     Json(body): Json<GenerationBody>,
 ) -> Result<Json<AgentTokenResponse>, RuntimeError> {
     state
-        .store
+        .computers
         .authorize_agent_token(bearer(&headers)?, body.generation, &agent_id)
         .await?;
     let (token, expires_at) = state.signing_key.mint_agent_token(
@@ -149,7 +143,7 @@ async fn inbox(
     headers: HeaderMap,
 ) -> Result<Json<InboxResponse>, RuntimeError> {
     let claims = agent_claims(&state, &headers).await?;
-    let mut response = state.store.inbox(&claims).await?;
+    let mut response = state.messages.inbox(&claims).await?;
     if let Some(trigger) = &mut response.trigger {
         let updates = trigger.deliveries.iter().map(|delivery| {
             state
@@ -257,7 +251,7 @@ async fn open_run(
     {
         return Err(RuntimeError::unauthorized("invalid trigger envelope"));
     }
-    Ok(Json(state.store.open_run(&claims, &request.trigger).await?))
+    Ok(Json(state.runs.open(&claims, &request.trigger).await?))
 }
 
 fn valid_trigger_shape(trigger: &crate::protocol::TriggerEnvelope) -> bool {
@@ -300,9 +294,7 @@ async fn finish_run(
     Json(request): Json<FinishRunRequest>,
 ) -> Result<Json<RunView>, RuntimeError> {
     let claims = agent_claims(&state, &headers).await?;
-    Ok(Json(
-        state.store.finish_run(&claims, &run_id, request).await?,
-    ))
+    Ok(Json(state.runs.finish(&claims, &run_id, request).await?))
 }
 
 async fn heartbeat_run(
@@ -311,7 +303,7 @@ async fn heartbeat_run(
     headers: HeaderMap,
 ) -> Result<StatusCode, RuntimeError> {
     let claims = agent_claims(&state, &headers).await?;
-    state.store.heartbeat_run(&claims, &run_id).await?;
+    state.runs.heartbeat(&claims, &run_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -323,7 +315,7 @@ async fn agent_claims(
         bearer(headers)?,
         time::OffsetDateTime::now_utc().unix_timestamp(),
     )?;
-    state.store.authorize_agent(&claims).await?;
+    state.computers.authorize_agent(&claims).await?;
     Ok(claims)
 }
 
