@@ -156,7 +156,7 @@ fn runtime_config(agent_id: &str) -> EngineRuntimeConfig {
     EngineRuntimeConfig {
         config_root: home.join("engine-config"),
         state_file: home.join("session.json"),
-        config_fingerprint: "test-persona".to_string(),
+        context_fingerprint: "test-persona".to_string(),
         home,
         model: "fake/model".to_string(),
         environment: BTreeMap::new(),

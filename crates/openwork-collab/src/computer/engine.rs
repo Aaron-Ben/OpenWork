@@ -91,7 +91,7 @@ pub struct EngineRuntimeConfig {
     pub home: PathBuf,
     pub config_root: PathBuf,
     pub state_file: PathBuf,
-    pub config_fingerprint: String,
+    pub context_fingerprint: String,
     pub model: String,
     pub environment: BTreeMap<String, String>,
 }

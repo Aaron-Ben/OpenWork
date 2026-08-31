@@ -6,6 +6,8 @@ export interface CollabRuntimeStatus {
   startedAt: number
   lastComputerHeartbeat: number | null
   engines: CollabEngineInventory[]
+  engineReadiness: CollabEngineReadiness[]
+  runners: CollabRunnerStatus[]
 }
 
 export interface CollabEngineInventory {
@@ -15,6 +17,18 @@ export interface CollabEngineInventory {
   checkedAt: number
   lastError: string | null
   observedSessionId: string
+}
+
+export interface CollabEngineReadiness {
+  engineId: string
+  status: 'unknown' | 'ready' | 'missing' | 'error'
+}
+
+export interface CollabRunnerStatus {
+  agentId: string
+  configRevision: number
+  state: 'running' | 'error'
+  lastError: string | null
 }
 
 export interface CollabAgent {
@@ -114,6 +128,18 @@ export const collabCommands = {
       engineId: agent.engineId,
       mainModelId: agent.mainModelId,
       triageModelId: agent.triageModelId,
+    }),
+  updateAgent: (agentId: string, agent: CollabAgentInput): Promise<CollabAgent> =>
+    invoke('collab_agent_update', {
+      input: {
+        agentId,
+        displayName: agent.displayName,
+        role: agent.role,
+        persona: agent.persona,
+        engineId: agent.engineId,
+        mainModelId: agent.mainModelId,
+        triageModelId: agent.triageModelId,
+      },
     }),
   setAgentAgenda: (agentId: string, enabled: boolean): Promise<CollabAgent> =>
     invoke('collab_agent_agenda_set', { agentId, enabled }),

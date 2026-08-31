@@ -69,7 +69,7 @@ struct OpenCodeRuntime {
 struct SessionMetadata {
     engine_id: String,
     model: String,
-    persona_hash: String,
+    context_fingerprint: String,
     session_id: String,
     updated_at: String,
 }
@@ -614,18 +614,17 @@ async fn prepare_environment(
 async fn load_session(config: &EngineRuntimeConfig) -> Result<Option<String>, EngineError> {
     match tokio::fs::read(&config.state_file).await {
         Ok(bytes) => {
-            let Ok(metadata) = serde_json::from_slice::<SessionMetadata>(&bytes) else {
-                return Ok(None);
-            };
-            if metadata.engine_id == EngineId::opencode().as_str()
-                && metadata.model == config.model
-                && metadata.persona_hash == config.config_fingerprint
-                && !metadata.session_id.trim().is_empty()
-            {
-                Ok(Some(metadata.session_id))
-            } else {
-                Ok(None)
+            let metadata = serde_json::from_slice::<SessionMetadata>(&bytes).ok();
+            if metadata.as_ref().is_some_and(|metadata| {
+                metadata.engine_id == EngineId::opencode().as_str()
+                    && metadata.model == config.model
+                    && metadata.context_fingerprint == config.context_fingerprint
+                    && !metadata.session_id.trim().is_empty()
+            }) {
+                return Ok(metadata.map(|metadata| metadata.session_id));
             }
+            clear_session(&config.state_file).await?;
+            Ok(None)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
@@ -636,7 +635,7 @@ async fn save_session(config: &EngineRuntimeConfig, session_id: &str) -> Result<
     let metadata = SessionMetadata {
         engine_id: EngineId::opencode().to_string(),
         model: config.model.clone(),
-        persona_hash: config.config_fingerprint.clone(),
+        context_fingerprint: config.context_fingerprint.clone(),
         session_id: session_id.to_string(),
         updated_at: time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
@@ -826,4 +825,107 @@ fn add_usage(total: &mut EngineUsage, tokens: Option<&Value>) {
     total.cache_creation_input_tokens = total
         .cache_creation_input_tokens
         .saturating_add(number("/cache/write"));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::load_session;
+    use crate::computer::engine::EngineRuntimeConfig;
+
+    fn config(
+        directory: &tempfile::TempDir,
+        state_file: std::path::PathBuf,
+    ) -> EngineRuntimeConfig {
+        EngineRuntimeConfig {
+            home: directory.path().join("work"),
+            config_root: directory.path().join("config"),
+            state_file,
+            context_fingerprint: "new-context".to_string(),
+            model: "new/model".to_string(),
+            environment: BTreeMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn matching_engine_model_and_context_fingerprint_resume() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_file = directory.path().join("session.json");
+        tokio::fs::write(
+            &state_file,
+            br#"{"engine_id":"opencode","model":"new/model","context_fingerprint":"new-context","session_id":"ses_current","updated_at":"2026-08-31T00:00:00Z"}"#,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            load_session(&config(&directory, state_file.clone()))
+                .await
+                .unwrap(),
+            Some("ses_current".to_string())
+        );
+        assert!(state_file.exists());
+    }
+
+    #[tokio::test]
+    async fn incompatible_engine_or_model_is_removed_instead_of_resumed() {
+        for (engine_id, model) in [("codex", "new/model"), ("opencode", "old/model")] {
+            let directory = tempfile::tempdir().unwrap();
+            let state_file = directory.path().join("session.json");
+            tokio::fs::write(
+                &state_file,
+                serde_json::to_vec(&serde_json::json!({
+                    "engine_id": engine_id,
+                    "model": model,
+                    "context_fingerprint": "new-context",
+                    "session_id": "ses_old",
+                    "updated_at": "2026-08-31T00:00:00Z",
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                load_session(&config(&directory, state_file.clone()))
+                    .await
+                    .unwrap(),
+                None
+            );
+            assert!(!state_file.exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn incompatible_context_fingerprint_is_removed_instead_of_resumed() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_file = directory.path().join("session.json");
+        tokio::fs::write(
+            &state_file,
+            br#"{"engine_id":"opencode","model":"new/model","context_fingerprint":"old-context","session_id":"ses_old","updated_at":"2026-08-31T00:00:00Z"}"#,
+        )
+        .await
+        .unwrap();
+        let config = config(&directory, state_file.clone());
+
+        assert_eq!(load_session(&config).await.unwrap(), None);
+        assert!(!state_file.exists());
+    }
+
+    #[tokio::test]
+    async fn legacy_persona_hash_metadata_is_not_treated_as_compatible_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_file = directory.path().join("session.json");
+        tokio::fs::write(
+            &state_file,
+            br#"{"engine_id":"opencode","model":"new/model","persona_hash":"new-context","session_id":"ses_legacy","updated_at":"2026-08-31T00:00:00Z"}"#,
+        )
+        .await
+        .unwrap();
+        let config = config(&directory, state_file.clone());
+
+        assert_eq!(load_session(&config).await.unwrap(), None);
+        assert!(!state_file.exists());
+    }
 }

@@ -64,8 +64,32 @@ pub struct AgentTokenResponse {
     pub expires_at: i64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerState {
+    Running,
+    Error,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RunnerStatusView {
+    pub agent_id: String,
+    pub config_revision: i64,
+    pub state: RunnerState,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineReadinessView {
+    pub engine_id: String,
+    pub status: EngineStatus,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ComputerHeartbeatRequest {
-    pub active_agent_ids: Vec<String>,
+    pub engine_readiness: Vec<EngineReadinessView>,
+    pub runners: Vec<RunnerStatusView>,
 }

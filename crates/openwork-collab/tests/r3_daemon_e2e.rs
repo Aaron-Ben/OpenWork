@@ -118,7 +118,7 @@ async fn run_smoke(
     let daemon_shutdown = CancellationToken::new();
     let daemon = ComputerDaemon::new(
         ComputerOptions {
-            state_root: state.path().join("computer"),
+            openwork_root: state.path().join(".openwork"),
             runtime_session_id,
             runtime_base_url: base_url.clone(),
             computer_secret,

@@ -28,6 +28,29 @@ describe('R3 collaboration command bridge', () => {
     })
   })
 
+  it('updates mutable Agent configuration without submitting a new id', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    await collabCommands.updateAgent('helper', {
+      displayName: 'Updated Helper',
+      role: null,
+      persona: 'Use the revised persona.',
+      engineId: 'opencode',
+      mainModelId: 'opencode/main-v2',
+      triageModelId: 'opencode/triage-v2',
+    })
+    expect(invoke).toHaveBeenCalledWith('collab_agent_update', {
+      input: {
+        agentId: 'helper',
+        displayName: 'Updated Helper',
+        role: null,
+        persona: 'Use the revised persona.',
+        engineId: 'opencode',
+        mainModelId: 'opencode/main-v2',
+        triageModelId: 'opencode/triage-v2',
+      },
+    })
+  })
+
   it('keeps user identity and local paths out of message sends', async () => {
     vi.mocked(invoke).mockResolvedValue(null)
     await collabCommands.sendMessage('general', 'hello @helper')

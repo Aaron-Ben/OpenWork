@@ -277,9 +277,12 @@ export const enUS = {
       runFailed: '{{agents}} failed: {{message}}', unknownFailure: 'Unknown OpenCode failure',
     },
     agents: {
-      title: 'Teammate management', create: 'Create teammate', save: 'Save', displayName: 'Name', role: 'Role (optional)',
+      title: 'Teammate management', create: 'Create teammate', edit: 'Edit teammate', save: 'Save', displayName: 'Name', role: 'Role (optional)',
       mainModel: 'Main model', triageModel: 'Triage model', persona: 'Persona', active: 'Active', archived: 'Archived', noAgents: 'No teammates yet',
       proactiveOn: 'Agenda on', proactiveOff: 'Agenda off', archive: 'Archive', restore: 'Restore',
+      running: 'Runner is active', starting: 'Runner is starting', restarting: 'Runner is applying the latest configuration',
+      runnerError: 'Runner failed', engineMissing: 'OpenCode is not installed', engineError: 'OpenCode readiness check failed',
+      runtimeReady: 'Local Runtime ready', runtimeStarting: 'Local Runtime starting',
     },
     boards: {
       title: 'Boards and runs', create: 'Create board', name: 'Board name',

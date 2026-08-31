@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc,
+    Arc, RwLock,
     atomic::{AtomicI64, Ordering},
 };
 
@@ -8,7 +8,10 @@ use sha2::Sha256;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::protocol::{InvalidationEvent, InvalidationKind, entity_id};
+use crate::protocol::{
+    ComputerHeartbeatRequest, EngineReadinessView, InvalidationEvent, InvalidationKind,
+    RunnerStatusView, entity_id,
+};
 
 use super::auth::SigningKey;
 
@@ -43,6 +46,7 @@ struct RuntimeSessionInner {
     desktop_tag: Vec<u8>,
     computer_tag: Vec<u8>,
     signing_key: SigningKey,
+    actual_state: RwLock<ComputerHeartbeatRequest>,
     desktop_events: broadcast::Sender<InvalidationEvent>,
     management_events: broadcast::Sender<InvalidationEvent>,
 }
@@ -77,6 +81,7 @@ impl RuntimeSession {
                 desktop_tag,
                 computer_tag,
                 signing_key: SigningKey::ephemeral(),
+                actual_state: RwLock::new(ComputerHeartbeatRequest::default()),
                 desktop_events,
                 management_events,
             }),
@@ -98,11 +103,58 @@ impl RuntimeSession {
         }
     }
 
-    pub(crate) fn note_computer_heartbeat(&self) {
+    pub(crate) fn note_computer_heartbeat(&self, mut state: ComputerHeartbeatRequest) {
+        self.touch_computer_heartbeat();
+        normalize_actual_state(&mut state);
+        let (engines_changed, runners_changed) = {
+            let mut current = self
+                .inner
+                .actual_state
+                .write()
+                .expect("RuntimeSession actual-state lock poisoned");
+            let engines_changed = current.engine_readiness != state.engine_readiness;
+            let runners_changed = current.runners != state.runners;
+            *current = state;
+            (engines_changed, runners_changed)
+        };
+        if engines_changed {
+            let _ = self.inner.desktop_events.send(event(
+                InvalidationKind::EngineInventory,
+                None,
+                None,
+            ));
+        }
+        if runners_changed {
+            let _ =
+                self.inner
+                    .desktop_events
+                    .send(event(InvalidationKind::RunnerStatus, None, None));
+        }
+    }
+
+    pub(crate) fn touch_computer_heartbeat(&self) {
         self.inner.last_computer_heartbeat.store(
             time::OffsetDateTime::now_utc().unix_timestamp(),
             Ordering::Relaxed,
         );
+    }
+
+    pub(crate) fn engine_readiness(&self) -> Vec<EngineReadinessView> {
+        self.inner
+            .actual_state
+            .read()
+            .expect("RuntimeSession actual-state lock poisoned")
+            .engine_readiness
+            .clone()
+    }
+
+    pub(crate) fn runner_statuses(&self) -> Vec<RunnerStatusView> {
+        self.inner
+            .actual_state
+            .read()
+            .expect("RuntimeSession actual-state lock poisoned")
+            .runners
+            .clone()
     }
 
     pub(crate) fn authorize_desktop(&self, candidate: &str) -> bool {
@@ -161,6 +213,21 @@ impl RuntimeSession {
     }
 }
 
+fn normalize_actual_state(state: &mut ComputerHeartbeatRequest) {
+    state
+        .engine_readiness
+        .sort_by(|left, right| left.engine_id.cmp(&right.engine_id));
+    state
+        .engine_readiness
+        .dedup_by(|left, right| left.engine_id == right.engine_id);
+    state
+        .runners
+        .sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+    state
+        .runners
+        .dedup_by(|left, right| left.agent_id == right.agent_id);
+}
+
 fn event(
     kind: InvalidationKind,
     subject_id: Option<String>,
@@ -208,6 +275,11 @@ pub enum RuntimeSessionError {
 
 #[cfg(test)]
 mod tests {
+    use crate::protocol::{
+        ComputerHeartbeatRequest, EngineReadinessView, EngineStatus, InvalidationKind, RunnerState,
+        RunnerStatusView,
+    };
+
     use super::{RuntimeCredentials, RuntimeSession};
 
     #[test]
@@ -221,5 +293,37 @@ mod tests {
         assert!(session.authorize_computer(&computer));
         assert!(!session.authorize_desktop(&computer));
         assert!(!session.authorize_computer(&desktop));
+    }
+
+    #[tokio::test]
+    async fn computer_heartbeat_projects_actual_state_and_only_invalidates_on_change() {
+        let session = RuntimeSession::new(RuntimeCredentials::generate()).unwrap();
+        let mut events = session.subscribe_desktop();
+        let state = ComputerHeartbeatRequest {
+            engine_readiness: vec![EngineReadinessView {
+                engine_id: "opencode".to_string(),
+                status: EngineStatus::Ready,
+            }],
+            runners: vec![RunnerStatusView {
+                agent_id: "helper".to_string(),
+                config_revision: 2,
+                state: RunnerState::Running,
+                last_error: None,
+            }],
+        };
+
+        session.note_computer_heartbeat(state.clone());
+        let first = events.recv().await.unwrap();
+        let second = events.recv().await.unwrap();
+        assert_eq!(first.kind, InvalidationKind::EngineInventory);
+        assert_eq!(second.kind, InvalidationKind::RunnerStatus);
+        assert_eq!(session.engine_readiness(), state.engine_readiness);
+        assert_eq!(session.runner_statuses(), state.runners);
+
+        session.note_computer_heartbeat(state);
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
     }
 }

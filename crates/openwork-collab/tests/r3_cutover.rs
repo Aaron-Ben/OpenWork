@@ -199,7 +199,7 @@ async fn r3_scopes_credentials_runs_typed_commands_and_rejects_old_sessions() {
         .http
         .post(format!("{}/computer/heartbeat", fixture.base_url))
         .bearer_auth(&fixture.computer_secret)
-        .json(&serde_json::json!({ "activeAgentIds": [] }))
+        .json(&serde_json::json!({ "engineReadiness": [], "runners": [] }))
         .send()
         .await
         .unwrap()

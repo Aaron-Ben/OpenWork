@@ -95,10 +95,10 @@ async fn desktop_events(
 async fn computer_heartbeat(
     State(state): State<TransportState>,
     headers: HeaderMap,
-    Json(_request): Json<ComputerHeartbeatRequest>,
+    Json(request): Json<ComputerHeartbeatRequest>,
 ) -> Result<StatusCode, TransportError> {
     authorize_computer(&state, &headers)?;
-    state.session.note_computer_heartbeat();
+    state.session.note_computer_heartbeat(request);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -107,7 +107,7 @@ async fn desired_agents(
     headers: HeaderMap,
 ) -> Result<Json<DesiredAgents>, TransportError> {
     authorize_computer(&state, &headers)?;
-    state.session.note_computer_heartbeat();
+    state.session.touch_computer_heartbeat();
     Ok(Json(DesiredAgents {
         runtime_session_id: state.session.id().to_string(),
         agents: state.agents.assignments().await?,
@@ -141,7 +141,7 @@ async fn report_inventory(
         .inventory
         .report(state.session.id(), &report.engines)
         .await?;
-    state.session.note_computer_heartbeat();
+    state.session.touch_computer_heartbeat();
     for engine in &report.engines {
         state.session.publish_inventory(&engine.engine_id);
     }
@@ -153,7 +153,7 @@ async fn management_events(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, TransportError> {
     authorize_computer(&state, &headers)?;
-    state.session.note_computer_heartbeat();
+    state.session.touch_computer_heartbeat();
     Ok(invalidation_stream(
         state.session.subscribe_management(),
         initial_event(InvalidationKind::RuntimeReady, None),

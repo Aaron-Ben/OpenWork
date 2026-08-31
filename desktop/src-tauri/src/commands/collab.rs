@@ -2,8 +2,21 @@ use openwork_collab::protocol::{
     AgentView, BoardView, DesktopCommand, DesktopCommandResult, MessageView, ParticipantView,
     RoomView, RunSummaryView, RuntimeStatusView,
 };
+use serde::Deserialize;
 
 use crate::{collab_client::CollabDaemonClient, CommandError};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollabAgentUpdateInput {
+    agent_id: String,
+    display_name: String,
+    role: Option<String>,
+    persona: String,
+    engine_id: String,
+    main_model_id: String,
+    triage_model_id: String,
+}
 
 #[tauri::command]
 pub async fn collab_status(
@@ -52,6 +65,37 @@ pub async fn collab_agent_create(
 ) -> Result<AgentView, CommandError> {
     match client
         .call(DesktopCommand::CreateAgent {
+            display_name,
+            role,
+            persona,
+            engine_id,
+            main_model_id,
+            triage_model_id,
+        })
+        .await?
+    {
+        DesktopCommandResult::Agent(agent) => Ok(agent),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_agent_update(
+    client: tauri::State<'_, CollabDaemonClient>,
+    input: CollabAgentUpdateInput,
+) -> Result<AgentView, CommandError> {
+    let CollabAgentUpdateInput {
+        agent_id,
+        display_name,
+        role,
+        persona,
+        engine_id,
+        main_model_id,
+        triage_model_id,
+    } = input;
+    match client
+        .call(DesktopCommand::UpdateAgent {
+            agent_id,
             display_name,
             role,
             persona,

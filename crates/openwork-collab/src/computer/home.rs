@@ -7,28 +7,52 @@ use uuid::Uuid;
 use crate::protocol::AgentAssignment;
 
 pub struct HomeManager {
-    state_root: PathBuf,
-    shim_executable: PathBuf,
+    openwork_root: PathBuf,
+    runtime_root: PathBuf,
+    runtime_bin: PathBuf,
     runtime_base_url: String,
 }
 
 pub struct AgentHome {
-    pub root: PathBuf,
-    pub triage_root: PathBuf,
+    pub work_root: PathBuf,
     pub config_root: PathBuf,
     pub state_file: PathBuf,
-    pub config_fingerprint: String,
+    pub context_fingerprint: String,
     pub environment: BTreeMap<String, String>,
     token_file: PathBuf,
 }
 
 impl HomeManager {
-    pub fn new(state_root: PathBuf, shim_executable: PathBuf, runtime_base_url: String) -> Self {
-        Self {
-            state_root,
-            shim_executable,
-            runtime_base_url,
+    pub async fn prepare(
+        openwork_root: PathBuf,
+        runtime_session_id: &str,
+        shim_executable: PathBuf,
+        runtime_base_url: String,
+    ) -> Result<Self, HomeError> {
+        if !valid_managed_segment(runtime_session_id) {
+            return Err(HomeError::InvalidRuntimeSessionId(
+                runtime_session_id.to_string(),
+            ));
         }
+        let runtime_root = openwork_root.join("runtime").join(runtime_session_id);
+        let runtime_bin = runtime_root.join("bin");
+        for directory in [
+            &openwork_root,
+            &openwork_root.join("agents"),
+            &runtime_root,
+            &runtime_bin,
+            &runtime_root.join("agents"),
+            &runtime_root.join("derived"),
+        ] {
+            secure_directory(directory).await?;
+        }
+        replace_symlink(&runtime_bin.join("openwork"), &shim_executable).await?;
+        Ok(Self {
+            openwork_root,
+            runtime_root,
+            runtime_bin,
+            runtime_base_url,
+        })
     }
 
     pub async fn materialize(
@@ -39,57 +63,36 @@ impl HomeManager {
         if !valid_agent_id(&assignment.id) {
             return Err(HomeError::InvalidAgentId(assignment.id.clone()));
         }
-        let root = self.state_root.join("agents").join(&assignment.id);
-        let bin = root.join("bin");
-        let memory = root.join("memory");
-        let notes = root.join("notes");
-        let workspace = root.join("workspace");
-        let triage_root = self.state_root.join("triage");
+        if !valid_managed_segment(&assignment.engine_id) {
+            return Err(HomeError::InvalidEngineId(assignment.engine_id.clone()));
+        }
+        let root = self.openwork_root.join("agents").join(&assignment.id);
+        let work_root = root.join("work");
+        let engine_root = root.join("engines").join(&assignment.engine_id);
+        let token_file = self
+            .runtime_root
+            .join("agents")
+            .join(&assignment.id)
+            .join("runtime-token");
         let config_root = self
-            .state_root
-            .join(format!("{}-config", assignment.engine_id))
-            .join(&assignment.id);
+            .runtime_root
+            .join("derived")
+            .join(&assignment.id)
+            .join(&assignment.engine_id);
         for directory in [
-            &self.state_root,
             &root,
-            &bin,
-            &memory,
-            &notes,
-            &workspace,
-            &triage_root,
+            &work_root,
+            &engine_root,
+            token_file.parent().expect("runtime token has a parent"),
             &config_root,
         ] {
             secure_directory(directory).await?;
         }
 
-        atomic_write(
-            &root.join("AGENTS.md"),
-            standing_prompt(assignment).as_bytes(),
-            0o600,
-        )
-        .await?;
-        atomic_write(
-            &root.join(".openwork-standing-prompt.md"),
-            standing_prompt(assignment).as_bytes(),
-            0o600,
-        )
-        .await?;
-        let memory_file = memory.join("MEMORY.md");
-        if !tokio::fs::try_exists(&memory_file).await? {
-            atomic_write(
-                &memory_file,
-                b"# Memory\n\nDurable notes for this agent. Never store secrets here.\n",
-                0o600,
-            )
-            .await?;
-        }
-        let token_file = bin.join(".runtime-token");
+        let managed_context = standing_prompt(assignment);
+        let context_fingerprint = managed_context_fingerprint(&managed_context);
+        atomic_write(&root.join("AGENTS.md"), managed_context.as_bytes(), 0o600).await?;
         atomic_write(&token_file, runtime_token.as_bytes(), 0o600).await?;
-        let shim = bin.join("openwork");
-        if tokio::fs::symlink_metadata(&shim).await.is_ok() {
-            tokio::fs::remove_file(&shim).await?;
-        }
-        tokio::fs::symlink(&self.shim_executable, &shim).await?;
 
         let original_path = std::env::var("PATH").unwrap_or_default();
         let original_data_home = std::env::var("XDG_DATA_HOME").ok().or_else(|| {
@@ -101,7 +104,7 @@ impl HomeManager {
             ("HOME".to_string(), root.to_string_lossy().into_owned()),
             (
                 "PATH".to_string(),
-                format!("{}:{original_path}", bin.to_string_lossy()),
+                format!("{}:{original_path}", self.runtime_bin.to_string_lossy()),
             ),
             (
                 "OPENWORK_RUNTIME_BASE_URL".to_string(),
@@ -115,23 +118,43 @@ impl HomeManager {
                 "OPENWORK_AGENT_HOME".to_string(),
                 root.to_string_lossy().into_owned(),
             ),
+            (
+                "XDG_CACHE_HOME".to_string(),
+                config_root.join("cache").to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_STATE_HOME".to_string(),
+                config_root.join("state").to_string_lossy().into_owned(),
+            ),
         ]);
         if let Some(data_home) = original_data_home {
             environment.insert("XDG_DATA_HOME".to_string(), data_home);
         }
         Ok(AgentHome {
-            root,
-            triage_root,
+            work_root,
             config_root,
-            state_file: self
-                .state_root
-                .join("sessions")
-                .join(format!("{}.session", assignment.id)),
-            config_fingerprint: persona_hash(assignment),
+            state_file: engine_root.join("session.json"),
+            context_fingerprint,
             environment,
             token_file,
         })
     }
+}
+
+async fn replace_symlink(
+    path: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<(), HomeError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            tokio::fs::remove_dir_all(path).await?;
+        }
+        Ok(_) => tokio::fs::remove_file(path).await?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    tokio::fs::symlink(target, path).await?;
+    Ok(())
 }
 
 impl AgentHome {
@@ -140,21 +163,8 @@ impl AgentHome {
     }
 }
 
-fn persona_hash(assignment: &AgentAssignment) -> String {
-    let fields = [
-        assignment.id.as_str(),
-        assignment.display_name.as_str(),
-        assignment.role.as_deref().unwrap_or_default(),
-        assignment.persona.as_str(),
-    ];
-    let mut hasher = Sha256::new();
-    for field in fields {
-        let normalized = field.replace("\r\n", "\n");
-        let normalized = normalized.trim();
-        hasher.update(normalized.len().to_be_bytes());
-        hasher.update(normalized.as_bytes());
-    }
-    format!("sha256:{:x}", hasher.finalize())
+fn managed_context_fingerprint(managed_context: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(managed_context.as_bytes()))
 }
 
 async fn secure_directory(path: &std::path::Path) -> Result<(), std::io::Error> {
@@ -208,10 +218,131 @@ fn valid_agent_id(id: &str) -> bool {
         })
 }
 
+fn valid_managed_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HomeError {
     #[error("invalid Agent id: {0}")]
     InvalidAgentId(String),
+    #[error("invalid Engine id: {0}")]
+    InvalidEngineId(String),
+    #[error("invalid RuntimeSession id: {0}")]
+    InvalidRuntimeSessionId(String),
     #[error("Agent home I/O failed: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use sha2::{Digest, Sha256};
+
+    use crate::protocol::AgentAssignment;
+
+    use super::HomeManager;
+
+    #[tokio::test]
+    async fn separates_persistent_agent_home_from_session_runtime_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let openwork_root = directory.path().join(".openwork");
+        let shim = directory.path().join("desktop");
+        tokio::fs::write(&shim, b"binary").await.unwrap();
+        let runtime_session_id = format!("runtime-{}", "a".repeat(32));
+        let manager = HomeManager::prepare(
+            openwork_root.clone(),
+            &runtime_session_id,
+            shim.clone(),
+            "http://127.0.0.1:43129".to_string(),
+        )
+        .await
+        .unwrap();
+        let assignment = AgentAssignment {
+            id: "helper".to_string(),
+            display_name: "Helper".to_string(),
+            role: Some("Researcher".to_string()),
+            persona: "Investigate carefully.".to_string(),
+            engine_id: "opencode".to_string(),
+            main_model_id: "opencode/main".to_string(),
+            triage_model_id: "opencode/triage".to_string(),
+            config_revision: 1,
+            agenda_enabled: false,
+        };
+
+        let home = manager.materialize(&assignment, "token-one").await.unwrap();
+        let persistent = openwork_root.join("agents/helper");
+        let runtime = openwork_root.join("runtime").join(runtime_session_id);
+
+        assert_eq!(home.work_root, persistent.join("work"));
+        assert_eq!(
+            home.state_file,
+            persistent.join("engines/opencode/session.json")
+        );
+        assert_eq!(home.config_root, runtime.join("derived/helper/opencode"));
+        assert_eq!(
+            home.environment.get("XDG_CACHE_HOME").map(String::as_str),
+            runtime.join("derived/helper/opencode/cache").to_str()
+        );
+        assert_eq!(
+            home.environment.get("XDG_STATE_HOME").map(String::as_str),
+            runtime.join("derived/helper/opencode/state").to_str()
+        );
+        assert_eq!(
+            home.environment.get("HOME").map(String::as_str),
+            persistent.to_str()
+        );
+        assert_eq!(
+            home.environment
+                .get("OPENWORK_RUNTIME_TOKEN_FILE")
+                .map(String::as_str),
+            runtime.join("agents/helper/runtime-token").to_str()
+        );
+        assert!(
+            home.environment["PATH"].starts_with(&format!("{}:", runtime.join("bin").display()))
+        );
+        let managed_context = tokio::fs::read_to_string(persistent.join("AGENTS.md"))
+            .await
+            .unwrap();
+        assert!(managed_context.contains("Investigate carefully."));
+        assert_eq!(
+            home.context_fingerprint,
+            format!("sha256:{:x}", Sha256::digest(managed_context.as_bytes()))
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(runtime.join("agents/helper/runtime-token"))
+                .await
+                .unwrap(),
+            "token-one"
+        );
+        assert_eq!(
+            tokio::fs::read_link(runtime.join("bin/openwork"))
+                .await
+                .unwrap(),
+            shim
+        );
+        for obsolete in ["bin", "memory", "notes", "skills", "workspace"] {
+            assert!(!persistent.join(obsolete).exists(), "created {obsolete}");
+        }
+
+        tokio::fs::write(persistent.join("work/kept.txt"), b"keep")
+            .await
+            .unwrap();
+        home.save_runtime_token("token-two").await.unwrap();
+        assert_eq!(
+            tokio::fs::read(persistent.join("work/kept.txt"))
+                .await
+                .unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(runtime.join("agents/helper/runtime-token"))
+                .await
+                .unwrap(),
+            "token-two"
+        );
+    }
 }

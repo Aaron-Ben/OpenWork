@@ -107,6 +107,8 @@ impl DesktopCommands {
                 started_at: self.session.started_at(),
                 last_computer_heartbeat: self.session.last_computer_heartbeat(),
                 engines: self.inventory.list().await?,
+                engine_readiness: self.session.engine_readiness(),
+                runners: self.session.runner_statuses(),
             })),
             DesktopCommand::ListAgents => Ok(DesktopCommandResult::Agents {
                 agents: self.agents.list().await?,
@@ -161,6 +163,29 @@ impl DesktopCommands {
             }
             DesktopCommand::SetAgentAgenda { agent_id, enabled } => {
                 let agent = Agents::set_agenda_in(transaction, &agent_id, enabled).await?;
+                let effect = agent_effect(&agent);
+                (DesktopCommandResult::Agent(agent), vec![effect])
+            }
+            DesktopCommand::UpdateAgent {
+                agent_id,
+                display_name,
+                role,
+                persona,
+                engine_id,
+                main_model_id,
+                triage_model_id,
+            } => {
+                let agent = Agents::update_in(
+                    transaction,
+                    &agent_id,
+                    &display_name,
+                    role.as_deref(),
+                    &persona,
+                    &engine_id,
+                    &main_model_id,
+                    &triage_model_id,
+                )
+                .await?;
                 let effect = agent_effect(&agent);
                 (DesktopCommandResult::Agent(agent), vec![effect])
             }

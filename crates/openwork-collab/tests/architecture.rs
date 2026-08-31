@@ -87,6 +87,42 @@ fn r1_business_modules_still_own_persistence_without_a_universal_store() {
     }
 }
 
+#[test]
+fn r4_keeps_persistent_home_separate_from_runtime_credentials() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let home = std::fs::read_to_string(crate_root.join("src/computer/home.rs")).unwrap();
+    let implementation = home.split("#[cfg(all(test").next().unwrap();
+    for obsolete in [
+        "join(\"memory\")",
+        "join(\"notes\")",
+        "join(\"skills\")",
+        "join(\"workspace\")",
+        ".openwork-standing-prompt.md",
+        ".runtime-token",
+    ] {
+        assert!(
+            !implementation.contains(obsolete),
+            "obsolete persistent-home shape survived: {obsolete}"
+        );
+    }
+    for required in [
+        "join(\"work\")",
+        "join(\"engines\")",
+        "join(\"runtime-token\")",
+        "join(\"derived\")",
+        "join(\"session.json\")",
+    ] {
+        assert!(
+            implementation.contains(required),
+            "R4 home shape is missing: {required}"
+        );
+    }
+    let protocol = source_text(&crate_root.join("src/protocol"));
+    assert!(!protocol.contains("active_agent_ids"));
+    assert!(protocol.contains("engine_readiness"));
+    assert!(protocol.contains("RunnerStatusView"));
+}
+
 fn source_text(root: &Path) -> String {
     source_files(root, "rs")
 }

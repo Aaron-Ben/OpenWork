@@ -34,11 +34,14 @@ impl ComputerClient {
         }
     }
 
-    pub async fn heartbeat(&self, active_agent_ids: Vec<String>) -> Result<(), RuntimeClientError> {
+    pub async fn heartbeat(
+        &self,
+        state: &ComputerHeartbeatRequest,
+    ) -> Result<(), RuntimeClientError> {
         self.http
             .post(format!("{}/computer/heartbeat", self.base_url))
             .bearer_auth(&self.computer_secret)
-            .json(&ComputerHeartbeatRequest { active_agent_ids })
+            .json(state)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await

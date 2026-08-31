@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::EngineInventoryView;
+use super::{EngineInventoryView, EngineReadinessView, RunnerStatusView};
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +24,7 @@ pub struct ComputerProcessBootstrap {
     pub runtime_session_id: String,
     pub base_url: String,
     pub computer_secret: String,
-    pub state_root: String,
+    pub openwork_root: String,
     pub shim_executable: String,
     pub engine_executable: String,
 }
@@ -63,6 +63,15 @@ pub enum DesktopCommand {
     SetAgentAgenda {
         agent_id: String,
         enabled: bool,
+    },
+    UpdateAgent {
+        agent_id: String,
+        display_name: String,
+        role: Option<String>,
+        persona: String,
+        engine_id: String,
+        main_model_id: String,
+        triage_model_id: String,
     },
     ArchiveAgent {
         agent_id: String,
@@ -149,6 +158,8 @@ pub struct RuntimeStatusView {
     pub started_at: i64,
     pub last_computer_heartbeat: Option<i64>,
     pub engines: Vec<EngineInventoryView>,
+    pub engine_readiness: Vec<EngineReadinessView>,
+    pub runners: Vec<RunnerStatusView>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

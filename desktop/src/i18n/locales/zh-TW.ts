@@ -272,9 +272,12 @@ export const zhTW = {
       runFailed: '{{agents}} 執行失敗：{{message}}', unknownFailure: '未知 OpenCode 錯誤',
     },
     agents: {
-      title: '同事管理', create: '建立同事', save: '儲存', displayName: '名稱', role: '角色（可選）',
+      title: '同事管理', create: '建立同事', edit: '編輯同事', save: '儲存', displayName: '名稱', role: '角色（可選）',
       mainModel: '主模型', triageModel: '分流模型', persona: '個性設定', active: '活躍', archived: '已封存', noAgents: '還沒有同事',
       proactiveOn: 'Agenda 已開啟', proactiveOff: 'Agenda 已關閉', archive: '封存', restore: '恢復',
+      running: 'Runner 正在執行', starting: 'Runner 正在啟動', restarting: 'Runner 正在套用最新設定',
+      runnerError: 'Runner 啟動失敗', engineMissing: '尚未安裝 OpenCode', engineError: 'OpenCode 可用性檢查失敗',
+      runtimeReady: '本機 Runtime 已就緒', runtimeStarting: '本機 Runtime 正在啟動',
     },
     boards: {
       title: '看板與執行', create: '建立看板', name: '看板名稱',

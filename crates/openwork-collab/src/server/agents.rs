@@ -102,6 +102,67 @@ impl Agents {
         Self::get_in(transaction, agent_id).await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn update_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        agent_id: &str,
+        display_name: &str,
+        role: Option<&str>,
+        persona: &str,
+        engine_id: &str,
+        main_model_id: &str,
+        triage_model_id: &str,
+    ) -> Result<AgentView, sqlx::Error> {
+        let display_name = required(display_name, "display name")?;
+        let persona = required(persona, "persona")?;
+        let engine_id = required(engine_id, "Engine id")?;
+        let main_model_id = required(main_model_id, "main model id")?;
+        let triage_model_id = required(triage_model_id, "triage model id")?;
+        if engine_id != "opencode" {
+            return Err(protocol_error("INVALID_ARGUMENT: unsupported Engine"));
+        }
+        let participant = sqlx::query(
+            "UPDATE collab_participants
+             SET display_name = $2
+             WHERE id = $1 AND kind = 'agent'",
+        )
+        .bind(agent_id)
+        .bind(display_name)
+        .execute(&mut **transaction)
+        .await?;
+        if participant.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        sqlx::query(
+            "UPDATE collab_agent_profiles
+             SET role = $2,
+                 persona = $3,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE agent_id = $1",
+        )
+        .bind(agent_id)
+        .bind(role.map(str::trim).filter(|value| !value.is_empty()))
+        .bind(persona)
+        .execute(&mut **transaction)
+        .await?;
+        sqlx::query(
+            "UPDATE collab_agent_runtime_configs
+             SET engine_id = $2,
+                 main_model_id = $3,
+                 triage_model_id = $4,
+                 config_revision = config_revision + 1,
+                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE agent_id = $1",
+        )
+        .bind(agent_id)
+        .bind(engine_id)
+        .bind(main_model_id)
+        .bind(triage_model_id)
+        .execute(&mut **transaction)
+        .await?;
+        Self::get_in(transaction, agent_id).await
+    }
+
     pub(crate) async fn set_archived_in(
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,

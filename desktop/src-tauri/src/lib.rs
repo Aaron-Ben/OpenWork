@@ -1,4 +1,5 @@
 mod collab_client;
+mod collab_event_bridge;
 mod commands;
 mod error;
 mod event_bridge;
@@ -26,6 +27,7 @@ pub fn run() {
             let collab = tauri::async_runtime::block_on(
                 collab_client::CollabDaemonClient::discover_or_start(),
             )?;
+            collab_event_bridge::spawn(app.handle().clone(), collab.subscribe_invalidations());
             app.manage(collab);
             app.manage(core);
             Ok(())
@@ -34,6 +36,7 @@ pub fn run() {
             commands::collab::collab_status,
             commands::collab::collab_agent_list,
             commands::collab::collab_agent_create,
+            commands::collab::collab_agent_update,
             commands::collab::collab_agent_agenda_set,
             commands::collab::collab_agent_archive,
             commands::collab::collab_agent_restore,

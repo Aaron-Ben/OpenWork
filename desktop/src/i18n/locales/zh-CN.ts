@@ -342,9 +342,12 @@ export const zhCN = {
       runFailed: '{{agents}} 运行失败：{{message}}', unknownFailure: '未知 OpenCode 错误',
     },
     agents: {
-      title: '同事管理', create: '创建同事', save: '保存', displayName: '名称', role: '角色（可选）',
+      title: '同事管理', create: '创建同事', edit: '编辑同事', save: '保存', displayName: '名称', role: '角色（可选）',
       mainModel: '主模型', triageModel: '分流模型', persona: '个性设定', active: '活跃', archived: '已归档', noAgents: '还没有同事',
       proactiveOn: 'Agenda 已开启', proactiveOff: 'Agenda 已关闭', archive: '归档', restore: '恢复',
+      running: 'Runner 正在运行', starting: 'Runner 正在启动', restarting: 'Runner 正在应用最新配置',
+      runnerError: 'Runner 启动失败', engineMissing: '未安装 OpenCode', engineError: 'OpenCode 可用性检查失败',
+      runtimeReady: '本机 Runtime 已就绪', runtimeStarting: '本机 Runtime 正在启动',
     },
     boards: {
       title: '看板与运行', create: '创建看板', name: '看板名称',

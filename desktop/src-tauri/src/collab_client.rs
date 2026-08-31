@@ -1,4 +1,6 @@
 use std::{
+    fs::File,
+    os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -6,10 +8,11 @@ use std::{
 };
 
 use openwork_collab::{
+    computer::sse::{SseDecoder, SseParseError},
     protocol::{
         request_id, ApiError, ComputerProcessBootstrap, ComputerProcessReady, DesktopCommand,
-        DesktopCommandRequest, DesktopCommandResult, RuntimeStatusView, ServerProcessBootstrap,
-        ServerProcessReady, COLLAB_PROTOCOL_VERSION,
+        DesktopCommandRequest, DesktopCommandResult, InvalidationEvent, RuntimeStatusView,
+        ServerProcessBootstrap, ServerProcessReady, COLLAB_PROTOCOL_VERSION,
     },
     server::RuntimeCredentials,
 };
@@ -18,7 +21,7 @@ use thiserror::Error;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, Command},
-    sync::{mpsc, oneshot, RwLock},
+    sync::{broadcast, mpsc, oneshot, RwLock},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -37,8 +40,10 @@ pub struct CollabDaemonClient {
 }
 
 struct ClientInner {
+    _runtime_ownership: File,
     connection: RwLock<Option<DesktopConnection>>,
     supervisor: mpsc::Sender<SupervisorCommand>,
+    invalidations: broadcast::Sender<InvalidationEvent>,
 }
 
 #[derive(Clone)]
@@ -66,11 +71,15 @@ impl CollabDaemonClient {
     pub async fn discover_or_start() -> Result<Self, CollabClientError> {
         let state_root = state_root()?;
         secure_directory(&state_root).await?;
+        let runtime_ownership = acquire_runtime_ownership(&state_root)?;
         let executable = std::env::current_exe()?;
         let (supervisor_tx, supervisor_rx) = mpsc::channel(1);
+        let (invalidations, _) = broadcast::channel(128);
         let inner = Arc::new(ClientInner {
+            _runtime_ownership: runtime_ownership,
             connection: RwLock::new(None),
             supervisor: supervisor_tx,
+            invalidations,
         });
         let (ready_tx, ready_rx) = oneshot::channel();
         tokio::spawn(supervise(
@@ -113,6 +122,10 @@ impl CollabDaemonClient {
             let _ = tokio::time::timeout(SUPERVISOR_SHUTDOWN_TIMEOUT, ack_rx).await;
         }
     }
+
+    pub fn subscribe_invalidations(&self) -> broadcast::Receiver<InvalidationEvent> {
+        self.inner.invalidations.subscribe()
+    }
 }
 
 async fn supervise(
@@ -124,25 +137,26 @@ async fn supervise(
 ) {
     let mut first_ready = Some(first_ready);
     loop {
-        let mut group = match start_group(&state_root, &executable).await {
-            Ok(group) => group,
-            Err(error) => {
-                if let Some(ready) = first_ready.take() {
-                    let _ = ready.send(Err(error.to_string()));
-                    return;
-                }
-                tracing::error!(%error, "Collaboration process group restart failed");
-                tokio::select! {
-                    command = commands.recv() => {
-                        if let Some(SupervisorCommand::Shutdown(ack)) = command {
-                            let _ = ack.send(());
-                        }
+        let mut group =
+            match start_group(&state_root, &executable, inner.invalidations.clone()).await {
+                Ok(group) => group,
+                Err(error) => {
+                    if let Some(ready) = first_ready.take() {
+                        let _ = ready.send(Err(error.to_string()));
                         return;
                     }
-                    _ = tokio::time::sleep(Duration::from_secs(2)) => continue,
+                    tracing::error!(%error, "Collaboration process group restart failed");
+                    tokio::select! {
+                        command = commands.recv() => {
+                            if let Some(SupervisorCommand::Shutdown(ack)) = command {
+                                let _ = ack.send(());
+                            }
+                            return;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(2)) => continue,
+                    }
                 }
-            }
-        };
+            };
         *inner.connection.write().await = Some(group.connection.clone());
         if let Some(ready) = first_ready.take() {
             let _ = ready.send(Ok(()));
@@ -185,12 +199,10 @@ async fn supervise(
 async fn start_group(
     state_root: &Path,
     executable: &Path,
+    invalidations: broadcast::Sender<InvalidationEvent>,
 ) -> Result<ProcessGroup, CollabClientError> {
     let credentials = RuntimeCredentials::generate();
-    let runtime_root = state_root
-        .join("runtime")
-        .join(&credentials.runtime_session_id);
-    secure_directory(&runtime_root).await?;
+    let runtime_root = prepare_runtime_root(state_root, &credentials.runtime_session_id).await?;
 
     let server_bootstrap = ServerProcessBootstrap {
         runtime_session_id: credentials.runtime_session_id.clone(),
@@ -225,7 +237,7 @@ async fn start_group(
         runtime_session_id: credentials.runtime_session_id.clone(),
         base_url: server_ready.base_url.clone(),
         computer_secret: credentials.computer_secret,
-        state_root: state_root.join("computer").to_string_lossy().into_owned(),
+        openwork_root: state_root.to_string_lossy().into_owned(),
         shim_executable: executable.to_string_lossy().into_owned(),
         engine_executable: std::env::var("OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string()),
     };
@@ -267,7 +279,11 @@ async fn start_group(
         return Err(error);
     }
     let sse_shutdown = CancellationToken::new();
-    let sse_task = tokio::spawn(desktop_sse_loop(connection.clone(), sse_shutdown.clone()));
+    let sse_task = tokio::spawn(desktop_sse_loop(
+        connection.clone(),
+        invalidations,
+        sse_shutdown.clone(),
+    ));
     Ok(ProcessGroup {
         server,
         computer,
@@ -422,37 +438,59 @@ async fn post_command(
     unreachable!("Desktop command retry loop returns on its final attempt")
 }
 
-async fn desktop_sse_loop(connection: DesktopConnection, shutdown: CancellationToken) {
+async fn desktop_sse_loop(
+    connection: DesktopConnection,
+    invalidations: broadcast::Sender<InvalidationEvent>,
+    shutdown: CancellationToken,
+) {
     let mut backoff = Duration::from_secs(1);
     loop {
-        let response = tokio::select! {
-            _ = shutdown.cancelled() => return,
-            response = connection.http
-                .get(format!("{}/desktop/events", connection.base_url))
-                .bearer_auth(&connection.desktop_secret)
-                .send() => response,
-        };
-        match response.and_then(reqwest::Response::error_for_status) {
-            Ok(mut response) => {
-                backoff = Duration::from_secs(1);
-                loop {
-                    let chunk = tokio::select! {
-                        _ = shutdown.cancelled() => return,
-                        chunk = response.chunk() => chunk,
-                    };
-                    match chunk {
-                        Ok(Some(_)) => {}
-                        Ok(None) | Err(_) => break,
-                    }
-                }
-            }
-            Err(error) => tracing::warn!(%error, "Desktop collaboration SSE disconnected"),
+        let connected_at = tokio::time::Instant::now();
+        if let Err(error) = desktop_sse_once(&connection, &invalidations, &shutdown).await {
+            tracing::warn!(%error, "Desktop collaboration SSE disconnected");
+        }
+        if shutdown.is_cancelled() {
+            return;
+        }
+        if connected_at.elapsed() >= Duration::from_secs(60) {
+            backoff = Duration::from_secs(1);
         }
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = tokio::time::sleep(backoff) => {}
         }
         backoff = (backoff * 2).min(Duration::from_secs(30));
+    }
+}
+
+async fn desktop_sse_once(
+    connection: &DesktopConnection,
+    invalidations: &broadcast::Sender<InvalidationEvent>,
+    shutdown: &CancellationToken,
+) -> Result<(), CollabClientError> {
+    let mut response = connection
+        .http
+        .get(format!("{}/desktop/events", connection.base_url))
+        .bearer_auth(&connection.desktop_secret)
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut decoder = SseDecoder::default();
+    loop {
+        let chunk = tokio::select! {
+            _ = shutdown.cancelled() => return Ok(()),
+            chunk = response.chunk() => chunk?,
+        };
+        let Some(chunk) = chunk else {
+            return Ok(());
+        };
+        for event in decoder.push(&chunk)? {
+            if event.event.as_deref() != Some("desktop") {
+                continue;
+            }
+            let invalidation = serde_json::from_str::<InvalidationEvent>(&event.data)?;
+            let _ = invalidations.send(invalidation);
+        }
     }
 }
 
@@ -503,6 +541,50 @@ async fn secure_directory(path: &Path) -> Result<(), std::io::Error> {
     tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).await
 }
 
+fn acquire_runtime_ownership(state_root: &Path) -> Result<File, CollabClientError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(state_root.join("runtime.lock"))?;
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        Ok(file)
+    } else {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            Err(CollabClientError::AlreadyRunning)
+        } else {
+            Err(error.into())
+        }
+    }
+}
+
+async fn prepare_runtime_root(
+    state_root: &Path,
+    runtime_session_id: &str,
+) -> Result<PathBuf, std::io::Error> {
+    let runtime_base = state_root.join("runtime");
+    secure_directory(&runtime_base).await?;
+    let mut entries = tokio::fs::read_dir(&runtime_base).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let file_type = entry.file_type().await?;
+        if file_type.is_dir() && !file_type.is_symlink() {
+            tokio::fs::remove_dir_all(path).await?;
+        } else {
+            tokio::fs::remove_file(path).await?;
+        }
+    }
+    let runtime_root = runtime_base.join(runtime_session_id);
+    secure_directory(&runtime_root).await?;
+    Ok(runtime_root)
+}
+
 async fn remove_runtime_root(state_root: &Path, runtime_root: &Path) -> Result<(), std::io::Error> {
     if runtime_root.parent() != Some(state_root.join("runtime").as_path()) {
         return Err(std::io::Error::new(
@@ -537,6 +619,8 @@ pub enum CollabClientError {
     Startup(String),
     #[error("collaboration Runtime is restarting")]
     Unavailable,
+    #[error("another OpenWork Desktop already owns the Collaboration Runtime")]
+    AlreadyRunning,
     #[error("collaboration request was rejected ({code}): {message}")]
     Rejected { code: String, message: String },
     #[error("collaboration process protocol failed: {0}")]
@@ -547,13 +631,17 @@ pub enum CollabClientError {
     Io(#[from] std::io::Error),
     #[error("collaboration payload was invalid: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("collaboration SSE was invalid: {0}")]
+    Sse(#[from] SseParseError),
     #[error("collaboration HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 }
 
 #[cfg(test)]
 mod tests {
-    use super::loopback_base_url;
+    use super::{
+        acquire_runtime_ownership, loopback_base_url, prepare_runtime_root, CollabClientError,
+    };
 
     #[test]
     fn only_random_loopback_http_endpoints_are_accepted() {
@@ -562,5 +650,36 @@ mod tests {
         assert!(!loopback_base_url("http://0.0.0.0:43129"));
         assert!(!loopback_base_url("https://127.0.0.1:43129"));
         assert!(!loopback_base_url("http://127.0.0.1:0"));
+    }
+
+    #[tokio::test]
+    async fn startup_removes_stale_runtime_directories_before_creating_the_current_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_root = directory.path().join(".openwork");
+        let stale = state_root.join("runtime/runtime-stale");
+        tokio::fs::create_dir_all(&stale).await.unwrap();
+        tokio::fs::write(stale.join("runtime-token"), b"obsolete")
+            .await
+            .unwrap();
+
+        let current = prepare_runtime_root(&state_root, "runtime-current")
+            .await
+            .unwrap();
+
+        assert_eq!(current, state_root.join("runtime/runtime-current"));
+        assert!(current.is_dir());
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn only_one_desktop_can_own_and_clean_the_runtime_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = acquire_runtime_ownership(directory.path()).unwrap();
+        assert!(matches!(
+            acquire_runtime_ownership(directory.path()),
+            Err(CollabClientError::AlreadyRunning)
+        ));
+        drop(first);
+        acquire_runtime_ownership(directory.path()).unwrap();
     }
 }

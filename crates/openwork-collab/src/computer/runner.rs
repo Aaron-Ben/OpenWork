@@ -222,7 +222,7 @@ impl AgentRunner {
                 self.engine
                     .adapter
                     .classify(ClassifyRequest {
-                        cwd: self.home.triage_root.clone(),
+                        cwd: self.home.work_root.clone(),
                         config_root: self.home.config_root.clone(),
                         prompt,
                         model: Some(payload.model.clone()),
@@ -407,7 +407,7 @@ impl AgentRunner {
             self.engine
                 .adapter
                 .classify(ClassifyRequest {
-                    cwd: self.home.triage_root.clone(),
+                    cwd: self.home.work_root.clone(),
                     config_root: self.home.config_root.clone(),
                     prompt: payload.classify_prompt,
                     model: Some(self.assignment.triage_model_id.clone()),

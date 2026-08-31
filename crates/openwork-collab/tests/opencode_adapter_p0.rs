@@ -38,6 +38,8 @@ async fn opencode_run_turn_uses_stdin_and_returns_resumable_structured_result() 
     )
     .unwrap();
     assert_eq!(session["session_id"], "ses_local");
+    assert_eq!(session["context_fingerprint"], "test-persona");
+    assert!(session.get("persona_hash").is_none());
     assert_eq!(result.usage.input_tokens, 11);
     assert_eq!(result.usage.output_tokens, 5);
     assert_eq!(result.usage.cached_input_tokens, 7);
@@ -443,7 +445,7 @@ async fn runtime(
             home: directory.path().to_path_buf(),
             config_root: directory.path().join("config"),
             state_file: directory.path().join("session.json"),
-            config_fingerprint: "test-persona".to_string(),
+            context_fingerprint: "test-persona".to_string(),
             model: model.to_string(),
             environment: Default::default(),
         })

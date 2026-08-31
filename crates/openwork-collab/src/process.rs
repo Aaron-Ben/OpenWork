@@ -61,7 +61,7 @@ pub async fn run_computer_process() -> Result<(), ProcessError> {
     let shutdown = CancellationToken::new();
     let daemon = ComputerDaemon::new(
         ComputerOptions {
-            state_root: PathBuf::from(&bootstrap.state_root),
+            openwork_root: PathBuf::from(&bootstrap.openwork_root),
             runtime_session_id: bootstrap.runtime_session_id.clone(),
             runtime_base_url: bootstrap.base_url,
             computer_secret: bootstrap.computer_secret,
