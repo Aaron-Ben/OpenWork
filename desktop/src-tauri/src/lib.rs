@@ -88,13 +88,21 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
-    let collab = app
-        .state::<collab_client::CollabDaemonClient>()
-        .inner()
-        .clone();
-    let exit_code = app.run_return(|_, _| {});
+    let (collab, exit_code) =
+        run_return_with_managed_state::<_, collab_client::CollabDaemonClient>(app);
     tauri::async_runtime::block_on(collab.shutdown());
     std::process::exit(exit_code);
+}
+
+fn run_return_with_managed_state<R, T>(app: tauri::App<R>) -> (T, i32)
+where
+    R: tauri::Runtime,
+    T: Clone + Send + Sync + 'static,
+{
+    let handle = app.handle().clone();
+    let exit_code = app.run_return(|_, _| {});
+    let state = handle.state::<T>().inner().clone();
+    (state, exit_code)
 }
 
 #[cfg(debug_assertions)]
@@ -107,3 +115,38 @@ fn load_development_env() {
 
 #[cfg(not(debug_assertions))]
 fn load_development_env() {}
+
+#[cfg(test)]
+mod tests {
+    use tauri::Manager;
+
+    use super::run_return_with_managed_state;
+
+    #[derive(Clone)]
+    struct SetupManagedState;
+
+    #[test]
+    fn managed_state_is_read_after_setup_runs() {
+        let (setup_tx, setup_rx) = std::sync::mpsc::channel();
+        let app = tauri::test::mock_builder()
+            .setup(move |app| {
+                assert!(app.manage(SetupManagedState));
+                setup_tx.send(()).unwrap();
+                Ok(())
+            })
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "lifecycle", Default::default())
+            .build()
+            .unwrap();
+        let closer = std::thread::spawn(move || {
+            setup_rx.recv().unwrap();
+            window.close().unwrap();
+        });
+
+        let (_, exit_code) = run_return_with_managed_state::<_, SetupManagedState>(app);
+
+        closer.join().unwrap();
+        assert_eq!(exit_code, 0);
+    }
+}
