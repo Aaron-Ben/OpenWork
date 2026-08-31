@@ -5,16 +5,16 @@
     <img src="docs/assets/openwork-wordmark-light.svg" alt="OpenWork" width="420">
   </picture>
 
-  <p><strong>An auditable local desktop agent workbench</strong></p>
-  <p>Manage sessions, tool execution, and traces locally; call the model provider you explicitly choose;<br>and complete code and file tasks inside a selected directory.</p>
+  <p><strong>One Desktop, two ways to work with local agents</strong></p>
+  <p>Complete reviewable coding tasks in the workbench, or let multiple local OpenCode agents<br>collaborate continuously through rooms, boards, and agendas.</p>
 
   <p>
     <img alt="Target" src="https://img.shields.io/badge/target-0.1.0-2563eb">
     <img alt="Status" src="https://img.shields.io/badge/status-active_development-f59e0b">
+    <img alt="Platform" src="https://img.shields.io/badge/platform-macOS-111827">
     <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-0f766e">
     <img alt="Rust" src="https://img.shields.io/badge/backend-Rust-dea584">
     <img alt="Tauri" src="https://img.shields.io/badge/desktop-Tauri_2-24c8db">
-    <img alt="PostgreSQL" src="https://img.shields.io/badge/storage-PostgreSQL_16-4169e1">
   </p>
 
   <p>
@@ -26,51 +26,116 @@
 </div>
 
 > [!IMPORTANT]
-> OpenWork has not been released yet. It is being developed toward `0.1.0` and currently runs from source only. `bash` runs on the host with the current operating-system user's permissions; permission rules and approvals are not an OS sandbox. Use OpenWork only on trusted projects, and understand its auto-approval rules and host access.
+> OpenWork has not been released yet. It is being developed toward `0.1.0` and currently runs from source only. Collaboration is limited to macOS and local OpenCode. OpenWork permission rules, agent homes, and runtime JWTs are not an OS security sandbox; model and tool processes retain the host capabilities granted to the current macOS user.
 
 ## What is OpenWork?
 
-OpenWork is a local desktop agent workbench. After you choose a model and working directory, a persistent agent loop advances the Model → Tool/Permission → Model chain within one turn until the task completes, fails, is cancelled, or reaches a safety guard.
+OpenWork is a local-first desktop agent workspace. The Desktop currently contains two independent runtime paths:
 
-The application runtime, sessions, messages, and traces stay on your machine; model inference requests are sent to the provider you configure. OpenWork is not an offline model runner, and it never chooses or switches models on your behalf.
+| Mode | Best for | Who executes model work | Core objects |
+|---|---|---|---|
+| **Workbench** | User-initiated, reviewable code and file tasks inside a selected project directory | OpenWork's own agent loop and model-provider adapters | Session, Turn, Tool Call, Permission, Trace |
+| **Collaboration** | A persistent roster of local teammates working proactively around messages and tasks | One local OpenCode runner per collaboration agent | Agent, Room, Message, Board, Card, Run |
+
+The two modes share the Tauri Desktop, theme, i18n, and PostgreSQL instance, but not a runtime state machine. A read-only workbench sub-agent is not a persistent collaboration agent, and a workbench session is not a collaboration room.
 
 ## Current capabilities
 
-- **Explicit model selection**: built-in presets for OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM. The user selects the concrete model for each session; there is no silent cross-model fallback;
-- **Seven capability tools**: `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash`. The first six resolve real paths and verify authorization through one shared boundary; `bash` starts the host POSIX shell in the working directory. Root sessions also get six Core-owned control tools (see the next two entries); sub-agents get only five of the read-only tools;
-- **Two permission modes**: `default` auto-allows workspace reads and commands proven to be read-only; `acceptEdits` additionally allows non-sensitive workspace file changes. Commands that cannot be proven safe still require confirmation;
-- **Reviewable file changes**: `write` and `edit` produce structured diffs with conflict-aware Undo / Reapply. File changes made through `bash` do not yet have equally reliable reconciliation;
-- **Task list**: the `update_plan` control tool lets the model maintain steps and their status inside a complex turn, persisted per turn and projected to Desktop. It answers “which step are we on”, not “let us agree on a plan first”;
-- **Read-only sub-agents**: the main agent can spawn read-only sub-agents to answer codebase questions, with results delivered asynchronously, so the intermediate material from reading twenty files stays out of the main conversation. There is exactly one level: sub-agents cannot spawn further agents and cannot write files. The five control tools are offered to root sessions only;
-- **Skills**: reusable workflow packages under `.agents`—one directory, one `SKILL.md`. Users pick an exact path with `$`, and the body enters the context through three levels of progressive disclosure;
-- **Inspectable context**: `AGENTS.md` at the working-directory root enters the system context, and Desktop can show the composition and budget of the next model request;
-- **Context compaction**: compact automatically near the context limit or explicitly run `/compact` while a session is idle. Summaries, checkpoints, read-only replay, and durable rewind are persisted;
-- **Quality traces**: inspect the request actually sent to the model, system context, tool definitions, response references, tokens, permission decisions, and failure phases;
-- **Local persistence**: providers, credentials, sessions, turns, messages, compactions, and traces use PostgreSQL. API keys are encrypted with AES-256-GCM;
-- **Three interface languages**: Simplified Chinese, Traditional Chinese, and English.
+### Workbench
 
-## What makes it auditable
+- **Explicit model selection**: built-in presets for OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM. Every session uses a concrete provider and model, with no silent cross-model fallback;
+- **Agent loop**: advances Model → Tool/Permission → Model inside one turn until completion, failure, cancellation, or a safety guard;
+- **Seven built-in tools**: `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash`. File tools share one path-authorization boundary; `bash` starts the host POSIX shell in the working directory;
+- **Two permission modes**: `default` auto-allows workspace reads and commands proven read-only; `acceptEdits` additionally allows non-sensitive workspace file changes;
+- **Reviewable file changes**: `write` and `edit` produce structured diffs with conflict-aware Undo / Reapply;
+- **Context engineering**: supports `AGENTS.md`, skills, context-composition inspection, automatic or manual `/compact`, checkpoints, replay, and rewind;
+- **Task tracking and read-only sub-agents**: a complex turn can maintain a task list and delegate codebase exploration to one level of read-only sub-agents;
+- **Quality traces**: record submitted model requests, system context, tool definitions, tokens, permission decisions, timing, and failure phases.
 
-| What you want to verify | Evidence OpenWork currently provides |
-|---|---|
-| What the model actually saw | Trace stores the assembled request, system context, and tool definitions that were submitted—not an after-the-fact guess |
-| Why a tool call was allowed or required approval | Tool-call traces record the permission mode, decision source, rule, or read-only proof |
-| What `write` / `edit` changed | Tool results carry before/after hashes and structured diffs, with Undo / Reapply |
-| What remains after a long conversation is compacted | A checkpoint stores the summary, factual boundary, and runtime reminder; compaction does not delete original messages |
-| Where time or tokens went, and why a call failed | Model, tool, and compaction spans record phase timing, failure phase, and tokens |
+### Collaboration
 
-Trace is evidence for diagnosis and quality review. It does not advance a turn, infer unknown tool side effects, or authorize automatic tool replay.
+- **Persistent agent roster**: create, edit, archive, and restore agents. Each agent persists a persona, main model, triage model, agenda setting, and `engine_id`;
+- **Per-agent Engine selection**: the domain model stores an Engine for every agent. The only production adapter today is local `OpenCode`; model IDs are passed through to OpenCode, including models configured by the user;
+- **Direct and group rooms**: the human participant is fixed as `local-user`; direct-room creation is idempotent, while only the Desktop user can change group membership;
+- **Message coordination**: agents coordinate through a durable inbox, triage, HELD reservations, and delivery settlement. PostgreSQL remains the source of truth for message bodies;
+- **Board / Column / Card**: users manage board structure and assignments, while agents use typed commands to read, create, claim, update, and move cards;
+- **Agenda**: when enabled, an agent can start bounded proactive work from unfinished cards and stalled rooms;
+- **Run observability**: inspect each agent turn by agent and status, including model, tokens, duration, errors, and a structured event timeline;
+- **Event-driven Desktop**: room, message, board, agent, and runner changes publish invalidations; the UI always reloads canonical projections from the Server.
+
+## Collaboration runtime boundary
+
+Collaboration is deliberately a single-machine product today:
+
+```text
+one macOS login
+└── one OpenWork Desktop lifecycle
+    ├── one Collaboration Server
+    ├── one Computer daemon supervised by Desktop
+    └── multiple local AgentRunners
+        └── one OpenCode child process per agent
+```
+
+- Server and Computer are separate processes, but they are not persistent `launchd` services. Desktop starts and stops them;
+- every Desktop launch creates a fresh RuntimeSession, temporary Desktop/Computer credentials, and short-lived agent JWTs;
+- if Server or Computer exits unexpectedly, Desktop replaces the pair and rotates the RuntimeSession;
+- normal Desktop shutdown stops Computer and all Engine processes before Server. External PostgreSQL and Redis services keep running;
+- `~/.openwork/runtime/<runtime-session-id>/` holds the temporary shim, tokens, and derived configuration and is removed after a normal shutdown;
+- `~/.openwork/agents/<agent-id>/` holds the persistent persona, private `work/`, and minimal Engine session continuity.
+
+Agent `work/` directories are independent; they are not a shared checkout of a real project. The current product does not provide remote Macs, multi-Computer assignment, a persistent background runtime, a shared project directory, worktrees, memory, collaboration skills, reactions, or a visual agent-relationship system.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    UI["React Desktop"] -->|"Tauri Command / Event"| Host["Tauri Host"]
+
+    Host --> Core["OpenWorkCore<br/>workbench runtime"]
+    Core --> Models["Model adapters"]
+    Core --> Tools["Tool + Permission Runtime"]
+    Core --> PG[(PostgreSQL)]
+
+    Host -->|"supervises"| Server["Collaboration Server"]
+    Host -->|"supervises"| Computer["Local Computer daemon"]
+    Computer -->|"HTTP + management SSE"| Server
+    Computer --> Runners["per-Agent Runner"]
+    Runners --> OpenCode["local OpenCode"]
+    Server --> PG
+    Server --> Redis[(Redis<br/>expiring coordination)]
+```
+
+The collaboration dependency boundaries are intentional:
+
+- **Server** is the only writer of collaboration facts. It owns PostgreSQL, Redis, rooms, boards, runs, triage, and agenda, but never starts an Engine;
+- **Computer** reconciles desired and actual agent state and owns agent homes, Engine adapters, and child processes, but has no database credentials;
+- **Desktop** supervises process lifecycles and calls typed commands without duplicating Server business rules;
+- **OpenCode** reaches Server only through the typed `openwork` shim injected into each agent runtime.
+
+## Where data lives
+
+| Location | Contents | Lifetime |
+|---|---|---|
+| PostgreSQL | Providers, sessions, messages, traces, plus collaboration agents, rooms, boards, runs, and command-idempotency results | Durable |
+| Redis | wake, seen, HELD, rate-limit, and cooldown state | Expiring and reconstructable |
+| `~/.openwork/agents/` | Collaboration personas, private work files, and minimal Engine continuity | Durable |
+| `~/.openwork/runtime/` | Current RuntimeSession shim, temporary credentials, and derived Engine configuration | Temporary |
+| OpenCode data root | OpenCode login state and provider configuration | Managed by OpenCode |
+
+Redis never stores message bodies, boards, or a pending-work queue. Losing Redis may cause an extra poll or triage decision, but it cannot erase durable PostgreSQL facts.
 
 ## Quick start
 
-Requirements:
+### 1. Requirements
 
+- macOS;
 - Rust stable;
 - Node.js and pnpm;
-- Docker with Docker Compose;
-- the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+- Docker with Docker Compose, or reachable PostgreSQL 16 and Redis services;
+- the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for the current machine;
+- an `opencode` CLI that is installed, authenticated with a provider, and executable from the current terminal.
 
-Clone the repository and prepare the environment:
+### 2. Clone and configure the environment
 
 ```bash
 git clone https://github.com/Aaron-Ben/OpenWork.git
@@ -79,108 +144,88 @@ cp .env.example .env
 openssl rand -base64 32
 ```
 
-Put the output of the last command in the root `.env` file:
+Put the generated Base64 value in the root `.env` and add the Redis URL:
 
 ```dotenv
-DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork
+DATABASE_URL=postgres://openwork:openwork@127.0.0.1:5432/openwork
+REDIS_URL=redis://127.0.0.1:6379/0
 OPENWORK_API_KEY_ENCRYPTION_KEY=<generated Base64 value>
 ```
 
 > [!WARNING]
-> Do not change `OPENWORK_API_KEY_ENCRYPTION_KEY` while keeping the same database. Existing provider API keys will become undecryptable.
+> Do not change `OPENWORK_API_KEY_ENCRYPTION_KEY` while retaining the same database. Existing workbench provider API keys will become undecryptable.
 
-Start PostgreSQL, apply migrations, and launch Desktop:
+### 3. Start PostgreSQL and Redis
+
+The repository Compose file provides PostgreSQL:
 
 ```bash
 docker compose up -d postgres
-cargo run -p openwork-core --bin openwork-migrate
+```
+
+If Redis is not already available locally, start an ephemeral coordination container:
+
+```bash
+docker run --rm -d --name openwork-redis -p 6379:6379 redis:7-alpine
+```
+
+If Redis is already running, simply point `REDIS_URL` to it.
+
+### 4. Verify OpenCode and start Desktop
+
+```bash
+opencode --version
 cd desktop
 pnpm install
 pnpm tauri dev
 ```
 
-Desktop commands must run inside `desktop/`; the repository root has no `package.json`. Debug Desktop loads the root `.env`, while release builds do not load the development `.env`.
+Desktop commands must run inside `desktop/`; the repository root has no `package.json`. Debug Desktop searches parent directories for the root `.env` and applies both workbench and collaboration database migrations during startup. Release builds do not load the development `.env`; inject these variables explicitly in the launch environment.
 
-Once running, configure a provider and API key in Settings, create a session with a model and working directory, and submit a task. Permission requests pause the current turn when needed; structured file-tool changes and traces remain available for review in the session UI.
+## First use
 
-## Permissions and security boundaries
+### Workbench
+
+1. Create a provider and save its API key in Settings;
+2. create a session and choose a model and working directory;
+3. submit a task and resolve permission requests when required;
+4. inspect messages, file diffs, the context window, and traces.
+
+### Collaboration
+
+1. Open Collaboration from the workbench sidebar;
+2. create an agent and provide its persona, OpenCode main model, and triage model;
+3. open the agent's direct room, or create a group room and choose its members;
+4. create boards, columns, and cards, then enable Agenda when proactive work is wanted;
+5. inspect each agent turn from Run Observability.
+
+Collaboration agents use the current OpenCode login state. Collaboration Server never stores OpenCode provider API keys.
+
+## Security boundaries
 
 | Boundary | Current behavior |
 |---|---|
-| Six file tools | Resolve and validate the real target or parent through one boundary. Workspace paths cannot silently escape through relative paths or symlinks; explicit outside-workspace access needs an execution permit for that call |
-| `default` | Automatically reads workspace files and runs commands proven read-only by a closed allowlist; ordinary writes and other commands require confirmation |
-| `acceptEdits` | Additionally allows non-sensitive workspace `write` / `edit` calls plus restricted filesystem-command forms and output redirection; other commands still require confirmation |
-| `bash` | Syntax analysis informs the permission decision but is not runtime isolation; approving `bash` means trusting the command and the programs it starts |
-| Network | Not enforced; host processes retain the network capabilities of the operating-system account |
-| Credentials | API keys are encrypted in PostgreSQL; the master key is injected from the environment and is never stored in the database |
-| Trace payloads | Always record every supported payload slot and may contain private code and model requests; the default retention period is 30 days |
+| Workbench file tools | Resolve real paths and enforce workspace authorization. Explicit access outside the workspace needs a permit for the current execution |
+| Workbench `bash` | Syntax analysis informs permission decisions but provides no runtime isolation; approving a command means trusting it and its child processes |
+| Collaboration agent home / JWT | Provide application identity, API authorization, and state separation; they do not stop trusted processes under the same macOS user from accessing other host files |
+| OpenCode | Runs as a local child process with the current user's permitted file and network access; OpenWork provides no OS sandbox |
+| Network | OpenWork does not enforce network isolation. Model requests go to the user-configured provider or OpenCode provider |
+| Provider credentials | Workbench API keys are AES-256-GCM encrypted in PostgreSQL; OpenCode credentials remain managed by OpenCode |
+| Trace | May contain private code, model requests, commands, and error details and should be handled as sensitive development data |
 
-OpenWork **deliberately does not provide OS-level sandboxing, network control, unattended execution, or a “run any command without asking” mode**. See the [permission design](docs/permissions.md) for the complete rationale and semantics.
+Use OpenWork only with trusted projects and trusted local agent configurations, and only after understanding their host permissions.
 
-## Not yet implemented
+## Documentation
 
-The development build targeting `0.1.0` does not yet implement MCP, memory, plan mode, an independent artifact subsystem, Git or repository-level diffs, worktrees, cross-process recovery of unfinished turns, an event journal, lossy compaction, or background-task recovery. This describes the current state; it does not commit every capability to a future release. After a process restart, unfinished turns are marked `interrupted`; tools are never replayed automatically.
-
-Plan mode here means the collaboration mode where a plan is agreed with the user before execution. It is not the same thing as the implemented `update_plan` task list; the two share no state machine.
-
-The following are known engineering gaps, not commitments that every item is in the current iteration:
-
-- the sub-agent tree has no token budget: concurrency 3, 15 model calls per sub-agent, and 20 per parent turn all count occurrences, and none of them counts spend. A parent can loop “spawn 3 → wait → spawn 3 again”, which caps out around 450 sub-agent model calls behind a single sentence;
-- the Rust → TypeScript host contract is still mirrored by hand, with no generation or drift check;
-- trace annotations still have schema only, while full queue/database/flush degradation verification and an outlet for dropped-write counters remain incomplete;
-- file side effects caused by `bash` cannot yet be reconciled reliably;
-- a manual live-provider smoke-test entry point exists, but it is not automated.
-
-Source code is the authority for current behavior; `docs/` describes the target design. When the two differ, each design document's “not yet implemented” section identifies the gap.
-
-## For contributors
-
-```mermaid
-flowchart LR
-    UI["Tauri Desktop<br/>React + TypeScript"] -->|"Command / Event"| Core["OpenWorkCore"]
-    Core --> Registry["Session Registry"]
-    Registry --> Actor["SessionActor"]
-    Actor --> Chat["Chat State Actor"]
-    Actor --> Model["Model Adapters<br/>HTTP + SSE"]
-    Actor --> Tools["Tool Runtime<br/>Permission + Workspace"]
-    Core --> DB[("PostgreSQL")]
-    Actor -. "best-effort" .-> Trace["Trace Recorder"]
-    Trace --> DB
-```
-
-| Path | Responsibility |
-|---|---|
-| `desktop/` | Tauri 2 / React client; adapts Commands / Events and never duplicates the backend state machine |
-| `crates/openwork-core/` | The only runtime entry point: session runtime, agent loop, compaction, storage, and Trace |
-| `crates/openwork-agent/` | The agent's static definition: system prompt, toolset, and limits |
-| `crates/openwork-chat-state/` | The only writer of the conversation |
-| `crates/openwork-models/` | Model protocols, provider adapters, HTTP / SSE, and error classification |
-| `crates/openwork-tools/` | Tool contracts, permission policy, path safety, and file/process backends |
-| `docs/` | Authoritative design documents, one per feature |
-
-Dependencies remain one-way: `openwork-models` is at the bottom, `openwork-core` composes the runtime, and Tauri sits at the outer boundary. Three core invariants are: one `SessionActor` per active session, one agent loop in `session/run_loop.rs`, and a Trace failure must never change a business result. See the [architecture document](docs/architecture.md) for the complete constraints.
-
-Verification commands:
-
-```bash
-# repository root
-cargo test
-cargo clippy --all-targets --all-features
-cargo fmt
-
-# desktop/
-pnpm test
-pnpm build
-```
-
-PostgreSQL integration tests require an explicit test database; otherwise those tests return early:
-
-```bash
-TEST_DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork \
-  cargo test -p openwork-core
-```
-
-Documentation: [index](docs/README.md) · [architecture](docs/architecture.md) · [session runtime](docs/session-runtime.md) · [context window](docs/context-window.md) · [compaction](docs/compaction.md) · [Trace](docs/trace.md) · [tools](docs/tools.md) · [task list](docs/update-plan.md) · [skills](docs/skills.md) · [multi-agent](docs/multi-agent.md) · [permissions](docs/permissions.md) · [data model](docs/data-model.md) · [Desktop](docs/desktop.md) · [local PostgreSQL](docs/local-postgres.md)
+- [Documentation index](docs/README.md)
+- [System architecture](docs/architecture.md)
+- [Workbench session runtime](docs/session-runtime.md)
+- [Tools and permissions](docs/tools.md) · [Permission model](docs/permissions.md)
+- [Context window](docs/context-window.md) · [Compaction](docs/compaction.md) · [Trace](docs/trace.md)
+- [Skills](docs/skills.md) · [Read-only sub-agents](docs/multi-agent.md)
+- [Collaboration runtime](docs/collaboration.md)
+- [Collaboration Desktop](docs/collaboration-desktop.md)
+- [Collaboration data model](docs/collaboration-data-model.md)
 
 ## License
 
