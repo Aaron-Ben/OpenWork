@@ -2,11 +2,12 @@
 
 mod support;
 
-use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
+use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
 use openwork_collab::{
     computer::{
         daemon::{ComputerDaemon, ComputerOptions},
+        engine::EngineRegistry,
         opencode::OpenCodeAdapter,
     },
     protocol::{ControlRequest, ControlResponse},
@@ -127,7 +128,7 @@ async fn computer_daemon_drives_opencode_through_the_shim_to_a_settled_reply() {
             heartbeat_interval: Duration::from_millis(100),
             engine_rescan_interval: Duration::from_millis(250),
         },
-        Arc::new(OpenCodeAdapter::with_executable(fake_opencode)),
+        EngineRegistry::single(OpenCodeAdapter::with_executable(fake_opencode)),
     );
     let daemon_shutdown_for_task = daemon_shutdown.clone();
     let daemon_task = tokio::spawn(async move { daemon.run(daemon_shutdown_for_task).await });

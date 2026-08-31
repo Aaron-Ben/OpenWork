@@ -1,8 +1,51 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct EngineId(String);
+
+impl EngineId {
+    pub fn new(value: impl Into<String>) -> Result<Self, EngineIdError> {
+        let value = value.into();
+        let valid = !value.is_empty()
+            && value.len() <= 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && value.as_bytes().first().is_some_and(u8::is_ascii_lowercase);
+        if !valid {
+            return Err(EngineIdError(value));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn opencode() -> Self {
+        Self("opencode".to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for EngineId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid Engine id {0:?}")]
+pub struct EngineIdError(String);
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,18 +58,13 @@ pub struct EngineUsage {
 
 #[derive(Clone, Debug)]
 pub struct TurnRequest {
-    pub home: PathBuf,
     pub prompt: String,
-    pub model: Option<String>,
-    pub resume_session_id: Option<String>,
-    pub environment: BTreeMap<String, String>,
     pub cancellation: CancellationToken,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TurnResult {
     pub text: String,
-    pub session_id: Option<String>,
     pub model: Option<String>,
     pub usage: EngineUsage,
 }
@@ -34,6 +72,7 @@ pub struct TurnResult {
 #[derive(Clone, Debug)]
 pub struct ClassifyRequest {
     pub cwd: PathBuf,
+    pub config_root: PathBuf,
     pub prompt: String,
     pub model: Option<String>,
     pub environment: BTreeMap<String, String>,
@@ -45,6 +84,16 @@ pub struct ClassifyResult {
     pub text: String,
     pub model: Option<String>,
     pub usage: EngineUsage,
+}
+
+#[derive(Clone, Debug)]
+pub struct EngineRuntimeConfig {
+    pub home: PathBuf,
+    pub config_root: PathBuf,
+    pub state_file: PathBuf,
+    pub config_fingerprint: String,
+    pub model: String,
+    pub environment: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,29 +109,109 @@ pub struct EngineInventory {
 
 #[async_trait]
 pub trait EngineAdapter: Send + Sync {
-    async fn inventory(&self) -> Result<EngineInventory, EngineError>;
+    fn id(&self) -> EngineId;
+    async fn probe(&self) -> Result<EngineInventory, EngineError>;
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError>;
-    async fn run_turn(&self, request: TurnRequest) -> Result<TurnResult, EngineError>;
+    async fn create_agent_runtime(
+        &self,
+        config: EngineRuntimeConfig,
+    ) -> Result<Box<dyn AgentEngineRuntime>, EngineError>;
+}
+
+#[async_trait]
+pub trait AgentEngineRuntime: Send {
+    async fn run_turn(&mut self, request: TurnRequest) -> Result<TurnResult, EngineError>;
+    async fn shutdown(&mut self) -> Result<(), EngineError>;
+}
+
+#[derive(Clone, Default)]
+pub struct EngineRegistry {
+    adapters: HashMap<EngineId, Arc<dyn EngineAdapter>>,
+}
+
+impl EngineRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn single<A>(adapter: A) -> Self
+    where
+        A: EngineAdapter + 'static,
+    {
+        let id = adapter.id();
+        Self {
+            adapters: HashMap::from([(id, Arc::new(adapter) as Arc<dyn EngineAdapter>)]),
+        }
+    }
+
+    pub fn register<A>(&mut self, adapter: A) -> Result<(), EngineRegistryError>
+    where
+        A: EngineAdapter + 'static,
+    {
+        let id = adapter.id();
+        if self.adapters.contains_key(&id) {
+            return Err(EngineRegistryError::Duplicate(id));
+        }
+        self.adapters.insert(id, Arc::new(adapter));
+        Ok(())
+    }
+
+    pub fn require(&self, id: &EngineId) -> Result<Arc<dyn EngineAdapter>, EngineError> {
+        self.adapters
+            .get(id)
+            .cloned()
+            .ok_or_else(|| EngineError::NotRegistered {
+                engine_id: id.clone(),
+            })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EngineRegistryError {
+    #[error("Engine {0} is already registered")]
+    Duplicate(EngineId),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("OpenCode is not installed: {0}")]
-    Missing(String),
-    #[error("OpenCode process failed: {0}")]
-    Process(String),
-    #[error("OpenCode protocol failed: {0}")]
-    Protocol(String),
-    #[error("OpenCode reported an error: {0}")]
-    Reported(String),
-    #[error("OpenCode resume session is invalid: {0}")]
-    SessionInvalid(String),
-    #[error("OpenCode I/O failed: {0}")]
+    #[error("Engine {engine_id} is not registered")]
+    NotRegistered { engine_id: EngineId },
+    #[error("Engine executable is missing: {detail}")]
+    Missing { detail: String },
+    #[error("Engine authentication failed: {detail}")]
+    Unauthenticated { detail: String },
+    #[error("Engine is rate limited: {detail}")]
+    RateLimited {
+        retry_after: Option<Duration>,
+        detail: String,
+    },
+    #[error("Engine process failed: {detail}")]
+    Process { detail: String },
+    #[error("Engine protocol failed: {detail}")]
+    Protocol { detail: String },
+    #[error("Engine reported an error: {detail}")]
+    Reported { detail: String },
+    #[error("Engine session is invalid: {detail}")]
+    SessionInvalid { detail: String },
+    #[error("Engine I/O failed: {0}")]
     Io(#[from] std::io::Error),
-    #[error("OpenCode turn was cancelled")]
+    #[error("Engine turn was cancelled")]
     Cancelled,
-    #[error("OpenCode {0} timed out")]
-    Timeout(&'static str),
-    #[error("OpenCode {0} exceeded its output limit")]
-    OutputLimit(&'static str),
+    #[error("Engine {operation} timed out")]
+    Timeout { operation: &'static str },
+    #[error("Engine {stream} exceeded its {limit}-byte output limit")]
+    OutputLimit { stream: &'static str, limit: usize },
+}
+
+impl EngineError {
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::RateLimited { .. })
+    }
+
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::RateLimited { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
 }

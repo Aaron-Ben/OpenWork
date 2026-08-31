@@ -1,8 +1,9 @@
-use std::{error::Error, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{error::Error, net::SocketAddr, path::PathBuf, time::Duration};
 
 use openwork_collab::{
     computer::{
         daemon::{ComputerDaemon, ComputerOptions},
+        engine::EngineRegistry,
         opencode::OpenCodeAdapter,
     },
     protocol::{ControlRequest, ControlResponse},
@@ -121,7 +122,7 @@ async fn run_computer() -> CliResult<()> {
             heartbeat_interval: Duration::from_secs(30),
             engine_rescan_interval: Duration::from_secs(5 * 60),
         },
-        Arc::new(OpenCodeAdapter::with_executable(opencode)),
+        EngineRegistry::single(OpenCodeAdapter::with_executable(opencode)),
     );
     let run = daemon.run(shutdown.clone());
     tokio::pin!(run);

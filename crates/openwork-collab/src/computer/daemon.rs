@@ -13,9 +13,12 @@ use crate::protocol::{
 
 use super::{
     client::{DeviceClient, RuntimeClientError},
-    engine::{EngineAdapter, EngineAvailability, EngineInventory},
+    engine::{
+        EngineAdapter, EngineAvailability, EngineId, EngineIdError, EngineInventory,
+        EngineRegistry, EngineRuntimeConfig,
+    },
     home::{HomeError, HomeManager},
-    runner::{AgentRunner, RunnerError, RunnerIdentity},
+    runner::{AgentRunner, RunnerEngine, RunnerError, RunnerIdentity},
     scheduling::RunnerResources,
 };
 
@@ -32,9 +35,9 @@ pub struct ComputerOptions {
     pub engine_rescan_interval: Duration,
 }
 
-pub struct ComputerDaemon<A: EngineAdapter + 'static> {
+pub struct ComputerDaemon {
     options: ComputerOptions,
-    adapter: Arc<A>,
+    engines: EngineRegistry,
 }
 
 struct RunnerHandle {
@@ -49,9 +52,9 @@ enum DaemonEvent {
     Fatal(RuntimeClientError),
 }
 
-impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
-    pub fn new(options: ComputerOptions, adapter: Arc<A>) -> Self {
-        Self { options, adapter }
+impl ComputerDaemon {
+    pub fn new(options: ComputerOptions, engines: EngineRegistry) -> Self {
+        Self { options, engines }
     }
 
     pub async fn run(self, shutdown: CancellationToken) -> Result<(), ComputerError> {
@@ -59,7 +62,8 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
             self.options.runtime_base_url.clone(),
             self.options.device_token.clone(),
         );
-        let inventory = self.adapter.inventory().await?;
+        let inventory_adapter = self.engines.require(&EngineId::opencode())?;
+        let inventory = inventory_adapter.probe().await?;
         let generation = client.start().await?;
         client
             .heartbeat(&heartbeat_request(
@@ -74,12 +78,12 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
             self.options.shim_executable,
             self.options.runtime_base_url,
         );
-        let resources = RunnerResources::local_opencode();
+        let resources = RunnerResources::local();
         let runner_factory = RunnerFactory {
             client: &client,
             generation,
             home_manager: &home_manager,
-            adapter: &self.adapter,
+            engines: &self.engines,
             poll_interval: self.options.poll_interval,
             resources: &resources,
         };
@@ -115,7 +119,7 @@ impl<A: EngineAdapter + 'static> ComputerDaemon<A> {
             background_shutdown.clone(),
         ));
         let inventory_task = tokio::spawn(engine_rescan_loop(
-            self.adapter.clone(),
+            inventory_adapter,
             inventory_tx,
             self.options.engine_rescan_interval,
             events_tx,
@@ -251,8 +255,8 @@ async fn roster_loop(
     }
 }
 
-async fn engine_rescan_loop<A: EngineAdapter + 'static>(
-    adapter: Arc<A>,
+async fn engine_rescan_loop(
+    adapter: Arc<dyn EngineAdapter>,
     inventories: watch::Sender<EngineInventory>,
     interval: Duration,
     events: mpsc::Sender<DaemonEvent>,
@@ -263,7 +267,7 @@ async fn engine_rescan_loop<A: EngineAdapter + 'static>(
         if !wait(delay, &shutdown).await {
             return;
         }
-        match adapter.inventory().await {
+        match adapter.probe().await {
             Ok(inventory) => {
                 delay = interval;
                 inventories.send_replace(inventory.clone());
@@ -276,7 +280,7 @@ async fn engine_rescan_loop<A: EngineAdapter + 'static>(
                 }
             }
             Err(error) => {
-                tracing::warn!(%error, "OpenCode inventory scan failed; preserving the last reliable result");
+                tracing::warn!(%error, "Engine inventory scan failed; preserving the last reliable result");
                 delay = next_backoff(delay, interval);
             }
         }
@@ -307,7 +311,7 @@ fn heartbeat_request(
         supervised,
         status,
         engine: EngineInventoryView {
-            engine_id: "opencode".to_string(),
+            engine_id: EngineId::opencode().to_string(),
             status: match inventory.availability {
                 EngineAvailability::Available => EngineStatus::Ready,
                 EngineAvailability::Missing => EngineStatus::Missing,
@@ -326,16 +330,16 @@ async fn stop_all(runners: &mut HashMap<String, RunnerHandle>) -> Result<(), Com
     Ok(())
 }
 
-struct RunnerFactory<'a, A: EngineAdapter + 'static> {
+struct RunnerFactory<'a> {
     client: &'a DeviceClient,
     generation: i64,
     home_manager: &'a HomeManager,
-    adapter: &'a Arc<A>,
+    engines: &'a EngineRegistry,
     poll_interval: Duration,
     resources: &'a RunnerResources,
 }
 
-impl<A: EngineAdapter + 'static> RunnerFactory<'_, A> {
+impl RunnerFactory<'_> {
     async fn reconcile(
         &self,
         assignments: Vec<AgentAssignment>,
@@ -373,6 +377,8 @@ impl<A: EngineAdapter + 'static> RunnerFactory<'_, A> {
         assignment: AgentAssignment,
         runners: &mut HashMap<String, RunnerHandle>,
     ) -> Result<(), ComputerError> {
+        let engine_id = EngineId::new(assignment.engine_id.clone())?;
+        let adapter = self.engines.require(&engine_id)?;
         let runtime_token = self
             .client
             .mint_agent_token(&assignment.id, self.generation)
@@ -380,6 +386,16 @@ impl<A: EngineAdapter + 'static> RunnerFactory<'_, A> {
         let home = self
             .home_manager
             .materialize(&assignment, &runtime_token.token)
+            .await?;
+        let engine_runtime = adapter
+            .create_agent_runtime(EngineRuntimeConfig {
+                home: home.root.clone(),
+                config_root: home.config_root.clone(),
+                state_file: home.state_file.clone(),
+                config_fingerprint: home.config_fingerprint.clone(),
+                model: assignment.model.clone(),
+                environment: home.environment.clone(),
+            })
             .await?;
         let runner_shutdown = CancellationToken::new();
         let task_shutdown = runner_shutdown.clone();
@@ -393,7 +409,10 @@ impl<A: EngineAdapter + 'static> RunnerFactory<'_, A> {
                 token_expires_at: runtime_token.expires_at,
             },
             self.client.agent(runtime_token.token),
-            self.adapter.clone(),
+            RunnerEngine {
+                adapter,
+                runtime: engine_runtime,
+            },
             home,
             self.poll_interval,
             self.resources.clone(),
@@ -417,6 +436,8 @@ pub enum ComputerError {
     Runtime(#[from] RuntimeClientError),
     #[error(transparent)]
     Engine(#[from] super::engine::EngineError),
+    #[error(transparent)]
+    EngineId(#[from] EngineIdError),
     #[error(transparent)]
     Home(#[from] HomeError),
     #[error(transparent)]

@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -16,21 +15,11 @@ pub struct HomeManager {
 pub struct AgentHome {
     pub root: PathBuf,
     pub triage_root: PathBuf,
-    pub session_file: PathBuf,
+    pub config_root: PathBuf,
+    pub state_file: PathBuf,
+    pub config_fingerprint: String,
     pub environment: BTreeMap<String, String>,
     token_file: PathBuf,
-    engine_id: String,
-    model: String,
-    persona_hash: String,
-}
-
-#[derive(Deserialize, Serialize)]
-struct SessionMetadata {
-    engine_id: String,
-    model: String,
-    persona_hash: String,
-    session_id: String,
-    updated_at: String,
 }
 
 impl HomeManager {
@@ -56,8 +45,10 @@ impl HomeManager {
         let notes = root.join("notes");
         let workspace = root.join("workspace");
         let triage_root = self.state_root.join("triage");
-        let config_root = self.state_root.join("opencode-config").join(&assignment.id);
-        let opencode_config = config_root.join("opencode");
+        let config_root = self
+            .state_root
+            .join(format!("{}-config", assignment.engine_id))
+            .join(&assignment.id);
         for directory in [
             &self.state_root,
             &root,
@@ -67,7 +58,6 @@ impl HomeManager {
             &workspace,
             &triage_root,
             &config_root,
-            &opencode_config,
         ] {
             secure_directory(directory).await?;
         }
@@ -93,13 +83,6 @@ impl HomeManager {
             )
             .await?;
         }
-        atomic_write(
-            &opencode_config.join("opencode.json"),
-            br#"{"permission":{"*":"allow"}}"#,
-            0o600,
-        )
-        .await?;
-
         let token_file = bin.join(".runtime-token");
         atomic_write(&token_file, runtime_token.as_bytes(), 0o600).await?;
         let shim = bin.join("openwork");
@@ -116,14 +99,6 @@ impl HomeManager {
         });
         let mut environment = BTreeMap::from([
             ("HOME".to_string(), root.to_string_lossy().into_owned()),
-            (
-                "XDG_CONFIG_HOME".to_string(),
-                config_root.to_string_lossy().into_owned(),
-            ),
-            (
-                "OPENCODE_DISABLE_PROJECT_CONFIG".to_string(),
-                "1".to_string(),
-            ),
             (
                 "PATH".to_string(),
                 format!("{}:{original_path}", bin.to_string_lossy()),
@@ -147,15 +122,14 @@ impl HomeManager {
         Ok(AgentHome {
             root,
             triage_root,
-            session_file: self
+            config_root,
+            state_file: self
                 .state_root
                 .join("sessions")
                 .join(format!("{}.session", assignment.id)),
+            config_fingerprint: persona_hash(assignment),
             environment,
             token_file,
-            engine_id: assignment.engine_id.clone(),
-            model: assignment.model.clone(),
-            persona_hash: persona_hash(assignment),
         })
     }
 }
@@ -163,50 +137,6 @@ impl HomeManager {
 impl AgentHome {
     pub async fn save_runtime_token(&self, token: &str) -> Result<(), HomeError> {
         atomic_write(&self.token_file, token.as_bytes(), 0o600).await
-    }
-
-    pub async fn load_session(&self) -> Result<Option<String>, HomeError> {
-        match tokio::fs::read(&self.session_file).await {
-            Ok(bytes) => {
-                let Ok(metadata) = serde_json::from_slice::<SessionMetadata>(&bytes) else {
-                    return Ok(None);
-                };
-                if metadata.engine_id == self.engine_id
-                    && metadata.model == self.model
-                    && metadata.persona_hash == self.persona_hash
-                    && !metadata.session_id.trim().is_empty()
-                {
-                    Ok(Some(metadata.session_id))
-                } else {
-                    Ok(None)
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    pub async fn save_session(&self, session_id: &str) -> Result<(), HomeError> {
-        let parent = self.session_file.parent().expect("session has parent");
-        secure_directory(parent).await?;
-        let metadata = SessionMetadata {
-            engine_id: self.engine_id.clone(),
-            model: self.model.clone(),
-            persona_hash: self.persona_hash.clone(),
-            session_id: session_id.to_string(),
-            updated_at: time::OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .expect("current timestamp formats as RFC 3339"),
-        };
-        atomic_write(&self.session_file, &serde_json::to_vec(&metadata)?, 0o600).await
-    }
-
-    pub async fn clear_session(&self) -> Result<(), HomeError> {
-        match tokio::fs::remove_file(&self.session_file).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
     }
 }
 
@@ -286,6 +216,4 @@ pub enum HomeError {
     InvalidAgentId(String),
     #[error("Agent home I/O failed: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Agent home metadata was invalid: {0}")]
-    Json(#[from] serde_json::Error),
 }

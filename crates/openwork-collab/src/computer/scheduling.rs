@@ -13,7 +13,7 @@ pub struct RunnerResources {
 }
 
 impl RunnerResources {
-    pub fn local_opencode() -> Self {
+    pub fn local() -> Self {
         Self {
             main_slots: Arc::new(Semaphore::new(2)),
             triage_slots: Arc::new(Semaphore::new(4)),
@@ -28,7 +28,7 @@ impl RunnerResources {
         tokio::select! {
             _ = cancellation.cancelled() => Err(EngineError::Cancelled),
             permit = self.main_slots.clone().acquire_owned() => {
-                Ok(permit.expect("main OpenCode semaphore is never closed"))
+                Ok(permit.expect("main Engine semaphore is never closed"))
             }
         }
     }
@@ -40,7 +40,7 @@ impl RunnerResources {
         tokio::select! {
             _ = cancellation.cancelled() => Err(EngineError::Cancelled),
             permit = self.triage_slots.clone().acquire_owned() => {
-                Ok(permit.expect("triage OpenCode semaphore is never closed"))
+                Ok(permit.expect("triage Engine semaphore is never closed"))
             }
         }
     }
@@ -52,7 +52,9 @@ impl RunnerResources {
     pub async fn observe_result<T>(&self, result: &Result<T, EngineError>) {
         match result {
             Ok(_) => self.pacer.on_success().await,
-            Err(error) if is_rate_limited(error) => self.pacer.on_rate_limited().await,
+            Err(EngineError::RateLimited { retry_after, .. }) => {
+                self.pacer.on_rate_limited(*retry_after).await;
+            }
             Err(_) => {}
         }
     }
@@ -104,26 +106,11 @@ impl AdaptivePacer {
         state.gap = state.gap.max(self.base_gap);
     }
 
-    async fn on_rate_limited(&self) {
+    async fn on_rate_limited(&self, retry_after: Option<Duration>) {
         let mut state = self.state.lock().await;
         state.gap = (state.gap * 2).min(Duration::from_secs(10));
         state.next_start = state
             .next_start
-            .max(tokio::time::Instant::now() + Duration::from_secs(60));
+            .max(tokio::time::Instant::now() + retry_after.unwrap_or(Duration::from_secs(60)));
     }
-}
-
-pub fn is_rate_limited(error: &EngineError) -> bool {
-    let text = error.to_string().to_ascii_lowercase();
-    [
-        "rate limit",
-        "rate_limit",
-        "too many requests",
-        "429",
-        "quota",
-        "overload",
-        "503",
-    ]
-    .iter()
-    .any(|needle| text.contains(needle))
 }

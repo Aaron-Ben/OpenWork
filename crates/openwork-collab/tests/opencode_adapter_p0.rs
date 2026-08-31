@@ -5,7 +5,8 @@ mod support;
 use std::os::unix::fs::PermissionsExt;
 
 use openwork_collab::computer::engine::{
-    ClassifyRequest, EngineAdapter, EngineAvailability, EngineError, TurnRequest,
+    AgentEngineRuntime, ClassifyRequest, EngineAdapter, EngineAvailability, EngineError,
+    EngineRuntimeConfig, TurnRequest,
 };
 use openwork_collab::computer::opencode::OpenCodeAdapter;
 use tokio_util::sync::CancellationToken;
@@ -14,22 +15,29 @@ use tokio_util::sync::CancellationToken;
 async fn opencode_run_turn_uses_stdin_and_returns_resumable_structured_result() {
     let directory = tempfile::tempdir().unwrap();
     let executable = support::fake_opencode(&directory).await;
-    let adapter = OpenCodeAdapter::with_executable(executable);
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "openai/gpt-5",
+    )
+    .await;
 
-    let result = adapter
+    let result = runtime
         .run_turn(TurnRequest {
-            home: directory.path().to_path_buf(),
             prompt: "continue the work".to_string(),
-            model: Some("openai/gpt-5".to_string()),
-            resume_session_id: Some("ses_previous".to_string()),
-            environment: Default::default(),
             cancellation: CancellationToken::new(),
         })
         .await
         .unwrap();
 
     assert_eq!(result.text, "done");
-    assert_eq!(result.session_id.as_deref(), Some("ses_local"));
+    let session: serde_json::Value = serde_json::from_slice(
+        &tokio::fs::read(directory.path().join("session.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(session["session_id"], "ses_local");
     assert_eq!(result.usage.input_tokens, 11);
     assert_eq!(result.usage.output_tokens, 5);
     assert_eq!(result.usage.cached_input_tokens, 7);
@@ -59,20 +67,22 @@ exit 1
         .await
         .unwrap();
 
-    let result = OpenCodeAdapter::with_executable(executable)
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
+    let result = runtime
         .run_turn(TurnRequest {
-            home: directory.path().to_path_buf(),
             prompt: "reply".to_string(),
-            model: None,
-            resume_session_id: None,
-            environment: Default::default(),
             cancellation: CancellationToken::new(),
         })
         .await;
 
     assert!(matches!(
         result,
-        Err(EngineError::Reported(message)) if message == "Insufficient balance"
+        Err(EngineError::Reported { detail }) if detail == "Insufficient balance"
     ));
 }
 
@@ -99,14 +109,16 @@ sleep 60
         .await
         .unwrap();
 
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        OpenCodeAdapter::with_executable(executable).run_turn(TurnRequest {
-            home: directory.path().to_path_buf(),
+        runtime.run_turn(TurnRequest {
             prompt: "reply".to_string(),
-            model: None,
-            resume_session_id: None,
-            environment: Default::default(),
             cancellation: CancellationToken::new(),
         }),
     )
@@ -115,7 +127,50 @@ sleep 60
 
     assert!(matches!(
         result,
-        Err(EngineError::Reported(message)) if message.contains("Rate limit exceeded")
+        Err(EngineError::RateLimited { detail, .. }) if detail.contains("Rate limit exceeded")
+    ));
+}
+
+#[tokio::test]
+async fn stderr_rate_limit_is_mapped_inside_the_opencode_adapter() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-stderr-rate-limit");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+echo 'provider returned HTTP 429: Too Many Requests' >&2
+exit 1
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
+    let result = runtime
+        .run_turn(TurnRequest {
+            prompt: "reply".to_string(),
+            cancellation: CancellationToken::new(),
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(EngineError::RateLimited { detail, .. })
+            if detail.contains("429") && detail.contains("Too Many Requests")
     ));
 }
 
@@ -156,6 +211,7 @@ printf '%s\n' \
     let result = adapter
         .classify(ClassifyRequest {
             cwd: directory.path().to_path_buf(),
+            config_root: directory.path().join("config"),
             prompt: r#"{"actionable":false}"#.to_string(),
             model: None,
             environment: Default::default(),
@@ -191,20 +247,20 @@ wait
     tokio::fs::set_permissions(&executable, permissions)
         .await
         .unwrap();
-    let adapter = OpenCodeAdapter::with_executable(executable);
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
     let cancellation = CancellationToken::new();
     let pid_file = directory.path().join("pids");
     let pid_file_for_task = pid_file.clone();
-    let home = directory.path().to_path_buf();
     let task_cancellation = cancellation.clone();
     let task = tokio::spawn(async move {
-        adapter
+        runtime
             .run_turn(TurnRequest {
-                home,
                 prompt: pid_file_for_task.to_string_lossy().into_owned(),
-                model: None,
-                resume_session_id: None,
-                environment: Default::default(),
                 cancellation: task_cancellation,
             })
             .await
@@ -262,7 +318,7 @@ exit 91
         .unwrap();
 
     let inventory = OpenCodeAdapter::with_executable(executable)
-        .inventory()
+        .probe()
         .await
         .unwrap();
     assert_eq!(inventory.availability, EngineAvailability::Available);
@@ -273,7 +329,7 @@ exit 91
 async fn inventory_reports_a_missing_executable_without_starting_opencode() {
     let directory = tempfile::tempdir().unwrap();
     let inventory = OpenCodeAdapter::with_executable(directory.path().join("not-installed"))
-        .inventory()
+        .probe()
         .await
         .unwrap();
 
@@ -303,20 +359,28 @@ printf '\n'
         .await
         .unwrap();
 
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        OpenCodeAdapter::with_executable(executable).run_turn(TurnRequest {
-            home: directory.path().to_path_buf(),
+        runtime.run_turn(TurnRequest {
             prompt: "large".to_string(),
-            model: None,
-            resume_session_id: None,
-            environment: Default::default(),
             cancellation: CancellationToken::new(),
         }),
     )
     .await
     .unwrap();
-    assert!(matches!(result, Err(EngineError::OutputLimit("stdout"))));
+    assert!(matches!(
+        result,
+        Err(EngineError::OutputLimit {
+            stream: "stdout",
+            ..
+        })
+    ));
 }
 
 #[tokio::test]
@@ -342,14 +406,16 @@ exit 1
         .await
         .unwrap();
 
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        OpenCodeAdapter::with_executable(executable).run_turn(TurnRequest {
-            home: directory.path().to_path_buf(),
+        runtime.run_turn(TurnRequest {
             prompt: "fail safely".to_string(),
-            model: None,
-            resume_session_id: None,
-            environment: Default::default(),
             cancellation: CancellationToken::new(),
         }),
     )
@@ -365,4 +431,22 @@ exit 1
     assert!(!error.contains("token=abc"));
     assert!(!error.contains("TOKEN=XYZ"));
     assert!(!error.contains(&directory.path().to_string_lossy().into_owned()));
+}
+
+async fn runtime(
+    adapter: OpenCodeAdapter,
+    directory: &tempfile::TempDir,
+    model: &str,
+) -> Box<dyn AgentEngineRuntime> {
+    adapter
+        .create_agent_runtime(EngineRuntimeConfig {
+            home: directory.path().to_path_buf(),
+            config_root: directory.path().join("config"),
+            state_file: directory.path().join("session.json"),
+            config_fingerprint: "test-persona".to_string(),
+            model: model.to_string(),
+            environment: Default::default(),
+        })
+        .await
+        .unwrap()
 }
