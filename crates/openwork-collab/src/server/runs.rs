@@ -2,7 +2,7 @@ use sqlx::{FromRow, PgPool};
 
 use crate::protocol::{FinishRunRequest, RunSummaryView, RunView, TriggerEnvelope};
 
-use super::{auth::AgentClaims, computers::authorize_agent_transaction};
+use super::auth::{AgentClaims, authorize_agent_transaction};
 
 #[derive(Clone)]
 pub(crate) struct Runs {
@@ -14,11 +14,31 @@ impl Runs {
         Self { pool }
     }
 
+    pub(crate) async fn interrupt_stale(
+        &self,
+        current_runtime_session_id: &str,
+    ) -> Result<u64, sqlx::Error> {
+        sqlx::query(
+            "UPDATE collab_runs
+             SET status = 'interrupted',
+                 ended_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 heartbeat_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai',
+                 error_code = 'RUNTIME_SESSION_REPLACED',
+                 error_message = 'Runtime session ended before the run finished'
+             WHERE status = 'running' AND runtime_session_id <> $1",
+        )
+        .bind(current_runtime_session_id)
+        .execute(&self.pool)
+        .await
+        .map(|result| result.rows_affected())
+    }
+
     pub(crate) async fn list(&self, limit: u32) -> Result<Vec<RunSummaryView>, sqlx::Error> {
         let limit = i64::from(limit.clamp(1, 200));
         sqlx::query_as::<_, RunSummaryRow>(
-            "SELECT id, agent_id, trigger, status, model, outcome, room_id, focus_card_id,
-                    trigger_reason, error_code, error_message,
+            "SELECT id, agent_id, runtime_session_id, trigger, status, engine_id,
+                    main_model_id, outcome, room_id, focus_card_id, trigger_reason,
+                    error_code, error_message,
                     to_char(started_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') || '+08:00' AS started_at
              FROM collab_runs ORDER BY started_at DESC, id DESC LIMIT $1",
         )
@@ -37,67 +57,84 @@ impl Runs {
         authorize_agent_transaction(&mut transaction, claims).await?;
         let focus = trigger.agenda_focus.as_ref();
         if let Some(focus) = focus {
-            let current: bool = sqlx::query_scalar(
-                "SELECT EXISTS(
-                    SELECT 1
-                    FROM collab_rooms room
-                    JOIN collab_room_members member
-                      ON member.room_id = room.id AND member.participant_id = $2
-                    WHERE room.id = $1 AND room.next_seq = $3
-                      AND (
-                        $4::TEXT IS NULL OR EXISTS (
-                            SELECT 1
-                            FROM collab_cards card
-                            JOIN collab_boards board ON board.id = card.board_id
-                            JOIN collab_board_columns board_column
-                              ON board_column.id = card.column_id AND NOT board_column.is_done
-                            WHERE card.id = $4 AND board.room_id = room.id
-                              AND (
-                                card.claimed_by = $2 OR
-                                (card.claimed_by IS NULL AND card.assignee_id = $2)
-                              )
-                        )
-                      )
+            if let Some(card_id) = focus.card_id.as_deref() {
+                let card_current: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(
+                    SELECT 1 FROM collab_cards card
+                    JOIN collab_board_columns board_column
+                      ON board_column.id = card.column_id AND NOT board_column.is_terminal
+                    WHERE card.id = $1 AND card.assignee_id = $2
                  )",
-            )
-            .bind(&focus.room_id)
-            .bind(&claims.sub)
-            .bind(focus.room_sequence)
-            .bind(&focus.card_id)
-            .fetch_one(&mut *transaction)
-            .await?;
-            if !current {
-                return Err(protocol_error(
-                    "CONFLICT: agenda focus changed before the run opened",
-                ));
+                )
+                .bind(card_id)
+                .bind(&claims.sub)
+                .fetch_one(&mut *transaction)
+                .await?;
+                if !card_current {
+                    return Err(protocol_error(
+                        "CONFLICT: agenda Card changed before the run opened",
+                    ));
+                }
+            }
+            if let Some(room_id) = focus.room_id.as_deref() {
+                let room_current: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM collab_rooms room
+                        JOIN collab_room_members member
+                          ON member.room_id = room.id AND member.participant_id = $2
+                        WHERE room.id = $1
+                          AND ($3::BIGINT IS NULL OR room.next_seq = $3)
+                     )",
+                )
+                .bind(room_id)
+                .bind(&claims.sub)
+                .bind(focus.room_sequence)
+                .fetch_one(&mut *transaction)
+                .await?;
+                if !room_current {
+                    return Err(protocol_error(
+                        "CONFLICT: agenda Room changed before the run opened",
+                    ));
+                }
             }
         }
-        let room_id = focus.map(|focus| focus.room_id.as_str()).or_else(|| {
-            trigger
-                .deliveries
-                .first()
-                .map(|delivery| delivery.room_id.as_str())
-        });
+        let room_id = focus
+            .and_then(|focus| focus.room_id.as_deref())
+            .or_else(|| {
+                trigger
+                    .deliveries
+                    .first()
+                    .map(|delivery| delivery.room_id.as_str())
+            });
         sqlx::query(
             "INSERT INTO collab_runs (
-                id, agent_id, computer_id, room_id, trigger, status,
-                engine_id, model, computer_generation, inbox_carried_over,
-                focus_card_id, agenda_anchor_seq, trigger_reason
+                id, agent_id, runtime_session_id, room_id, trigger, status,
+                engine_id, main_model_id, triage_model_id, runtime_config_snapshot,
+                inbox_carried_over, focus_card_id, agenda_anchor_seq, trigger_reason
              )
-             SELECT $1, a.id, a.computer_id, $3, $4, 'running',
-                    a.engine_id, a.model, $5, $6, $7, $8, $9
-             FROM collab_agents a
-             WHERE a.id = $2
+             SELECT $1, profile.agent_id, $3, $4, $5, 'running',
+                    config.engine_id, config.main_model_id, config.triage_model_id,
+                    jsonb_build_object(
+                        'configRevision', config.config_revision,
+                        'engineId', config.engine_id,
+                        'mainModelId', config.main_model_id,
+                        'triageModelId', config.triage_model_id,
+                        'persona', profile.persona
+                    ),
+                    $6, $7, $8, $9
+             FROM collab_agent_profiles profile
+             JOIN collab_agent_runtime_configs config ON config.agent_id = profile.agent_id
+             WHERE profile.agent_id = $2 AND profile.archived_at IS NULL
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&trigger.dispatch_id)
         .bind(&claims.sub)
+        .bind(&claims.runtime_session_id)
         .bind(room_id)
         .bind(&trigger.trigger)
-        .bind(claims.generation)
         .bind(trigger.carried_over)
         .bind(focus.and_then(|focus| focus.card_id.as_deref()))
-        .bind(focus.map(|focus| focus.room_sequence))
+        .bind(focus.and_then(|focus| focus.room_sequence))
         .bind(focus.map(|focus| focus.reason.as_str()))
         .execute(&mut *transaction)
         .await?;
@@ -127,17 +164,20 @@ impl Runs {
             .execute(&mut *transaction)
             .await?;
         }
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM collab_runs WHERE id = $1 AND agent_id = $2")
-                .bind(&trigger.dispatch_id)
-                .bind(&claims.sub)
-                .fetch_one(&mut *transaction)
-                .await?;
+        let (status, outcome): (String, Option<String>) = sqlx::query_as(
+            "SELECT status, outcome FROM collab_runs
+             WHERE id = $1 AND agent_id = $2 AND runtime_session_id = $3",
+        )
+        .bind(&trigger.dispatch_id)
+        .bind(&claims.sub)
+        .bind(&claims.runtime_session_id)
+        .fetch_one(&mut *transaction)
+        .await?;
         transaction.commit().await?;
         Ok(RunView {
             id: trigger.dispatch_id.clone(),
             status,
-            outcome: None,
+            outcome,
         })
     }
 
@@ -151,12 +191,12 @@ impl Runs {
         let result = sqlx::query(
             "UPDATE collab_runs
              SET heartbeat_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-             WHERE id = $1 AND agent_id = $2 AND computer_generation = $3
+             WHERE id = $1 AND agent_id = $2 AND runtime_session_id = $3
                AND status = 'running'",
         )
         .bind(run_id)
         .bind(&claims.sub)
-        .bind(claims.generation)
+        .bind(&claims.runtime_session_id)
         .execute(&mut *transaction)
         .await?;
         if result.rows_affected() == 0 {
@@ -179,12 +219,12 @@ impl Runs {
         authorize_agent_transaction(&mut transaction, claims).await?;
         let (current_status, current_outcome): (String, Option<String>) = sqlx::query_as(
             "SELECT status, outcome FROM collab_runs
-             WHERE id = $1 AND agent_id = $2 AND computer_generation = $3
+             WHERE id = $1 AND agent_id = $2 AND runtime_session_id = $3
              FOR UPDATE",
         )
         .bind(run_id)
         .bind(&claims.sub)
-        .bind(claims.generation)
+        .bind(&claims.runtime_session_id)
         .fetch_one(&mut *transaction)
         .await?;
         if current_status != "running" {
@@ -234,14 +274,14 @@ impl Runs {
             let action_recorded: bool = sqlx::query_scalar(
                 "SELECT EXISTS (
                     SELECT 1
-                    FROM collab_cli_requests request,
+                    FROM collab_command_requests request,
                          LATERAL jsonb_array_elements(
-                             COALESCE(request.result -> 'sideEffects', '[]'::jsonb)
+                             COALESCE(request.result -> 'effects', '[]'::jsonb)
                          ) effect
                     WHERE request.run_id = $1
                       AND effect ->> 'type' IN (
-                          'message_published', 'reaction_changed',
-                          'card_created', 'card_claimed', 'card_moved'
+                          'message_published', 'card_created',
+                          'card_assigned', 'card_moved'
                       )
                  )",
             )
@@ -293,9 +333,11 @@ impl Runs {
 struct RunSummaryRow {
     id: String,
     agent_id: String,
+    runtime_session_id: String,
     trigger: String,
     status: String,
-    model: String,
+    engine_id: String,
+    main_model_id: String,
     outcome: Option<String>,
     room_id: Option<String>,
     focus_card_id: Option<String>,
@@ -310,9 +352,11 @@ impl From<RunSummaryRow> for RunSummaryView {
         Self {
             id: row.id,
             agent_id: row.agent_id,
+            runtime_session_id: row.runtime_session_id,
             trigger: row.trigger,
             status: row.status,
-            model: row.model,
+            engine_id: row.engine_id,
+            main_model_id: row.main_model_id,
             outcome: row.outcome,
             room_id: row.room_id,
             focus_card_id: row.focus_card_id,

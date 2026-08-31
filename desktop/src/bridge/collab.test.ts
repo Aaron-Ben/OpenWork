@@ -5,22 +5,26 @@ import { collabCommands } from './collab'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
-describe('P0 collaboration command bridge', () => {
+describe('R3 collaboration command bridge', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('creates an OpenCode Agent without Provider or approval fields', async () => {
     vi.mocked(invoke).mockResolvedValue(null)
     await collabCommands.createAgent({
-      id: 'helper',
       displayName: 'Helper',
-      systemPrompt: 'Help the user.',
-      model: 'opencode/mimo-v2.5-free',
+      role: 'Researcher',
+      persona: 'Help the user.',
+      engineId: 'opencode',
+      mainModelId: 'opencode/mimo-v2.5-free',
+      triageModelId: 'opencode/mimo-v2.5-free',
     })
     expect(invoke).toHaveBeenCalledWith('collab_agent_create', {
-      id: 'helper',
       displayName: 'Helper',
-      systemPrompt: 'Help the user.',
-      model: 'opencode/mimo-v2.5-free',
+      role: 'Researcher',
+      persona: 'Help the user.',
+      engineId: 'opencode',
+      mainModelId: 'opencode/mimo-v2.5-free',
+      triageModelId: 'opencode/mimo-v2.5-free',
     })
   })
 

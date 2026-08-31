@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 #[test]
-fn p0_has_one_local_opencode_path_and_no_legacy_collaboration_dependencies() {
+fn r3_has_one_local_engine_path_and_separate_server_computer_facades() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(crate_root.join("Cargo.toml")).unwrap();
     for dependency in [
@@ -19,37 +19,66 @@ fn p0_has_one_local_opencode_path_and_no_legacy_collaboration_dependencies() {
     let computer = source_text(&crate_root.join("src/computer"));
     assert!(!computer.contains("sqlx::"));
     assert!(!computer.contains("redis::"));
-    let shim = std::fs::read_to_string(crate_root.join("src/computer/shim.rs")).unwrap();
-    assert_eq!(computer.matches("/runtime/cli").count(), 1);
-    assert!(shim.contains("/runtime/cli"));
     let server = source_text(&crate_root.join("src/server"));
     assert!(!server.contains("Command::new"));
+    assert!(crate_root.join("src/protocol/desktop.rs").exists());
+    assert!(crate_root.join("src/protocol/computer.rs").exists());
+    assert!(crate_root.join("src/protocol/agent.rs").exists());
+}
+
+#[test]
+fn r3_has_no_obsolete_identity_transport_or_cli_path() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for removed in [
+        "src/launchd.rs",
+        "src/server/control.rs",
+        "src/server/runtime.rs",
+        "src/server/computers.rs",
+    ] {
+        assert!(!crate_root.join(removed).exists(), "{removed} still exists");
+    }
 
     let source = source_text(&crate_root.join("src"));
-    for excluded in [
-        "target_os = \"windows\"",
-        "target_os = \"linux\"",
-        "opencode serve",
-        "ClaudeAdapter",
-        "CodexAdapter",
-        "pairing_code",
+    for forbidden in [
+        "ControlRequest",
+        "CliRequest",
+        "/runtime/cli",
+        "control.sock",
+        "computer.json",
+        "device_token",
+        "computer_id",
+        "generation:",
     ] {
         assert!(
-            !source.contains(excluded),
-            "excluded P0 path survived: {excluded}"
+            !source.contains(forbidden),
+            "obsolete R3 source path survived: {forbidden}"
+        );
+    }
+
+    let migrations = source_files(&crate_root.join("migrations"), "sql");
+    for forbidden in [
+        "CREATE TABLE collab_computers",
+        "computer_id",
+        "device_token",
+        "claimed_by",
+        "claimed_at",
+        "collab_reactions",
+        "collab_events",
+    ] {
+        assert!(
+            !migrations.contains(forbidden),
+            "obsolete R3 schema survived: {forbidden}"
         );
     }
 }
 
 #[test]
-fn r1_server_business_modules_own_persistence_without_a_universal_store() {
+fn r1_business_modules_still_own_persistence_without_a_universal_store() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let server_root = crate_root.join("src/server");
     assert!(!server_root.join("storage.rs").exists());
-
-    let server = source_text(&server_root);
-    assert!(!server.contains("CollaborationStore"));
-    for adapter in ["control.rs", "runtime.rs", "scheduler.rs"] {
+    assert!(!source_text(&server_root).contains("CollaborationStore"));
+    for adapter in ["transport.rs", "scheduler.rs", "runtime_session.rs"] {
         let source = std::fs::read_to_string(server_root.join(adapter)).unwrap();
         assert!(
             !source.contains("sqlx::query"),
@@ -59,6 +88,10 @@ fn r1_server_business_modules_own_persistence_without_a_universal_store() {
 }
 
 fn source_text(root: &Path) -> String {
+    source_files(root, "rs")
+}
+
+fn source_files(root: &Path, extension: &str) -> String {
     let mut text = String::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(path) = pending.pop() {
@@ -66,7 +99,10 @@ fn source_text(root: &Path) -> String {
             for entry in std::fs::read_dir(path).unwrap() {
                 pending.push(entry.unwrap().path());
             }
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
+        } else if path
+            .extension()
+            .is_some_and(|candidate| candidate == extension)
+        {
             text.push_str(&std::fs::read_to_string(path).unwrap());
         }
     }

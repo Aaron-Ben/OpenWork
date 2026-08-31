@@ -14,7 +14,7 @@ use crate::protocol::{
 
 use super::{
     agenda::parse_agenda_decision,
-    client::{AgentClient, DeviceClient, RuntimeClientError},
+    client::{AgentClient, ComputerClient, RuntimeClientError},
     engine::{
         AgentEngineRuntime, ClassifyRequest, EngineAdapter, EngineError, EngineUsage, TurnRequest,
         TurnResult,
@@ -29,8 +29,7 @@ const AGENDA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 pub struct AgentRunner {
     assignment: AgentAssignment,
-    device: DeviceClient,
-    generation: i64,
+    computer: ComputerClient,
     client: AgentClient,
     engine: RunnerEngine,
     home: AgentHome,
@@ -48,8 +47,7 @@ pub struct AgentRunner {
 }
 
 pub(super) struct RunnerIdentity {
-    pub device: DeviceClient,
-    pub generation: i64,
+    pub computer: ComputerClient,
     pub token_expires_at: i64,
 }
 
@@ -107,8 +105,7 @@ impl AgentRunner {
     ) -> Self {
         Self {
             assignment,
-            device: identity.device,
-            generation: identity.generation,
+            computer: identity.computer,
             client,
             engine,
             home,
@@ -380,7 +377,7 @@ impl AgentRunner {
     async fn maybe_agenda(&mut self, cancellation: CancellationToken) -> Result<(), RunnerError> {
         let now = Instant::now();
         if !agenda_due(
-            self.assignment.scanner_enabled,
+            self.assignment.agenda_enabled,
             self.quiet_since.elapsed(),
             self.last_agenda_check.map(|last| last.elapsed()),
             self.agenda_backoff_until
@@ -413,7 +410,7 @@ impl AgentRunner {
                     cwd: self.home.triage_root.clone(),
                     config_root: self.home.config_root.clone(),
                     prompt: payload.classify_prompt,
-                    model: Some(self.assignment.fast_model.clone()),
+                    model: Some(self.assignment.triage_model_id.clone()),
                     environment: self.home.environment.clone(),
                     cancellation: cancellation.clone(),
                 })
@@ -445,7 +442,7 @@ impl AgentRunner {
                 decision,
                 model: result
                     .model
-                    .unwrap_or_else(|| self.assignment.fast_model.clone()),
+                    .unwrap_or_else(|| self.assignment.triage_model_id.clone()),
                 input_tokens: result.usage.input_tokens as i64,
                 output_tokens: result.usage.output_tokens as i64,
                 latency_ms: classify_started.elapsed().as_millis() as i64,
@@ -567,10 +564,7 @@ impl AgentRunner {
         if !token_needs_refresh(self.token_expires_at, now) {
             return Ok(());
         }
-        let response = self
-            .device
-            .mint_agent_token(&self.assignment.id, self.generation)
-            .await?;
+        let response = self.computer.mint_agent_token(&self.assignment.id).await?;
         self.home.save_runtime_token(&response.token).await?;
         self.client.replace_token(response.token);
         self.token_expires_at = response.expires_at;
@@ -635,7 +629,7 @@ fn build_prompt(
 ) -> String {
     let mut prompt = format!(
         "You are {}. {}\nHandle the following durable collaboration delivery.\n",
-        assignment.display_name, assignment.system_prompt
+        assignment.display_name, assignment.persona
     );
     if !triage_note.trim().is_empty() {
         prompt.push_str(&format!("Triage focus: {triage_note}\n"));
@@ -660,7 +654,7 @@ fn build_prompt(
 fn build_agenda_prompt(assignment: &AgentAssignment, focused_brief: &str) -> String {
     format!(
         "You are {}. {}\nHandle this proactive collaboration turn.\n{}\n",
-        assignment.display_name, assignment.system_prompt, focused_brief
+        assignment.display_name, assignment.persona, focused_brief
     )
 }
 
@@ -680,7 +674,10 @@ pub enum RunnerError {
 
 impl RunnerError {
     pub(super) fn is_fenced(&self) -> bool {
-        self.to_string().contains("409 Conflict")
+        matches!(
+            self,
+            Self::Runtime(error) if error.is_terminal_identity_error()
+        )
     }
 }
 

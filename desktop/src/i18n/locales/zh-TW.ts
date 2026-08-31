@@ -272,13 +272,13 @@ export const zhTW = {
       runFailed: '{{agents}} 執行失敗：{{message}}', unknownFailure: '未知 OpenCode 錯誤',
     },
     agents: {
-      title: '同事管理', create: '建立同事', save: '儲存', id: 'ID', displayName: '名稱',
-      model: '模型', prompt: 'System Prompt', enabled: '已啟用', disabled: '已停用', noAgents: '還沒有同事',
-      proactiveOn: '主動檢查已開啟', proactiveOff: '主動檢查已關閉',
+      title: '同事管理', create: '建立同事', save: '儲存', displayName: '名稱', role: '角色（可選）',
+      mainModel: '主模型', triageModel: '分流模型', persona: '個性設定', active: '活躍', archived: '已封存', noAgents: '還沒有同事',
+      proactiveOn: 'Agenda 已開啟', proactiveOff: 'Agenda 已關閉', archive: '封存', restore: '恢復',
     },
     boards: {
-      title: '看板與執行', create: '建立看板', room: '所屬房間', name: '看板名稱',
-      empty: '還沒有看板', claimedBy: '認領者', assignedTo: '負責人', unassigned: '未分配', recentRuns: '最近執行',
+      title: '看板與執行', create: '建立看板', name: '看板名稱',
+      empty: '還沒有看板', assignedTo: '負責人', unassigned: '未分配', recentRuns: '最近執行',
     },
   },
   tool: {

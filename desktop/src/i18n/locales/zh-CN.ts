@@ -342,13 +342,13 @@ export const zhCN = {
       runFailed: '{{agents}} 运行失败：{{message}}', unknownFailure: '未知 OpenCode 错误',
     },
     agents: {
-      title: '同事管理', create: '创建同事', save: '保存', id: 'ID', displayName: '名称',
-      model: '模型', prompt: 'System Prompt', enabled: '已启用', disabled: '已停用', noAgents: '还没有同事',
-      proactiveOn: '主动检查已开启', proactiveOff: '主动检查已关闭',
+      title: '同事管理', create: '创建同事', save: '保存', displayName: '名称', role: '角色（可选）',
+      mainModel: '主模型', triageModel: '分流模型', persona: '个性设定', active: '活跃', archived: '已归档', noAgents: '还没有同事',
+      proactiveOn: 'Agenda 已开启', proactiveOff: 'Agenda 已关闭', archive: '归档', restore: '恢复',
     },
     boards: {
-      title: '看板与运行', create: '创建看板', room: '所属房间', name: '看板名称',
-      empty: '还没有看板', claimedBy: '认领者', assignedTo: '负责人', unassigned: '未分配', recentRuns: '最近运行',
+      title: '看板与运行', create: '创建看板', name: '看板名称',
+      empty: '还没有看板', assignedTo: '负责人', unassigned: '未分配', recentRuns: '最近运行',
     },
   },
   tool: {

@@ -277,13 +277,13 @@ export const enUS = {
       runFailed: '{{agents}} failed: {{message}}', unknownFailure: 'Unknown OpenCode failure',
     },
     agents: {
-      title: 'Teammate management', create: 'Create teammate', save: 'Save', id: 'ID', displayName: 'Name',
-      model: 'Model', prompt: 'System prompt', enabled: 'Enabled', disabled: 'Disabled', noAgents: 'No teammates yet',
-      proactiveOn: 'Proactive checks on', proactiveOff: 'Proactive checks off',
+      title: 'Teammate management', create: 'Create teammate', save: 'Save', displayName: 'Name', role: 'Role (optional)',
+      mainModel: 'Main model', triageModel: 'Triage model', persona: 'Persona', active: 'Active', archived: 'Archived', noAgents: 'No teammates yet',
+      proactiveOn: 'Agenda on', proactiveOff: 'Agenda off', archive: 'Archive', restore: 'Restore',
     },
     boards: {
-      title: 'Boards and runs', create: 'Create board', room: 'Room', name: 'Board name',
-      empty: 'No boards yet', claimedBy: 'Claimed by', assignedTo: 'Assigned to', unassigned: 'Unassigned', recentRuns: 'Recent runs',
+      title: 'Boards and runs', create: 'Create board', name: 'Board name',
+      empty: 'No boards yet', assignedTo: 'Assigned to', unassigned: 'Unassigned', recentRuns: 'Recent runs',
     },
   },
   tool: {

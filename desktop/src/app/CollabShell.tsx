@@ -39,7 +39,7 @@ export function CollabShell() {
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
           )}
         </>
-      ) : view === 'agents' ? <AgentManager /> : <BoardPage rooms={rooms} />}
+      ) : view === 'agents' ? <AgentManager /> : <BoardPage />}
     </main>
   )
 }

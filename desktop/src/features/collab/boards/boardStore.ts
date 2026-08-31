@@ -9,7 +9,7 @@ interface BoardStoreState {
   loading: boolean
   error: string | null
   fetchAll: () => Promise<void>
-  createBoard: (roomId: string, title: string) => Promise<void>
+  createBoard: (title: string) => Promise<void>
 }
 
 export const useBoardStore = create<BoardStoreState>((set, get) => ({
@@ -29,8 +29,8 @@ export const useBoardStore = create<BoardStoreState>((set, get) => ({
       set({ error: resolveErrorMessage(error), loading: false })
     }
   },
-  createBoard: async (roomId, title) => {
-    await collabCommands.createBoard(roomId, title)
+  createBoard: async (title) => {
+    await collabCommands.createBoard(title)
     await get().fetchAll()
   },
 }))

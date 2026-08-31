@@ -25,7 +25,7 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
   const [agentToAdd, setAgentToAdd] = useState('')
   const runState = roomRunState(messages?.runs ?? [], room.id)
   const runAgents = runState?.agentIds.map((id) => `@${id}`).join(', ') ?? ''
-  const availableAgents = agents.filter((agent) => agent.enabled && !members.some((member) => member.id === agent.id))
+  const availableAgents = agents.filter((agent) => agent.archivedAt === null && !members.some((member) => member.id === agent.id))
 
   useEffect(() => {
     void open(room.id)
@@ -90,7 +90,7 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <div className="grid gap-4">
           {messages?.messages.map((message) => {
-            const own = message.authorId === 'user'
+            const own = message.authorId === 'local-user'
             return (
               <article key={message.id} data-message-sequence={message.sequence} className={`flex gap-2.5 ${own ? 'flex-row-reverse' : ''}`}>
                 <span className={`grid size-8 shrink-0 place-items-center rounded-full ${own ? 'bg-ink/10 text-ink' : 'bg-clay/10 text-clay'}`}>

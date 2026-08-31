@@ -145,8 +145,7 @@ fn persona_hash(assignment: &AgentAssignment) -> String {
         assignment.id.as_str(),
         assignment.display_name.as_str(),
         assignment.role.as_deref().unwrap_or_default(),
-        assignment.bio.as_deref().unwrap_or_default(),
-        assignment.system_prompt.as_str(),
+        assignment.persona.as_str(),
     ];
     let mut hasher = Sha256::new();
     for field in fields {
@@ -192,12 +191,11 @@ async fn atomic_write(path: &std::path::Path, bytes: &[u8], mode: u32) -> Result
 
 fn standing_prompt(assignment: &AgentAssignment) -> String {
     format!(
-        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\nBio: {}\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published.\n\n## Glance and yield\n\n- A human may address one named teammate by name or role without @-mentioning them. If you are that teammate, answer; otherwise stay out. A message to the whole group may be answered by the group.\n- Reply from the actual posted messages, never from an imagined queue position. Use `openwork glance <room-id>` when you need to reread the room.\n- Post optimistically. If `openwork reply` returns HELD, read the newer messages, reconsider, and retry with the provided token only if your revised reply is still needed.\n- Do not repeat a peer. If another Agent already covered your point, react or stay silent. Stop when the task is complete.\n- Do not claim a chat turn or reserve a conversational slot. Claims are only for genuine shared work that another teammate could duplicate.\n\n# Local workspace\n\nUse memory/, notes/, and workspace/ for local durable work.\n\n# CLI discovery\n\nRun `openwork --help` when needed.\n\n# Memory discipline\n\nNever write credentials or runtime tokens into memory.\n",
+        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published.\n\n## Glance and yield\n\n- A human may address one named teammate by name or role without @-mentioning them. If you are that teammate, answer; otherwise stay out. A message to the whole group may be answered by the group.\n- Reply from the actual posted messages, never from an imagined queue position. Use `openwork glance <room-id>` when you need to reread the room.\n- Post optimistically. If `openwork reply` returns HELD, read the newer messages, reconsider, and retry with the provided token only if your revised reply is still needed.\n- Do not repeat a peer. If another Agent already covered your point, stay silent. Stop when the task is complete.\n- Do not claim a chat turn or reserve a conversational slot. Claims are only for genuine shared work that another teammate could duplicate.\n\n# Local workspace\n\nUse the local Agent workspace for durable work.\n\n# CLI discovery\n\nRun `openwork --help` when needed.\n",
         assignment.display_name,
         assignment.id,
         assignment.role.as_deref().unwrap_or("unspecified"),
-        assignment.bio.as_deref().unwrap_or("unspecified"),
-        assignment.system_prompt
+        assignment.persona
     )
 }
 
@@ -206,7 +204,7 @@ fn valid_agent_id(id: &str) -> bool {
     matches!(chars.next(), Some(first) if first.is_ascii_lowercase())
         && id.len() <= 48
         && chars.all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
         })
 }
 

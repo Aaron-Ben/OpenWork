@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
-use uuid::Uuid;
 
-use crate::protocol::{MessageView, ParticipantView, RoomView};
+use crate::protocol::{MessageView, ParticipantView, RoomView, entity_id};
 
 #[derive(Clone)]
 pub(crate) struct Rooms {
@@ -15,10 +14,24 @@ impl Rooms {
         Self { pool }
     }
 
-    pub(crate) async fn create_direct(&self, agent_id: &str) -> Result<RoomView, sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
-        let (room_id, _) = get_or_create_direct_room(&mut transaction, "user", agent_id).await?;
-        transaction.commit().await?;
+    pub(crate) async fn create_direct_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        agent_id: &str,
+    ) -> Result<RoomView, sqlx::Error> {
+        let active: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM collab_agent_profiles
+             WHERE agent_id = $1 AND archived_at IS NULL)",
+        )
+        .bind(agent_id)
+        .fetch_one(&mut **transaction)
+        .await?;
+        if !active {
+            return Err(protocol_error(
+                "NOT_FOUND: Agent does not exist or is archived",
+            ));
+        }
+        let (room_id, _) =
+            get_or_create_direct_room(transaction, "local-user", agent_id, "local-user").await?;
         Ok(RoomView {
             id: room_id,
             kind: "direct".to_string(),
@@ -26,8 +39,8 @@ impl Rooms {
         })
     }
 
-    pub(crate) async fn create_group(
-        &self,
+    pub(crate) async fn create_group_in(
+        transaction: &mut Transaction<'_, Postgres>,
         title: &str,
         agent_ids: &[String],
     ) -> Result<RoomView, sqlx::Error> {
@@ -48,27 +61,29 @@ impl Rooms {
             ));
         }
         let agent_ids: Vec<String> = agent_ids.into_iter().collect();
-        let mut transaction = self.pool.begin().await?;
         let valid_agent_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM collab_agents
-             WHERE id = ANY($1) AND enabled ORDER BY id",
+            "SELECT agent_id FROM collab_agent_profiles
+             WHERE agent_id = ANY($1) AND archived_at IS NULL ORDER BY agent_id",
         )
         .bind(&agent_ids)
-        .fetch_all(&mut *transaction)
+        .fetch_all(&mut **transaction)
         .await?;
         if valid_agent_ids != agent_ids {
             return Err(protocol_error(
-                "NOT_FOUND: one or more selected Agents do not exist or are disabled",
+                "NOT_FOUND: one or more selected Agents do not exist or are archived",
             ));
         }
-        let room_id = format!("room_{}", Uuid::new_v4().simple());
-        sqlx::query("INSERT INTO collab_rooms (id, kind, title) VALUES ($1, 'group', $2)")
-            .bind(&room_id)
-            .bind(title)
-            .execute(&mut *transaction)
-            .await?;
+        let room_id = entity_id("room");
+        sqlx::query(
+            "INSERT INTO collab_rooms (id, kind, title, created_by)
+             VALUES ($1, 'group', $2, 'local-user')",
+        )
+        .bind(&room_id)
+        .bind(title)
+        .execute(&mut **transaction)
+        .await?;
         let mut member_ids = Vec::with_capacity(agent_ids.len() + 1);
-        member_ids.push("user".to_string());
+        member_ids.push("local-user".to_string());
         member_ids.extend(agent_ids);
         for member_id in member_ids {
             sqlx::query(
@@ -77,10 +92,9 @@ impl Rooms {
             )
             .bind(&room_id)
             .bind(member_id)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
         }
-        transaction.commit().await?;
         Ok(RoomView {
             id: room_id,
             kind: "group".to_string(),
@@ -106,7 +120,7 @@ impl Rooms {
             "SELECT EXISTS(
                 SELECT 1 FROM collab_rooms room
                 JOIN collab_room_members viewer
-                  ON viewer.room_id = room.id AND viewer.participant_id = 'user'
+                  ON viewer.room_id = room.id AND viewer.participant_id = 'local-user'
                 WHERE room.id = $1 AND room.kind = 'group'
              )",
         )
@@ -121,7 +135,7 @@ impl Rooms {
              FROM collab_room_members member
              JOIN collab_participants participant ON participant.id = member.participant_id
              WHERE member.room_id = $1
-             ORDER BY CASE WHEN participant.id = 'user' THEN 0 ELSE 1 END,
+             ORDER BY CASE WHEN participant.id = 'local-user' THEN 0 ELSE 1 END,
                       participant.display_name, participant.id",
         )
         .bind(room_id)
@@ -130,68 +144,84 @@ impl Rooms {
         .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
     }
 
-    pub(crate) async fn add_member(
-        &self,
+    pub(crate) async fn list_members_in(
+        transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
-        agent_id: &str,
-    ) -> Result<(Vec<ParticipantView>, Option<MessageView>), sqlx::Error> {
-        self.change_member(room_id, agent_id, true).await
-    }
-
-    pub(crate) async fn remove_member(
-        &self,
-        room_id: &str,
-        agent_id: &str,
-    ) -> Result<(Vec<ParticipantView>, Option<MessageView>), sqlx::Error> {
-        self.change_member(room_id, agent_id, false).await
+    ) -> Result<Vec<ParticipantView>, sqlx::Error> {
+        let visible: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_rooms room
+                JOIN collab_room_members viewer
+                  ON viewer.room_id = room.id AND viewer.participant_id = 'local-user'
+                WHERE room.id = $1 AND room.kind = 'group'
+             )",
+        )
+        .bind(room_id)
+        .fetch_one(&mut **transaction)
+        .await?;
+        if !visible {
+            return Err(protocol_error("NOT_FOUND: group is not visible"));
+        }
+        sqlx::query_as::<_, ParticipantRow>(
+            "SELECT participant.id, participant.kind, participant.display_name
+             FROM collab_room_members member
+             JOIN collab_participants participant ON participant.id = member.participant_id
+             WHERE member.room_id = $1
+             ORDER BY CASE WHEN participant.id = 'local-user' THEN 0 ELSE 1 END,
+                      participant.display_name, participant.id",
+        )
+        .bind(room_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
     }
 
     pub(crate) async fn agent_ids(&self, room_id: &str) -> Result<Vec<String>, sqlx::Error> {
         sqlx::query_scalar(
-            "SELECT agent.id
+            "SELECT agent.agent_id
              FROM collab_room_members member
-             JOIN collab_agents agent ON agent.id = member.participant_id
-             WHERE member.room_id = $1 AND agent.enabled
-             ORDER BY agent.id",
+             JOIN collab_agent_profiles agent ON agent.agent_id = member.participant_id
+             WHERE member.room_id = $1 AND agent.archived_at IS NULL
+             ORDER BY agent.agent_id",
         )
         .bind(room_id)
         .fetch_all(&self.pool)
         .await
     }
 
-    async fn change_member(
-        &self,
+    pub(crate) async fn change_member_in(
+        transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
         agent_id: &str,
         adding: bool,
     ) -> Result<(Vec<ParticipantView>, Option<MessageView>), sqlx::Error> {
-        let mut transaction = self.pool.begin().await?;
         let current_sequence: Option<i64> = sqlx::query_scalar(
             "SELECT room.next_seq
              FROM collab_rooms room
              JOIN collab_room_members viewer
-               ON viewer.room_id = room.id AND viewer.participant_id = 'user'
+               ON viewer.room_id = room.id AND viewer.participant_id = 'local-user'
              WHERE room.id = $1 AND room.kind = 'group'
              FOR UPDATE OF room",
         )
         .bind(room_id)
-        .fetch_optional(&mut *transaction)
+        .fetch_optional(&mut **transaction)
         .await?;
         let Some(current_sequence) = current_sequence else {
             return Err(protocol_error("NOT_FOUND: group is not visible"));
         };
         let agent_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS(
-                SELECT 1 FROM collab_agents WHERE id = $1 AND ($2 = FALSE OR enabled)
+                SELECT 1 FROM collab_agent_profiles
+                WHERE agent_id = $1 AND ($2 = FALSE OR archived_at IS NULL)
              )",
         )
         .bind(agent_id)
         .bind(adding)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         if !agent_exists {
             return Err(protocol_error(
-                "NOT_FOUND: Agent does not exist or is disabled",
+                "NOT_FOUND: Agent does not exist or is archived",
             ));
         }
         let is_member: bool = sqlx::query_scalar(
@@ -202,11 +232,10 @@ impl Rooms {
         )
         .bind(room_id)
         .bind(agent_id)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         if is_member == adding {
-            transaction.commit().await?;
-            return Ok((self.list_members(room_id).await?, None));
+            return Ok((Self::list_members_in(transaction, room_id).await?, None));
         }
         if adding {
             sqlx::query(
@@ -216,10 +245,10 @@ impl Rooms {
             .bind(room_id)
             .bind(agent_id)
             .bind(current_sequence)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
         }
-        let message_id = format!("msg_{}", Uuid::new_v4().simple());
+        let message_id = entity_id("msg");
         let sequence: i64 = sqlx::query_scalar(
             "UPDATE collab_rooms
              SET next_seq = next_seq + 1,
@@ -228,19 +257,19 @@ impl Rooms {
              WHERE id = $1 RETURNING next_seq",
         )
         .bind(room_id)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         let action = if adding { "invited" } else { "removed" };
-        let body = format!("user {action} {agent_id}");
+        let body = format!("local-user {action} {agent_id}");
         sqlx::query(
             "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
-             VALUES ($1, $2, $3, 'user', 'system', $4)",
+             VALUES ($1, $2, $3, 'local-user', 'system', $4)",
         )
         .bind(&message_id)
         .bind(room_id)
         .bind(sequence)
         .bind(&body)
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
         if !adding {
             sqlx::query(
@@ -248,18 +277,20 @@ impl Rooms {
             )
             .bind(room_id)
             .bind(agent_id)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
         }
-        transaction.commit().await?;
         let message = MessageView {
             id: message_id,
             room_id: room_id.to_string(),
             sequence,
-            author_id: "user".to_string(),
+            author_id: "local-user".to_string(),
             body,
         };
-        Ok((self.list_members(room_id).await?, Some(message)))
+        Ok((
+            Self::list_members_in(transaction, room_id).await?,
+            Some(message),
+        ))
     }
 }
 
@@ -267,6 +298,7 @@ pub(crate) async fn get_or_create_direct_room(
     transaction: &mut Transaction<'_, Postgres>,
     first_participant: &str,
     second_participant: &str,
+    created_by: &str,
 ) -> Result<(String, bool), sqlx::Error> {
     if first_participant == second_participant {
         return Err(protocol_error(
@@ -279,15 +311,16 @@ pub(crate) async fn get_or_create_direct_room(
         (second_participant, first_participant)
     };
     let direct_key = format!("{left}|{right}");
-    let proposed_room_id = format!("room_{}", Uuid::new_v4().simple());
+    let proposed_room_id = entity_id("room");
     let inserted: Option<String> = sqlx::query_scalar(
-        "INSERT INTO collab_rooms (id, kind, direct_key)
-         VALUES ($1, 'direct', $2)
+        "INSERT INTO collab_rooms (id, kind, direct_key, created_by)
+         VALUES ($1, 'direct', $2, $3)
          ON CONFLICT (direct_key) WHERE direct_key IS NOT NULL DO NOTHING
          RETURNING id",
     )
     .bind(&proposed_room_id)
     .bind(&direct_key)
+    .bind(created_by)
     .fetch_optional(&mut **transaction)
     .await?;
     if let Some(room_id) = inserted {

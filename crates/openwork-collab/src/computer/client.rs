@@ -7,9 +7,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentAssignment, AgentRoster,
-    AgentTokenResponse, DeviceStartResponse, FinishRunRequest, HeartbeatRequest, InboxResponse,
-    OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
+    AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentTokenResponse,
+    ComputerHeartbeatRequest, DesiredAgents, EngineInventoryReport, FinishRunRequest,
+    InboxResponse, InvalidationEvent, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
 };
 
 use super::sse::{SseDecoder, SseParseError};
@@ -17,40 +17,28 @@ use super::sse::{SseDecoder, SseParseError};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone)]
-pub struct DeviceClient {
+pub struct ComputerClient {
     http: reqwest::Client,
     base_url: String,
-    device_token: String,
+    runtime_session_id: String,
+    computer_secret: String,
 }
 
-impl DeviceClient {
-    pub fn new(base_url: String, device_token: String) -> Self {
+impl ComputerClient {
+    pub fn new(base_url: String, runtime_session_id: String, computer_secret: String) -> Self {
         Self {
             http: reqwest::Client::new(),
             base_url: base_url.trim_end_matches('/').to_string(),
-            device_token,
+            runtime_session_id,
+            computer_secret,
         }
     }
 
-    pub async fn start(&self) -> Result<i64, RuntimeClientError> {
+    pub async fn heartbeat(&self, active_agent_ids: Vec<String>) -> Result<(), RuntimeClientError> {
         self.http
-            .post(format!("{}/api/computers/me/start", self.base_url))
-            .bearer_auth(&self.device_token)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json::<DeviceStartResponse>()
-            .await
-            .map(|response| response.generation)
-            .map_err(Into::into)
-    }
-
-    pub async fn heartbeat(&self, request: &HeartbeatRequest) -> Result<(), RuntimeClientError> {
-        self.http
-            .post(format!("{}/api/computers/me/heartbeat", self.base_url))
-            .bearer_auth(&self.device_token)
-            .json(request)
+            .post(format!("{}/computer/heartbeat", self.base_url))
+            .bearer_auth(&self.computer_secret)
+            .json(&ComputerHeartbeatRequest { active_agent_ids })
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
@@ -58,38 +46,48 @@ impl DeviceClient {
         Ok(())
     }
 
-    pub async fn roster(
-        &self,
-        generation: i64,
-    ) -> Result<Vec<AgentAssignment>, RuntimeClientError> {
-        self.http
-            .get(format!(
-                "{}/api/computers/me/agents?generation={generation}",
-                self.base_url
-            ))
-            .bearer_auth(&self.device_token)
+    pub async fn desired_agents(&self) -> Result<DesiredAgents, RuntimeClientError> {
+        let snapshot = self
+            .http
+            .get(format!("{}/computer/agents", self.base_url))
+            .bearer_auth(&self.computer_secret)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)?
-            .json::<AgentRoster>()
+            .json::<DesiredAgents>()
+            .await?;
+        if snapshot.runtime_session_id != self.runtime_session_id {
+            return Err(RuntimeClientError::SessionMismatch);
+        }
+        Ok(snapshot)
+    }
+
+    pub async fn report_inventory(
+        &self,
+        report: &EngineInventoryReport,
+    ) -> Result<(), RuntimeClientError> {
+        self.http
+            .post(format!("{}/computer/inventory", self.base_url))
+            .bearer_auth(&self.computer_secret)
+            .json(report)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
             .await
-            .map(|response| response.agents)
-            .map_err(Into::into)
+            .and_then(reqwest::Response::error_for_status)?;
+        Ok(())
     }
 
     pub async fn mint_agent_token(
         &self,
         agent_id: &str,
-        generation: i64,
     ) -> Result<AgentTokenResponse, RuntimeClientError> {
         self.http
             .post(format!(
-                "{}/api/computers/me/agents/{agent_id}/token",
+                "{}/computer/agents/{agent_id}/token",
                 self.base_url
             ))
-            .bearer_auth(&self.device_token)
-            .json(&serde_json::json!({ "generation": generation }))
+            .bearer_auth(&self.computer_secret)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
@@ -106,6 +104,22 @@ impl DeviceClient {
             token: Arc::new(RwLock::new(token)),
         }
     }
+
+    pub async fn management_loop(
+        &self,
+        invalidations: mpsc::Sender<()>,
+        shutdown: CancellationToken,
+    ) {
+        reconnecting_sse_loop(
+            self.http.clone(),
+            format!("{}/computer/events", self.base_url),
+            SseCredential::Static(self.computer_secret.clone()),
+            "management",
+            invalidations,
+            shutdown,
+        )
+        .await;
+    }
 }
 
 #[derive(Clone)]
@@ -115,97 +129,55 @@ pub struct AgentClient {
     token: Arc<RwLock<String>>,
 }
 
+#[derive(Clone)]
+enum SseCredential {
+    Static(String),
+    Refreshing(Arc<RwLock<String>>),
+}
+
+impl SseCredential {
+    fn current(&self) -> String {
+        match self {
+            Self::Static(token) => token.clone(),
+            Self::Refreshing(token) => token.read().expect("Agent token lock poisoned").clone(),
+        }
+    }
+}
+
 impl AgentClient {
     pub fn replace_token(&self, token: String) {
         *self.token.write().expect("Agent token lock poisoned") = token;
     }
 
     pub async fn inbox(&self) -> Result<InboxResponse, RuntimeClientError> {
-        self.http
-            .get(format!("{}/runtime/inbox", self.base_url))
-            .bearer_auth(self.token())
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json()
-            .await
-            .map_err(Into::into)
+        self.get_json("/agent/inbox").await
     }
 
     pub async fn open_run(&self, request: &OpenRunRequest) -> Result<RunView, RuntimeClientError> {
-        self.http
-            .post(format!("{}/runtime/runs", self.base_url))
-            .bearer_auth(self.token())
-            .json(request)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json()
-            .await
-            .map_err(Into::into)
+        self.post_json("/agent/runs", request).await
     }
 
     pub async fn triage_payload(&self, run_id: &str) -> Result<TriagePayload, RuntimeClientError> {
-        self.http
-            .get(format!(
-                "{}/runtime/inbox-triage/payload?run_id={run_id}",
-                self.base_url
-            ))
-            .bearer_auth(self.token())
-            .timeout(REQUEST_TIMEOUT)
-            .send()
+        self.get_json(&format!("/agent/inbox-triage/payload?run_id={run_id}"))
             .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json()
-            .await
-            .map_err(Into::into)
     }
 
     pub async fn report_triage(
         &self,
         request: &TriageReportRequest,
     ) -> Result<(), RuntimeClientError> {
-        self.http
-            .post(format!("{}/runtime/triage", self.base_url))
-            .bearer_auth(self.token())
-            .json(request)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?;
-        Ok(())
+        self.post_empty("/agent/triage", request).await
     }
 
     pub async fn agenda_payload(&self) -> Result<AgendaPayload, RuntimeClientError> {
-        self.http
-            .get(format!("{}/runtime/agenda/payload", self.base_url))
-            .bearer_auth(self.token())
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json()
-            .await
-            .map_err(Into::into)
+        self.get_json("/agent/agenda/payload").await
     }
 
     pub async fn decide_agenda(
         &self,
         request: &AgendaDecisionRequest,
     ) -> Result<AgendaDecisionResponse, RuntimeClientError> {
-        self.http
-            .post(format!("{}/runtime/agenda/decision", self.base_url))
-            .bearer_auth(self.token())
-            .json(request)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)?
-            .json()
-            .await
-            .map_err(Into::into)
+        self.post_json("/agent/agenda/decision", request).await
     }
 
     pub async fn finish_run(
@@ -217,7 +189,7 @@ impl AgentClient {
         for attempt in 0..5 {
             let response = self
                 .http
-                .post(format!("{}/runtime/runs/{run_id}/finish", self.base_url))
+                .post(format!("{}/agent/runs/{run_id}/finish", self.base_url))
                 .bearer_auth(self.token())
                 .json(request)
                 .timeout(REQUEST_TIMEOUT)
@@ -241,7 +213,7 @@ impl AgentClient {
 
     pub async fn heartbeat_run(&self, run_id: &str) -> Result<(), RuntimeClientError> {
         self.http
-            .post(format!("{}/runtime/runs/{run_id}/heartbeat", self.base_url))
+            .post(format!("{}/agent/runs/{run_id}/heartbeat", self.base_url))
             .bearer_auth(self.token())
             .timeout(REQUEST_TIMEOUT)
             .send()
@@ -251,59 +223,65 @@ impl AgentClient {
     }
 
     pub async fn wake_loop(&self, wakes: mpsc::Sender<()>, shutdown: CancellationToken) {
-        let mut backoff = Duration::from_secs(1);
-        loop {
-            if shutdown.is_cancelled() || wakes.is_closed() {
-                return;
-            }
-            let connected_at = Instant::now();
-            if let Err(error) = self.wake_stream_once(&wakes, &shutdown).await {
-                tracing::warn!(%error, "Agent wake SSE disconnected");
-            }
-            if shutdown.is_cancelled() || wakes.is_closed() {
-                return;
-            }
-            if connected_at.elapsed() >= Duration::from_secs(60) {
-                backoff = Duration::from_secs(1);
-            }
-            tokio::select! {
-                _ = shutdown.cancelled() => return,
-                _ = tokio::time::sleep(backoff) => {}
-            }
-            backoff = (backoff * 2).min(Duration::from_secs(30));
-        }
+        reconnecting_sse_loop(
+            self.http.clone(),
+            format!("{}/agent/events", self.base_url),
+            SseCredential::Refreshing(self.token.clone()),
+            "agent",
+            wakes,
+            shutdown,
+        )
+        .await;
     }
 
-    async fn wake_stream_once(
+    async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
-        wakes: &mpsc::Sender<()>,
-        shutdown: &CancellationToken,
-    ) -> Result<(), RuntimeClientError> {
-        let mut response = self
-            .http
-            .get(format!("{}/runtime/wake-stream", self.base_url))
+        path: &str,
+    ) -> Result<T, RuntimeClientError> {
+        self.http
+            .get(format!("{}{}", self.base_url, path))
             .bearer_auth(self.token())
+            .timeout(REQUEST_TIMEOUT)
             .send()
-            .await?
-            .error_for_status()?;
-        let _ = wakes.try_send(());
-        let mut decoder = SseDecoder::default();
-        loop {
-            let chunk = tokio::select! {
-                _ = shutdown.cancelled() => return Ok(()),
-                chunk = response.chunk() => chunk?,
-            };
-            let Some(chunk) = chunk else {
-                return Ok(());
-            };
-            for event in decoder.push(&chunk)? {
-                if event.event.as_deref() != Some("wake") {
-                    continue;
-                }
-                serde_json::from_str::<crate::protocol::WakeEvent>(&event.data)?;
-                let _ = wakes.try_send(());
-            }
-        }
+            .await
+            .and_then(reqwest::Response::error_for_status)?
+            .json()
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        request: &impl serde::Serialize,
+    ) -> Result<T, RuntimeClientError> {
+        self.http
+            .post(format!("{}{}", self.base_url, path))
+            .bearer_auth(self.token())
+            .json(request)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)?
+            .json()
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn post_empty(
+        &self,
+        path: &str,
+        request: &impl serde::Serialize,
+    ) -> Result<(), RuntimeClientError> {
+        self.http
+            .post(format!("{}{}", self.base_url, path))
+            .bearer_auth(self.token())
+            .json(request)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)?;
+        Ok(())
     }
 
     fn token(&self) -> String {
@@ -311,6 +289,79 @@ impl AgentClient {
             .read()
             .expect("Agent token lock poisoned")
             .clone()
+    }
+}
+
+async fn reconnecting_sse_loop(
+    http: reqwest::Client,
+    url: String,
+    credential: SseCredential,
+    event_name: &'static str,
+    invalidations: mpsc::Sender<()>,
+    shutdown: CancellationToken,
+) {
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        if shutdown.is_cancelled() || invalidations.is_closed() {
+            return;
+        }
+        let connected_at = Instant::now();
+        if let Err(error) = sse_once(
+            &http,
+            &url,
+            &credential.current(),
+            event_name,
+            &invalidations,
+            &shutdown,
+        )
+        .await
+        {
+            tracing::warn!(%error, %event_name, "Collaboration SSE disconnected");
+        }
+        if shutdown.is_cancelled() || invalidations.is_closed() {
+            return;
+        }
+        if connected_at.elapsed() >= Duration::from_secs(60) {
+            backoff = Duration::from_secs(1);
+        }
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(backoff) => {}
+        }
+        backoff = (backoff * 2).min(Duration::from_secs(30));
+    }
+}
+
+async fn sse_once(
+    http: &reqwest::Client,
+    url: &str,
+    token: &str,
+    event_name: &str,
+    invalidations: &mpsc::Sender<()>,
+    shutdown: &CancellationToken,
+) -> Result<(), RuntimeClientError> {
+    let mut response = http
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut decoder = SseDecoder::default();
+    loop {
+        let chunk = tokio::select! {
+            _ = shutdown.cancelled() => return Ok(()),
+            chunk = response.chunk() => chunk?,
+        };
+        let Some(chunk) = chunk else {
+            return Ok(());
+        };
+        for event in decoder.push(&chunk)? {
+            if event.event.as_deref() != Some(event_name) {
+                continue;
+            }
+            serde_json::from_str::<InvalidationEvent>(&event.data)?;
+            let _ = invalidations.try_send(());
+        }
     }
 }
 
@@ -324,24 +375,26 @@ fn retryable_finish_error(error: &reqwest::Error) -> bool {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeClientError {
-    #[error("collaboration Runtime request failed: {0}")]
+    #[error("Collaboration Runtime request failed: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("collaboration wake stream was invalid: {0}")]
+    #[error("Collaboration SSE was invalid: {0}")]
     Sse(#[from] SseParseError),
-    #[error("collaboration wake payload was invalid: {0}")]
+    #[error("Collaboration payload was invalid: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("Server returned a different RuntimeSession")]
+    SessionMismatch,
 }
 
 impl RuntimeClientError {
     pub fn is_terminal_identity_error(&self) -> bool {
-        matches!(
-            self,
-            Self::Http(error)
-                if matches!(
-                    error.status(),
-                    Some(reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::CONFLICT)
-                )
-        )
+        match self {
+            Self::SessionMismatch => true,
+            Self::Http(error) => matches!(
+                error.status(),
+                Some(reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::CONFLICT)
+            ),
+            Self::Sse(_) | Self::Json(_) => false,
+        }
     }
 
     pub fn is_transient(&self) -> bool {
@@ -351,7 +404,24 @@ impl RuntimeClientError {
                     || status == reqwest::StatusCode::REQUEST_TIMEOUT
                     || status == reqwest::StatusCode::TOO_MANY_REQUESTS
             }),
-            Self::Sse(_) | Self::Json(_) => false,
+            Self::Sse(_) | Self::Json(_) | Self::SessionMismatch => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use super::SseCredential;
+
+    #[test]
+    fn refreshing_sse_credential_reads_the_latest_agent_token() {
+        let token = Arc::new(RwLock::new("first".to_string()));
+        let credential = SseCredential::Refreshing(token.clone());
+        assert_eq!(credential.current(), "first");
+
+        *token.write().unwrap() = "second".to_string();
+        assert_eq!(credential.current(), "second");
     }
 }

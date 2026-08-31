@@ -26,7 +26,7 @@ pub struct HeldBinding {
     pub agent_id: String,
     pub run_id: String,
     pub room_id: String,
-    pub computer_generation: i64,
+    pub runtime_session_id: String,
     pub shown_peer_max: i64,
 }
 

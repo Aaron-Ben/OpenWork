@@ -1,11 +1,9 @@
 use std::collections::BTreeMap;
 
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
-use uuid::Uuid;
-
 use crate::protocol::{
-    COLLAB_PROTOCOL_VERSION, DeliveryRange, InboxResponse, MessageView, TriggerEnvelope,
+    COLLAB_PROTOCOL_VERSION, DeliveryRange, InboxResponse, MessageView, TriggerEnvelope, entity_id,
 };
+use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 use super::auth::AgentClaims;
 
@@ -19,28 +17,34 @@ impl Messages {
         Self { pool }
     }
 
-    pub(crate) async fn send_user(
-        &self,
+    pub(crate) async fn send_user_in(
+        transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
         body: &str,
     ) -> Result<MessageView, sqlx::Error> {
-        let message_id = format!("msg_{}", Uuid::new_v4().simple());
-        let mut transaction = self.pool.begin().await?;
+        if body.trim().is_empty()
+            || body.len() > crate::protocol::MESSAGE_BODY_MAX_BYTES
+            || body.as_bytes().contains(&0)
+        {
+            return Err(sqlx::Error::Protocol(
+                "INVALID_ARGUMENT: message body is invalid".to_string(),
+            ));
+        }
+        let message_id = entity_id("msg");
         let sequence = insert(
-            &mut transaction,
+            transaction,
             room_id,
-            "user",
+            "local-user",
             "normal",
             body,
             Some(&message_id),
         )
         .await?;
-        transaction.commit().await?;
         Ok(MessageView {
             id: message_id,
             room_id: room_id.to_string(),
             sequence,
-            author_id: "user".to_string(),
+            author_id: "local-user".to_string(),
             body: body.to_string(),
         })
     }
@@ -66,16 +70,16 @@ impl Messages {
             "SELECT rm.participant_id
              FROM collab_room_members rm
              JOIN collab_rooms r ON r.id = rm.room_id
-             JOIN collab_agents a ON a.id = rm.participant_id
+             JOIN collab_agent_profiles a ON a.agent_id = rm.participant_id
              JOIN collab_messages message
                ON message.id = $1 AND message.room_id = rm.room_id
-             WHERE rm.room_id = $2 AND rm.participant_id <> $3 AND a.enabled
+             WHERE rm.room_id = $2 AND rm.participant_id <> $3 AND a.archived_at IS NULL
                AND (
                    NOT rm.muted OR r.kind = 'direct' OR (
                        message.kind = 'normal'
                        AND message.body ~ (
-                           '(^|[^A-Za-z0-9_])@' || rm.participant_id ||
-                           '([^A-Za-z0-9_]|$)'
+                           '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                           '([^A-Za-z0-9_-]|$)'
                        )
                    )
                )
@@ -105,8 +109,8 @@ impl Messages {
                          AND mention.author_id <> $1
                          AND mention.kind = 'normal'
                          AND mention.body ~ (
-                             '(^|[^A-Za-z0-9_])@' || rm.participant_id ||
-                             '([^A-Za-z0-9_]|$)'
+                             '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                             '([^A-Za-z0-9_-]|$)'
                          )
                    )
                )
@@ -146,10 +150,9 @@ impl Messages {
         Ok(InboxResponse {
             trigger: Some(TriggerEnvelope {
                 protocol_version: COLLAB_PROTOCOL_VERSION,
-                dispatch_id: format!("run_{}", Uuid::new_v4().simple()),
+                dispatch_id: entity_id("run"),
                 agent_id: claims.sub.clone(),
-                computer_id: "local".to_string(),
-                computer_generation: claims.generation,
+                runtime_session_id: claims.runtime_session_id.clone(),
                 trigger: "message".to_string(),
                 deliveries: ranges
                     .into_iter()
@@ -193,7 +196,7 @@ async fn insert(
     let message_id = match message_id {
         Some(message_id) => message_id,
         None => {
-            generated = format!("msg_{}", Uuid::new_v4().simple());
+            generated = entity_id("msg");
             &generated
         }
     };

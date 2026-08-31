@@ -12,7 +12,7 @@ pub use error::{CommandError, CommandErrorCode};
 pub fn run() {
     load_development_env();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -34,7 +34,9 @@ pub fn run() {
             commands::collab::collab_status,
             commands::collab::collab_agent_list,
             commands::collab::collab_agent_create,
-            commands::collab::collab_agent_proactivity_set,
+            commands::collab::collab_agent_agenda_set,
+            commands::collab::collab_agent_archive,
+            commands::collab::collab_agent_restore,
             commands::collab::collab_room_list,
             commands::collab::collab_direct_room_create,
             commands::collab::collab_group_room_create,
@@ -81,8 +83,15 @@ pub fn run() {
             commands::runtime::runtime_trace_payload_get,
             commands::runtime::runtime_trace_compactions,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    let collab = app
+        .state::<collab_client::CollabDaemonClient>()
+        .inner()
+        .clone();
+    let exit_code = app.run_return(|_, _| {});
+    tauri::async_runtime::block_on(collab.shutdown());
+    std::process::exit(exit_code);
 }
 
 #[cfg(debug_assertions)]

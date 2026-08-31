@@ -1,9 +1,7 @@
+use crate::protocol::{WakeEvent, entity_id};
 use time::OffsetDateTime;
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
-
-use crate::protocol::WakeEvent;
 
 use super::{
     coordination::Coordination,
@@ -78,10 +76,6 @@ impl Scheduler {
         self.redis.subscribe_wakes()
     }
 
-    pub fn redis_connected(&self) -> bool {
-        self.redis.is_connected()
-    }
-
     async fn schedule(&self, event: MessageNewEvent) {
         match self.redis.claim_message(&event.message_id).await {
             Ok(true) => {}
@@ -103,7 +97,7 @@ impl Scheduler {
             }
         };
         for agent_id in recipients {
-            if event.author_id != "user" {
+            if event.author_id != "local-user" {
                 match self.redis.allow_agent_authored_wake(&agent_id).await {
                     Ok(true) => {}
                     Ok(false) => continue,
@@ -113,7 +107,7 @@ impl Scheduler {
                 }
             }
             let wake = WakeEvent {
-                id: Uuid::new_v4().to_string(),
+                id: entity_id("event"),
                 agent_id,
                 message_id: event.message_id.clone(),
                 room_id: event.room_id.clone(),

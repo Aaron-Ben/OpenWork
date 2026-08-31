@@ -1,11 +1,9 @@
 use std::fmt::Write as _;
 
+use crate::protocol::{TriagePayload, TriageReportRequest, TriageVerdict, entity_id};
 use sqlx::{FromRow, PgPool};
-use uuid::Uuid;
 
-use crate::protocol::{TriagePayload, TriageReportRequest, TriageVerdict};
-
-use super::{auth::AgentClaims, computers::authorize_agent_transaction};
+use super::auth::{AgentClaims, authorize_agent_transaction};
 
 #[derive(Clone)]
 pub struct InboxTriage {
@@ -22,7 +20,7 @@ impl InboxTriage {
         claims: &AgentClaims,
         run_id: &str,
     ) -> Result<TriagePayload, sqlx::Error> {
-        let (system_prompt, role, bio, model) = self.agent_profile(claims).await?;
+        let (persona, role, model) = self.agent_profile(claims).await?;
         let context = self.context(claims, run_id).await?;
         if context
             .unread
@@ -59,10 +57,9 @@ impl InboxTriage {
             });
         }
         let mut input = format!(
-            "Agent persona:\nrole: {}\nbio: {}\nsystem prompt: {}\n",
+            "Agent persona:\nrole: {}\npersona: {}\n",
             role.as_deref().unwrap_or("unspecified"),
-            bio.as_deref().unwrap_or("unspecified"),
-            system_prompt,
+            persona,
         );
         if !context.recent.is_empty() {
             input.push_str("\nRecent posted context:\n");
@@ -96,17 +93,14 @@ impl InboxTriage {
     async fn agent_profile(
         &self,
         claims: &AgentClaims,
-    ) -> Result<(String, Option<String>, Option<String>, String), sqlx::Error> {
+    ) -> Result<(String, Option<String>, String), sqlx::Error> {
         sqlx::query_as(
-            "SELECT a.system_prompt, a.role, a.bio,
-                    COALESCE(a.fast_model, a.model) AS fast_model
-             FROM collab_agents a
-             JOIN collab_computers c ON c.id = a.computer_id
-             WHERE a.id = $1 AND a.enabled AND c.daemon_generation = $2
-               AND c.status = 'online'",
+            "SELECT profile.persona, profile.role, config.triage_model_id
+             FROM collab_agent_profiles profile
+             JOIN collab_agent_runtime_configs config ON config.agent_id = profile.agent_id
+             WHERE profile.agent_id = $1 AND profile.archived_at IS NULL",
         )
         .bind(&claims.sub)
-        .bind(claims.generation)
         .fetch_one(&self.pool)
         .await
     }
@@ -127,13 +121,13 @@ impl InboxTriage {
              JOIN collab_rooms room ON room.id = m.room_id
              JOIN collab_participants author ON author.id = m.author_id
              WHERE r.id = $1 AND r.agent_id = $2
-               AND r.computer_generation = $3 AND r.status = 'running'
+               AND r.runtime_session_id = $3 AND r.status = 'running'
                AND m.author_id <> $2
              ORDER BY m.room_id, m.sequence",
         )
         .bind(run_id)
         .bind(&claims.sub)
-        .bind(claims.generation)
+        .bind(&claims.runtime_session_id)
         .fetch_all(&self.pool)
         .await?;
         if unread.is_empty() {
@@ -162,12 +156,12 @@ impl InboxTriage {
              JOIN collab_rooms room ON room.id = message.room_id
              JOIN collab_participants author ON author.id = message.author_id
              WHERE run.id = $1 AND run.agent_id = $2
-               AND run.computer_generation = $3 AND run.status = 'running'
+               AND run.runtime_session_id = $3 AND run.status = 'running'
              ORDER BY message.room_id, message.sequence",
         )
         .bind(run_id)
         .bind(&claims.sub)
-        .bind(claims.generation)
+        .bind(&claims.runtime_session_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(TriageContext { unread, recent })
@@ -204,46 +198,52 @@ impl InboxTriage {
                 "CONFLICT: triage verdict is immutable once recorded",
             ));
         }
-        let deliveries: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT d.room_id, d.up_to_seq
+        let deliveries: Vec<(String, i64, String, String)> = sqlx::query_as(
+            "SELECT d.room_id, d.up_to_seq, r.engine_id, r.triage_model_id
              FROM collab_run_deliveries d
              JOIN collab_runs r ON r.id = d.run_id
              WHERE d.run_id = $1 AND r.agent_id = $2
-               AND r.computer_generation = $3 AND r.status = 'running'
+               AND r.runtime_session_id = $3 AND r.status = 'running'
              FOR UPDATE OF d",
         )
         .bind(&request.run_id)
         .bind(&claims.sub)
-        .bind(claims.generation)
+        .bind(&claims.runtime_session_id)
         .fetch_all(&mut *transaction)
         .await?;
         if deliveries.is_empty() {
             return Err(sqlx::Error::RowNotFound);
         }
-        for (room_id, up_to_seq) in deliveries {
+        for (room_id, up_to_seq, engine_id, model_id) in deliveries {
             sqlx::query(
                 "INSERT INTO collab_triages (
-                    id, run_id, agent_id, computer_id, room_id, up_to_seq,
-                    actionable, source, reason, prompt_note, engine_id, model,
+                    id, run_id, agent_id, runtime_session_id, room_id, up_to_seq,
+                    actionable, source, reason, prompt_note, engine_id, model_id,
                     input_tokens, output_tokens, latency_ms
                  )
-                 SELECT $1, $2, $3, 'local', $4, $5, $6, $7,
-                        $8, $9, 'opencode', $10, $11, $12, $13
+                 SELECT $1, $2, $3, $4, $5, $6, $7, $8,
+                        $9, $10, $11, $12, $13, $14, $15
                  WHERE NOT EXISTS (
                     SELECT 1 FROM collab_triages
-                    WHERE run_id = $2 AND room_id = $4
+                    WHERE run_id = $2 AND room_id = $5
                  )",
             )
-            .bind(format!("triage_{}", Uuid::new_v4().simple()))
+            .bind(entity_id("triage"))
             .bind(&request.run_id)
             .bind(&claims.sub)
+            .bind(&claims.runtime_session_id)
             .bind(&room_id)
             .bind(up_to_seq)
             .bind(request.verdict.actionable)
             .bind(&request.verdict.source)
             .bind(&request.verdict.reason)
             .bind(&request.verdict.prompt_note)
-            .bind(&request.model)
+            .bind(&engine_id)
+            .bind(if request.model.trim().is_empty() {
+                &model_id
+            } else {
+                &request.model
+            })
             .bind(request.input_tokens)
             .bind(request.output_tokens)
             .bind(request.latency_ms)
