@@ -8,12 +8,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
     AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentTokenResponse,
-    ComputerHeartbeatRequest, DesiredAgents, EngineInventoryReport, FinishRunRequest,
-    InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
+    AppendRunEventsRequest, ComputerHeartbeatRequest, DesiredAgents, EngineInventoryReport,
+    FinishRunRequest, InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
     sse::reconnecting_invalidation_loop,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const OBSERVABILITY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct ComputerClient {
@@ -222,6 +223,22 @@ impl AgentClient {
             .post(format!("{}/agent/runs/{run_id}/heartbeat", self.base_url))
             .bearer_auth(self.token())
             .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)?;
+        Ok(())
+    }
+
+    pub async fn append_run_events(
+        &self,
+        run_id: &str,
+        request: &AppendRunEventsRequest,
+    ) -> Result<(), RuntimeClientError> {
+        self.http
+            .post(format!("{}/agent/runs/{run_id}/events", self.base_url))
+            .bearer_auth(self.token())
+            .json(request)
+            .timeout(OBSERVABILITY_TIMEOUT)
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)?;

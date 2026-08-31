@@ -3,9 +3,9 @@
 use openwork_collab::{
     protocol::{
         AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
-        AgentTokenResponse, BoardView, DesiredAgents, DesktopCommand, DesktopCommandRequest,
-        DesktopCommandResult, FinishRunRequest, InboxResponse, OpenRunRequest, RunView, entity_id,
-        request_id,
+        AgentTokenResponse, AppendRunEventsRequest, BoardView, DesiredAgents, DesktopCommand,
+        DesktopCommandRequest, DesktopCommandResult, FinishRunRequest, InboxResponse,
+        OpenRunRequest, RunEventInput, RunView, entity_id, request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -306,6 +306,26 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
         .unwrap();
     assert!(run.id.starts_with("run-"));
 
+    let started_event = AppendRunEventsRequest {
+        events: vec![RunEventInput {
+            id: entity_id("event"),
+            kind: "engine.started".to_string(),
+            data: serde_json::json!({"configuredModelId": "local/main"}),
+        }],
+    };
+    for _ in 0..2 {
+        fixture
+            .http
+            .post(format!("{}/agent/runs/{}/events", fixture.base_url, run.id))
+            .bearer_auth(&token.token)
+            .json(&started_event)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+
     let command_request = AgentCommandRequest {
         request_id: request_id(),
         command: AgentCommand::Reply {
@@ -348,6 +368,32 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
 
     fixture
         .http
+        .post(format!("{}/agent/runs/{}/events", fixture.base_url, run.id))
+        .bearer_auth(&token.token)
+        .json(&AppendRunEventsRequest {
+            events: vec![RunEventInput {
+                id: entity_id("event"),
+                kind: "engine.completed".to_string(),
+                data: serde_json::json!({
+                    "observedModelId": "deepseek/v4-flash",
+                    "durationMs": 1250,
+                    "usage": {
+                        "inputTokens": 10,
+                        "cachedInputTokens": 0,
+                        "cacheCreationInputTokens": 2,
+                        "outputTokens": 5
+                    }
+                }),
+            }],
+        })
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    fixture
+        .http
         .post(format!("{}/agent/runs/{}/finish", fixture.base_url, run.id))
         .bearer_auth(&token.token)
         .json(&FinishRunRequest {
@@ -364,6 +410,70 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
         .unwrap()
         .error_for_status()
         .unwrap();
+
+    let runs = fixture
+        .desktop(&DesktopCommandRequest {
+            request_id: None,
+            command: DesktopCommand::ListRuns {
+                agent_id: Some(agent.id.clone()),
+                status: Some("completed".to_string()),
+                limit: 10,
+            },
+        })
+        .await
+        .error_for_status()
+        .unwrap()
+        .json::<DesktopCommandResult>()
+        .await
+        .unwrap();
+    let DesktopCommandResult::Runs { runs } = runs else {
+        panic!("run list returned the wrong result")
+    };
+    assert_eq!(runs.len(), 1);
+    assert_eq!(
+        runs[0].observed_model_id.as_deref(),
+        Some("deepseek/v4-flash")
+    );
+    assert_eq!(runs[0].cache_creation_input_tokens, Some(2));
+    assert_eq!(runs[0].tool_calls, 1);
+    assert_eq!(runs[0].stage, "run.completed");
+
+    let trace = fixture
+        .desktop(&DesktopCommandRequest {
+            request_id: None,
+            command: DesktopCommand::GetRunTrace {
+                run_id: run.id.clone(),
+            },
+        })
+        .await
+        .error_for_status()
+        .unwrap()
+        .json::<DesktopCommandResult>()
+        .await
+        .unwrap();
+    let DesktopCommandResult::RunTrace(trace) = trace else {
+        panic!("run trace returned the wrong result")
+    };
+    let kinds = trace
+        .events
+        .iter()
+        .map(|event| event.kind.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == "engine.started")
+            .count(),
+        1
+    );
+    for expected in [
+        "run.opened",
+        "engine.completed",
+        "command.completed",
+        "run.completed",
+    ] {
+        assert!(kinds.contains(&expected), "trace is missing {expected}");
+    }
 
     let board = fixture
         .desktop(&DesktopCommandRequest {

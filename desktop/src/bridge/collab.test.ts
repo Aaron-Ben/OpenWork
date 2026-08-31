@@ -118,4 +118,20 @@ describe('R3 collaboration command bridge', () => {
       cardId: 'card-1',
     })
   })
+
+  it('maps run observability filters and trace reads to dedicated commands', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+
+    await collabCommands.listRuns({ agentId: 'helper', status: 'failed', limit: 25 })
+    await collabCommands.getRunTrace('run-123')
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'collab_run_list', {
+      agentId: 'helper',
+      status: 'failed',
+      limit: 25,
+    })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'collab_run_trace', {
+      runId: 'run-123',
+    })
+  })
 })

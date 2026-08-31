@@ -19,7 +19,6 @@ export function BoardPage() {
   const { t } = useTranslation()
   const boards = useBoardStore((state) => state.boards)
   const agents = useBoardStore((state) => state.agents)
-  const runs = useBoardStore((state) => state.runs)
   const error = useBoardStore((state) => state.error)
   const fetchAll = useBoardStore((state) => state.fetchAll)
   const actions = {
@@ -188,15 +187,6 @@ export function BoardPage() {
             <ClipboardList size={28} /><span>{t('collab.boards.empty')}</span>
           </div>
         ) : null}
-        <section className="grid gap-2 border-t border-line pt-5">
-          <h2 className="font-serif text-lg font-semibold">{t('collab.boards.recentRuns')}</h2>
-          {runs.slice(0, 20).map((run) => (
-            <article key={run.id} className="rounded-xl border border-line px-3 py-2 text-sm">
-              <strong>@{run.agentId}</strong> · {run.engineId} · {run.trigger} · {run.status}{run.outcome ? ` · ${run.outcome}` : ''}
-              {run.triggerReason ? <p className="mt-1 text-xs text-ink-faint">{run.triggerReason}</p> : null}
-            </article>
-          ))}
-        </section>
       </div>
       {creating ? (
         <div className="absolute inset-0 z-30 grid place-items-center bg-black/30 p-6" role="dialog" aria-modal="true">

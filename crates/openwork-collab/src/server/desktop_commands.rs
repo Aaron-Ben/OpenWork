@@ -12,8 +12,8 @@ use super::{
     board::{Board, BoardOperationError},
     inventory::EngineInventory,
     messages::Messages,
+    observability::Observability,
     rooms::Rooms,
-    runs::Runs,
     runtime_session::RuntimeSession,
     scheduler::Scheduler,
 };
@@ -26,7 +26,7 @@ pub(crate) struct DesktopCommands {
     inventory: EngineInventory,
     messages: Messages,
     rooms: Rooms,
-    runs: Runs,
+    observability: Observability,
     scheduler: Scheduler,
     session: RuntimeSession,
 }
@@ -52,7 +52,7 @@ impl DesktopCommands {
         inventory: EngineInventory,
         messages: Messages,
         rooms: Rooms,
-        runs: Runs,
+        observability: Observability,
         scheduler: Scheduler,
         session: RuntimeSession,
     ) -> Self {
@@ -63,7 +63,7 @@ impl DesktopCommands {
             inventory,
             messages,
             rooms,
-            runs,
+            observability,
             scheduler,
             session,
         }
@@ -129,9 +129,19 @@ impl DesktopCommands {
             DesktopCommand::ListBoards => Ok(DesktopCommandResult::Boards {
                 boards: self.board.list().await?,
             }),
-            DesktopCommand::ListRuns { limit } => Ok(DesktopCommandResult::Runs {
-                runs: self.runs.list(limit).await?,
+            DesktopCommand::ListRuns {
+                agent_id,
+                status,
+                limit,
+            } => Ok(DesktopCommandResult::Runs {
+                runs: self
+                    .observability
+                    .list_runs(agent_id.as_deref(), status.as_deref(), limit)
+                    .await?,
             }),
+            DesktopCommand::GetRunTrace { run_id } => Ok(DesktopCommandResult::RunTrace(Box::new(
+                self.observability.trace(&run_id).await?,
+            ))),
             _ => Err(protocol_error(
                 "INVALID_ARGUMENT: mutating Desktop command reached read dispatcher",
             )),

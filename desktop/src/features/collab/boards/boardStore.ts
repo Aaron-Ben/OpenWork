@@ -4,14 +4,12 @@ import {
   collabCommands,
   type CollabAgent,
   type CollabBoard,
-  type CollabRun,
 } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
 
 interface BoardStoreState {
   boards: CollabBoard[]
   agents: CollabAgent[]
-  runs: CollabRun[]
   loading: boolean
   error: string | null
   fetchAll: () => Promise<void>
@@ -29,18 +27,16 @@ interface BoardStoreState {
 export const useBoardStore = create<BoardStoreState>((set, get) => ({
   boards: [],
   agents: [],
-  runs: [],
   loading: false,
   error: null,
   fetchAll: async () => {
     set({ loading: true, error: null })
     try {
-      const [boards, agents, runs] = await Promise.all([
+      const [boards, agents] = await Promise.all([
         collabCommands.listBoards(),
         collabCommands.listAgents(),
-        collabCommands.listRuns(),
       ])
-      set({ boards, agents, runs, loading: false })
+      set({ boards, agents, loading: false })
     } catch (error) {
       set({ error: resolveErrorMessage(error), loading: false })
     }

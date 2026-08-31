@@ -261,7 +261,7 @@ export const zhTW = {
   },
   collab: {
     switchTo: '協作模式', backToWorkbench: '返回工作臺', brand: '協作',
-    nav: { rooms: '房間', agents: '同事', boards: '看板' },
+    nav: { rooms: '房間', agents: '同事', boards: '看板', observability: '觀測' },
     rooms: {
       title: '房間', empty: '建立同事後會建立一對一房間', loading: '正在載入…',
       messagePlaceholder: '給 OpenCode 同事發訊息', send: '發送', noMessages: '還沒有訊息', user: '你',
@@ -280,13 +280,31 @@ export const zhTW = {
       runtimeReady: '本機 Runtime 已就緒', runtimeStarting: '本機 Runtime 正在啟動',
     },
     boards: {
-      title: '看板與執行', create: '建立看板', name: '看板名稱', description: '描述（選填）',
-      empty: '還沒有看板', assignedTo: '負責人', unassigned: '未分配', localUser: '你（local-user）', recentRuns: '最近執行',
+      title: '看板', create: '建立看板', name: '看板名稱', description: '描述（選填）',
+      empty: '還沒有看板', assignedTo: '負責人', unassigned: '未分配', localUser: '你（local-user）',
       addColumn: '新增欄', columnName: '欄名稱', terminal: '終態欄', terminalPrompt: '這個欄是否代表工作已完成？',
       editBoard: '編輯看板', deleteBoard: '刪除看板', editColumn: '編輯欄', deleteColumn: '刪除欄', deleteCard: '刪除卡片',
       moveLeft: '向左移動', moveRight: '向右移動',
       deleteBoardPrompt: '只有沒有卡片的看板可以刪除。確認刪除？',
       deleteColumnPrompt: '只有空欄可以刪除。確認刪除？', deleteCardPrompt: '確認永久刪除這張卡片？',
+    },
+    observability: {
+      title: '執行觀測', subtitle: '每個 Agent Turn 的執行軌跡', refresh: '重新整理',
+      agentFilter: '同事', statusFilter: '狀態', allAgents: '全部同事', allStatuses: '全部狀態',
+      loading: '正在載入…', empty: '還沒有執行記錄', selectRun: '選擇一次執行查看軌跡',
+      duration: '耗時', tokens: 'Token', tools: '命令', inbox: '收件', events: '事件', trigger: '觸發方式',
+      engine: 'Engine', configuredModel: '設定模型', observedModel: '實際模型', startedAt: '開始時間',
+      timeline: '執行時間線', noEvents: '沒有事件', rawData: '結構化資料', unknownError: '未知錯誤',
+      milliseconds: '{{count}} ms',
+      status: { running: '執行中', completed: '已完成', failed: '失敗', cancelled: '已取消', interrupted: '已中斷' },
+      event: {
+        run_opened: 'Run 已開啟', triage_started: '開始判斷是否需要回應',
+        triageActionable: 'Triage：需要回應', triageIgnored: 'Triage：無需回應',
+        engine_started: 'Engine Turn 開始', engine_completed: 'Engine Turn 完成',
+        engine_failed: 'Engine Turn 失敗', engine_cancelled: 'Engine Turn 已取消',
+        commandCompleted: '命令完成：{{command}}', run_completed: 'Run 已完成',
+        run_failed: 'Run 失敗', run_cancelled: 'Run 已取消', run_interrupted: 'Run 已中斷',
+      },
     },
   },
   tool: {

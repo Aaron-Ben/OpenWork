@@ -44,6 +44,7 @@ describe('i18n', () => {
       'collab.nav.rooms',
       'collab.nav.agents',
       'collab.nav.boards',
+      'collab.nav.observability',
       'collab.rooms.title',
       'collab.rooms.messagePlaceholder',
       'collab.rooms.createGroup',
@@ -53,7 +54,8 @@ describe('i18n', () => {
       'collab.agents.mainModel',
       'collab.agents.persona',
       'collab.boards.title',
-      'collab.boards.recentRuns',
+      'collab.observability.title',
+      'collab.observability.timeline',
     ] as const
     for (const language of supportedLanguages) {
       const translate = i18n.getFixedT(language)

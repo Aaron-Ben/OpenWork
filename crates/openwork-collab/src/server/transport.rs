@@ -16,16 +16,17 @@ use tokio::sync::broadcast;
 use crate::protocol::{
     AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentCommandEffect,
     AgentCommandRequest, AgentCommandResponse, AgentTokenResponse, ApiError,
-    ComputerHeartbeatRequest, DesiredAgents, DesktopCommandRequest, DesktopCommandResult,
-    EngineInventoryReport, FinishRunRequest, InboxResponse, InvalidationEvent, InvalidationKind,
-    OpenRunRequest, RunView, TriagePayload, TriageReportRequest, entity_id,
+    AppendRunEventsRequest, ComputerHeartbeatRequest, DesiredAgents, DesktopCommandRequest,
+    DesktopCommandResult, EngineInventoryReport, FinishRunRequest, InboxResponse,
+    InvalidationEvent, InvalidationKind, OpenRunRequest, RunView, TriagePayload,
+    TriageReportRequest, entity_id,
 };
 
 use super::{
     agenda::Agenda, agent_commands::AgentCommands, agents::Agents, auth::AgentClaims,
     coordination::Coordination, desktop_commands::DesktopCommands, inventory::EngineInventory,
-    messages::Messages, runs::Runs, runtime_session::RuntimeSession, scheduler::Scheduler,
-    triage::InboxTriage,
+    messages::Messages, observability::Observability, runs::Runs, runtime_session::RuntimeSession,
+    scheduler::Scheduler, triage::InboxTriage,
 };
 
 #[derive(Clone)]
@@ -33,6 +34,7 @@ pub(crate) struct TransportState {
     pub(crate) agents: Agents,
     pub(crate) messages: Messages,
     pub(crate) runs: Runs,
+    pub(crate) observability: Observability,
     pub(crate) scheduler: Scheduler,
     pub(crate) coordination: Coordination,
     pub(crate) triage: InboxTriage,
@@ -62,6 +64,7 @@ pub(crate) fn router(state: TransportState) -> Router {
         .route("/agenda/decision", post(agenda_decision))
         .route("/runs", post(open_run))
         .route("/runs/{run_id}/heartbeat", post(heartbeat_run))
+        .route("/runs/{run_id}/events", post(append_run_events))
         .route("/runs/{run_id}/finish", post(finish_run))
         .route("/commands", post(agent_command));
     Router::new()
@@ -327,6 +330,20 @@ async fn finish_run(
 ) -> Result<Json<RunView>, TransportError> {
     let claims = agent_claims(&state, &headers).await?;
     Ok(Json(state.runs.finish(&claims, &run_id, request).await?))
+}
+
+async fn append_run_events(
+    State(state): State<TransportState>,
+    Path(run_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<AppendRunEventsRequest>,
+) -> Result<StatusCode, TransportError> {
+    let claims = agent_claims(&state, &headers).await?;
+    state
+        .observability
+        .append(&claims, &run_id, request)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn heartbeat_run(

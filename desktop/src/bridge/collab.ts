@@ -107,13 +107,46 @@ export interface CollabRun {
   status: string
   engineId: string
   mainModelId: string
+  observedModelId: string | null
   outcome: string | null
   roomId: string | null
   focusCardId: string | null
   triggerReason: string | null
   errorCode: string | null
   errorMessage: string | null
+  stage: string
   startedAt: string
+  heartbeatAt: string
+  endedAt: string | null
+  durationMs: number
+  inputTokens: number | null
+  cachedInputTokens: number | null
+  cacheCreationInputTokens: number | null
+  outputTokens: number | null
+  rateLimitPercent: number | null
+  toolCalls: number
+  eventCount: number
+  inboxMessageCount: number
+}
+
+export interface CollabRunEvent {
+  id: string
+  source: 'server' | 'runner' | 'engine'
+  kind: string
+  level: 'info' | 'warning' | 'error'
+  data: Record<string, unknown>
+  createdAt: string
+}
+
+export interface CollabRunTrace {
+  run: CollabRun
+  events: CollabRunEvent[]
+}
+
+export interface CollabRunFilters {
+  agentId?: string | null
+  status?: string | null
+  limit?: number
 }
 
 export const collabCommands = {
@@ -194,5 +227,8 @@ export const collabCommands = {
     invoke('collab_card_assign', { cardId, assigneeId }),
   deleteCard: (cardId: string): Promise<string> =>
     invoke('collab_card_delete', { cardId }),
-  listRuns: (limit = 50): Promise<CollabRun[]> => invoke('collab_run_list', { limit }),
+  listRuns: ({ agentId = null, status = null, limit = 100 }: CollabRunFilters = {}): Promise<CollabRun[]> =>
+    invoke('collab_run_list', { agentId, status, limit }),
+  getRunTrace: (runId: string): Promise<CollabRunTrace> =>
+    invoke('collab_run_trace', { runId }),
 }

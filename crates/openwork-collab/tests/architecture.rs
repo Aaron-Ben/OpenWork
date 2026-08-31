@@ -92,12 +92,48 @@ fn business_modules_own_persistence_without_a_universal_store() {
             "AgentCommands still owns business persistence: {forbidden}"
         );
     }
-    for owner in ["command_requests.rs", "messages.rs", "rooms.rs", "runs.rs"] {
+    for owner in [
+        "command_requests.rs",
+        "messages.rs",
+        "observability.rs",
+        "rooms.rs",
+        "runs.rs",
+    ] {
         assert!(
             server_root.join(owner).exists(),
             "SQL owner is missing: {owner}"
         );
     }
+}
+
+#[test]
+fn run_observability_is_engine_neutral_and_separate_from_run_correctness() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let observability = std::fs::read_to_string(crate_root.join("src/server/observability.rs"))
+        .expect("observability module exists");
+    let runs = std::fs::read_to_string(crate_root.join("src/server/runs.rs")).unwrap();
+    let protocol = source_text(&crate_root.join("src/protocol"));
+
+    for required in [
+        "RunTraceView",
+        "RunEventView",
+        "engine.started",
+        "engine.completed",
+        "command.completed",
+    ] {
+        assert!(
+            observability.contains(required) || protocol.contains(required),
+            "run observability is missing {required}"
+        );
+    }
+    assert!(!runs.contains("RunSummaryView"));
+    assert!(
+        !observability
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .contains("opencode.")
+    );
 }
 
 #[test]

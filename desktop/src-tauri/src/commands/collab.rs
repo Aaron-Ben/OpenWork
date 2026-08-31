@@ -1,6 +1,6 @@
 use openwork_collab::protocol::{
     AgentView, BoardView, CardView, DesktopCommand, DesktopCommandResult, MessageView,
-    ParticipantView, RoomView, RunSummaryView, RuntimeStatusView,
+    ParticipantView, RoomView, RunSummaryView, RunTraceView, RuntimeStatusView,
 };
 use serde::Deserialize;
 
@@ -400,10 +400,30 @@ pub async fn collab_card_delete(
 #[tauri::command]
 pub async fn collab_run_list(
     client: tauri::State<'_, CollabDaemonClient>,
+    agent_id: Option<String>,
+    status: Option<String>,
     limit: u32,
 ) -> Result<Vec<RunSummaryView>, CommandError> {
-    match client.call(DesktopCommand::ListRuns { limit }).await? {
+    match client
+        .call(DesktopCommand::ListRuns {
+            agent_id,
+            status,
+            limit,
+        })
+        .await?
+    {
         DesktopCommandResult::Runs { runs } => Ok(runs),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_run_trace(
+    client: tauri::State<'_, CollabDaemonClient>,
+    run_id: String,
+) -> Result<RunTraceView, CommandError> {
+    match client.call(DesktopCommand::GetRunTrace { run_id }).await? {
+        DesktopCommandResult::RunTrace(trace) => Ok(*trace),
         response => Err(unexpected(response)),
     }
 }

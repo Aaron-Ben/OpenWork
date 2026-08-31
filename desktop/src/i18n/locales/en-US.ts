@@ -266,7 +266,7 @@ export const enUS = {
   },
   collab: {
     switchTo: 'Collaboration', backToWorkbench: 'Back to Workbench', brand: 'Collab',
-    nav: { rooms: 'Rooms', agents: 'Teammates', boards: 'Boards' },
+    nav: { rooms: 'Rooms', agents: 'Teammates', boards: 'Boards', observability: 'Observe' },
     rooms: {
       title: 'Rooms', empty: 'Create a teammate to start a direct room', loading: 'Loading…',
       messagePlaceholder: 'Message your OpenCode teammate', send: 'Send', noMessages: 'No messages yet', user: 'You',
@@ -285,13 +285,31 @@ export const enUS = {
       runtimeReady: 'Local Runtime ready', runtimeStarting: 'Local Runtime starting',
     },
     boards: {
-      title: 'Boards and runs', create: 'Create board', name: 'Board name', description: 'Description (optional)',
-      empty: 'No boards yet', assignedTo: 'Assigned to', unassigned: 'Unassigned', localUser: 'You (local-user)', recentRuns: 'Recent runs',
+      title: 'Boards', create: 'Create board', name: 'Board name', description: 'Description (optional)',
+      empty: 'No boards yet', assignedTo: 'Assigned to', unassigned: 'Unassigned', localUser: 'You (local-user)',
       addColumn: 'Add column', columnName: 'Column name', terminal: 'Terminal column', terminalPrompt: 'Does this column mean the work is finished?',
       editBoard: 'Edit board', deleteBoard: 'Delete board', editColumn: 'Edit column', deleteColumn: 'Delete column', deleteCard: 'Delete card',
       moveLeft: 'Move left', moveRight: 'Move right',
       deleteBoardPrompt: 'Only a board with no cards can be deleted. Delete it?',
       deleteColumnPrompt: 'Only an empty column can be deleted. Delete it?', deleteCardPrompt: 'Permanently delete this card?',
+    },
+    observability: {
+      title: 'Run observability', subtitle: 'Execution traces for every Agent Turn', refresh: 'Refresh',
+      agentFilter: 'Teammate', statusFilter: 'Status', allAgents: 'All teammates', allStatuses: 'All statuses',
+      loading: 'Loading…', empty: 'No runs yet', selectRun: 'Select a run to inspect its trace',
+      duration: 'Duration', tokens: 'Tokens', tools: 'Commands', inbox: 'Inbox', events: 'Events', trigger: 'Trigger',
+      engine: 'Engine', configuredModel: 'Configured model', observedModel: 'Observed model', startedAt: 'Started',
+      timeline: 'Execution timeline', noEvents: 'No events', rawData: 'Structured data', unknownError: 'Unknown error',
+      milliseconds: '{{count}} ms',
+      status: { running: 'Running', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' },
+      event: {
+        run_opened: 'Run opened', triage_started: 'Response triage started',
+        triageActionable: 'Triage: response needed', triageIgnored: 'Triage: no response needed',
+        engine_started: 'Engine Turn started', engine_completed: 'Engine Turn completed',
+        engine_failed: 'Engine Turn failed', engine_cancelled: 'Engine Turn cancelled',
+        commandCompleted: 'Command completed: {{command}}', run_completed: 'Run completed',
+        run_failed: 'Run failed', run_cancelled: 'Run cancelled', run_interrupted: 'Run interrupted',
+      },
     },
   },
   tool: {

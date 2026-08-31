@@ -8,6 +8,7 @@ import { useAgentStore } from '@/features/collab/agents/agentStore'
 import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
 import { CollabRail } from '@/features/collab/components/CollabRail'
 import { MessagePane } from '@/features/collab/rooms/MessagePane'
+import { ObservabilityPage } from '@/features/collab/observability/ObservabilityPage'
 import { RoomList } from '@/features/collab/rooms/RoomList'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
 import { useCollabRuntimeStore } from '@/features/collab/runtimeStore'
@@ -61,7 +62,13 @@ export function CollabShell() {
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
           )}
         </>
-      ) : view === 'agents' ? <AgentManager /> : <BoardPage />}
+      ) : view === 'agents' ? (
+        <AgentManager />
+      ) : view === 'boards' ? (
+        <BoardPage />
+      ) : (
+        <ObservabilityPage />
+      )}
     </main>
   )
 }

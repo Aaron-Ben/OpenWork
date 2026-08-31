@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgendaDecisionRequest, AgentAssignment, ClimateView, FinishRunRequest, MessageView,
-    OpenRunRequest, TriageReportRequest,
+    AgendaDecisionRequest, AgentAssignment, AppendRunEventsRequest, ClimateView, FinishRunRequest,
+    MessageView, OpenRunRequest, RunEventInput, TriageReportRequest, entity_id,
 };
 
 use super::{
@@ -198,6 +198,12 @@ impl AgentRunner {
         self.quiet_since = Instant::now();
         let run = self.client.open_run(&OpenRunRequest { trigger }).await?;
         let _run_heartbeat = RunHeartbeat::start(self.client.clone(), run.id.clone());
+        self.report_run_event(
+            &run.id,
+            "triage.started",
+            serde_json::json!({"configuredModelId": self.assignment.triage_model_id}),
+        )
+        .await;
         let payload = match self.client.triage_payload(&run.id).await {
             Ok(payload) => payload,
             Err(error) => {
@@ -331,7 +337,15 @@ impl AgentRunner {
         prompt: String,
         cancellation: CancellationToken,
     ) -> Result<(), RunnerError> {
+        self.report_run_event(
+            &run_id,
+            "engine.started",
+            serde_json::json!({"configuredModelId": self.assignment.main_model_id}),
+        )
+        .await;
+        let turn_started = Instant::now();
         let result = self.run_main_turn(prompt, cancellation).await;
+        let duration_ms = turn_started.elapsed().as_millis() as i64;
         if let Err(error) = &result
             && error.is_rate_limited()
         {
@@ -344,6 +358,22 @@ impl AgentRunner {
         }
         match result {
             Ok(result) => {
+                self.report_run_event(
+                    &run_id,
+                    "engine.completed",
+                    serde_json::json!({
+                        "observedModelId": result.model,
+                        "durationMs": duration_ms,
+                        "responseBytes": result.text.len(),
+                        "usage": {
+                            "inputTokens": result.usage.input_tokens,
+                            "cachedInputTokens": result.usage.cached_input_tokens,
+                            "cacheCreationInputTokens": result.usage.cache_creation_input_tokens,
+                            "outputTokens": result.usage.output_tokens,
+                        }
+                    }),
+                )
+                .await;
                 self.finish_or_queue(
                     run_id.clone(),
                     FinishRunRequest {
@@ -361,6 +391,27 @@ impl AgentRunner {
             Err(error) => {
                 let cancelled = matches!(error, EngineError::Cancelled);
                 let rate_limited = error.is_rate_limited();
+                let error_code = if rate_limited {
+                    "ENGINE_RATE_LIMITED"
+                } else {
+                    "ENGINE_ERROR"
+                };
+                self.report_run_event(
+                    &run_id,
+                    if cancelled {
+                        "engine.cancelled"
+                    } else {
+                        "engine.failed"
+                    },
+                    serde_json::json!({
+                        "durationMs": duration_ms,
+                        "errorCode": error_code,
+                        "errorMessage": error.to_string(),
+                        "rateLimited": rate_limited,
+                        "retryAfterMs": error.retry_after().map(|value| value.as_millis() as u64),
+                    }),
+                )
+                .await;
                 self.finish_or_queue(
                     run_id,
                     FinishRunRequest {
@@ -368,14 +419,7 @@ impl AgentRunner {
                         input_tokens: None,
                         cached_input_tokens: None,
                         output_tokens: None,
-                        error_code: Some(
-                            if rate_limited {
-                                "ENGINE_RATE_LIMITED"
-                            } else {
-                                "ENGINE_ERROR"
-                            }
-                            .to_string(),
-                        ),
+                        error_code: Some(error_code.to_string()),
                         error_message: Some(error.to_string()),
                         assistant_text: None,
                     },
@@ -554,6 +598,25 @@ impl AgentRunner {
                 Ok(false)
             }
             Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn report_run_event(&mut self, run_id: &str, kind: &str, data: serde_json::Value) {
+        let request = AppendRunEventsRequest {
+            events: vec![RunEventInput {
+                id: entity_id("event"),
+                kind: kind.to_string(),
+                data,
+            }],
+        };
+        if let Err(error) = self.client.append_run_events(run_id, &request).await {
+            tracing::warn!(
+                agent_id = self.assignment.id,
+                %run_id,
+                event_kind = kind,
+                %error,
+                "run observability event was not recorded"
+            );
         }
     }
 

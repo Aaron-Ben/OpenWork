@@ -198,8 +198,13 @@ async fn send_and_wait_for_reply(client: &CollabDaemonClient, room_id: &str, cou
 async fn wait_for_completed_runs(client: &CollabDaemonClient, count: usize) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Ok(DesktopCommandResult::Runs { runs }) =
-                client.call(DesktopCommand::ListRuns { limit: 100 }).await
+            if let Ok(DesktopCommandResult::Runs { runs }) = client
+                .call(DesktopCommand::ListRuns {
+                    agent_id: None,
+                    status: None,
+                    limit: 100,
+                })
+                .await
             {
                 let completed = runs.iter().filter(|run| run.status == "completed").count();
                 if completed == count {

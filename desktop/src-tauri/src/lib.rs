@@ -60,6 +60,7 @@ pub fn run() {
             commands::collab::collab_card_assign,
             commands::collab::collab_card_delete,
             commands::collab::collab_run_list,
+            commands::collab::collab_run_trace,
             commands::skills::list_skills,
             commands::skills::set_skill_disabled,
             commands::skills::read_skill,

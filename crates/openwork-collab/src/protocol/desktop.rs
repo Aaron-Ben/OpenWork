@@ -141,7 +141,12 @@ pub enum DesktopCommand {
         card_id: String,
     },
     ListRuns {
+        agent_id: Option<String>,
+        status: Option<String>,
         limit: u32,
+    },
+    GetRunTrace {
+        run_id: String,
     },
 }
 
@@ -156,6 +161,7 @@ impl DesktopCommand {
                 | Self::ListMessages { .. }
                 | Self::ListBoards
                 | Self::ListRuns { .. }
+                | Self::GetRunTrace { .. }
         )
     }
 }
@@ -180,6 +186,7 @@ pub enum DesktopCommandResult {
     Card(CardView),
     Deleted { entity_id: String },
     Runs { runs: Vec<RunSummaryView> },
+    RunTrace(Box<RunTraceView>),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -267,7 +274,7 @@ pub struct CardView {
     pub created_by: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSummaryView {
     pub id: String,
@@ -277,11 +284,42 @@ pub struct RunSummaryView {
     pub status: String,
     pub engine_id: String,
     pub main_model_id: String,
+    pub observed_model_id: Option<String>,
     pub outcome: Option<String>,
     pub room_id: Option<String>,
     pub focus_card_id: Option<String>,
     pub trigger_reason: Option<String>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    pub stage: String,
     pub started_at: String,
+    pub heartbeat_at: String,
+    pub ended_at: Option<String>,
+    pub duration_ms: i64,
+    pub input_tokens: Option<i64>,
+    pub cached_input_tokens: Option<i64>,
+    pub cache_creation_input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub rate_limit_percent: Option<f64>,
+    pub tool_calls: i64,
+    pub event_count: i64,
+    pub inbox_message_count: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTraceView {
+    pub run: RunSummaryView,
+    pub events: Vec<RunEventView>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunEventView {
+    pub id: String,
+    pub source: String,
+    pub kind: String,
+    pub level: String,
+    pub data: serde_json::Value,
+    pub created_at: String,
 }

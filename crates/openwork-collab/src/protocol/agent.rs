@@ -193,6 +193,20 @@ pub struct FinishRunRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct AppendRunEventsRequest {
+    pub events: Vec<RunEventInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunEventInput {
+    pub id: String,
+    pub kind: String,
+    pub data: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentCommandRequest {
     pub request_id: String,
     pub command: AgentCommand,

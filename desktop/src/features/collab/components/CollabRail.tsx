@@ -1,4 +1,4 @@
-import { Bot, ClipboardList, LogOut, MessagesSquare } from 'lucide-react'
+import { Activity, Bot, ClipboardList, LogOut, MessagesSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { useModeStore } from '@/app/modeStore'
@@ -14,6 +14,7 @@ export function CollabRail({ view, macOS = isMacOS }: { view: CollabView; macOS?
     { view: 'rooms', label: t('collab.nav.rooms'), icon: <MessagesSquare size={20} /> },
     { view: 'agents', label: t('collab.nav.agents'), icon: <Bot size={20} /> },
     { view: 'boards', label: t('collab.nav.boards'), icon: <ClipboardList size={20} /> },
+    { view: 'observability', label: t('collab.nav.observability'), icon: <Activity size={20} /> },
   ]
   return (
     <aside className="flex h-full w-20 shrink-0 flex-col border-r border-line bg-paper-hover">

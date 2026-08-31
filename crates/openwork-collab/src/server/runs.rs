@@ -1,6 +1,6 @@
 use sqlx::{FromRow, PgPool};
 
-use crate::protocol::{FinishRunRequest, MessageView, RunSummaryView, RunView, TriggerEnvelope};
+use crate::protocol::{FinishRunRequest, MessageView, RunView, TriggerEnvelope};
 
 use super::auth::{AgentClaims, authorize_agent_transaction};
 
@@ -194,21 +194,6 @@ impl Runs {
         .execute(&mut **transaction)
         .await?;
         Ok(())
-    }
-
-    pub(crate) async fn list(&self, limit: u32) -> Result<Vec<RunSummaryView>, sqlx::Error> {
-        let limit = i64::from(limit.clamp(1, 200));
-        sqlx::query_as::<_, RunSummaryRow>(
-            "SELECT id, agent_id, runtime_session_id, trigger, status, engine_id,
-                    main_model_id, outcome, room_id, focus_card_id, trigger_reason,
-                    error_code, error_message,
-                    to_char(started_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') || '+08:00' AS started_at
-             FROM collab_runs ORDER BY started_at DESC, id DESC LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map(|rows| rows.into_iter().map(RunSummaryView::from).collect())
     }
 
     pub(crate) async fn open(
@@ -493,24 +478,6 @@ impl Runs {
 }
 
 #[derive(FromRow)]
-struct RunSummaryRow {
-    id: String,
-    agent_id: String,
-    runtime_session_id: String,
-    trigger: String,
-    status: String,
-    engine_id: String,
-    main_model_id: String,
-    outcome: Option<String>,
-    room_id: Option<String>,
-    focus_card_id: Option<String>,
-    trigger_reason: Option<String>,
-    error_code: Option<String>,
-    error_message: Option<String>,
-    started_at: String,
-}
-
-#[derive(FromRow)]
 struct RunInboxMessageRow {
     id: String,
     room_id: String,
@@ -527,27 +494,6 @@ impl From<RunInboxMessageRow> for MessageView {
             sequence: row.sequence,
             author_id: row.author_id,
             body: row.body,
-        }
-    }
-}
-
-impl From<RunSummaryRow> for RunSummaryView {
-    fn from(row: RunSummaryRow) -> Self {
-        Self {
-            id: row.id,
-            agent_id: row.agent_id,
-            runtime_session_id: row.runtime_session_id,
-            trigger: row.trigger,
-            status: row.status,
-            engine_id: row.engine_id,
-            main_model_id: row.main_model_id,
-            outcome: row.outcome,
-            room_id: row.room_id,
-            focus_card_id: row.focus_card_id,
-            trigger_reason: row.trigger_reason,
-            error_code: row.error_code,
-            error_message: row.error_message,
-            started_at: row.started_at,
         }
     }
 }

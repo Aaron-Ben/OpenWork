@@ -11,6 +11,7 @@ mod desktop_commands;
 mod inventory;
 mod messages;
 mod migration;
+mod observability;
 mod redis;
 mod rooms;
 mod runs;
@@ -34,6 +35,7 @@ use coordination::Coordination;
 use desktop_commands::DesktopCommands;
 use inventory::EngineInventory;
 use messages::Messages;
+use observability::Observability;
 use rooms::Rooms;
 use runs::Runs;
 use scheduler::Scheduler;
@@ -79,6 +81,7 @@ impl CollaborationServer {
         let messages = Messages::new(pool.clone());
         let runs = Runs::new(pool.clone());
         runs.interrupt_stale(session.id()).await?;
+        let observability = Observability::new(pool.clone());
         let triage = InboxTriage::new(pool.clone());
         let inventory = EngineInventory::new(pool.clone());
         let (redis_coordination, redis_task) =
@@ -104,7 +107,7 @@ impl CollaborationServer {
             inventory.clone(),
             messages.clone(),
             rooms,
-            runs.clone(),
+            observability.clone(),
             scheduler.clone(),
             session.clone(),
         );
@@ -116,6 +119,7 @@ impl CollaborationServer {
             agents,
             messages,
             runs,
+            observability,
             scheduler,
             coordination,
             triage,
