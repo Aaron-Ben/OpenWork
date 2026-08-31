@@ -130,6 +130,9 @@ impl AgentRunner {
     ) -> Result<(), RunnerError> {
         let (rerun_requested_tx, mut rerun_requested_rx) = mpsc::channel(1);
         let wake_shutdown = stop_requested.child_token();
+        // A Runner task may panic inside an Engine adapter. Keep the SSE child
+        // task lifecycle-bound even when normal async cleanup is skipped.
+        let _wake_shutdown_guard = wake_shutdown.clone().drop_guard();
         let wake_client = self.client.clone();
         let wake_task_shutdown = wake_shutdown.clone();
         let wake_task = tokio::spawn(async move {

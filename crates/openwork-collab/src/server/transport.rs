@@ -167,22 +167,21 @@ async fn agent_events(
 ) -> Result<impl IntoResponse, TransportError> {
     let claims = agent_claims(&state, &headers).await?;
     let agent_id = claims.sub;
-    let receiver = state.scheduler.subscribe_wakes();
+    let receiver = state.scheduler.subscribe_wakes(&agent_id);
     let initial = initial_event(InvalidationKind::Message, Some(agent_id.clone()));
-    let stream = futures_util::stream::unfold(
-        (receiver, true, agent_id),
-        move |(mut receiver, initial_pending, agent_id)| {
+    let stream =
+        futures_util::stream::unfold((receiver, true), move |(mut receiver, initial_pending)| {
             let initial = initial.clone();
             async move {
                 if initial_pending {
                     return Some((
                         Ok::<_, Infallible>(sse_event("agent", &initial)),
-                        (receiver, false, agent_id),
+                        (receiver, false),
                     ));
                 }
                 loop {
                     match receiver.recv().await {
-                        Ok(wake) if wake.agent_id == agent_id => {
+                        Ok(wake) => {
                             let event = InvalidationEvent {
                                 id: wake.id,
                                 kind: InvalidationKind::Message,
@@ -192,16 +191,15 @@ async fn agent_events(
                             };
                             return Some((
                                 Ok::<_, Infallible>(sse_event("agent", &event)),
-                                (receiver, false, agent_id),
+                                (receiver, false),
                             ));
                         }
-                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(broadcast::error::RecvError::Closed) => return None,
                     }
                 }
             }
-        },
-    );
+        });
     Ok(Sse::new(stream).keep_alive(keep_alive()))
 }
 

@@ -255,6 +255,7 @@ Redis key/channel 都在 `openwork:` namespace：
 | `openwork:turn-rate:<agent>` | Agent-authored wake 限速 | 60 秒 |
 | `openwork:seen:<agent>:<room>` | 发布新鲜度 sequence | 10 分钟 |
 | `openwork:hold:<agent>:<room>:<token>` | 一次性 HELD binding | 2 分钟 |
+| `openwork:hold:<agent>:<room>:<token>:request` | HELD 的 `request_id` 预留所有者 | 与 HELD 同量级短 TTL |
 | `openwork:agenda-rate:<agent>` | Agenda dispatch cooldown | 5 分钟 |
 | `openwork:agenda-nudge:<room>` | Room nudge cooldown | 45 分钟 |
 | `openwork:agenda-declines:<agent>` | 连续 decline 计数 | 6 小时 |
@@ -280,7 +281,7 @@ Redis 不保存消息正文、Agent config、Board、Run 或待执行 Agenda que
 
 持久 Agent home 只保存受管 persona/协作契约、私有工作文件和最小 Engine continuity。RuntimeSession 目录只保存短期凭证与派生配置：启动清除陈旧目录，正常退出清除当前目录。
 
-多个 Agent 的 `work` 彼此独立；它不是多个 Agent 共同操作同一个真实项目 checkout，也不是 OS 安全沙箱。
+多个 Agent 的 `work` 彼此独立；它不是多个 Agent 共同操作同一个真实项目 checkout，也不是 OS 安全沙箱。Agent home、RuntimeSession 文件和 JWT 只提供应用层身份、状态与 API 权限隔离；同一 macOS 登录用户下的可信本机进程仍共享该用户的 OS 文件权限。
 
 ## 10. 事务与并发不变量
 
@@ -290,7 +291,7 @@ Redis 不保存消息正文、Agent config、Board、Run 或待执行 Agenda que
 4. Board/Column/Card 操作统一按 Board → Column ID → Card ID 的固定顺序加锁；
 5. Column/Card 重排使用可延迟唯一约束并重新写成连续整数；
 6. 每 Agent running Run 依靠部分唯一索引兜底；
-7. 命令幂等结果与业务写入位于同一事务；
+7. 命令幂等结果与业务写入位于同一事务；HELD 先按同一 `request_id` 预留，事务提交后才消费，同一请求可幂等恢复；
 8. delivery 只在成功终态按明确效果结算；
 9. Climate owner 来自 Agent JWT，而不是客户端字段；
 10. Redis 协调错误永远不能伪装成 PostgreSQL 事务成功。

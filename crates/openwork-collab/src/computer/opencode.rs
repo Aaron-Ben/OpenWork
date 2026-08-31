@@ -28,8 +28,6 @@ const MAX_JSONL_LINE_BYTES: usize = 1024 * 1024;
 const ERROR_TAIL_BYTES: usize = 16 * 1024;
 const INVENTORY_TIMEOUT: Duration = Duration::from_secs(3);
 const CLASSIFY_TIMEOUT: Duration = Duration::from_secs(60);
-const MAIN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const NO_OUTPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Debug)]
 pub struct OpenCodeAdapter {
@@ -44,7 +42,7 @@ struct ExecutionRequest {
     config_content: Option<String>,
     environment: std::collections::BTreeMap<String, String>,
     cancellation: CancellationToken,
-    absolute_timeout: Duration,
+    absolute_timeout: Option<Duration>,
     require_session: bool,
 }
 
@@ -148,7 +146,6 @@ impl OpenCodeAdapter {
             &mut child,
             request.cancellation,
             request.absolute_timeout,
-            NO_OUTPUT_TIMEOUT.min(request.absolute_timeout),
         )
         .await
         {
@@ -211,8 +208,7 @@ impl OpenCodeAdapter {
 async fn capture_output(
     child: &mut Child,
     cancellation: CancellationToken,
-    absolute_timeout: Duration,
-    no_output_timeout: Duration,
+    absolute_timeout: Option<Duration>,
 ) -> Result<CapturedOutput, EngineError> {
     let process_group = child.id().map(|pid| -(pid as i32));
     let mut stdout = child.stdout.take().ok_or_else(|| EngineError::Process {
@@ -232,8 +228,7 @@ async fn capture_output(
     let mut status = None;
     let mut terminal_error = None;
     let started = tokio::time::Instant::now();
-    let absolute_deadline = started + absolute_timeout;
-    let mut no_output_deadline = started + no_output_timeout;
+    let absolute_deadline = absolute_timeout.map(|timeout| started + timeout);
     let mut force_kill_at = None;
     let mut drain_deadline = None;
     let mut stdout_buffer = [0_u8; 8192];
@@ -260,7 +255,6 @@ async fn capture_output(
                 match result {
                     Ok(0) => stdout_open = false,
                     Ok(read) => {
-                        no_output_deadline = tokio::time::Instant::now() + no_output_timeout;
                         stdout_total = stdout_total.saturating_add(read);
                         let mut line_exceeded = false;
                         for byte in &stdout_buffer[..read] {
@@ -318,7 +312,6 @@ async fn capture_output(
                 match result {
                     Ok(0) => stderr_open = false,
                     Ok(read) => {
-                        no_output_deadline = tokio::time::Instant::now() + no_output_timeout;
                         stderr_total = stderr_total.saturating_add(read);
                         append_tail(&mut stderr_tail, &stderr_buffer[..read], ERROR_TAIL_BYTES);
                         if stderr_total > MAX_STDERR_BYTES && terminal_error.is_none() {
@@ -343,12 +336,7 @@ async fn capture_output(
                 signal_process_group(process_group, libc::SIGINT);
                 force_kill_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
             }
-            _ = tokio::time::sleep_until(no_output_deadline), if status.is_none() && terminal_error.is_none() => {
-                terminal_error = Some(EngineError::Timeout { operation: "output" });
-                signal_process_group(process_group, libc::SIGINT);
-                force_kill_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
-            }
-            _ = tokio::time::sleep_until(absolute_deadline), if status.is_none() && terminal_error.is_none() => {
+            _ = optional_deadline(absolute_deadline), if absolute_deadline.is_some() && status.is_none() && terminal_error.is_none() => {
                 terminal_error = Some(EngineError::Timeout { operation: "turn" });
                 signal_process_group(process_group, libc::SIGINT);
                 force_kill_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
@@ -504,7 +492,7 @@ impl EngineAdapter for OpenCodeAdapter {
                 config_content: Some(triage_config_content()),
                 environment,
                 cancellation: request.cancellation,
-                absolute_timeout: CLASSIFY_TIMEOUT,
+                absolute_timeout: Some(CLASSIFY_TIMEOUT),
                 require_session: false,
             })
             .await?;
@@ -555,7 +543,7 @@ impl OpenCodeRuntime {
                 config_content: None,
                 environment: self.config.environment.clone(),
                 cancellation,
-                absolute_timeout: MAIN_TIMEOUT,
+                absolute_timeout: self.config.turn_timeout,
                 require_session: self.session_id.is_none(),
             })
             .await
@@ -845,6 +833,7 @@ mod tests {
             context_fingerprint: "new-context".to_string(),
             model: "new/model".to_string(),
             environment: BTreeMap::new(),
+            turn_timeout: None,
         }
     }
 

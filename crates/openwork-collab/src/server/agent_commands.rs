@@ -11,16 +11,24 @@ use super::{
     board::{Board, BoardOperationError},
     climate::{Climate, ClimateOperationError},
     command_requests::CommandRequests,
-    coordination::{Coordination, HeldBinding},
+    coordination::{Coordination, HeldBinding, HeldReservation},
     messages::Messages,
     rooms::{Rooms, get_or_create_direct_room},
     runs::Runs,
+    triage::AGENT_LOOP_HARD_CAP,
 };
 
 #[derive(Clone)]
 pub(crate) struct AgentCommands {
     pool: PgPool,
     coordination: Coordination,
+}
+
+struct ReplyInput<'a> {
+    room_id: &'a str,
+    body: &'a str,
+    held_token: Option<&'a str>,
+    request_id: &'a str,
 }
 
 impl AgentCommands {
@@ -36,6 +44,15 @@ impl AgentCommands {
         if !CommandRequests::valid_id(&request.request_id) {
             return Ok(error("INVALID_ARGUMENT", "invalid request id"));
         }
+        let request_id = request.request_id.clone();
+        let held_target = match &request.command {
+            AgentCommand::Reply {
+                room_id,
+                held_token: Some(token),
+                ..
+            } => Some((room_id.clone(), token.clone())),
+            _ => None,
+        };
         let mut transaction = self.pool.begin().await?;
         authorize_agent_transaction(&mut transaction, claims).await?;
         let mutating = request.command.is_mutating();
@@ -58,16 +75,21 @@ impl AgentCommands {
                 &mut transaction,
                 run_id,
                 claims,
-                &request.request_id,
+                &request_id,
                 &semantic_hash,
             )
             .await?
             {
                 transaction.commit().await?;
+                if let Some((room_id, token)) = held_target.as_ref() {
+                    self.finalize_held(claims, room_id, token, &request_id)
+                        .await;
+                }
                 return Ok(result);
             }
         }
 
+        let mut held_reserved = false;
         let response = match request.command {
             AgentCommand::Inbox => {
                 let (carried_over, messages) = Runs::inbox_in(
@@ -116,15 +138,21 @@ impl AgentCommands {
                 body,
                 held_token,
             } => {
-                self.reply(
-                    &mut transaction,
-                    run_id.as_deref().expect("Reply requires an active Run"),
-                    claims,
-                    &room_id,
-                    &body,
-                    held_token.as_deref(),
-                )
-                .await?
+                let (response, reserved) = self
+                    .reply(
+                        &mut transaction,
+                        run_id.as_deref().expect("Reply requires an active Run"),
+                        claims,
+                        ReplyInput {
+                            room_id: &room_id,
+                            body: &body,
+                            held_token: held_token.as_deref(),
+                            request_id: &request_id,
+                        },
+                    )
+                    .await?;
+                held_reserved = reserved;
+                response
             }
             AgentCommand::Ack { room_id } => {
                 let up_to_seq = Runs::acknowledge_in(
@@ -315,13 +343,39 @@ impl AgentCommands {
                 run_id
                     .as_deref()
                     .expect("every mutating AgentCommand requires an active Run"),
-                &request.request_id,
+                &request_id,
                 &response,
             )
             .await?;
         }
         transaction.commit().await?;
+        if held_reserved && let Some((room_id, token)) = held_target.as_ref() {
+            self.finalize_held(claims, room_id, token, &request_id)
+                .await;
+        }
         Ok(response)
+    }
+
+    async fn finalize_held(
+        &self,
+        claims: &AgentClaims,
+        room_id: &str,
+        token: &str,
+        request_id: &str,
+    ) {
+        match self
+            .coordination
+            .finalize_held(&claims.sub, room_id, token, request_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(%room_id, %request_id, "HELD reservation was not finalized")
+            }
+            Err(error) => {
+                tracing::warn!(%error, %room_id, %request_id, "HELD finalization failed; the same request may retry")
+            }
+        }
     }
 
     async fn glance(
@@ -360,38 +414,66 @@ impl AgentCommands {
         transaction: &mut Transaction<'_, Postgres>,
         run_id: &str,
         claims: &AgentClaims,
-        room_id: &str,
-        body: &str,
-        held_token: Option<&str>,
-    ) -> Result<AgentCommandResponse, sqlx::Error> {
+        input: ReplyInput<'_>,
+    ) -> Result<(AgentCommandResponse, bool), sqlx::Error> {
+        let ReplyInput {
+            room_id,
+            body,
+            held_token,
+            request_id,
+        } = input;
         if !Messages::valid_body(body) {
-            return Ok(error("INVALID_ARGUMENT", "message body is invalid"));
+            return Ok((error("INVALID_ARGUMENT", "message body is invalid"), false));
         }
         let context = Runs::reply_context_in(transaction, run_id, room_id, &claims.sub).await?;
         let Some((snapshot_anchor, room_kind, member_count)) = context else {
-            return Ok(error("NOT_FOUND", "Room is not in the active Run"));
+            return Ok((error("NOT_FOUND", "Room is not in the active Run"), false));
         };
         if room_kind == "direct" && held_token.is_some() {
-            return Ok(error(
-                "INVALID_ARGUMENT",
-                "HELD token is not valid for a Direct Room",
+            return Ok((
+                error(
+                    "INVALID_ARGUMENT",
+                    "HELD token is not valid for a Direct Room",
+                ),
+                false,
             ));
         }
+        if Messages::agent_loop_capped_in(transaction, room_id, AGENT_LOOP_HARD_CAP).await? {
+            return Ok((
+                error(
+                    "LOOP_CAP",
+                    "Agent conversation reached its deterministic loop cap",
+                ),
+                false,
+            ));
+        }
+        let mut held_reserved = false;
         if room_kind == "group" && member_count > 2 {
             match held_token {
                 Some(token) => {
                     let binding = match self
                         .coordination
-                        .consume_held(&claims.sub, room_id, token)
+                        .reserve_held(&claims.sub, room_id, token, request_id)
                         .await
                     {
-                        Ok(Some(binding)) => binding,
-                        Ok(None) => return Ok(error("HELD", "retry token is invalid or expired")),
+                        Ok(HeldReservation::Reserved(binding)) => {
+                            held_reserved = true;
+                            binding
+                        }
+                        Ok(HeldReservation::Missing) => {
+                            return Ok((error("HELD", "retry token is invalid or expired"), false));
+                        }
+                        Ok(HeldReservation::OwnedByAnotherRequest) => {
+                            return Ok((
+                                error("HELD", "retry token belongs to another request"),
+                                false,
+                            ));
+                        }
                         Err(redis_error) => {
-                            tracing::warn!(%redis_error, %room_id, "HELD token consumption failed closed");
-                            return Ok(error(
-                                "RATE_LIMITED",
-                                "coordination is temporarily unavailable",
+                            tracing::warn!(%redis_error, %room_id, "HELD token reservation failed closed");
+                            return Ok((
+                                error("RATE_LIMITED", "coordination is temporarily unavailable"),
+                                false,
                             ));
                         }
                     };
@@ -400,7 +482,10 @@ impl AgentCommands {
                         || binding.room_id != room_id
                         || binding.runtime_session_id != claims.runtime_session_id
                     {
-                        return Ok(error("HELD", "retry token does not match this Run"));
+                        return Ok((
+                            error("HELD", "retry token does not match this Run"),
+                            held_reserved,
+                        ));
                     }
                     if let Some(peer_max) = Messages::peer_max_in(
                         transaction,
@@ -410,7 +495,7 @@ impl AgentCommands {
                     )
                     .await?
                     {
-                        return self
+                        let response = self
                             .hold_reply(
                                 transaction,
                                 run_id,
@@ -419,7 +504,8 @@ impl AgentCommands {
                                 binding.shown_peer_max,
                                 peer_max,
                             )
-                            .await;
+                            .await?;
+                        return Ok((response, held_reserved));
                     }
                 }
                 None => {
@@ -436,7 +522,7 @@ impl AgentCommands {
                         Messages::peer_max_in(transaction, room_id, &claims.sub, seen_baseline)
                             .await?
                     {
-                        return self
+                        let response = self
                             .hold_reply(
                                 transaction,
                                 run_id,
@@ -445,19 +531,23 @@ impl AgentCommands {
                                 seen_baseline,
                                 peer_max,
                             )
-                            .await;
+                            .await?;
+                        return Ok((response, false));
                     }
                 }
             }
         }
         let message = Messages::insert_agent_in(transaction, room_id, &claims.sub, body).await?;
         Runs::mark_delivery_action_in(transaction, run_id, room_id).await?;
-        Ok(AgentCommandResponse {
-            result: AgentCommandResult::MessagePublished {
-                message: message.clone(),
+        Ok((
+            AgentCommandResponse {
+                result: AgentCommandResult::MessagePublished {
+                    message: message.clone(),
+                },
+                effects: vec![message_effect(&message)],
             },
-            effects: vec![message_effect(&message)],
-        })
+            held_reserved,
+        ))
     }
 
     async fn hold_reply(
@@ -530,6 +620,12 @@ async fn direct_message(
     }
     let (room_id, _) =
         get_or_create_direct_room(transaction, &claims.sub, participant_id, &claims.sub).await?;
+    if Messages::agent_loop_capped_in(transaction, &room_id, AGENT_LOOP_HARD_CAP).await? {
+        return Ok(error(
+            "LOOP_CAP",
+            "Agent conversation reached its deterministic loop cap",
+        ));
+    }
     let message = Messages::insert_agent_in(transaction, &room_id, &claims.sub, body).await?;
     Runs::mark_delivery_action_in(transaction, run_id, &room_id).await?;
     Ok(AgentCommandResponse {

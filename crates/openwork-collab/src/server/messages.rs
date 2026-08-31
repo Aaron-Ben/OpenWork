@@ -5,6 +5,8 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 use super::{auth::AgentClaims, climate::Climate};
 
+const INBOX_MESSAGE_LIMIT: usize = 200;
+
 #[derive(Clone)]
 pub(crate) struct Messages {
     pool: PgPool,
@@ -129,6 +131,31 @@ impl Messages {
         .await
     }
 
+    pub(crate) async fn agent_loop_capped_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        hard_cap: i64,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) >= $2
+             FROM collab_messages message
+             JOIN collab_participants author ON author.id = message.author_id
+             WHERE message.room_id = $1
+               AND message.sequence > COALESCE((
+                   SELECT MAX(previous.sequence)
+                   FROM collab_messages previous
+                   JOIN collab_participants previous_author
+                     ON previous_author.id = previous.author_id
+                   WHERE previous.room_id = $1 AND previous_author.kind <> 'agent'
+               ), 0)
+               AND author.kind = 'agent' AND message.kind <> 'system'",
+        )
+        .bind(room_id)
+        .bind(hard_cap)
+        .fetch_one(&mut **transaction)
+        .await
+    }
+
     pub(crate) async fn list(&self, room_id: &str) -> Result<Vec<MessageView>, sqlx::Error> {
         sqlx::query_as::<_, MessageRow>(
             "SELECT id, room_id, sequence, author_id, body
@@ -215,35 +242,46 @@ impl Messages {
     }
 
     pub(crate) async fn inbox(&self, claims: &AgentClaims) -> Result<InboxResponse, sqlx::Error> {
-        let rows = sqlx::query_as::<_, InboxRow>(
-            "SELECT m.id, m.room_id, m.sequence, m.author_id, m.body, rm.last_read_seq,
-                    COUNT(*) OVER() AS total_count
-             FROM collab_room_members rm
-             JOIN collab_rooms r ON r.id = rm.room_id
-             JOIN collab_messages m ON m.room_id = rm.room_id
-             WHERE rm.participant_id = $1
-               AND (
-                   NOT rm.muted OR r.kind = 'direct' OR EXISTS (
-                       SELECT 1
-                       FROM collab_messages mention
-                       WHERE mention.room_id = rm.room_id
-                         AND mention.sequence > rm.last_read_seq
-                         AND mention.author_id <> $1
-                         AND mention.kind = 'normal'
-                         AND mention.body ~ (
-                             '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
-                             '([^A-Za-z0-9_-]|$)'
-                         )
-                   )
-               )
-               AND m.sequence > rm.last_read_seq AND m.author_id <> $1
-             ORDER BY m.created_at, m.room_id, m.sequence
-             LIMIT 200",
+        let unread_rooms = sqlx::query_as::<_, UnreadRoomRow>(
+            "WITH unread AS (
+                SELECT m.room_id, rm.last_read_seq, COUNT(*) AS unread_count,
+                       MIN(m.created_at) AS oldest_at
+                FROM collab_room_members rm
+                JOIN collab_rooms r ON r.id = rm.room_id
+                JOIN collab_messages m ON m.room_id = rm.room_id
+                WHERE rm.participant_id = $1
+                  AND (
+                      NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                          SELECT 1
+                          FROM collab_messages mention
+                          WHERE mention.room_id = rm.room_id
+                            AND mention.sequence > rm.last_read_seq
+                            AND mention.author_id <> $1
+                            AND mention.kind = 'normal'
+                            AND mention.body ~ (
+                                '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                                '([^A-Za-z0-9_-]|$)'
+                            )
+                      )
+                  )
+                  AND m.sequence > rm.last_read_seq AND m.author_id <> $1
+                GROUP BY m.room_id, rm.last_read_seq
+             ), counted AS (
+                SELECT room_id, last_read_seq, unread_count, oldest_at,
+                       SUM(unread_count) OVER()::BIGINT AS total_count,
+                       COUNT(*) OVER() AS total_rooms
+                FROM unread
+             )
+             SELECT room_id, last_read_seq, unread_count, total_count, total_rooms
+             FROM counted
+             ORDER BY oldest_at, room_id
+             LIMIT $2",
         )
         .bind(&claims.sub)
+        .bind(INBOX_MESSAGE_LIMIT as i64)
         .fetch_all(&self.pool)
         .await?;
-        if rows.is_empty() {
+        if unread_rooms.is_empty() {
             return Ok(InboxResponse {
                 trigger: None,
                 messages: Vec::new(),
@@ -251,9 +289,66 @@ impl Messages {
                 carried_over: false,
             });
         }
-        let carried_over = rows
-            .first()
-            .is_some_and(|row| row.total_count > rows.len() as i64);
+        let allocations = water_fill(
+            &unread_rooms
+                .iter()
+                .map(|room| room.unread_count as usize)
+                .collect::<Vec<_>>(),
+            INBOX_MESSAGE_LIMIT,
+        );
+        let room_ids = unread_rooms
+            .iter()
+            .map(|room| room.room_id.clone())
+            .collect::<Vec<_>>();
+        let allocations = allocations
+            .into_iter()
+            .map(|allocation| allocation as i64)
+            .collect::<Vec<_>>();
+        let rows = sqlx::query_as::<_, InboxRow>(
+            "WITH allocation AS (
+                SELECT *
+                FROM UNNEST($2::TEXT[], $3::BIGINT[]) AS selected(room_id, take_count)
+             ), ranked AS (
+                SELECT m.id, m.room_id, m.sequence, m.author_id, m.body,
+                       rm.last_read_seq, m.created_at, allocation.take_count,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY m.room_id ORDER BY m.sequence
+                       ) AS room_position
+                FROM allocation
+                JOIN collab_room_members rm ON rm.room_id = allocation.room_id
+                JOIN collab_rooms r ON r.id = rm.room_id
+                JOIN collab_messages m ON m.room_id = rm.room_id
+                WHERE rm.participant_id = $1
+                  AND (
+                      NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                          SELECT 1
+                          FROM collab_messages mention
+                          WHERE mention.room_id = rm.room_id
+                            AND mention.sequence > rm.last_read_seq
+                            AND mention.author_id <> $1
+                            AND mention.kind = 'normal'
+                            AND mention.body ~ (
+                                '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
+                                '([^A-Za-z0-9_-]|$)'
+                            )
+                      )
+                  )
+                  AND m.sequence > rm.last_read_seq AND m.author_id <> $1
+             )
+             SELECT id, room_id, sequence, author_id, body, last_read_seq
+             FROM ranked
+             WHERE room_position <= take_count
+             ORDER BY created_at, room_id, sequence",
+        )
+        .bind(&claims.sub)
+        .bind(&room_ids)
+        .bind(&allocations)
+        .fetch_all(&self.pool)
+        .await?;
+        let total_count = unread_rooms[0].total_count;
+        let total_rooms = unread_rooms[0].total_rooms;
+        let carried_over =
+            total_count > rows.len() as i64 || total_rooms > unread_rooms.len() as i64;
         let mut ranges = BTreeMap::<String, (i64, i64)>::new();
         let mut participant_ids = BTreeSet::<String>::new();
         let mut messages = Vec::with_capacity(rows.len());
@@ -363,5 +458,40 @@ struct InboxRow {
     author_id: String,
     body: String,
     last_read_seq: i64,
+}
+
+#[derive(FromRow)]
+struct UnreadRoomRow {
+    room_id: String,
+    unread_count: i64,
     total_count: i64,
+    total_rooms: i64,
+}
+
+fn water_fill(counts: &[usize], budget: usize) -> Vec<usize> {
+    let mut order = (0..counts.len()).collect::<Vec<_>>();
+    order.sort_by_key(|index| (counts[*index], *index));
+    let mut allocations = vec![0; counts.len()];
+    let mut remaining = budget;
+    let mut unserved = counts.len();
+    for index in order {
+        let fair_share = remaining / unserved;
+        let allocated = counts[index].min(fair_share);
+        allocations[index] = allocated;
+        remaining -= allocated;
+        unserved -= 1;
+    }
+    allocations
+}
+
+#[cfg(test)]
+mod tests {
+    use super::water_fill;
+
+    #[test]
+    fn inbox_budget_water_fills_quiet_rooms_before_busy_rooms() {
+        assert_eq!(water_fill(&[200, 1], 200), vec![199, 1]);
+        assert_eq!(water_fill(&[100, 2, 3], 10), vec![5, 2, 3]);
+        assert_eq!(water_fill(&[2, 3], 10), vec![2, 3]);
+    }
 }

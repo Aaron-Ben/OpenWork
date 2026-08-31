@@ -1,6 +1,7 @@
 use std::{
+    collections::HashMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -31,8 +32,36 @@ pub struct MessageNewEvent {
 pub struct RedisCoordination {
     client: Client,
     message_events: broadcast::Sender<MessageNewEvent>,
-    wake_events: broadcast::Sender<WakeEvent>,
+    wake_events: Arc<AgentWakeHub>,
     connected: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct AgentWakeHub {
+    senders: Mutex<HashMap<String, broadcast::Sender<WakeEvent>>>,
+}
+
+impl AgentWakeHub {
+    fn subscribe(&self, agent_id: &str) -> broadcast::Receiver<WakeEvent> {
+        self.senders
+            .lock()
+            .expect("Agent wake hub lock poisoned")
+            .entry(agent_id.to_string())
+            .or_insert_with(|| broadcast::channel(64).0)
+            .subscribe()
+    }
+
+    fn publish(&self, event: WakeEvent) {
+        let sender = self
+            .senders
+            .lock()
+            .expect("Agent wake hub lock poisoned")
+            .get(&event.agent_id)
+            .cloned();
+        if let Some(sender) = sender {
+            let _ = sender.send(event);
+        }
+    }
 }
 
 impl RedisCoordination {
@@ -42,12 +71,11 @@ impl RedisCoordination {
     ) -> Result<(Self, JoinHandle<()>), RedisError> {
         let client = Client::open(redis_url)?;
         let (message_events, _) = broadcast::channel(256);
-        let (wake_events, _) = broadcast::channel(256);
         let connected = Arc::new(AtomicBool::new(false));
         let coordination = Self {
             client,
             message_events,
-            wake_events,
+            wake_events: Arc::new(AgentWakeHub::default()),
             connected,
         };
         let subscriber = coordination.clone();
@@ -64,8 +92,8 @@ impl RedisCoordination {
         self.message_events.subscribe()
     }
 
-    pub fn subscribe_wakes(&self) -> broadcast::Receiver<WakeEvent> {
-        self.wake_events.subscribe()
+    pub fn subscribe_wakes(&self, agent_id: &str) -> broadcast::Receiver<WakeEvent> {
+        self.wake_events.subscribe(agent_id)
     }
 
     pub async fn publish_message(&self, event: &MessageNewEvent) -> RedisResult<i64> {
@@ -187,7 +215,7 @@ impl RedisCoordination {
                                     } else if channel.starts_with("openwork:wake:")
                                         && let Ok(event) = serde_json::from_str(&payload)
                                     {
-                                        let _ = self.wake_events.send(event);
+                                        self.wake_events.publish(event);
                                     }
                                 }
                             }
@@ -209,4 +237,30 @@ impl RedisCoordination {
 
 fn timeout_error() -> RedisError {
     RedisError::from((ErrorKind::Io, "Redis operation timed out"))
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    use super::AgentWakeHub;
+    use crate::protocol::WakeEvent;
+
+    #[test]
+    fn agent_wake_hub_does_not_fan_out_other_agents_events() {
+        let hub = AgentWakeHub::default();
+        let mut alpha = hub.subscribe("alpha");
+        let mut beta = hub.subscribe("beta");
+        hub.publish(WakeEvent {
+            id: "event-1".to_string(),
+            agent_id: "alpha".to_string(),
+            message_id: "message-1".to_string(),
+            room_id: "room-1".to_string(),
+            reason: "message.new".to_string(),
+            published_at: 1,
+        });
+
+        assert_eq!(alpha.try_recv().unwrap().agent_id, "alpha");
+        assert!(matches!(beta.try_recv(), Err(TryRecvError::Empty)));
+    }
 }

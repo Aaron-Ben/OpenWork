@@ -120,6 +120,20 @@ Desktop 直接导入 `computer::sse`，Desktop 与 Computer 又分别维护一�
 - SSE：共享 protocol 模块验证重连；Computer 测试验证 management 与 Agent 各自使用独立订阅，Supervisor/结构测试约束 Desktop 只启动一个订阅。
 - 真实 OpenCode：保留显式 opt-in smoke。它会发起外部模型请求，未获得明确授权时不运行，也不能把“测试函数存在”写成“真实 smoke 已通过”。
 
+## 六、第二轮细节收口
+
+对照 `raw.txt` 与 Cumora Computer 实现后，再补齐以下运行时语义：
+
+- 正式 Engine Turn 默认关闭无输出超时与总墙钟超时；只有显式 runtime 配置才启用总超时，停止 Agent/Desktop 仍能取消；
+- Runner 异常退出由 Computer 立即按 1–30 秒有界退避重建，稳定 60 秒后清零失败次数；后台管理循环异常结束会使 daemon 失败，不留下静默失活进程；
+- HELD 使用 `request_id` 预留 → PostgreSQL 事务提交 → 最终消费；同一请求可恢复，其他请求不能抢占；
+- Agent 循环的 classifier cadence 与 hard cap 分离，Direct 和 Group 都在连续 20 条 Agent Message 时确定性停止；
+- durable inbox 使用 quietest-first water-fill，每个本批 Room 拥有独立窗口，未装入本批的范围不推进持久游标；
+- 网络层仍是每 active Agent 一条 SSE；Server 内部改为 per-Agent wake hub，避免把 Alpha 的 wake 广播给全部 Agent receiver；SSE decoder 限制单个未完成事件为 1 MiB；
+- Agent home 与 JWT 明确只是应用层逻辑隔离，不宣称 OS 安全沙箱。
+
+这些改动不改变单 Mac、Desktop 监督双子进程、本机 OpenCode、PostgreSQL 持久事实和 Redis 短期协调的产品边界。
+
 ## 完成条件
 
 只有以下条件全部满足，`raw.md` 才能恢复“完成 41”的表述：

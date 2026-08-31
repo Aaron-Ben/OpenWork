@@ -30,6 +30,13 @@ pub struct HeldBinding {
     pub shown_peer_max: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HeldReservation {
+    Reserved(HeldBinding),
+    Missing,
+    OwnedByAnotherRequest,
+}
+
 impl Coordination {
     pub fn new(redis: RedisCoordination) -> Self {
         Self { redis }
@@ -111,32 +118,90 @@ impl Coordination {
             .ok_or_else(|| RedisError::from((ErrorKind::Client, "HELD token collision")))
     }
 
-    pub async fn consume_held(
+    pub async fn reserve_held(
         &self,
         agent_id: &str,
         room_id: &str,
         token: &str,
-    ) -> RedisResult<Option<HeldBinding>> {
+        request_id: &str,
+    ) -> RedisResult<HeldReservation> {
         let mut connection = self.redis.connection().await?;
-        let value = tokio::time::timeout(
+        let key = held_key(agent_id, room_id, token);
+        let (status, value): (String, String) = tokio::time::timeout(
             REDIS_TIMEOUT,
-            redis::cmd("GETDEL")
-                .arg(held_key(agent_id, room_id, token))
-                .query_async::<Option<String>>(&mut connection),
+            Script::new(
+                r#"
+                local binding = redis.call('GET', KEYS[1])
+                if not binding then
+                    return {'missing', ''}
+                end
+                local owner = redis.call('GET', KEYS[2])
+                if not owner then
+                    redis.call('SET', KEYS[2], ARGV[1], 'NX', 'EX', ARGV[2])
+                    owner = redis.call('GET', KEYS[2])
+                end
+                if owner == ARGV[1] then
+                    return {'reserved', binding}
+                end
+                return {'owned', ''}
+                "#,
+            )
+            .key(&key)
+            .key(held_reservation_key(&key))
+            .arg(request_id)
+            .arg(HELD_TTL_SECONDS)
+            .invoke_async(&mut connection),
         )
         .await
         .map_err(|_| timeout_error())??;
-        value
-            .map(|value| {
-                serde_json::from_str(&value).map_err(|error| {
+        match status.as_str() {
+            "missing" => Ok(HeldReservation::Missing),
+            "owned" => Ok(HeldReservation::OwnedByAnotherRequest),
+            "reserved" => serde_json::from_str(&value)
+                .map(HeldReservation::Reserved)
+                .map_err(|error| {
                     RedisError::from((
                         ErrorKind::UnexpectedReturnType,
                         "invalid stored HELD binding",
                         error.to_string(),
                     ))
-                })
-            })
-            .transpose()
+                }),
+            _ => Err(RedisError::from((
+                ErrorKind::UnexpectedReturnType,
+                "invalid HELD reservation response",
+                status,
+            ))),
+        }
+    }
+
+    pub async fn finalize_held(
+        &self,
+        agent_id: &str,
+        room_id: &str,
+        token: &str,
+        request_id: &str,
+    ) -> RedisResult<bool> {
+        let mut connection = self.redis.connection().await?;
+        let key = held_key(agent_id, room_id, token);
+        let deleted: i64 = tokio::time::timeout(
+            REDIS_TIMEOUT,
+            Script::new(
+                r#"
+                if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+                    return 0
+                end
+                redis.call('DEL', KEYS[1], KEYS[2])
+                return 1
+                "#,
+            )
+            .key(&key)
+            .key(held_reservation_key(&key))
+            .arg(request_id)
+            .invoke_async(&mut connection),
+        )
+        .await
+        .map_err(|_| timeout_error())??;
+        Ok(deleted == 1)
     }
 
     pub async fn agenda_allowed(&self, agent_id: &str) -> RedisResult<bool> {
@@ -228,6 +293,10 @@ fn held_key(agent_id: &str, room_id: &str, token: &str) -> String {
     )
 }
 
+fn held_reservation_key(held_key: &str) -> String {
+    format!("{held_key}:request")
+}
+
 fn digest(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut encoded = String::with_capacity(digest.len() * 2);
@@ -239,4 +308,84 @@ fn digest(bytes: &[u8]) -> String {
 
 fn timeout_error() -> RedisError {
     RedisError::from((ErrorKind::Io, "Redis operation timed out"))
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn held_token_reservation_is_scoped_to_one_request_and_retriable() {
+        let Ok(redis_url) = std::env::var("TEST_REDIS_URL").or_else(|_| std::env::var("REDIS_URL"))
+        else {
+            return;
+        };
+        let shutdown = CancellationToken::new();
+        let Ok((redis, subscriber)) =
+            RedisCoordination::start(&redis_url, shutdown.child_token()).await
+        else {
+            return;
+        };
+        if !redis.is_connected() {
+            shutdown.cancel();
+            let _ = subscriber.await;
+            return;
+        }
+        let coordination = Coordination::new(redis);
+        let suffix = Uuid::new_v4().simple().to_string();
+        let binding = HeldBinding {
+            agent_id: format!("agent_{suffix}"),
+            run_id: format!("run_{suffix}"),
+            room_id: format!("room_{suffix}"),
+            runtime_session_id: format!("runtime_{suffix}"),
+            shown_peer_max: 42,
+        };
+        let token = coordination.issue_held(&binding).await.unwrap();
+
+        assert_eq!(
+            coordination
+                .reserve_held(&binding.agent_id, &binding.room_id, &token, "request-a")
+                .await
+                .unwrap(),
+            HeldReservation::Reserved(binding.clone())
+        );
+        assert_eq!(
+            coordination
+                .reserve_held(&binding.agent_id, &binding.room_id, &token, "request-a")
+                .await
+                .unwrap(),
+            HeldReservation::Reserved(binding.clone())
+        );
+        assert_eq!(
+            coordination
+                .reserve_held(&binding.agent_id, &binding.room_id, &token, "request-b")
+                .await
+                .unwrap(),
+            HeldReservation::OwnedByAnotherRequest
+        );
+        assert!(
+            !coordination
+                .finalize_held(&binding.agent_id, &binding.room_id, &token, "request-b")
+                .await
+                .unwrap()
+        );
+        assert!(
+            coordination
+                .finalize_held(&binding.agent_id, &binding.room_id, &token, "request-a")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            coordination
+                .reserve_held(&binding.agent_id, &binding.room_id, &token, "request-a")
+                .await
+                .unwrap(),
+            HeldReservation::Missing
+        );
+
+        shutdown.cancel();
+        let _ = subscriber.await;
+    }
 }

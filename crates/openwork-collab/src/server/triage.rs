@@ -11,8 +11,8 @@ use super::{
     climate::Climate,
 };
 
-const DM_AGENT_TRIAGE_EVERY: i64 = 8;
-const DM_AGENT_HARD_LOOP_CAP: i64 = 20;
+const AGENT_LOOP_TRIAGE_INTERVAL: i64 = 8;
+pub(super) const AGENT_LOOP_HARD_CAP: i64 = 20;
 
 #[derive(Clone)]
 pub struct InboxTriage {
@@ -70,7 +70,7 @@ impl InboxTriage {
             .iter()
             .filter(|message| message.message_kind != "system")
             .collect::<Vec<_>>();
-        if let Some(verdict) = direct_agent_verdict(&real_unread) {
+        if let Some(verdict) = agent_loop_verdict(&real_unread) {
             return Ok(TriagePayload {
                 verdict: Some(verdict),
                 instructions: None,
@@ -120,7 +120,7 @@ impl InboxTriage {
         Ok(TriagePayload {
             verdict: None,
             instructions: Some(
-                "This unread delivery is agent-only. Decide whether it needs a full Agent turn. A specific request for this Agent's decision or action is actionable. If recent context shows a human is still waiting and the unread agent message advances that work, it is actionable. Pure acknowledgements, agreement, repetition, and open-ended agent chatter without concrete work are not actionable. When unsure, prefer actionable. Return only JSON with: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string}. Do not answer the message and do not call tools."
+                "This unread delivery is agent-only. Decide whether it needs a full Agent turn. A specific request for this Agent's decision or action is actionable. If recent context shows a human is still waiting and the unread agent message advances that work, it is actionable. Pure acknowledgements, agreement, repetition, and open-ended agent chatter without concrete work are not actionable. A Room with agent_streak 20 or higher is hard capped: acknowledge it instead of replying. When unsure, prefer actionable. Return only JSON with: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string}. Do not answer the message and do not call tools."
                     .to_string(),
             ),
             input: Some(input),
@@ -159,13 +159,33 @@ impl InboxTriage {
         let unread = sqlx::query_as::<_, TriageMessage>(
             "SELECT m.id, m.room_id, room.kind AS room_kind, m.sequence,
                     m.author_id, author.kind AS author_kind,
-                    author.display_name AS author_name, m.kind AS message_kind, m.body
+                    author.display_name AS author_name, m.kind AS message_kind, m.body,
+                    agent_chain.agent_streak
              FROM collab_runs r
              JOIN collab_run_deliveries d ON d.run_id = r.id
              JOIN collab_messages m ON m.room_id = d.room_id
                 AND m.sequence BETWEEN d.from_seq AND d.up_to_seq
              JOIN collab_rooms room ON room.id = m.room_id
              JOIN collab_participants author ON author.id = m.author_id
+             JOIN LATERAL (
+                 SELECT COUNT(*) AS agent_streak
+                 FROM collab_messages trailing_message
+                 JOIN collab_participants trailing_author
+                   ON trailing_author.id = trailing_message.author_id
+                 WHERE trailing_message.room_id = d.room_id
+                   AND trailing_message.sequence <= d.up_to_seq
+                   AND trailing_message.sequence > COALESCE((
+                       SELECT MAX(previous.sequence)
+                       FROM collab_messages previous
+                       JOIN collab_participants previous_author
+                         ON previous_author.id = previous.author_id
+                       WHERE previous.room_id = d.room_id
+                         AND previous.sequence <= d.up_to_seq
+                         AND previous_author.kind <> 'agent'
+                   ), 0)
+                   AND trailing_author.kind = 'agent'
+                   AND trailing_message.kind <> 'system'
+             ) agent_chain ON TRUE
              WHERE r.id = $1 AND r.agent_id = $2
                AND r.runtime_session_id = $3 AND r.status = 'running'
                AND m.author_id <> $2
@@ -183,7 +203,8 @@ impl InboxTriage {
             "SELECT message.id, message.room_id, room.kind AS room_kind,
                     message.sequence, message.author_id,
                     author.kind AS author_kind, author.display_name AS author_name,
-                    message.kind AS message_kind, message.body
+                    message.kind AS message_kind, message.body,
+                    0::BIGINT AS agent_streak
              FROM collab_runs run
              JOIN collab_run_deliveries delivery ON delivery.run_id = run.id
              JOIN collab_room_members member
@@ -319,44 +340,44 @@ impl InboxTriage {
     }
 }
 
-fn direct_agent_verdict(messages: &[&TriageMessage]) -> Option<TriageVerdict> {
+fn agent_loop_verdict(messages: &[&TriageMessage]) -> Option<TriageVerdict> {
     if messages.is_empty()
         || !messages
             .iter()
-            .all(|message| message.room_kind == "direct" && message.author_kind == "agent")
+            .all(|message| message.author_kind == "agent")
     {
         return None;
     }
-    let mut latest_by_room = BTreeMap::<&str, i64>::new();
+    let mut latest_by_room = BTreeMap::<&str, (&str, i64)>::new();
     for message in messages {
         latest_by_room
             .entry(&message.room_id)
-            .and_modify(|sequence| *sequence = (*sequence).max(message.sequence))
-            .or_insert(message.sequence);
+            .and_modify(|(_, streak)| *streak = (*streak).max(message.agent_streak))
+            .or_insert((&message.room_kind, message.agent_streak));
     }
     if latest_by_room
         .values()
-        .all(|sequence| sequence % DM_AGENT_TRIAGE_EVERY != 0)
+        .all(|(_, streak)| *streak >= AGENT_LOOP_HARD_CAP)
     {
-        return Some(TriageVerdict {
-            actionable: true,
-            reason: format!(
-                "Agent-to-Agent Direct Room engages between every {DM_AGENT_TRIAGE_EVERY}th-message loop check"
-            ),
-            prompt_note: "A teammate messaged you directly. Reply in that Direct Room.".to_string(),
-            source: "agent_dm_engage".to_string(),
-        });
-    }
-    if latest_by_room.values().all(|sequence| {
-        *sequence >= DM_AGENT_HARD_LOOP_CAP && sequence % DM_AGENT_TRIAGE_EVERY == 0
-    }) {
         return Some(TriageVerdict {
             actionable: false,
             reason: format!(
-                "Agent-to-Agent Direct Room reached the {DM_AGENT_HARD_LOOP_CAP}-message hard loop cap"
+                "Agent conversation reached the {AGENT_LOOP_HARD_CAP}-message hard loop cap"
             ),
             prompt_note: String::new(),
             source: "loop_cap".to_string(),
+        });
+    }
+    if latest_by_room.values().all(|(room_kind, streak)| {
+        *room_kind == "direct" && *streak % AGENT_LOOP_TRIAGE_INTERVAL != 0
+    }) {
+        return Some(TriageVerdict {
+            actionable: true,
+            reason: format!(
+                "Agent-to-Agent Direct Room engages between every {AGENT_LOOP_TRIAGE_INTERVAL}th-message loop check"
+            ),
+            prompt_note: "A teammate messaged you directly. Reply in that Direct Room.".to_string(),
+            source: "agent_dm_engage".to_string(),
         });
     }
     None
@@ -378,17 +399,19 @@ struct TriageMessage {
     author_name: String,
     message_kind: String,
     body: String,
+    agent_streak: i64,
 }
 
 fn append_message(input: &mut String, message: &TriageMessage) {
     let _ = writeln!(
         input,
-        "room_id: {}\nroom_kind: {}\nmessage_id: {}\nmessage_kind: {}\nsequence: {}\nauthor_id: {}\nauthor_kind: {}\nauthor_name: {}\nbody: {}\n",
+        "room_id: {}\nroom_kind: {}\nmessage_id: {}\nmessage_kind: {}\nsequence: {}\nagent_streak: {}\nauthor_id: {}\nauthor_kind: {}\nauthor_name: {}\nbody: {}\n",
         message.room_id,
         message.room_kind,
         message.id,
         message.message_kind,
         message.sequence,
+        message.agent_streak,
         message.author_id,
         message.author_kind,
         message.author_name,
@@ -402,38 +425,50 @@ fn protocol_error(message: &str) -> sqlx::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{TriageMessage, direct_agent_verdict};
+    use super::{TriageMessage, agent_loop_verdict};
 
-    fn direct_agent_message(room_id: &str, sequence: i64) -> TriageMessage {
+    fn agent_message(room_id: &str, room_kind: &str, agent_streak: i64) -> TriageMessage {
         TriageMessage {
-            id: format!("msg-{sequence}"),
+            id: format!("msg-{agent_streak}"),
             room_id: room_id.to_string(),
-            room_kind: "direct".to_string(),
-            sequence,
+            room_kind: room_kind.to_string(),
+            sequence: agent_streak,
             author_id: "agent-peer".to_string(),
             author_kind: "agent".to_string(),
             author_name: "Peer".to_string(),
             message_kind: "normal".to_string(),
             body: "hello".to_string(),
+            agent_streak,
         }
     }
 
     #[test]
-    fn agent_direct_engages_between_checks_and_stops_at_the_hard_cap() {
-        let between = direct_agent_message("room-direct", 7);
-        let verdict = direct_agent_verdict(&[&between]).expect("between checks engages");
+    fn direct_check_cadence_and_hard_cap_are_independent() {
+        let between = agent_message("room-direct", "direct", 7);
+        let verdict = agent_loop_verdict(&[&between]).expect("between checks engages");
         assert!(verdict.actionable);
         assert_eq!(verdict.source, "agent_dm_engage");
 
-        let checkpoint = direct_agent_message("room-direct", 8);
-        assert!(direct_agent_verdict(&[&checkpoint]).is_none());
+        let checkpoint = agent_message("room-direct", "direct", 8);
+        assert!(agent_loop_verdict(&[&checkpoint]).is_none());
 
-        let capped = direct_agent_message("room-direct", 24);
-        let verdict = direct_agent_verdict(&[&capped]).expect("hard cap suppresses");
+        let capped = agent_message("room-direct", "direct", 20);
+        let verdict = agent_loop_verdict(&[&capped]).expect("hard cap suppresses");
+        assert!(!verdict.actionable);
+        assert_eq!(verdict.source, "loop_cap");
+    }
+
+    #[test]
+    fn group_uses_model_triage_until_the_deterministic_agent_loop_cap() {
+        let slow_group = agent_message("room-group", "group", 8);
+        assert!(agent_loop_verdict(&[&slow_group]).is_none());
+
+        let capped_group = agent_message("room-group", "group", 20);
+        let verdict = agent_loop_verdict(&[&capped_group]).expect("group cap suppresses");
         assert!(!verdict.actionable);
         assert_eq!(verdict.source, "loop_cap");
 
-        let fresh_other_room = direct_agent_message("room-other", 1);
-        assert!(direct_agent_verdict(&[&capped, &fresh_other_room]).is_none());
+        let fresh_other_room = agent_message("room-other", "group", 1);
+        assert!(agent_loop_verdict(&[&capped_group, &fresh_other_room]).is_none());
     }
 }

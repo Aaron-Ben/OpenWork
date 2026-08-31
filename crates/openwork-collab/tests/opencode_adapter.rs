@@ -3,6 +3,7 @@
 mod support;
 
 use std::os::unix::fs::PermissionsExt;
+use std::time::Duration;
 
 use openwork_collab::computer::engine::{
     AgentEngineRuntime, ClassifyRequest, EngineAdapter, EngineAvailability, EngineError,
@@ -44,6 +45,97 @@ async fn opencode_run_turn_uses_stdin_and_returns_resumable_structured_result() 
     assert_eq!(result.usage.output_tokens, 5);
     assert_eq!(result.usage.cached_input_tokens, 7);
     assert_eq!(result.usage.cache_creation_input_tokens, 5);
+}
+
+#[tokio::test]
+async fn main_turn_has_no_default_silence_or_wall_clock_timeout() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-silent-work");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+sleep 1
+printf '%s\n' \
+  '{"type":"step_start","sessionID":"ses_silent"}' \
+  '{"type":"text","part":{"text":"finished after silence"}}'
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let mut runtime = runtime_with_timeout(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+        None,
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        runtime.run_turn(TurnRequest {
+            prompt: "do quiet work".to_string(),
+            cancellation: CancellationToken::new(),
+        }),
+    )
+    .await
+    .expect("a silent turn should finish without a default timeout")
+    .unwrap();
+
+    assert_eq!(result.text, "finished after silence");
+}
+
+#[tokio::test]
+async fn an_explicit_main_turn_timeout_remains_available() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("opencode-explicit-timeout");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+sleep 60
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+
+    let mut runtime = runtime_with_timeout(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+        Some(Duration::from_millis(50)),
+    )
+    .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        runtime.run_turn(TurnRequest {
+            prompt: "bound this turn".to_string(),
+            cancellation: CancellationToken::new(),
+        }),
+    )
+    .await
+    .expect("the configured timeout should stop the process");
+
+    assert!(matches!(
+        result,
+        Err(EngineError::Timeout { operation: "turn" })
+    ));
 }
 
 #[tokio::test]
@@ -440,6 +532,15 @@ async fn runtime(
     directory: &tempfile::TempDir,
     model: &str,
 ) -> Box<dyn AgentEngineRuntime> {
+    runtime_with_timeout(adapter, directory, model, None).await
+}
+
+async fn runtime_with_timeout(
+    adapter: OpenCodeAdapter,
+    directory: &tempfile::TempDir,
+    model: &str,
+    turn_timeout: Option<Duration>,
+) -> Box<dyn AgentEngineRuntime> {
     adapter
         .create_agent_runtime(EngineRuntimeConfig {
             home: directory.path().to_path_buf(),
@@ -448,6 +549,7 @@ async fn runtime(
             context_fingerprint: "test-persona".to_string(),
             model: model.to_string(),
             environment: Default::default(),
+            turn_timeout,
         })
         .await
         .unwrap()

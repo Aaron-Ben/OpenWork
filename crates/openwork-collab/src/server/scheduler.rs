@@ -72,8 +72,8 @@ impl Scheduler {
         }
     }
 
-    pub fn subscribe_wakes(&self) -> broadcast::Receiver<WakeEvent> {
-        self.redis.subscribe_wakes()
+    pub fn subscribe_wakes(&self, agent_id: &str) -> broadcast::Receiver<WakeEvent> {
+        self.redis.subscribe_wakes(agent_id)
     }
 
     async fn schedule(&self, event: MessageNewEvent) {

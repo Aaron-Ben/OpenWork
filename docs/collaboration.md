@@ -114,6 +114,8 @@ Agent JWT 至少携带 Agent ID、RuntimeSession ID 和过期时间。Computer �
 
 Desktop、Computer、Agent credential 不能跨 namespace 互换。
 
+这些凭证与每个 Agent 的独立 home 是**应用层逻辑隔离**，不是 macOS 安全沙箱。Computer、Runner、Engine 和 shim 都属于同一登录用户下的可信本机进程；被攻陷或恶意的本机 Engine 进程仍可能读取该用户有权读取的其他文件。JWT 负责限制 Server API 中“以哪个 Agent、哪个 RuntimeSession 做什么”，不负责建立 OS 级机密边界。
+
 ## 4. HTTP 与 SSE seam
 
 Server 只绑定操作系统分配的随机 loopback 端口。所有修改都是 HTTP request；实时通道只使用 SSE。
@@ -127,7 +129,9 @@ Computer            1 条 management SSE
 - Desktop SSE 通知 Runtime、Agent config、Engine inventory、Runner status 或消息可能变化；
 - management SSE 只促使 Computer 重新获取完整 desired Agent snapshot；
 - Agent SSE 只通知对应 Agent 可能有新工作；
+- 每条 Agent SSE 在网络上独立，Server 内部也按 Agent ID 使用独立 wake channel；Alpha 的事件不会先广播给所有 Runner 再由各连接过滤；
 - 三类连接都使用 1 秒起步、最多 30 秒的指数退避；
+- SSE decoder 对单个未完成事件设置 1 MiB 上限，防止无分隔符输入无限占用内存；
 - Computer 仍每 60 秒获取完整 desired snapshot；
 - Agent 仍约每 20 秒重新读取 durable inbox；
 - SSE 和 Redis Pub/Sub 只传 invalidation，不传业务正文。
@@ -155,6 +159,8 @@ desired agents + current Engine readiness
 
 Engine、主模型、triage 模型、persona 或 config revision 变化都会重建对应 Runner。一个 Agent 的 home 或 Engine 初始化失败只把该 Runner 标记为 error，不阻塞其他 Agent。归档停止 Runner并保留历史、home 与 Engine continuity；恢复后用新的 config revision 重建。
 
+Runner 异常退出后，Computer 不等待下一次 60 秒全量 reconcile：它立即按 1、2、4 秒指数退避重建该 Agent 的 Runner，最长退避 30 秒；Runner 连续稳定 60 秒后清零失败次数。desired state 已删除、归档或配置已变化时，旧重启计划随之取消。management、heartbeat、roster 或 inventory 后台任务意外停止则视为 daemon 故障，而不是留下一个表面在线但不再协调的 Computer。
+
 PostgreSQL 中的 Engine inventory 只是最后一次观测。当前 session 能否启动 Runner，必须由 Computer 本次实时 probe 的内存结果确认。
 
 ## 6. Engine 与 AgentRunner
@@ -175,6 +181,8 @@ AgentEngineRuntime
 
 生产 `EngineRegistry` 当前只注册 `OpenCodeAdapter`。OpenCode 的命令、JSONL、session 恢复、错误映射、输出上限、取消与进程组终止全部封装在 adapter 内。Runner 只看到通用 `EngineError`，其中包括 missing、unauthenticated、rate-limited、session-invalid、process、protocol、cancelled、timeout 和 output-limit。
 
+正式 Turn 默认没有“5 分钟无输出”或总墙钟超时；长时间无输出本身不表示 Engine 已失效。总 Turn 超时只有在对应 Engine runtime 显式配置时才启用。用户停止 Agent 或退出 Desktop 仍会沿取消/有界关闭路径终止 Engine 进程组。classifier 等短请求继续拥有自己的固定超时。
+
 每个 `AgentRunner` 是一个 actor：
 
 - 同 Agent 永不并发运行两个正式 Turn；
@@ -192,12 +200,13 @@ Message 先写 PostgreSQL，再尽力发布 Redis invalidation。Redis 发布失
 User 消息确定性进入正式 Turn。Agent 消息才经过 triage：
 
 - Agent Direct Room 通常直接 engage；
-- 每第 8 条 Agent Direct Message 进入一次 classifier；
-- 第 20 条检查点强制 `loop_cap`；
-- Group 中的 Agent 消息由 classifier 判断是否需要行动；
+- Agent Direct Room 每连续 8 条 Agent Message 进入一次 classifier；
+- triage 检查频率与硬上限互相独立：自最近一次 User Message 后连续 20 条 Agent Message 时确定性 `loop_cap`，不等待下一个 8 的倍数；
+- Group 中的 Agent Message 平时由 classifier 判断，但同样受连续 20 条的确定性上限；
+- reply/DM 写入边界再次检查 hard cap，防止一个同时包含多个 Room 的批次绕过单 Room 上限；
 - triage 失败不会把 User 消息丢掉。
 
-Runner 从 durable inbox 打开一个 Run，并把每个 Room 的 sequence 范围写入 delivery。只有成功完成且有明确 settlement 的 Run 才推进 delivery。失败、取消或中断保留未结算范围，下次 RuntimeSession 可以重新读取，因此模型调用和回复具有 at-least-once 特征。
+Runner 从 durable inbox 打开一个 Run，并把每个 Room 的 sequence 范围写入 delivery。单批最多 200 条消息，使用与 Cumora 相同的 quietest-first water-fill：先让每个有未读的 Room 获得自己的窗口，再把余量交给繁忙 Room；每个窗口从该 Room 最旧的未读消息开始。超过本批预算的消息不推进 `last_read_seq`，会在后续 Run 继续出现。只有成功完成且有明确 settlement 的 Run 才推进 delivery。失败、取消或中断保留未结算范围，下次 RuntimeSession 可以重新读取，因此模型调用和回复具有 at-least-once 特征。
 
 HELD 解决并行回复的新鲜度问题：
 
@@ -205,7 +214,8 @@ HELD 解决并行回复的新鲜度问题：
 2. 发布前 Server 比较当前 sequence；
 3. Room 已变化时拒绝发布并签发短期 HELD token；
 4. Agent `glance` 最新消息；
-5. 使用绑定 Agent、Run、Room、session 和 sequence 的一次性 token 重试。
+5. 使用绑定 Agent、Run、Room、session 和 sequence 的一次性 token 重试；
+6. Server 先按 `request_id` 原子预留 HELD，再提交 PostgreSQL 命令与幂等结果，提交成功后才最终消费 token。同一 `request_id` 可在 SQL 失败后继续恢复，其他请求不能抢占预留。
 
 HELD 不是全局锁，也不选举唯一回答者。
 
@@ -275,6 +285,7 @@ Redis 协调不可用时 Agenda 关闭本次尝试。Card-focused Agenda Run 可
 | Redis Pub/Sub 不可用 | 消息仍持久；即时 wake 可丢失，poll 恢复 |
 | Redis 安全协调不可用 | HELD/Agenda 等需要原子协调的动作按各自规则拒绝或关闭 |
 | Engine rate limit | 记录结构化错误与 retry-after，pacer 延后后续调用 |
+| Runner panic/异常退出 | Computer 立即进入有界指数退避重建，不等待 roster poll；重复失败仍可观测且不形成紧循环 |
 | Engine 忽略取消 | 先终止进程组，超时后强制结束子进程 |
 | Run 在结算前中断 | delivery 不推进，下次启动重新读取 |
 

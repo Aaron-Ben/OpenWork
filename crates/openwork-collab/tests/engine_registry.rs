@@ -169,6 +169,7 @@ fn runtime_config(agent_id: &str) -> EngineRuntimeConfig {
         home,
         model: "fake/model".to_string(),
         environment: BTreeMap::new(),
+        turn_timeout: None,
     }
 }
 

@@ -58,6 +58,9 @@ pub struct EngineRuntimeConfig {
     pub context_fingerprint: String,
     pub model: String,
     pub environment: BTreeMap<String, String>,
+    /// Optional product-level wall-clock limit for one main Engine turn.
+    /// `None` lets the turn run until it finishes or is explicitly cancelled.
+    pub turn_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

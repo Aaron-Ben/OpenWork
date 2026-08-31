@@ -24,6 +24,9 @@ use super::{
 
 const RUNNER_SHUTDOWN_GRACE: Duration = Duration::from_secs(15);
 const RUNNER_FORCE_REAP_TIMEOUT: Duration = Duration::from_secs(1);
+const RUNNER_RESTART_BASE: Duration = Duration::from_secs(1);
+const RUNNER_RESTART_MAX: Duration = Duration::from_secs(30);
+const RUNNER_STABLE_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug)]
 pub struct ComputerOptions {
@@ -48,12 +51,32 @@ struct RunnerHandle {
     stop_requested: CancellationToken,
     force_cancel: CancellationToken,
     task: JoinHandle<Result<(), RunnerError>>,
+    started_at: tokio::time::Instant,
+    restart_failures: u32,
+}
+
+#[derive(Clone, Copy)]
+struct RestartPlan {
+    failures: u32,
+    not_before: tokio::time::Instant,
+}
+
+impl RestartPlan {
+    fn after_failure(failures: u32) -> Self {
+        let exponent = failures.saturating_sub(1).min(5);
+        let delay = (RUNNER_RESTART_BASE * 2_u32.pow(exponent)).min(RUNNER_RESTART_MAX);
+        Self {
+            failures,
+            not_before: tokio::time::Instant::now() + delay,
+        }
+    }
 }
 
 enum DaemonEvent {
     Roster(Vec<AgentAssignment>),
     Inventory(Vec<EngineProbe>),
     Fatal(RuntimeClientError),
+    BackgroundStopped(&'static str),
 }
 
 #[derive(Clone, Debug)]
@@ -94,9 +117,15 @@ impl ComputerDaemon {
             resources: &resources,
         };
         let mut runners = HashMap::<String, RunnerHandle>::new();
+        let mut restart_plans = HashMap::<String, RestartPlan>::new();
         let snapshot = client.desired_agents().await?;
         let runner_statuses = runner_factory
-            .reconcile(snapshot.agents, &inventory, &mut runners)
+            .reconcile(
+                snapshot.agents,
+                &inventory,
+                &mut runners,
+                &mut restart_plans,
+            )
             .await?;
         let initial_actual = actual_state(&inventory, runner_statuses);
         client.heartbeat(&initial_actual).await?;
@@ -107,32 +136,74 @@ impl ComputerDaemon {
         let (management_tx, management_rx) = mpsc::channel(1);
         let management_client = client.clone();
         let management_shutdown = background_shutdown.clone();
+        let management_events = events_tx.clone();
         let management_task = tokio::spawn(async move {
             management_client
-                .management_loop(management_tx, management_shutdown)
+                .management_loop(management_tx, management_shutdown.clone())
                 .await;
+            if !management_shutdown.is_cancelled() {
+                let _ = management_events
+                    .send(DaemonEvent::BackgroundStopped("management SSE"))
+                    .await;
+            }
         });
-        let heartbeat_task = tokio::spawn(heartbeat_loop(
-            client.clone(),
-            self.options.heartbeat_interval,
-            actual_rx,
-            events_tx.clone(),
-            background_shutdown.clone(),
-        ));
-        let roster_task = tokio::spawn(roster_loop(
-            client.clone(),
-            self.options.roster_interval,
-            management_rx,
-            events_tx.clone(),
-            background_shutdown.clone(),
-        ));
-        let inventory_task = tokio::spawn(engine_rescan_loop(
-            client.clone(),
-            inventory_adapters,
-            self.options.engine_rescan_interval,
-            events_tx,
-            background_shutdown.clone(),
-        ));
+        let heartbeat_client = client.clone();
+        let heartbeat_interval = self.options.heartbeat_interval;
+        let heartbeat_events = events_tx.clone();
+        let heartbeat_shutdown = background_shutdown.clone();
+        let heartbeat_task = tokio::spawn(async move {
+            heartbeat_loop(
+                heartbeat_client,
+                heartbeat_interval,
+                actual_rx,
+                heartbeat_events.clone(),
+                heartbeat_shutdown.clone(),
+            )
+            .await;
+            if !heartbeat_shutdown.is_cancelled() {
+                let _ = heartbeat_events
+                    .send(DaemonEvent::BackgroundStopped("heartbeat"))
+                    .await;
+            }
+        });
+        let roster_events = events_tx.clone();
+        let roster_shutdown = background_shutdown.clone();
+        let roster_client = client.clone();
+        let roster_interval = self.options.roster_interval;
+        let roster_task = tokio::spawn(async move {
+            roster_loop(
+                roster_client,
+                roster_interval,
+                management_rx,
+                roster_events.clone(),
+                roster_shutdown.clone(),
+            )
+            .await;
+            if !roster_shutdown.is_cancelled() {
+                let _ = roster_events
+                    .send(DaemonEvent::BackgroundStopped("roster"))
+                    .await;
+            }
+        });
+        let inventory_events = events_tx.clone();
+        let inventory_shutdown = background_shutdown.clone();
+        let inventory_client = client.clone();
+        let inventory_interval = self.options.engine_rescan_interval;
+        let inventory_task = tokio::spawn(async move {
+            engine_rescan_loop(
+                inventory_client,
+                inventory_adapters,
+                inventory_interval,
+                inventory_events.clone(),
+                inventory_shutdown.clone(),
+            )
+            .await;
+            if !inventory_shutdown.is_cancelled() {
+                let _ = inventory_events
+                    .send(DaemonEvent::BackgroundStopped("engine inventory"))
+                    .await;
+            }
+        });
         let mut current_inventory = inventory;
         let mut current_runner_statuses = actual_tx.borrow().runners.clone();
         let mut runner_tick = tokio::time::interval(Duration::from_secs(1));
@@ -143,7 +214,12 @@ impl ComputerDaemon {
                 event = events_rx.recv() => match event {
                     Some(DaemonEvent::Roster(assignments)) => {
                         match runner_factory
-                            .reconcile(assignments, &current_inventory, &mut runners)
+                            .reconcile(
+                                assignments,
+                                &current_inventory,
+                                &mut runners,
+                                &mut restart_plans,
+                            )
                             .await
                         {
                             Ok(statuses) => {
@@ -160,7 +236,12 @@ impl ComputerDaemon {
                         current_inventory = inventory;
                         match client.desired_agents().await {
                             Ok(snapshot) => match runner_factory
-                                .reconcile(snapshot.agents, &current_inventory, &mut runners)
+                                .reconcile(
+                                    snapshot.agents,
+                                    &current_inventory,
+                                    &mut runners,
+                                    &mut restart_plans,
+                                )
                                 .await
                             {
                                 Ok(statuses) => current_runner_statuses = statuses,
@@ -179,10 +260,22 @@ impl ComputerDaemon {
                         ));
                     }
                     Some(DaemonEvent::Fatal(error)) => break Err(error.into()),
+                    Some(DaemonEvent::BackgroundStopped(name)) if !background_shutdown.is_cancelled() => {
+                        tracing::error!(loop_name = name, "Computer background loop stopped unexpectedly");
+                        break Err(ComputerError::BackgroundStopped);
+                    }
+                    Some(DaemonEvent::BackgroundStopped(_)) => break Ok(()),
                     None if shutdown.is_cancelled() => break Ok(()),
                     None => break Err(ComputerError::BackgroundStopped),
                 },
                 _ = runner_tick.tick() => {
+                    for handle in runners.values_mut() {
+                        if handle.restart_failures > 0
+                            && handle.started_at.elapsed() >= RUNNER_STABLE_AFTER
+                        {
+                            handle.restart_failures = 0;
+                        }
+                    }
                     let finished = runners
                         .iter()
                         .filter(|(_, handle)| handle.task.is_finished())
@@ -191,6 +284,11 @@ impl ComputerDaemon {
                     for id in finished {
                         let handle = runners.remove(&id).expect("finished Runner still exists");
                         let assignment = handle.assignment.clone();
+                        let restart_failures = if handle.started_at.elapsed() >= RUNNER_STABLE_AFTER {
+                            1
+                        } else {
+                            handle.restart_failures.saturating_add(1)
+                        };
                         match handle.task.await {
                             Ok(Ok(())) => {
                                 tracing::warn!(agent_id = id, "Agent Runner stopped unexpectedly");
@@ -218,10 +316,42 @@ impl ComputerDaemon {
                                 );
                             }
                         }
+                        restart_plans.insert(id, RestartPlan::after_failure(restart_failures));
                         actual_tx.send_replace(actual_state(
                             &current_inventory,
                             current_runner_statuses.clone(),
                         ));
+                    }
+                    if restart_plans
+                        .values()
+                        .any(|plan| plan.not_before <= tokio::time::Instant::now())
+                    {
+                        match client.desired_agents().await {
+                            Ok(snapshot) => match runner_factory
+                                .reconcile(
+                                    snapshot.agents,
+                                    &current_inventory,
+                                    &mut runners,
+                                    &mut restart_plans,
+                                )
+                                .await
+                            {
+                                Ok(statuses) => {
+                                    current_runner_statuses = statuses;
+                                    actual_tx.send_replace(actual_state(
+                                        &current_inventory,
+                                        current_runner_statuses.clone(),
+                                    ));
+                                }
+                                Err(error) => break Err(error),
+                            },
+                            Err(error) if error.is_terminal_identity_error() => {
+                                break Err(error.into());
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "failed to refresh desired Agents for Runner restart");
+                            }
+                        }
                     }
                 }
             }
@@ -290,7 +420,7 @@ async fn roster_loop(
             _ = shutdown.cancelled() => return,
             _ = tokio::time::sleep(retry_delay) => {}
             invalidation = invalidations.recv() => {
-                if invalidation.is_none() && shutdown.is_cancelled() {
+                if invalidation.is_none() {
                     return;
                 }
             }
@@ -528,11 +658,13 @@ impl RunnerFactory<'_> {
         assignments: Vec<AgentAssignment>,
         inventory: &[EngineProbe],
         runners: &mut HashMap<String, RunnerHandle>,
+        restart_plans: &mut HashMap<String, RestartPlan>,
     ) -> Result<Vec<RunnerStatusView>, ComputerError> {
         let desired = assignments
             .iter()
             .map(|assignment| (assignment.id.as_str(), assignment))
             .collect::<HashMap<_, _>>();
+        restart_plans.retain(|id, _| desired.contains_key(id.as_str()));
         let mut failures = Vec::new();
         let removed = runners
             .keys()
@@ -550,10 +682,12 @@ impl RunnerFactory<'_> {
             {
                 tracing::warn!(agent_id = id, %error, "Agent Runner required forced replacement");
             }
+            restart_plans.remove(&id);
         }
         for assignment in assignments {
             if !runners.contains_key(&assignment.id) {
                 if !engine_runnable(inventory, &assignment.engine_id) {
+                    restart_plans.remove(&assignment.id);
                     failures.push(RunnerStatusView {
                         agent_id: assignment.id,
                         config_revision: assignment.config_revision,
@@ -565,17 +699,39 @@ impl RunnerFactory<'_> {
                     });
                     continue;
                 }
-                match self.start(assignment.clone(), runners).await {
-                    Ok(()) => {}
-                    Err(error) if error.is_fenced() => return Err(error),
-                    Err(error) => {
-                        tracing::warn!(agent_id = assignment.id, %error, "Agent Runner could not start");
+                let restart_failures = match restart_plans.get(&assignment.id) {
+                    Some(plan) if plan.not_before > tokio::time::Instant::now() => {
                         failures.push(RunnerStatusView {
                             agent_id: assignment.id,
                             config_revision: assignment.config_revision,
                             state: RunnerState::Error,
+                            last_error: Some("Agent Runner restart is scheduled".to_string()),
+                        });
+                        continue;
+                    }
+                    Some(plan) => plan.failures,
+                    None => 0,
+                };
+                match self
+                    .start(assignment.clone(), runners, restart_failures)
+                    .await
+                {
+                    Ok(()) => {
+                        restart_plans.remove(&assignment.id);
+                    }
+                    Err(error) if error.is_fenced() => return Err(error),
+                    Err(error) => {
+                        tracing::warn!(agent_id = assignment.id, %error, "Agent Runner could not start");
+                        failures.push(RunnerStatusView {
+                            agent_id: assignment.id.clone(),
+                            config_revision: assignment.config_revision,
+                            state: RunnerState::Error,
                             last_error: Some(bounded_error(error.to_string())),
                         });
+                        restart_plans.insert(
+                            assignment.id,
+                            RestartPlan::after_failure(restart_failures.saturating_add(1)),
+                        );
                     }
                 }
             }
@@ -598,6 +754,7 @@ impl RunnerFactory<'_> {
         &self,
         assignment: AgentAssignment,
         runners: &mut HashMap<String, RunnerHandle>,
+        restart_failures: u32,
     ) -> Result<(), ComputerError> {
         let engine_id = EngineId::new(assignment.engine_id.clone())?;
         let adapter = self.engines.require(&engine_id)?;
@@ -614,6 +771,7 @@ impl RunnerFactory<'_> {
                 context_fingerprint: home.context_fingerprint.clone(),
                 model: assignment.main_model_id.clone(),
                 environment: home.environment.clone(),
+                turn_timeout: None,
             })
             .await?;
         let stop_requested = CancellationToken::new();
@@ -646,6 +804,8 @@ impl RunnerFactory<'_> {
                 stop_requested,
                 force_cancel,
                 task,
+                started_at: tokio::time::Instant::now(),
+                restart_failures,
             },
         );
         Ok(())
@@ -770,6 +930,8 @@ mod tests {
                 stop_requested,
                 force_cancel,
                 task,
+                started_at: tokio::time::Instant::now(),
+                restart_failures: 0,
             },
         )]);
 
@@ -800,6 +962,8 @@ mod tests {
                     stop_requested,
                     force_cancel,
                     task,
+                    started_at: tokio::time::Instant::now(),
+                    restart_failures: 0,
                 },
             );
         }

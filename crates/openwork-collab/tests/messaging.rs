@@ -160,17 +160,19 @@ impl Fixture {
     }
 
     async fn inbox(&self, token: &str) -> InboxResponse {
-        self.http
+        let response = self
+            .http
             .get(format!("{}/agent/inbox", self.base_url))
             .bearer_auth(token)
             .send()
             .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap()
+            .unwrap();
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap();
+            panic!("inbox failed with {status}: {body}");
+        }
+        response.json().await.unwrap()
     }
 
     async fn agent_events(&self, token: &str) -> reqwest::Response {
@@ -202,7 +204,8 @@ impl Fixture {
     }
 
     async fn triage(&self, token: &str, run_id: &str) -> TriagePayload {
-        self.http
+        let response = self
+            .http
             .get(format!(
                 "{}/agent/inbox-triage/payload?run_id={run_id}",
                 self.base_url
@@ -210,20 +213,31 @@ impl Fixture {
             .bearer_auth(token)
             .send()
             .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap()
+            .unwrap();
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap();
+            panic!("triage failed with {status}: {body}");
+        }
+        response.json().await.unwrap()
     }
 
     async fn command(&self, token: &str, command: AgentCommand) -> AgentCommandResponse {
+        self.command_with_request_id(token, request_id(), command)
+            .await
+    }
+
+    async fn command_with_request_id(
+        &self,
+        token: &str,
+        request_id: String,
+        command: AgentCommand,
+    ) -> AgentCommandResponse {
         self.http
             .post(format!("{}/agent/commands", self.base_url))
             .bearer_auth(token)
             .json(&AgentCommandRequest {
-                request_id: request_id(),
+                request_id,
                 command,
             })
             .send()
@@ -398,6 +412,112 @@ async fn per_agent_sse_is_isolated_and_the_durable_inbox_does_not_depend_on_it()
 }
 
 #[tokio::test]
+async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha = fixture.create_agent("Alpha").await;
+    let beta = fixture.create_agent("Beta").await;
+    let busy = fixture
+        .create_group(vec![alpha.id.clone(), beta.id.clone()])
+        .await;
+    let quiet = fixture.create_direct(&alpha.id).await;
+    let prefix = Uuid::new_v4().simple().to_string();
+    sqlx::query(
+        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+         SELECT 'msg-' || md5($1 || sequence::TEXT), $2, sequence, 'local-user', 'normal',
+                'busy message ' || sequence::TEXT
+         FROM generate_series(1, 200) AS sequence",
+    )
+    .bind(prefix)
+    .bind(&busy.id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE collab_rooms SET next_seq = 200 WHERE id = $1")
+        .bind(&busy.id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    fixture
+        .send_user(&quiet.id, "quiet room must keep its own inbox window")
+        .await;
+
+    let token = fixture.token(&alpha.id).await;
+    let inbox = fixture.inbox(&token).await;
+    assert_eq!(inbox.messages.len(), 200);
+    assert!(inbox.carried_over);
+    assert_eq!(
+        inbox
+            .messages
+            .iter()
+            .filter(|message| message.room_id == busy.id)
+            .count(),
+        199
+    );
+    assert!(inbox.messages.iter().any(|message| {
+        message.room_id == quiet.id && message.body == "quiet room must keep its own inbox window"
+    }));
+
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn group_agent_chatter_stops_at_the_deterministic_loop_cap() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha = fixture.create_agent("Alpha").await;
+    let beta = fixture.create_agent("Beta").await;
+    let group = fixture
+        .create_group(vec![alpha.id.clone(), beta.id.clone()])
+        .await;
+    let seed = Uuid::new_v4().simple().to_string();
+    sqlx::query(
+        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+         SELECT 'msg-' || md5($1 || sequence::TEXT), $2, sequence, $3, 'normal',
+                'agent loop message ' || sequence::TEXT
+         FROM generate_series(1, 20) AS sequence",
+    )
+    .bind(seed)
+    .bind(&group.id)
+    .bind(&beta.id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE collab_rooms SET next_seq = 20 WHERE id = $1")
+        .bind(&group.id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+    let token = fixture.token(&alpha.id).await;
+    let inbox = fixture.inbox(&token).await;
+    let run = fixture.open_run(&token, &inbox).await;
+    let triage = fixture.triage(&token, &run.id).await;
+    let verdict = triage.verdict.expect("hard cap is deterministic");
+    assert!(!verdict.actionable);
+    assert_eq!(verdict.source, "loop_cap");
+    let rejected = fixture
+        .command(
+            &token,
+            AgentCommand::Reply {
+                room_id: group.id,
+                body: "This reply must not extend the Agent loop.".to_string(),
+                held_token: None,
+            },
+        )
+        .await;
+    assert!(matches!(
+        rejected.result,
+        AgentCommandResult::Error { ref code, .. } if code == "LOOP_CAP"
+    ));
+    fixture.finish(&token, &run.id, "completed").await;
+
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration() {
     let Some(fixture) = Fixture::start().await else {
         return;
@@ -451,20 +571,35 @@ async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration(
         results => panic!("expected one HELD response, got {results:?}"),
     };
     let consumed_held_token = held_token.clone();
+    let retry_request_id = request_id();
+    let retry_command = AgentCommand::Reply {
+        room_id: group.id.clone(),
+        body: "Reconsidered answer".to_string(),
+        held_token: Some(held_token),
+    };
     let retried = fixture
-        .command(
+        .command_with_request_id(
             held_agent_token,
-            AgentCommand::Reply {
-                room_id: group.id.clone(),
-                body: "Reconsidered answer".to_string(),
-                held_token: Some(held_token),
-            },
+            retry_request_id.clone(),
+            retry_command.clone(),
         )
         .await;
-    assert!(matches!(
-        retried.result,
-        AgentCommandResult::MessagePublished { .. }
-    ));
+    let AgentCommandResult::MessagePublished {
+        message: retried_message,
+    } = &retried.result
+    else {
+        panic!("HELD retry was not published: {:?}", retried.result)
+    };
+    let replayed = fixture
+        .command_with_request_id(held_agent_token, retry_request_id, retry_command)
+        .await;
+    let AgentCommandResult::MessagePublished {
+        message: replayed_message,
+    } = replayed.result
+    else {
+        panic!("idempotent HELD retry was not replayed")
+    };
+    assert_eq!(replayed_message.id, retried_message.id);
     let reused = fixture
         .command(
             held_agent_token,

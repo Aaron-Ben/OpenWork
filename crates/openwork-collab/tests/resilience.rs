@@ -324,6 +324,7 @@ async fn redis_subscriber_recovers_after_a_live_connection_is_cut() {
         "message committed during the Redis outage disappeared"
     );
 
+    drop(events);
     server.shutdown().await.unwrap();
     proxy_shutdown.cancel();
     proxy_task.await.unwrap();

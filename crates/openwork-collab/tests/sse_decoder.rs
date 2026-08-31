@@ -21,3 +21,13 @@ fn decoder_accepts_crlf_boundaries() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].data, "{}");
 }
+
+#[test]
+fn decoder_rejects_an_unbounded_event_without_a_delimiter() {
+    let mut decoder = SseDecoder::default();
+    let oversized = vec![b'x'; 1024 * 1024 + 1];
+
+    let error = decoder.push(&oversized).unwrap_err();
+
+    assert!(error.to_string().contains("decoder limit"));
+}

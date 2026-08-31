@@ -4,6 +4,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::InvalidationEvent;
 
+const MAX_PENDING_EVENT_BYTES: usize = 1024 * 1024;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SseEvent {
     pub event: Option<String>,
@@ -21,12 +23,24 @@ impl SseDecoder {
         self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
         while let Some((end, delimiter_len)) = find_event_boundary(&self.buffer) {
+            if end > MAX_PENDING_EVENT_BYTES {
+                self.buffer.clear();
+                return Err(SseParseError::EventTooLarge {
+                    limit: MAX_PENDING_EVENT_BYTES,
+                });
+            }
             let block = self.buffer.drain(..end).collect::<Vec<_>>();
             self.buffer.drain(..delimiter_len);
             let block = std::str::from_utf8(&block)?;
             if let Some(event) = parse_event(block) {
                 events.push(event);
             }
+        }
+        if self.buffer.len() > MAX_PENDING_EVENT_BYTES {
+            self.buffer.clear();
+            return Err(SseParseError::EventTooLarge {
+                limit: MAX_PENDING_EVENT_BYTES,
+            });
         }
         Ok(events)
     }
@@ -162,6 +176,8 @@ fn parse_event(block: &str) -> Option<SseEvent> {
 pub enum SseParseError {
     #[error("SSE stream contained invalid UTF-8: {0}")]
     Utf8(#[from] std::str::Utf8Error),
+    #[error("SSE event exceeded the {limit}-byte decoder limit")]
+    EventTooLarge { limit: usize },
 }
 
 #[derive(Debug, thiserror::Error)]
