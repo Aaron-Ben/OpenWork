@@ -124,20 +124,24 @@ impl AgentRunner {
     }
 
     pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), RunnerError> {
-        let (wake_tx, mut wake_rx) = mpsc::channel(1);
+        let (rerun_requested_tx, mut rerun_requested_rx) = mpsc::channel(1);
         let wake_shutdown = shutdown.child_token();
         let wake_client = self.client.clone();
         let wake_task_shutdown = wake_shutdown.clone();
         let wake_task = tokio::spawn(async move {
-            wake_client.wake_loop(wake_tx, wake_task_shutdown).await;
+            wake_client
+                .wake_loop(rerun_requested_tx, wake_task_shutdown)
+                .await;
         });
         let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let result = 'runner: loop {
-            let Some(debounce) = next_trigger(&mut wake_rx, &mut interval, &shutdown).await? else {
+            let Some(debounce) =
+                next_trigger(&mut rerun_requested_rx, &mut interval, &shutdown).await?
+            else {
                 break 'runner Ok(());
             };
-            if debounce && !debounce_wakes(&mut wake_rx, &shutdown).await {
+            if debounce && !debounce_wakes(&mut rerun_requested_rx, &shutdown).await {
                 break 'runner Ok(());
             }
             loop {
@@ -153,13 +157,13 @@ impl AgentRunner {
                 if shutdown.is_cancelled() {
                     break 'runner Ok(());
                 }
-                if wake_rx.try_recv().is_err() {
+                if rerun_requested_rx.try_recv().is_err() {
                     break;
                 }
             }
         };
         wake_shutdown.cancel();
-        drop(wake_rx);
+        drop(rerun_requested_rx);
         let _ = wake_task.await;
         let engine_shutdown = self.engine.runtime.shutdown().await;
         result.and(engine_shutdown.map_err(RunnerError::Engine))

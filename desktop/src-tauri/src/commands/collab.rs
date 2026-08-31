@@ -1,6 +1,6 @@
 use openwork_collab::protocol::{
-    AgentView, BoardView, DesktopCommand, DesktopCommandResult, MessageView, ParticipantView,
-    RoomView, RunSummaryView, RuntimeStatusView,
+    AgentView, BoardView, CardView, DesktopCommand, DesktopCommandResult, MessageView,
+    ParticipantView, RoomView, RunSummaryView, RuntimeStatusView,
 };
 use serde::Deserialize;
 
@@ -276,6 +276,128 @@ pub async fn collab_board_create(
 }
 
 #[tauri::command]
+pub async fn collab_board_update(
+    client: tauri::State<'_, CollabDaemonClient>,
+    board_id: String,
+    title: String,
+    description: Option<String>,
+) -> Result<BoardView, CommandError> {
+    match client
+        .call(DesktopCommand::UpdateBoard {
+            board_id,
+            title,
+            description,
+        })
+        .await?
+    {
+        DesktopCommandResult::Board(board) => Ok(board),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_board_delete(
+    client: tauri::State<'_, CollabDaemonClient>,
+    board_id: String,
+) -> Result<String, CommandError> {
+    deleted(
+        client
+            .call(DesktopCommand::DeleteBoard { board_id })
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn collab_board_column_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    board_id: String,
+    title: String,
+    is_terminal: bool,
+) -> Result<BoardView, CommandError> {
+    board_result(
+        client
+            .call(DesktopCommand::CreateBoardColumn {
+                board_id,
+                title,
+                is_terminal,
+            })
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn collab_board_column_update(
+    client: tauri::State<'_, CollabDaemonClient>,
+    column_id: String,
+    title: String,
+    is_terminal: bool,
+) -> Result<BoardView, CommandError> {
+    board_result(
+        client
+            .call(DesktopCommand::UpdateBoardColumn {
+                column_id,
+                title,
+                is_terminal,
+            })
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn collab_board_column_move(
+    client: tauri::State<'_, CollabDaemonClient>,
+    column_id: String,
+    before_column_id: Option<String>,
+) -> Result<BoardView, CommandError> {
+    board_result(
+        client
+            .call(DesktopCommand::MoveBoardColumn {
+                column_id,
+                before_column_id,
+            })
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn collab_board_column_delete(
+    client: tauri::State<'_, CollabDaemonClient>,
+    column_id: String,
+) -> Result<BoardView, CommandError> {
+    board_result(
+        client
+            .call(DesktopCommand::DeleteBoardColumn { column_id })
+            .await?,
+    )
+}
+
+#[tauri::command]
+pub async fn collab_card_assign(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card_id: String,
+    assignee_id: Option<String>,
+) -> Result<CardView, CommandError> {
+    match client
+        .call(DesktopCommand::AssignCard {
+            card_id,
+            assignee_id,
+        })
+        .await?
+    {
+        DesktopCommandResult::Card(card) => Ok(card),
+        response => Err(unexpected(response)),
+    }
+}
+
+#[tauri::command]
+pub async fn collab_card_delete(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card_id: String,
+) -> Result<String, CommandError> {
+    deleted(client.call(DesktopCommand::DeleteCard { card_id }).await?)
+}
+
+#[tauri::command]
 pub async fn collab_run_list(
     client: tauri::State<'_, CollabDaemonClient>,
     limit: u32,
@@ -291,4 +413,18 @@ fn unexpected(_response: DesktopCommandResult) -> CommandError {
         crate::CommandErrorCode::CollaborationUnavailable,
         "collaboration Server returned an unexpected response",
     )
+}
+
+fn board_result(response: DesktopCommandResult) -> Result<BoardView, CommandError> {
+    match response {
+        DesktopCommandResult::Board(board) => Ok(board),
+        response => Err(unexpected(response)),
+    }
+}
+
+fn deleted(response: DesktopCommandResult) -> Result<String, CommandError> {
+    match response {
+        DesktopCommandResult::Deleted { entity_id } => Ok(entity_id),
+        response => Err(unexpected(response)),
+    }
 }

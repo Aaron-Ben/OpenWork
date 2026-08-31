@@ -280,8 +280,13 @@ export const zhTW = {
       runtimeReady: '本機 Runtime 已就緒', runtimeStarting: '本機 Runtime 正在啟動',
     },
     boards: {
-      title: '看板與執行', create: '建立看板', name: '看板名稱',
-      empty: '還沒有看板', assignedTo: '負責人', unassigned: '未分配', recentRuns: '最近執行',
+      title: '看板與執行', create: '建立看板', name: '看板名稱', description: '描述（選填）',
+      empty: '還沒有看板', assignedTo: '負責人', unassigned: '未分配', localUser: '你（local-user）', recentRuns: '最近執行',
+      addColumn: '新增欄', columnName: '欄名稱', terminal: '終態欄', terminalPrompt: '這個欄是否代表工作已完成？',
+      editBoard: '編輯看板', deleteBoard: '刪除看板', editColumn: '編輯欄', deleteColumn: '刪除欄', deleteCard: '刪除卡片',
+      moveLeft: '向左移動', moveRight: '向右移動',
+      deleteBoardPrompt: '只有沒有卡片的看板可以刪除。確認刪除？',
+      deleteColumnPrompt: '只有空欄可以刪除。確認刪除？', deleteCardPrompt: '確認永久刪除這張卡片？',
     },
   },
   tool: {

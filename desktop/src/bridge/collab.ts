@@ -164,5 +164,35 @@ export const collabCommands = {
   listBoards: (): Promise<CollabBoard[]> => invoke('collab_board_list'),
   createBoard: (title: string, description: string | null = null): Promise<CollabBoard> =>
     invoke('collab_board_create', { title, description }),
+  updateBoard: (
+    boardId: string,
+    title: string,
+    description: string | null,
+  ): Promise<CollabBoard> => invoke('collab_board_update', { boardId, title, description }),
+  deleteBoard: (boardId: string): Promise<string> =>
+    invoke('collab_board_delete', { boardId }),
+  createBoardColumn: (
+    boardId: string,
+    title: string,
+    isTerminal: boolean,
+  ): Promise<CollabBoard> =>
+    invoke('collab_board_column_create', { boardId, title, isTerminal }),
+  updateBoardColumn: (
+    columnId: string,
+    title: string,
+    isTerminal: boolean,
+  ): Promise<CollabBoard> =>
+    invoke('collab_board_column_update', { columnId, title, isTerminal }),
+  moveBoardColumn: (
+    columnId: string,
+    beforeColumnId: string | null,
+  ): Promise<CollabBoard> =>
+    invoke('collab_board_column_move', { columnId, beforeColumnId }),
+  deleteBoardColumn: (columnId: string): Promise<CollabBoard> =>
+    invoke('collab_board_column_delete', { columnId }),
+  assignCard: (cardId: string, assigneeId: string | null): Promise<CollabCard> =>
+    invoke('collab_card_assign', { cardId, assigneeId }),
+  deleteCard: (cardId: string): Promise<string> =>
+    invoke('collab_card_delete', { cardId }),
   listRuns: (limit = 50): Promise<CollabRun[]> => invoke('collab_run_list', { limit }),
 }

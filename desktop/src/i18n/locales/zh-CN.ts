@@ -350,8 +350,13 @@ export const zhCN = {
       runtimeReady: '本机 Runtime 已就绪', runtimeStarting: '本机 Runtime 正在启动',
     },
     boards: {
-      title: '看板与运行', create: '创建看板', name: '看板名称',
-      empty: '还没有看板', assignedTo: '负责人', unassigned: '未分配', recentRuns: '最近运行',
+      title: '看板与运行', create: '创建看板', name: '看板名称', description: '描述（可选）',
+      empty: '还没有看板', assignedTo: '负责人', unassigned: '未分配', localUser: '你（local-user）', recentRuns: '最近运行',
+      addColumn: '添加列', columnName: '列名称', terminal: '终态列', terminalPrompt: '这个列是否代表任务已结束？',
+      editBoard: '编辑看板', deleteBoard: '删除看板', editColumn: '编辑列', deleteColumn: '删除列', deleteCard: '删除卡片',
+      moveLeft: '向左移动', moveRight: '向右移动',
+      deleteBoardPrompt: '仅无卡片的看板可以删除。确认删除？',
+      deleteColumnPrompt: '仅空列可以删除。确认删除？', deleteCardPrompt: '确认永久删除这张卡片？',
     },
   },
   tool: {

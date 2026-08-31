@@ -114,3 +114,58 @@ impl AdaptivePacer {
             .max(tokio::time::Instant::now() + retry_after.unwrap_or(Duration::from_secs(60)));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::RunnerResources;
+
+    #[tokio::test]
+    async fn local_resources_allow_two_agents_but_bound_a_third_main_turn() {
+        let resources = RunnerResources::local();
+        let cancellation = CancellationToken::new();
+        let first = resources.main_permit(&cancellation).await.unwrap();
+        let second = resources.main_permit(&cancellation).await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                resources.main_permit(&cancellation),
+            )
+            .await
+            .is_err()
+        );
+
+        drop(first);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                resources.main_permit(&cancellation),
+            )
+            .await
+            .is_ok()
+        );
+        drop(second);
+    }
+
+    #[tokio::test]
+    async fn local_resources_allow_four_parallel_triage_calls() {
+        let resources = RunnerResources::local();
+        let cancellation = CancellationToken::new();
+        let mut permits = Vec::new();
+        for _ in 0..4 {
+            permits.push(resources.triage_permit(&cancellation).await.unwrap());
+        }
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(20),
+                resources.triage_permit(&cancellation),
+            )
+            .await
+            .is_err()
+        );
+        drop(permits);
+    }
+}

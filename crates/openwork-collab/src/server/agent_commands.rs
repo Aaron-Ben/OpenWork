@@ -180,9 +180,22 @@ impl AgentCommands {
             AgentCommand::BoardList => success(AgentCommandResult::Boards {
                 boards: Board::list_in(&mut transaction).await?,
             }),
+            AgentCommand::BoardShow { board_id } => {
+                match Board::get_in(&mut transaction, &board_id).await {
+                    Ok(board) => success(AgentCommandResult::Board { board }),
+                    Err(sqlx::Error::RowNotFound) => error("NOT_FOUND", "Board does not exist"),
+                    Err(error) => return Err(error),
+                }
+            }
             AgentCommand::CardList { board_id } => success(AgentCommandResult::Cards {
                 cards: Board::list_cards_in(&mut transaction, board_id.as_deref()).await?,
             }),
+            AgentCommand::CardShow { card_id } => {
+                match Board::get_card_in(&mut transaction, &card_id).await {
+                    Ok(card) => success(AgentCommandResult::Card { card }),
+                    Err(error) => board_failure(error)?,
+                }
+            }
             AgentCommand::CardCreate {
                 board_id,
                 column_id,
@@ -219,6 +232,41 @@ impl AgentCommands {
                             card_id,
                             assignee_id: claims.sub.clone(),
                         }],
+                    },
+                    Err(error) => board_failure(error)?,
+                }
+            }
+            AgentCommand::CardAssign {
+                card_id,
+                assignee_id,
+            } => {
+                match Board::assign_card_in(&mut transaction, &card_id, Some(&assignee_id)).await {
+                    Ok(card) => AgentCommandResponse {
+                        result: AgentCommandResult::Card { card },
+                        effects: vec![AgentCommandEffect::CardAssigned {
+                            card_id,
+                            assignee_id,
+                        }],
+                    },
+                    Err(error) => board_failure(error)?,
+                }
+            }
+            AgentCommand::CardUpdate {
+                card_id,
+                title,
+                description,
+            } => {
+                match Board::update_card_in(
+                    &mut transaction,
+                    &card_id,
+                    &title,
+                    description.as_deref(),
+                )
+                .await
+                {
+                    Ok(card) => AgentCommandResponse {
+                        result: AgentCommandResult::Card { card },
+                        effects: vec![AgentCommandEffect::CardUpdated { card_id }],
                     },
                     Err(error) => board_failure(error)?,
                 }

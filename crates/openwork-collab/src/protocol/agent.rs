@@ -240,8 +240,14 @@ pub enum AgentCommand {
         note: String,
     },
     BoardList,
+    BoardShow {
+        board_id: String,
+    },
     CardList {
         board_id: Option<String>,
+    },
+    CardShow {
+        card_id: String,
     },
     CardCreate {
         board_id: String,
@@ -252,6 +258,15 @@ pub enum AgentCommand {
     },
     CardClaim {
         card_id: String,
+    },
+    CardAssign {
+        card_id: String,
+        assignee_id: String,
+    },
+    CardUpdate {
+        card_id: String,
+        title: String,
+        description: Option<String>,
     },
     CardMove {
         card_id: String,
@@ -272,7 +287,9 @@ impl AgentCommand {
                 | Self::Glance { .. }
                 | Self::ClimateShow { .. }
                 | Self::BoardList
+                | Self::BoardShow { .. }
                 | Self::CardList { .. }
+                | Self::CardShow { .. }
         )
     }
 
@@ -285,7 +302,9 @@ impl AgentCommand {
                 | Self::Participants
                 | Self::ClimateShow { .. }
                 | Self::BoardList
+                | Self::BoardShow { .. }
                 | Self::CardList { .. }
+                | Self::CardShow { .. }
         )
     }
 }
@@ -348,6 +367,9 @@ pub enum AgentCommandResult {
     Boards {
         boards: Vec<BoardView>,
     },
+    Board {
+        board: BoardView,
+    },
     Cards {
         cards: Vec<CardView>,
     },
@@ -392,6 +414,9 @@ pub enum AgentCommandEffect {
     CardAssigned {
         card_id: String,
         assignee_id: String,
+    },
+    CardUpdated {
+        card_id: String,
     },
     CardMoved {
         card_id: String,

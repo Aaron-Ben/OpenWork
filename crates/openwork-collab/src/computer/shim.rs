@@ -18,9 +18,13 @@ const HELP: &str = "Usage:
   openwork climate show [participant-id]
   openwork climate note <participant-id> --affinity <-1..1> --trust <-1..1> (--stdin | --file <path> | -- <note>)
   openwork board list
+  openwork board show <board-id>
   openwork card list [--board <board-id>]
+  openwork card show <card-id>
   openwork card create --board <id> --column <id> --title <text> [--description <text>] [--assignee <id>]
   openwork card claim <card-id>
+  openwork card assign <card-id> <participant-id>
+  openwork card update <card-id> --title <text> [--description <text>]
   openwork card move <card-id> --column <id> [--before-card <card-id>]";
 
 pub fn main() -> i32 {
@@ -131,6 +135,11 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
             room_id: room_id.clone(),
         }),
         [board, action] if board == "board" && action == "list" => Ok(AgentCommand::BoardList),
+        [board, action, board_id] if board == "board" && action == "show" => {
+            Ok(AgentCommand::BoardShow {
+                board_id: board_id.clone(),
+            })
+        }
         [card, action] if card == "card" && action == "list" => {
             Ok(AgentCommand::CardList { board_id: None })
         }
@@ -139,6 +148,11 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
         {
             Ok(AgentCommand::CardList {
                 board_id: Some(board_id.clone()),
+            })
+        }
+        [card, action, card_id] if card == "card" && action == "show" => {
+            Ok(AgentCommand::CardShow {
+                card_id: card_id.clone(),
             })
         }
         [card, action, card_id] if card == "card" && action == "claim" => {
@@ -214,6 +228,20 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
                 title: required_flag(&flags, "--title")?.to_string(),
                 description: flags.get("--description").cloned(),
                 assignee_id: flags.get("--assignee").cloned(),
+            })
+        }
+        [card, action, card_id, assignee_id] if card == "card" && action == "assign" => {
+            Ok(AgentCommand::CardAssign {
+                card_id: card_id.clone(),
+                assignee_id: assignee_id.clone(),
+            })
+        }
+        [card, action, card_id, tail @ ..] if card == "card" && action == "update" => {
+            let flags = parse_flags(tail, &["--title", "--description"])?;
+            Ok(AgentCommand::CardUpdate {
+                card_id: card_id.clone(),
+                title: required_flag(&flags, "--title")?.to_string(),
+                description: flags.get("--description").cloned(),
             })
         }
         [card, action, card_id, tail @ ..] if card == "card" && action == "move" => {
@@ -387,6 +415,10 @@ fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
             serde_json::to_string_pretty(&boards).map_err(ShimError::Json)?,
             0,
         ),
+        AgentCommandResult::Board { board } => (
+            serde_json::to_string_pretty(&board).map_err(ShimError::Json)?,
+            0,
+        ),
         AgentCommandResult::Cards { cards } => (
             serde_json::to_string_pretty(&cards).map_err(ShimError::Json)?,
             0,
@@ -507,6 +539,63 @@ mod tests {
                 note: "Strong technically; verify estimates.".to_string(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn parses_the_complete_r6_card_surface_without_structure_or_delete_commands() {
+        assert_eq!(
+            parse_command(vec![
+                "board".to_string(),
+                "show".to_string(),
+                "board-1".to_string(),
+            ])
+            .await
+            .unwrap(),
+            AgentCommand::BoardShow {
+                board_id: "board-1".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command(vec![
+                "card".to_string(),
+                "assign".to_string(),
+                "card-1".to_string(),
+                "alpha".to_string(),
+            ])
+            .await
+            .unwrap(),
+            AgentCommand::CardAssign {
+                card_id: "card-1".to_string(),
+                assignee_id: "alpha".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command(vec![
+                "card".to_string(),
+                "update".to_string(),
+                "card-1".to_string(),
+                "--title".to_string(),
+                "Revised".to_string(),
+            ])
+            .await
+            .unwrap(),
+            AgentCommand::CardUpdate {
+                card_id: "card-1".to_string(),
+                title: "Revised".to_string(),
+                description: None,
+            }
+        );
+        for forbidden in [
+            vec!["board", "delete", "board-1"],
+            vec!["column", "create", "Review"],
+            vec!["card", "delete", "card-1"],
+        ] {
+            assert!(
+                parse_command(forbidden.into_iter().map(str::to_string).collect())
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[test]

@@ -35,6 +35,9 @@ impl Agenda {
     }
 
     pub async fn payload(&self, claims: &AgentClaims) -> Result<AgendaPayload, sqlx::Error> {
+        if !self.enabled(&claims.sub).await? {
+            return self.signed_payload(claims, Vec::new());
+        }
         if !self
             .coordination
             .agenda_allowed(&claims.sub)
@@ -56,6 +59,11 @@ impl Agenda {
         claims: &AgentClaims,
         request: AgendaDecisionRequest,
     ) -> Result<AgendaDecisionResponse, sqlx::Error> {
+        if !self.enabled(&claims.sub).await? {
+            return Err(protocol_error(
+                "CONFLICT: Agenda is disabled for this Agent",
+            ));
+        }
         self.signing_key
             .verify_agenda_candidates(&request.candidate_set)
             .map_err(auth_error)?;
@@ -219,6 +227,19 @@ impl Agenda {
             candidate_set,
             classify_prompt,
         })
+    }
+
+    async fn enabled(&self, agent_id: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT config.agenda_enabled
+             FROM collab_agent_runtime_configs config
+             JOIN collab_agent_profiles profile ON profile.agent_id = config.agent_id
+             WHERE config.agent_id = $1 AND profile.archived_at IS NULL",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|enabled| enabled.unwrap_or(false))
     }
 
     async fn card_candidates(&self, agent_id: &str) -> Result<Vec<AgendaCandidate>, sqlx::Error> {

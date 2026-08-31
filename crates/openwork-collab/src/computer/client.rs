@@ -225,13 +225,13 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn wake_loop(&self, wakes: mpsc::Sender<()>, shutdown: CancellationToken) {
+    pub async fn wake_loop(&self, rerun_requested: mpsc::Sender<()>, shutdown: CancellationToken) {
         reconnecting_sse_loop(
             self.http.clone(),
             format!("{}/agent/events", self.base_url),
             SseCredential::Refreshing(self.token.clone()),
             "agent",
-            wakes,
+            rerun_requested,
             shutdown,
         )
         .await;
@@ -363,9 +363,13 @@ async fn sse_once(
                 continue;
             }
             serde_json::from_str::<InvalidationEvent>(&event.data)?;
-            let _ = invalidations.try_send(());
+            request_rerun(invalidations);
         }
     }
+}
+
+fn request_rerun(invalidations: &mpsc::Sender<()>) {
+    let _ = invalidations.try_send(());
 }
 
 fn retryable_finish_error(error: &reqwest::Error) -> bool {
@@ -416,7 +420,9 @@ impl RuntimeClientError {
 mod tests {
     use std::sync::{Arc, RwLock};
 
-    use super::SseCredential;
+    use tokio::sync::mpsc;
+
+    use super::{SseCredential, request_rerun};
 
     #[test]
     fn refreshing_sse_credential_reads_the_latest_agent_token() {
@@ -426,5 +432,16 @@ mod tests {
 
         *token.write().unwrap() = "second".to_string();
         assert_eq!(credential.current(), "second");
+    }
+
+    #[tokio::test]
+    async fn busy_wakes_coalesce_into_one_rerun_request() {
+        let (rerun_requested, mut receiver) = mpsc::channel(1);
+        for _ in 0..100 {
+            request_rerun(&rerun_requested);
+        }
+
+        assert_eq!(receiver.recv().await, Some(()));
+        assert!(receiver.try_recv().is_err());
     }
 }

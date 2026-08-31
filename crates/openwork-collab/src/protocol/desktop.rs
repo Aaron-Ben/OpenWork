@@ -108,6 +108,38 @@ pub enum DesktopCommand {
         title: String,
         description: Option<String>,
     },
+    UpdateBoard {
+        board_id: String,
+        title: String,
+        description: Option<String>,
+    },
+    DeleteBoard {
+        board_id: String,
+    },
+    CreateBoardColumn {
+        board_id: String,
+        title: String,
+        is_terminal: bool,
+    },
+    UpdateBoardColumn {
+        column_id: String,
+        title: String,
+        is_terminal: bool,
+    },
+    MoveBoardColumn {
+        column_id: String,
+        before_column_id: Option<String>,
+    },
+    DeleteBoardColumn {
+        column_id: String,
+    },
+    AssignCard {
+        card_id: String,
+        assignee_id: Option<String>,
+    },
+    DeleteCard {
+        card_id: String,
+    },
     ListRuns {
         limit: u32,
     },
@@ -145,6 +177,8 @@ pub enum DesktopCommandResult {
     Messages { messages: Vec<MessageView> },
     Board(BoardView),
     Boards { boards: Vec<BoardView> },
+    Card(CardView),
+    Deleted { entity_id: String },
     Runs { runs: Vec<RunSummaryView> },
 }
 

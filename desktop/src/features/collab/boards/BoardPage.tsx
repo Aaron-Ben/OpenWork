@@ -1,7 +1,16 @@
-import { ClipboardList, Plus } from 'lucide-react'
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Pencil,
+  Plus,
+  Trash2,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { CollabBoard, CollabBoardColumn, CollabCard } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useBoardStore } from './boardStore'
@@ -9,12 +18,24 @@ import { useBoardStore } from './boardStore'
 export function BoardPage() {
   const { t } = useTranslation()
   const boards = useBoardStore((state) => state.boards)
+  const agents = useBoardStore((state) => state.agents)
   const runs = useBoardStore((state) => state.runs)
   const error = useBoardStore((state) => state.error)
   const fetchAll = useBoardStore((state) => state.fetchAll)
-  const createBoard = useBoardStore((state) => state.createBoard)
+  const actions = {
+    createBoard: useBoardStore((state) => state.createBoard),
+    updateBoard: useBoardStore((state) => state.updateBoard),
+    deleteBoard: useBoardStore((state) => state.deleteBoard),
+    createColumn: useBoardStore((state) => state.createColumn),
+    updateColumn: useBoardStore((state) => state.updateColumn),
+    moveColumn: useBoardStore((state) => state.moveColumn),
+    deleteColumn: useBoardStore((state) => state.deleteColumn),
+    assignCard: useBoardStore((state) => state.assignCard),
+    deleteCard: useBoardStore((state) => state.deleteCard),
+  }
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
 
   useEffect(() => {
     void fetchAll()
@@ -25,9 +46,55 @@ export function BoardPage() {
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (!title.trim()) return
-    await createBoard(title.trim())
+    await actions.createBoard(title.trim(), optional(description))
     setTitle('')
+    setDescription('')
     setCreating(false)
+  }
+
+  async function editBoard(board: CollabBoard) {
+    const nextTitle = globalThis.prompt(t('collab.boards.name'), board.title)?.trim()
+    if (!nextTitle) return
+    const nextDescription = globalThis.prompt(
+      t('collab.boards.description'),
+      board.description ?? '',
+    )
+    if (nextDescription === null) return
+    await actions.updateBoard(board.id, nextTitle, optional(nextDescription))
+  }
+
+  async function addColumn(boardId: string) {
+    const columnTitle = globalThis.prompt(t('collab.boards.columnName'))?.trim()
+    if (!columnTitle) return
+    const isTerminal = globalThis.confirm(t('collab.boards.terminalPrompt'))
+    await actions.createColumn(boardId, columnTitle, isTerminal)
+  }
+
+  async function editColumn(column: CollabBoardColumn) {
+    const nextTitle = globalThis.prompt(t('collab.boards.columnName'), column.title)?.trim()
+    if (!nextTitle) return
+    const isTerminal = globalThis.confirm(t('collab.boards.terminalPrompt'))
+    await actions.updateColumn(column.id, nextTitle, isTerminal)
+  }
+
+  async function remove(kind: 'board' | 'column' | 'card', id: string) {
+    if (!globalThis.confirm(t(`collab.boards.delete${capitalize(kind)}Prompt`))) return
+    if (kind === 'board') await actions.deleteBoard(id)
+    if (kind === 'column') await actions.deleteColumn(id)
+    if (kind === 'card') await actions.deleteCard(id)
+  }
+
+  async function moveColumn(board: CollabBoard, index: number, direction: -1 | 1) {
+    const column = board.columns[index]
+    if (!column) return
+    const beforeColumnId = direction < 0
+      ? board.columns[index - 1]?.id ?? null
+      : board.columns[index + 2]?.id ?? null
+    await actions.moveColumn(column.id, beforeColumnId)
+  }
+
+  async function assign(card: CollabCard, assigneeId: string) {
+    await actions.assignCard(card.id, assigneeId || null)
   }
 
   return (
@@ -42,23 +109,72 @@ export function BoardPage() {
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {boards.map((board) => (
           <article key={board.id} className="grid gap-3">
-            <div>
-              <h2 className="font-serif text-xl font-semibold">{board.title}</h2>
-              <p className="text-xs text-ink-faint">{board.id}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-xl font-semibold">{board.title}</h2>
+                {board.description ? <p className="text-sm text-ink-muted">{board.description}</p> : null}
+                <p className="text-xs text-ink-faint">{board.id}</p>
+              </div>
+              <div className="flex gap-1">
+                <Button type="button" size="sm" variant="ghost" onClick={() => void addColumn(board.id)}>
+                  <Plus size={14} />{t('collab.boards.addColumn')}
+                </Button>
+                <IconButton label={t('collab.boards.editBoard')} onClick={() => void editBoard(board)}>
+                  <Pencil size={14} />
+                </IconButton>
+                <IconButton label={t('collab.boards.deleteBoard')} onClick={() => void remove('board', board.id)}>
+                  <Trash2 size={14} />
+                </IconButton>
+              </div>
             </div>
-            <div className="grid min-w-[720px] grid-cols-3 gap-3">
-              {board.columns.map((column) => (
-                <section key={column.id} className="min-h-40 rounded-2xl border border-line bg-paper-hover p-3">
-                  <h3 className="mb-3 flex items-center justify-between text-sm font-semibold">
-                    <span>{column.title}</span><span className="text-ink-faint">{column.cards.length}</span>
-                  </h3>
+            <div className="flex min-w-[720px] gap-3 overflow-x-auto pb-2">
+              {board.columns.map((column, index) => (
+                <section key={column.id} className="min-h-40 w-72 shrink-0 rounded-2xl border border-line bg-paper-hover p-3">
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <h3 className="flex min-w-0 items-center gap-1 text-sm font-semibold">
+                      {column.isTerminal ? <CheckCircle2 aria-label={t('collab.boards.terminal')} size={14} /> : null}
+                      <span className="truncate">{column.title}</span>
+                      <span className="text-ink-faint">{column.cards.length}</span>
+                    </h3>
+                    <div className="flex">
+                      <IconButton disabled={index === 0} label={t('collab.boards.moveLeft')} onClick={() => void moveColumn(board, index, -1)}>
+                        <ChevronLeft size={13} />
+                      </IconButton>
+                      <IconButton disabled={index === board.columns.length - 1} label={t('collab.boards.moveRight')} onClick={() => void moveColumn(board, index, 1)}>
+                        <ChevronRight size={13} />
+                      </IconButton>
+                      <IconButton label={t('collab.boards.editColumn')} onClick={() => void editColumn(column)}>
+                        <Pencil size={13} />
+                      </IconButton>
+                      <IconButton label={t('collab.boards.deleteColumn')} onClick={() => void remove('column', column.id)}>
+                        <Trash2 size={13} />
+                      </IconButton>
+                    </div>
+                  </div>
                   <div className="grid gap-2">
                     {column.cards.map((card) => (
                       <article key={card.id} className="rounded-xl border border-line bg-paper p-3 shadow-sm">
-                        <strong className="block text-sm">{card.title}</strong>
-                        <span className="mt-1 block text-xs text-ink-faint">
-                          {card.assigneeId ? `${t('collab.boards.assignedTo')} @${card.assigneeId}` : t('collab.boards.unassigned')}
-                        </span>
+                        <div className="flex items-start justify-between gap-2">
+                          <strong className="block text-sm">{card.title}</strong>
+                          <IconButton label={t('collab.boards.deleteCard')} onClick={() => void remove('card', card.id)}>
+                            <Trash2 size={13} />
+                          </IconButton>
+                        </div>
+                        {card.description ? <p className="mt-1 text-xs text-ink-muted">{card.description}</p> : null}
+                        <label className="mt-2 grid gap-1 text-xs text-ink-faint">
+                          <span>{t('collab.boards.assignedTo')}</span>
+                          <select
+                            className="h-8 rounded-md border border-line bg-paper px-2 text-xs text-ink"
+                            value={card.assigneeId ?? ''}
+                            onChange={(event) => void assign(card, event.target.value)}
+                          >
+                            <option value="">{t('collab.boards.unassigned')}</option>
+                            <option value="local-user">{t('collab.boards.localUser')}</option>
+                            {agents.filter((agent) => agent.archivedAt === null).map((agent) => (
+                              <option key={agent.id} value={agent.id}>{agent.displayName} (@{agent.id})</option>
+                            ))}
+                          </select>
+                        </label>
                       </article>
                     ))}
                   </div>
@@ -90,6 +206,10 @@ export function BoardPage() {
               <span>{t('collab.boards.name')}</span>
               <Input required value={title} onChange={(event) => setTitle(event.target.value)} />
             </label>
+            <label className="grid gap-1 text-xs font-medium text-ink-muted">
+              <span>{t('collab.boards.description')}</span>
+              <Input value={description} onChange={(event) => setDescription(event.target.value)} />
+            </label>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="ghost" onClick={() => setCreating(false)}>{t('common.cancel')}</Button>
               <Button type="submit" variant="accent">{t('collab.boards.create')}</Button>
@@ -99,4 +219,38 @@ export function BoardPage() {
       ) : null}
     </section>
   )
+}
+
+function IconButton({
+  children,
+  disabled = false,
+  label,
+  onClick,
+}: {
+  children: React.ReactNode
+  disabled?: boolean
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      aria-label={label}
+      className="grid size-7 place-items-center rounded-md text-ink-faint hover:bg-paper hover:text-ink disabled:opacity-30"
+      disabled={disabled}
+      title={label}
+      type="button"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
+function optional(value: string): string | null {
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function capitalize(value: string): string {
+  return `${value[0]?.toUpperCase()}${value.slice(1)}`
 }

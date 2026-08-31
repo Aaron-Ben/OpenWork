@@ -8,8 +8,14 @@ use crate::protocol::{
 };
 
 use super::{
-    agents::Agents, board::Board, inventory::EngineInventory, messages::Messages, rooms::Rooms,
-    runs::Runs, runtime_session::RuntimeSession, scheduler::Scheduler,
+    agents::Agents,
+    board::{Board, BoardOperationError},
+    inventory::EngineInventory,
+    messages::Messages,
+    rooms::Rooms,
+    runs::Runs,
+    runtime_session::RuntimeSession,
+    scheduler::Scheduler,
 };
 
 #[derive(Clone)]
@@ -231,6 +237,92 @@ impl DesktopCommands {
                 ),
                 Vec::new(),
             ),
+            DesktopCommand::UpdateBoard {
+                board_id,
+                title,
+                description,
+            } => (
+                DesktopCommandResult::Board(
+                    Board::update_in(transaction, &board_id, &title, description.as_deref())
+                        .await
+                        .map_err(board_error)?,
+                ),
+                Vec::new(),
+            ),
+            DesktopCommand::DeleteBoard { board_id } => {
+                Board::delete_in(transaction, &board_id)
+                    .await
+                    .map_err(board_error)?;
+                (
+                    DesktopCommandResult::Deleted {
+                        entity_id: board_id,
+                    },
+                    Vec::new(),
+                )
+            }
+            DesktopCommand::CreateBoardColumn {
+                board_id,
+                title,
+                is_terminal,
+            } => (
+                DesktopCommandResult::Board(
+                    Board::create_column_in(transaction, &board_id, &title, is_terminal)
+                        .await
+                        .map_err(board_error)?,
+                ),
+                Vec::new(),
+            ),
+            DesktopCommand::UpdateBoardColumn {
+                column_id,
+                title,
+                is_terminal,
+            } => (
+                DesktopCommandResult::Board(
+                    Board::update_column_in(transaction, &column_id, &title, is_terminal)
+                        .await
+                        .map_err(board_error)?,
+                ),
+                Vec::new(),
+            ),
+            DesktopCommand::MoveBoardColumn {
+                column_id,
+                before_column_id,
+            } => (
+                DesktopCommandResult::Board(
+                    Board::move_column_in(transaction, &column_id, before_column_id.as_deref())
+                        .await
+                        .map_err(board_error)?,
+                ),
+                Vec::new(),
+            ),
+            DesktopCommand::DeleteBoardColumn { column_id } => (
+                DesktopCommandResult::Board(
+                    Board::delete_column_in(transaction, &column_id)
+                        .await
+                        .map_err(board_error)?,
+                ),
+                Vec::new(),
+            ),
+            DesktopCommand::AssignCard {
+                card_id,
+                assignee_id,
+            } => (
+                DesktopCommandResult::Card(
+                    Board::assign_card_in(transaction, &card_id, assignee_id.as_deref())
+                        .await
+                        .map_err(board_error)?,
+                ),
+                Vec::new(),
+            ),
+            DesktopCommand::DeleteCard { card_id } => {
+                Board::delete_card_in(transaction, &card_id)
+                    .await
+                    .map_err(board_error)?;
+                (
+                    DesktopCommandResult::Deleted { entity_id: card_id },
+                    Vec::new(),
+                )
+            }
             _ => {
                 return Err(protocol_error(
                     "INVALID_ARGUMENT: read-only Desktop command reached mutation dispatcher",
@@ -337,6 +429,15 @@ fn message_effect(message: crate::protocol::MessageView) -> PostCommitEffect {
         message_id: message.id,
         room_id: message.room_id,
         author_id: message.author_id,
+    }
+}
+
+fn board_error(error: BoardOperationError) -> sqlx::Error {
+    match error {
+        BoardOperationError::Domain { code, message } => {
+            protocol_error(&format!("{code}: {message}"))
+        }
+        BoardOperationError::Database(error) => error,
     }
 }
 

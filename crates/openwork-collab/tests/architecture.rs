@@ -159,6 +159,47 @@ fn r5_keeps_agent_commands_typed_and_group_membership_user_owned() {
     }
 }
 
+#[test]
+fn r6_keeps_board_structure_user_owned_and_card_order_server_owned() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let agent_protocol = std::fs::read_to_string(crate_root.join("src/protocol/agent.rs")).unwrap();
+    for required in [
+        "BoardShow",
+        "CardShow",
+        "CardCreate",
+        "CardClaim",
+        "CardAssign",
+        "CardUpdate",
+        "CardMove",
+    ] {
+        assert!(
+            agent_protocol.contains(required),
+            "R6 Agent Card surface is missing {required}"
+        );
+    }
+    for forbidden in [
+        "DeleteBoard",
+        "CreateBoardColumn",
+        "UpdateBoardColumn",
+        "MoveBoardColumn",
+        "DeleteBoardColumn",
+        "DeleteCard",
+    ] {
+        assert!(
+            !agent_protocol.contains(forbidden),
+            "Agent protocol owns Desktop Board structure: {forbidden}"
+        );
+    }
+    let board = std::fs::read_to_string(crate_root.join("src/server/board.rs")).unwrap();
+    assert!(board.contains("SET CONSTRAINTS collab_cards_position_unique DEFERRED"));
+    assert!(board.contains("ORDER BY id FOR UPDATE"));
+    assert!(board.contains("before Card is not in target Column"));
+    let migration = source_files(&crate_root.join("migrations"), "sql");
+    assert!(migration.contains("is_terminal BOOLEAN NOT NULL"));
+    assert!(migration.contains("UNIQUE (board_id, position) DEFERRABLE"));
+    assert!(migration.contains("UNIQUE (column_id, position) DEFERRABLE"));
+}
+
 fn source_text(root: &Path) -> String {
     source_files(root, "rs")
 }

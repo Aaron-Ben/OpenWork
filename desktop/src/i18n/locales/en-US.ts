@@ -285,8 +285,13 @@ export const enUS = {
       runtimeReady: 'Local Runtime ready', runtimeStarting: 'Local Runtime starting',
     },
     boards: {
-      title: 'Boards and runs', create: 'Create board', name: 'Board name',
-      empty: 'No boards yet', assignedTo: 'Assigned to', unassigned: 'Unassigned', recentRuns: 'Recent runs',
+      title: 'Boards and runs', create: 'Create board', name: 'Board name', description: 'Description (optional)',
+      empty: 'No boards yet', assignedTo: 'Assigned to', unassigned: 'Unassigned', localUser: 'You (local-user)', recentRuns: 'Recent runs',
+      addColumn: 'Add column', columnName: 'Column name', terminal: 'Terminal column', terminalPrompt: 'Does this column mean the work is finished?',
+      editBoard: 'Edit board', deleteBoard: 'Delete board', editColumn: 'Edit column', deleteColumn: 'Delete column', deleteCard: 'Delete card',
+      moveLeft: 'Move left', moveRight: 'Move right',
+      deleteBoardPrompt: 'Only a board with no cards can be deleted. Delete it?',
+      deleteColumnPrompt: 'Only an empty column can be deleted. Delete it?', deleteCardPrompt: 'Permanently delete this card?',
     },
   },
   tool: {
