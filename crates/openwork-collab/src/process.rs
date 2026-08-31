@@ -10,8 +10,7 @@ use crate::{
         opencode::OpenCodeAdapter,
     },
     protocol::{
-        COLLAB_PROTOCOL_VERSION, ComputerProcessBootstrap, ComputerProcessReady,
-        ServerProcessBootstrap, ServerProcessReady,
+        ComputerProcessBootstrap, ComputerProcessReady, ServerProcessBootstrap, ServerProcessReady,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -36,7 +35,6 @@ pub async fn run_server_process() -> Result<(), ProcessError> {
     )
     .await?;
     write_ready(&ServerProcessReady {
-        protocol_version: COLLAB_PROTOCOL_VERSION,
         runtime_session_id: bootstrap.runtime_session_id,
         base_url: format!("http://{}", server.runtime_addr()),
     })
@@ -76,7 +74,6 @@ pub async fn run_computer_process() -> Result<(), ProcessError> {
         )),
     );
     write_ready(&ComputerProcessReady {
-        protocol_version: COLLAB_PROTOCOL_VERSION,
         runtime_session_id: bootstrap.runtime_session_id,
     })
     .await?;

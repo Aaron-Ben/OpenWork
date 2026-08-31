@@ -3,6 +3,7 @@ mod agent_commands;
 mod agents;
 mod auth;
 mod board;
+mod climate;
 mod coordination;
 mod db;
 mod desktop_commands;

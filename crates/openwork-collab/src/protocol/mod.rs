@@ -12,7 +12,6 @@ pub use desktop::*;
 pub use error::*;
 pub use events::*;
 
-pub const COLLAB_PROTOCOL_VERSION: u32 = 9;
 pub const MESSAGE_BODY_MAX_BYTES: usize = 1024 * 1024;
 
 pub fn entity_id(prefix: &str) -> String {

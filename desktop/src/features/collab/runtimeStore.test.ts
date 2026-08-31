@@ -8,7 +8,6 @@ vi.mock('@/bridge/collab', () => ({
 }))
 
 const status: CollabRuntimeStatus = {
-  protocolVersion: 9,
   runtimeSessionId: 'runtime-test',
   startedAt: 1,
   lastComputerHeartbeat: 2,

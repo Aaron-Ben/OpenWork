@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgendaDecisionRequest, AgentAssignment, FinishRunRequest, MessageView, OpenRunRequest,
-    TriageReportRequest,
+    AgendaDecisionRequest, AgentAssignment, ClimateView, FinishRunRequest, MessageView,
+    OpenRunRequest, TriageReportRequest,
 };
 
 use super::{
@@ -305,6 +305,7 @@ impl AgentRunner {
         let prompt = build_prompt(
             &self.assignment,
             &inbox.messages,
+            &inbox.climates,
             &verdict.prompt_note,
             inbox.carried_over,
         );
@@ -624,6 +625,7 @@ fn agenda_due(
 fn build_prompt(
     assignment: &AgentAssignment,
     messages: &[MessageView],
+    climates: &[ClimateView],
     triage_note: &str,
     carried_over: bool,
 ) -> String {
@@ -638,6 +640,20 @@ fn build_prompt(
         prompt.push_str(
             "This is the oldest bounded inbox batch; more unread messages remain for a later run.\n",
         );
+    }
+    if !climates.is_empty() {
+        prompt.push_str(
+            "Private Climate context follows. These are your subjective current impressions, not objective facts.\n",
+        );
+        for climate in climates {
+            prompt.push_str(&format!(
+                "about {}: affinity={}, trust={}, note={}\n",
+                climate.about_participant_id,
+                climate.affinity,
+                climate.trust,
+                climate.last_note.as_deref().unwrap_or("none"),
+            ));
+        }
     }
     for message in messages {
         prompt.push_str(&format!(
@@ -685,10 +701,11 @@ impl RunnerError {
 mod tests {
     use std::time::Duration;
 
+    use crate::protocol::{AgentAssignment, ClimateView, MessageView};
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
-    use super::{agenda_due, next_trigger, token_needs_refresh};
+    use super::{agenda_due, build_prompt, next_trigger, token_needs_refresh};
 
     #[test]
     fn refreshes_agent_token_with_five_minutes_remaining() {
@@ -719,6 +736,46 @@ mod tests {
             Some(Duration::from_secs(60)),
             false
         ));
+    }
+
+    #[test]
+    fn main_prompt_projects_only_the_current_private_climate_snapshot() {
+        let assignment = AgentAssignment {
+            id: "alpha".to_string(),
+            display_name: "Alpha".to_string(),
+            role: None,
+            persona: "Investigate carefully.".to_string(),
+            engine_id: "opencode".to_string(),
+            main_model_id: "local/main".to_string(),
+            triage_model_id: "local/triage".to_string(),
+            config_revision: 1,
+            agenda_enabled: false,
+        };
+        let prompt = build_prompt(
+            &assignment,
+            &[MessageView {
+                id: "msg-1".to_string(),
+                room_id: "room-1".to_string(),
+                sequence: 1,
+                author_id: "beta".to_string(),
+                body: "Please review this.".to_string(),
+            }],
+            &[ClimateView {
+                agent_id: "alpha".to_string(),
+                about_participant_id: "beta".to_string(),
+                affinity: 0.75,
+                trust: 0.5,
+                last_note: Some("Strong technically; verify estimates.".to_string()),
+                updated_at: "2026-08-31T20:00:00+08:00".to_string(),
+            }],
+            "",
+            false,
+        );
+
+        assert!(prompt.contains("subjective current impressions"));
+        assert!(prompt.contains("about beta: affinity=0.75, trust=0.5"));
+        assert!(prompt.contains("Strong technically; verify estimates."));
+        assert!(prompt.contains("Please review this."));
     }
 
     #[tokio::test]

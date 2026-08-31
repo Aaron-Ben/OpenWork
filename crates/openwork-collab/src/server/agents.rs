@@ -2,7 +2,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 use uuid::Uuid;
 
-use crate::protocol::{AgentAssignment, AgentView};
+use crate::protocol::{AgentAssignment, AgentView, ParticipantView};
 
 #[derive(Clone)]
 pub(crate) struct Agents {
@@ -230,6 +230,22 @@ impl Agents {
         .map(|rows| rows.into_iter().map(AgentAssignment::from).collect())
     }
 
+    pub(crate) async fn active_participants_in(
+        transaction: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<ParticipantView>, sqlx::Error> {
+        sqlx::query_as::<_, ParticipantRow>(
+            "SELECT participant.id, participant.kind, participant.display_name
+             FROM collab_participants participant
+             LEFT JOIN collab_agent_profiles profile ON profile.agent_id = participant.id
+             WHERE participant.kind = 'user' OR profile.archived_at IS NULL
+             ORDER BY CASE WHEN participant.kind = 'user' THEN 0 ELSE 1 END,
+                      participant.display_name, participant.id",
+        )
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
+    }
+
     pub(crate) async fn is_active(&self, agent_id: &str) -> Result<bool, sqlx::Error> {
         sqlx::query_scalar(
             "SELECT EXISTS(
@@ -344,6 +360,23 @@ struct AssignmentRow {
     triage_model_id: String,
     config_revision: i64,
     agenda_enabled: bool,
+}
+
+#[derive(FromRow)]
+struct ParticipantRow {
+    id: String,
+    kind: String,
+    display_name: String,
+}
+
+impl From<ParticipantRow> for ParticipantView {
+    fn from(row: ParticipantRow) -> Self {
+        Self {
+            id: row.id,
+            kind: row.kind,
+            display_name: row.display_name,
+        }
+    }
 }
 
 impl From<AssignmentRow> for AgentAssignment {

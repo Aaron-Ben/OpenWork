@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export interface CollabRuntimeStatus {
-  protocolVersion: number
   runtimeSessionId: string
   startedAt: number
   lastComputerHeartbeat: number | null

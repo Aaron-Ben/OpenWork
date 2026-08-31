@@ -12,7 +12,7 @@ use openwork_collab::{
     protocol::{
         request_id, ApiError, ComputerProcessBootstrap, ComputerProcessReady, DesktopCommand,
         DesktopCommandRequest, DesktopCommandResult, InvalidationEvent, RuntimeStatusView,
-        ServerProcessBootstrap, ServerProcessReady, COLLAB_PROTOCOL_VERSION,
+        ServerProcessBootstrap, ServerProcessReady,
     },
     server::RuntimeCredentials,
 };
@@ -222,8 +222,7 @@ async fn start_group(
             return Err(error);
         }
     };
-    if server_ready.protocol_version != COLLAB_PROTOCOL_VERSION
-        || server_ready.runtime_session_id != credentials.runtime_session_id
+    if server_ready.runtime_session_id != credentials.runtime_session_id
         || !loopback_base_url(&server_ready.base_url)
     {
         let _ = stop_child(&mut server, SERVER_SHUTDOWN_TIMEOUT).await;
@@ -255,9 +254,7 @@ async fn start_group(
             return Err(error);
         }
     };
-    if computer_ready.protocol_version != COLLAB_PROTOCOL_VERSION
-        || computer_ready.runtime_session_id != credentials.runtime_session_id
-    {
+    if computer_ready.runtime_session_id != credentials.runtime_session_id {
         let _ = stop_child(&mut computer, COMPUTER_SHUTDOWN_TIMEOUT).await;
         let _ = stop_child(&mut server, SERVER_SHUTDOWN_TIMEOUT).await;
         let _ = remove_runtime_root(state_root, &runtime_root).await;

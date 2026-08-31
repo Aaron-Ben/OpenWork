@@ -13,7 +13,6 @@ pub struct ServerProcessBootstrap {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerProcessReady {
-    pub protocol_version: u32,
     pub runtime_session_id: String,
     pub base_url: String,
 }
@@ -32,7 +31,6 @@ pub struct ComputerProcessBootstrap {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputerProcessReady {
-    pub protocol_version: u32,
     pub runtime_session_id: String,
 }
 
@@ -153,7 +151,6 @@ pub enum DesktopCommandResult {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeStatusView {
-    pub protocol_version: u32,
     pub runtime_session_id: String,
     pub started_at: i64,
     pub last_computer_heartbeat: Option<i64>,

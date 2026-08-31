@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::protocol::{
-    COLLAB_PROTOCOL_VERSION, DeliveryRange, InboxResponse, MessageView, TriggerEnvelope, entity_id,
-};
+use crate::protocol::{DeliveryRange, InboxResponse, MessageView, TriggerEnvelope, entity_id};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
-use super::auth::AgentClaims;
+use super::{auth::AgentClaims, climate::Climate};
 
 #[derive(Clone)]
 pub(crate) struct Messages {
@@ -56,6 +54,48 @@ impl Messages {
         )
         .bind(room_id)
         .fetch_all(&self.pool)
+        .await
+        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+    }
+
+    pub(crate) async fn list_for_agent_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        agent_id: &str,
+        room_id: &str,
+        tail: u32,
+    ) -> Result<Vec<MessageView>, sqlx::Error> {
+        let membership: Option<(time::PrimitiveDateTime, String)> = sqlx::query_as(
+            "SELECT member.joined_at, room.kind
+             FROM collab_room_members member
+             JOIN collab_rooms room ON room.id = member.room_id
+             WHERE member.room_id = $1 AND member.participant_id = $2",
+        )
+        .bind(room_id)
+        .bind(agent_id)
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let Some((joined_at, room_kind)) = membership else {
+            return Err(sqlx::Error::Protocol(
+                "NOT_FOUND: Room is not visible to this Agent".to_string(),
+            ));
+        };
+        sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body FROM (
+                SELECT message.id, message.room_id, message.sequence,
+                       message.author_id, message.body
+                FROM collab_messages message
+                WHERE message.room_id = $1
+                  AND ($3 = 'direct' OR message.created_at >= $2)
+                ORDER BY message.sequence DESC
+                LIMIT $4
+             ) recent
+             ORDER BY sequence",
+        )
+        .bind(room_id)
+        .bind(joined_at)
+        .bind(room_kind)
+        .bind(i64::from(tail.clamp(1, 200)))
+        .fetch_all(&mut **transaction)
         .await
         .map(|rows| rows.into_iter().map(MessageView::from).collect())
     }
@@ -125,6 +165,7 @@ impl Messages {
             return Ok(InboxResponse {
                 trigger: None,
                 messages: Vec::new(),
+                climates: Vec::new(),
                 carried_over: false,
             });
         }
@@ -132,12 +173,14 @@ impl Messages {
             .first()
             .is_some_and(|row| row.total_count > rows.len() as i64);
         let mut ranges = BTreeMap::<String, (i64, i64)>::new();
+        let mut participant_ids = BTreeSet::<String>::new();
         let mut messages = Vec::with_capacity(rows.len());
         for row in rows {
             ranges
                 .entry(row.room_id.clone())
                 .and_modify(|range| range.1 = row.sequence)
                 .or_insert((row.last_read_seq + 1, row.sequence));
+            participant_ids.insert(row.author_id.clone());
             messages.push(MessageView {
                 id: row.id,
                 room_id: row.room_id,
@@ -146,10 +189,11 @@ impl Messages {
                 body: row.body,
             });
         }
+        let participant_ids = participant_ids.into_iter().collect::<Vec<_>>();
+        let climates = Climate::for_participants(&self.pool, &claims.sub, &participant_ids).await?;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         Ok(InboxResponse {
             trigger: Some(TriggerEnvelope {
-                protocol_version: COLLAB_PROTOCOL_VERSION,
                 dispatch_id: entity_id("run"),
                 agent_id: claims.sub.clone(),
                 runtime_session_id: claims.runtime_session_id.clone(),
@@ -169,6 +213,7 @@ impl Messages {
                 signature: String::new(),
             }),
             messages,
+            climates,
             carried_over,
         })
     }

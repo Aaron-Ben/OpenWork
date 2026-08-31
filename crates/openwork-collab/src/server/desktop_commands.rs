@@ -4,8 +4,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::protocol::{
-    COLLAB_PROTOCOL_VERSION, DesktopCommand, DesktopCommandRequest, DesktopCommandResult,
-    RuntimeStatusView, entity_id,
+    DesktopCommand, DesktopCommandRequest, DesktopCommandResult, RuntimeStatusView, entity_id,
 };
 
 use super::{
@@ -102,7 +101,6 @@ impl DesktopCommands {
     ) -> Result<DesktopCommandResult, sqlx::Error> {
         match command {
             DesktopCommand::Status => Ok(DesktopCommandResult::Status(RuntimeStatusView {
-                protocol_version: COLLAB_PROTOCOL_VERSION,
                 runtime_session_id: self.session.id().to_string(),
                 started_at: self.session.started_at(),
                 last_computer_heartbeat: self.session.last_computer_heartbeat(),

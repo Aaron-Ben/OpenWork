@@ -281,7 +281,7 @@ impl Runs {
                     WHERE request.run_id = $1
                       AND effect ->> 'type' IN (
                           'message_published', 'card_created',
-                          'card_assigned', 'card_moved'
+                          'card_assigned', 'card_moved', 'climate_updated'
                       )
                  )",
             )

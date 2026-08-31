@@ -123,6 +123,42 @@ fn r4_keeps_persistent_home_separate_from_runtime_credentials() {
     assert!(protocol.contains("RunnerStatusView"));
 }
 
+#[test]
+fn r5_keeps_agent_commands_typed_and_group_membership_user_owned() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let agent_protocol = std::fs::read_to_string(crate_root.join("src/protocol/agent.rs")).unwrap();
+    let shim = std::fs::read_to_string(crate_root.join("src/computer/shim.rs")).unwrap();
+    let climate = std::fs::read_to_string(crate_root.join("src/server/climate.rs")).unwrap();
+
+    for required in [
+        "Rooms",
+        "Messages",
+        "Members",
+        "Participants",
+        "ClimateShow",
+        "ClimateNote",
+    ] {
+        assert!(
+            agent_protocol.contains(required),
+            "R5 AgentCommand is missing {required}"
+        );
+    }
+    for forbidden in ["GroupCreate", "GroupInvite", "GroupLeave", "GroupKick"] {
+        assert!(
+            !agent_protocol.contains(forbidden),
+            "Agent protocol can mutate Group membership: {forbidden}"
+        );
+    }
+    assert!(!shim.contains("openwork group"));
+    assert!(climate.contains("collab_agent_climates"));
+    for forbidden in ["climate_history", "collab_climate_events"] {
+        assert!(
+            !source_text(&crate_root.join("src")).contains(forbidden),
+            "Climate history/event path survived: {forbidden}"
+        );
+    }
+}
+
 fn source_text(root: &Path) -> String {
     source_files(root, "rs")
 }

@@ -9,10 +9,13 @@ use crate::protocol::{
 };
 
 use super::{
+    agents::Agents,
     auth::{AgentClaims, authorize_agent_transaction},
     board::{Board, BoardOperationError},
+    climate::{Climate, ClimateOperationError},
     coordination::{Coordination, HeldBinding},
-    rooms::get_or_create_direct_room,
+    messages::Messages,
+    rooms::{Rooms, get_or_create_direct_room},
 };
 
 #[derive(Clone)]
@@ -36,17 +39,25 @@ impl AgentCommands {
         }
         let mut transaction = self.pool.begin().await?;
         authorize_agent_transaction(&mut transaction, claims).await?;
-        let Some(run_id) = active_run(&mut transaction, claims).await? else {
-            return Ok(error("UNAUTHENTICATED", "no active Run for this Agent"));
-        };
         let mutating = request.command.is_mutating();
+        let run_id = if request.command.requires_active_run() {
+            let Some(run_id) = active_run(&mut transaction, claims).await? else {
+                return Ok(error("UNAUTHENTICATED", "no active Run for this Agent"));
+            };
+            Some(run_id)
+        } else {
+            None
+        };
         if mutating {
+            let run_id = run_id
+                .as_deref()
+                .expect("every mutating AgentCommand requires an active Run");
             let semantic_hash = digest(
                 &serde_json::to_vec(&request.command).expect("AgentCommand is serializable"),
             );
             if let Some(result) = reserve_request(
                 &mut transaction,
-                &run_id,
+                run_id,
                 claims,
                 &request.request_id,
                 &semantic_hash,
@@ -59,10 +70,43 @@ impl AgentCommands {
         }
 
         let response = match request.command {
-            AgentCommand::Inbox => current_inbox(&mut transaction, &run_id, claims).await?,
+            AgentCommand::Inbox => {
+                current_inbox(
+                    &mut transaction,
+                    run_id.as_deref().expect("Inbox requires an active Run"),
+                    claims,
+                )
+                .await?
+            }
+            AgentCommand::Rooms => success(AgentCommandResult::Rooms {
+                rooms: Rooms::list_for_agent_in(&mut transaction, &claims.sub).await?,
+            }),
+            AgentCommand::Messages { room_id, tail } => success(AgentCommandResult::Messages {
+                messages: Messages::list_for_agent_in(
+                    &mut transaction,
+                    &claims.sub,
+                    &room_id,
+                    tail,
+                )
+                .await?,
+                room_id,
+            }),
+            AgentCommand::Members { room_id } => success(AgentCommandResult::Members {
+                members: Rooms::list_members_for_agent_in(&mut transaction, &claims.sub, &room_id)
+                    .await?,
+                room_id,
+            }),
+            AgentCommand::Participants => success(AgentCommandResult::Participants {
+                participants: Agents::active_participants_in(&mut transaction).await?,
+            }),
             AgentCommand::Glance { room_id } => {
-                self.glance(&mut transaction, &run_id, claims, &room_id)
-                    .await?
+                self.glance(
+                    &mut transaction,
+                    run_id.as_deref().expect("Glance requires an active Run"),
+                    claims,
+                    &room_id,
+                )
+                .await?
             }
             AgentCommand::Reply {
                 room_id,
@@ -71,7 +115,7 @@ impl AgentCommands {
             } => {
                 self.reply(
                     &mut transaction,
-                    &run_id,
+                    run_id.as_deref().expect("Reply requires an active Run"),
                     claims,
                     &room_id,
                     &body,
@@ -79,11 +123,60 @@ impl AgentCommands {
                 )
                 .await?
             }
-            AgentCommand::Ack { room_id } => ack(&mut transaction, &run_id, &room_id).await?,
+            AgentCommand::Ack { room_id } => {
+                ack(
+                    &mut transaction,
+                    run_id.as_deref().expect("Ack requires an active Run"),
+                    &room_id,
+                )
+                .await?
+            }
             AgentCommand::DirectMessage {
                 participant_id,
                 body,
-            } => direct_message(&mut transaction, &run_id, claims, &participant_id, &body).await?,
+            } => {
+                direct_message(
+                    &mut transaction,
+                    run_id
+                        .as_deref()
+                        .expect("DirectMessage requires an active Run"),
+                    claims,
+                    &participant_id,
+                    &body,
+                )
+                .await?
+            }
+            AgentCommand::ClimateShow { participant_id } => success(AgentCommandResult::Climates {
+                climates: Climate::list_owned_in(
+                    &mut transaction,
+                    &claims.sub,
+                    participant_id.as_deref(),
+                )
+                .await?,
+            }),
+            AgentCommand::ClimateNote {
+                participant_id,
+                affinity,
+                trust,
+                note,
+            } => match Climate::overwrite_in(
+                &mut transaction,
+                &claims.sub,
+                &participant_id,
+                affinity,
+                trust,
+                &note,
+            )
+            .await
+            {
+                Ok(climate) => AgentCommandResponse {
+                    result: AgentCommandResult::Climate { climate },
+                    effects: vec![AgentCommandEffect::ClimateUpdated {
+                        about_participant_id: participant_id,
+                    }],
+                },
+                Err(error) => climate_failure(error)?,
+            },
             AgentCommand::BoardList => success(AgentCommandResult::Boards {
                 boards: Board::list_in(&mut transaction).await?,
             }),
@@ -156,7 +249,15 @@ impl AgentCommands {
             }
         };
         if mutating {
-            save_result(&mut transaction, &run_id, &request.request_id, &response).await?;
+            save_result(
+                &mut transaction,
+                run_id
+                    .as_deref()
+                    .expect("every mutating AgentCommand requires an active Run"),
+                &request.request_id,
+                &response,
+            )
+            .await?;
         }
         transaction.commit().await?;
         Ok(response)
@@ -786,5 +887,12 @@ fn board_failure(failure: BoardOperationError) -> Result<AgentCommandResponse, s
     match failure {
         BoardOperationError::Domain { code, message } => Ok(error(code, message)),
         BoardOperationError::Database(error) => Err(error),
+    }
+}
+
+fn climate_failure(failure: ClimateOperationError) -> Result<AgentCommandResponse, sqlx::Error> {
+    match failure {
+        ClimateOperationError::Domain { code, message } => Ok(error(code, message)),
+        ClimateOperationError::Database(error) => Err(error),
     }
 }

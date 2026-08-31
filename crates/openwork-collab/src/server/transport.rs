@@ -279,7 +279,6 @@ async fn open_run(
         .verify_trigger(&request.trigger)?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if request.trigger.expires_at <= now
-        || request.trigger.protocol_version != crate::protocol::COLLAB_PROTOCOL_VERSION
         || request.trigger.agent_id != claims.sub
         || request.trigger.runtime_session_id != claims.runtime_session_id
         || !valid_trigger_shape(&request.trigger)

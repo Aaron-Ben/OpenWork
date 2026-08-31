@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{BoardView, CardView, MessageView, ParticipantView};
+use super::{BoardView, CardView, MessageView, ParticipantView, RoomView};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -31,18 +31,29 @@ pub struct TriageReportRequest {
     pub latency_ms: Option<i64>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxResponse {
     pub trigger: Option<TriggerEnvelope>,
     pub messages: Vec<MessageView>,
+    pub climates: Vec<ClimateView>,
     pub carried_over: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClimateView {
+    pub agent_id: String,
+    pub about_participant_id: String,
+    pub affinity: f64,
+    pub trust: f64,
+    pub last_note: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TriggerEnvelope {
-    pub protocol_version: u32,
     pub dispatch_id: String,
     pub agent_id: String,
     pub runtime_session_id: String,
@@ -180,14 +191,14 @@ pub struct FinishRunRequest {
     pub assistant_text: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommandRequest {
     pub request_id: String,
     pub command: AgentCommand,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(
     tag = "type",
     rename_all = "snake_case",
@@ -195,6 +206,15 @@ pub struct AgentCommandRequest {
 )]
 pub enum AgentCommand {
     Inbox,
+    Rooms,
+    Messages {
+        room_id: String,
+        tail: u32,
+    },
+    Members {
+        room_id: String,
+    },
+    Participants,
     Glance {
         room_id: String,
     },
@@ -209,6 +229,15 @@ pub enum AgentCommand {
     DirectMessage {
         participant_id: String,
         body: String,
+    },
+    ClimateShow {
+        participant_id: Option<String>,
+    },
+    ClimateNote {
+        participant_id: String,
+        affinity: f64,
+        trust: f64,
+        note: String,
     },
     BoardList,
     CardList {
@@ -235,19 +264,40 @@ impl AgentCommand {
     pub fn is_mutating(&self) -> bool {
         !matches!(
             self,
-            Self::Inbox | Self::Glance { .. } | Self::BoardList | Self::CardList { .. }
+            Self::Inbox
+                | Self::Rooms
+                | Self::Messages { .. }
+                | Self::Members { .. }
+                | Self::Participants
+                | Self::Glance { .. }
+                | Self::ClimateShow { .. }
+                | Self::BoardList
+                | Self::CardList { .. }
+        )
+    }
+
+    pub fn requires_active_run(&self) -> bool {
+        !matches!(
+            self,
+            Self::Rooms
+                | Self::Messages { .. }
+                | Self::Members { .. }
+                | Self::Participants
+                | Self::ClimateShow { .. }
+                | Self::BoardList
+                | Self::CardList { .. }
         )
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommandResponse {
     pub result: AgentCommandResult,
     pub effects: Vec<AgentCommandEffect>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(
     tag = "type",
     rename_all = "snake_case",
@@ -263,6 +313,26 @@ pub enum AgentCommandResult {
         compose_anchor: i64,
         members: Vec<ParticipantView>,
         messages: Vec<MessageView>,
+    },
+    Rooms {
+        rooms: Vec<RoomView>,
+    },
+    Messages {
+        room_id: String,
+        messages: Vec<MessageView>,
+    },
+    Members {
+        room_id: String,
+        members: Vec<ParticipantView>,
+    },
+    Participants {
+        participants: Vec<ParticipantView>,
+    },
+    Climates {
+        climates: Vec<ClimateView>,
+    },
+    Climate {
+        climate: ClimateView,
     },
     MessagePublished {
         message: MessageView,
@@ -327,5 +397,8 @@ pub enum AgentCommandEffect {
         card_id: String,
         column_id: String,
         position: i32,
+    },
+    ClimateUpdated {
+        about_participant_id: String,
     },
 }

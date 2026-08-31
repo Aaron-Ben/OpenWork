@@ -1,9 +1,18 @@
-use std::fmt::Write as _;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+};
 
 use crate::protocol::{TriagePayload, TriageReportRequest, TriageVerdict, entity_id};
 use sqlx::{FromRow, PgPool};
 
-use super::auth::{AgentClaims, authorize_agent_transaction};
+use super::{
+    auth::{AgentClaims, authorize_agent_transaction},
+    climate::Climate,
+};
+
+const DM_AGENT_TRIAGE_EVERY: i64 = 8;
+const DM_AGENT_HARD_LOOP_CAP: i64 = 20;
 
 #[derive(Clone)]
 pub struct InboxTriage {
@@ -56,11 +65,48 @@ impl InboxTriage {
                 model,
             });
         }
+        let real_unread = context
+            .unread
+            .iter()
+            .filter(|message| message.message_kind != "system")
+            .collect::<Vec<_>>();
+        if let Some(verdict) = direct_agent_verdict(&real_unread) {
+            return Ok(TriagePayload {
+                verdict: Some(verdict),
+                instructions: None,
+                input: None,
+                model,
+            });
+        }
         let mut input = format!(
             "Agent persona:\nrole: {}\npersona: {}\n",
             role.as_deref().unwrap_or("unspecified"),
             persona,
         );
+        let participant_ids = context
+            .unread
+            .iter()
+            .chain(&context.recent)
+            .map(|message| message.author_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let climates = Climate::for_participants(&self.pool, &claims.sub, &participant_ids).await?;
+        if !climates.is_empty() {
+            input.push_str(
+                "\nPrivate Climate context (this Agent's subjective current impressions):\n",
+            );
+            for climate in climates {
+                let _ = writeln!(
+                    input,
+                    "about_participant_id: {}\naffinity: {}\ntrust: {}\nnote: {}\n",
+                    climate.about_participant_id,
+                    climate.affinity,
+                    climate.trust,
+                    climate.last_note.as_deref().unwrap_or("none"),
+                );
+            }
+        }
         if !context.recent.is_empty() {
             input.push_str("\nRecent posted context:\n");
             for message in &context.recent {
@@ -176,13 +222,20 @@ impl InboxTriage {
         authorize_agent_transaction(&mut transaction, claims).await?;
         if !matches!(
             request.verdict.source.as_str(),
-            "local_model" | "deterministic" | "system_only"
+            "local_model" | "deterministic" | "system_only" | "agent_dm_engage" | "loop_cap"
         ) {
             return Err(protocol_error("INVALID_ARGUMENT: invalid triage source"));
         }
-        if request.verdict.source == "system_only" && request.verdict.actionable {
+        if matches!(request.verdict.source.as_str(), "system_only" | "loop_cap")
+            && request.verdict.actionable
+        {
             return Err(protocol_error(
-                "INVALID_ARGUMENT: system-only triage cannot be actionable",
+                "INVALID_ARGUMENT: suppressing triage source cannot be actionable",
+            ));
+        }
+        if request.verdict.source == "agent_dm_engage" && !request.verdict.actionable {
+            return Err(protocol_error(
+                "INVALID_ARGUMENT: Agent DM engage triage must be actionable",
             ));
         }
         let existing: Option<bool> = sqlx::query_scalar(
@@ -266,6 +319,49 @@ impl InboxTriage {
     }
 }
 
+fn direct_agent_verdict(messages: &[&TriageMessage]) -> Option<TriageVerdict> {
+    if messages.is_empty()
+        || !messages
+            .iter()
+            .all(|message| message.room_kind == "direct" && message.author_kind == "agent")
+    {
+        return None;
+    }
+    let mut latest_by_room = BTreeMap::<&str, i64>::new();
+    for message in messages {
+        latest_by_room
+            .entry(&message.room_id)
+            .and_modify(|sequence| *sequence = (*sequence).max(message.sequence))
+            .or_insert(message.sequence);
+    }
+    if latest_by_room
+        .values()
+        .all(|sequence| sequence % DM_AGENT_TRIAGE_EVERY != 0)
+    {
+        return Some(TriageVerdict {
+            actionable: true,
+            reason: format!(
+                "Agent-to-Agent Direct Room engages between every {DM_AGENT_TRIAGE_EVERY}th-message loop check"
+            ),
+            prompt_note: "A teammate messaged you directly. Reply in that Direct Room.".to_string(),
+            source: "agent_dm_engage".to_string(),
+        });
+    }
+    if latest_by_room.values().all(|sequence| {
+        *sequence >= DM_AGENT_HARD_LOOP_CAP && sequence % DM_AGENT_TRIAGE_EVERY == 0
+    }) {
+        return Some(TriageVerdict {
+            actionable: false,
+            reason: format!(
+                "Agent-to-Agent Direct Room reached the {DM_AGENT_HARD_LOOP_CAP}-message hard loop cap"
+            ),
+            prompt_note: String::new(),
+            source: "loop_cap".to_string(),
+        });
+    }
+    None
+}
+
 struct TriageContext {
     unread: Vec<TriageMessage>,
     recent: Vec<TriageMessage>,
@@ -302,4 +398,42 @@ fn append_message(input: &mut String, message: &TriageMessage) {
 
 fn protocol_error(message: &str) -> sqlx::Error {
     sqlx::Error::Protocol(message.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TriageMessage, direct_agent_verdict};
+
+    fn direct_agent_message(room_id: &str, sequence: i64) -> TriageMessage {
+        TriageMessage {
+            id: format!("msg-{sequence}"),
+            room_id: room_id.to_string(),
+            room_kind: "direct".to_string(),
+            sequence,
+            author_id: "agent-peer".to_string(),
+            author_kind: "agent".to_string(),
+            author_name: "Peer".to_string(),
+            message_kind: "normal".to_string(),
+            body: "hello".to_string(),
+        }
+    }
+
+    #[test]
+    fn agent_direct_engages_between_checks_and_stops_at_the_hard_cap() {
+        let between = direct_agent_message("room-direct", 7);
+        let verdict = direct_agent_verdict(&[&between]).expect("between checks engages");
+        assert!(verdict.actionable);
+        assert_eq!(verdict.source, "agent_dm_engage");
+
+        let checkpoint = direct_agent_message("room-direct", 8);
+        assert!(direct_agent_verdict(&[&checkpoint]).is_none());
+
+        let capped = direct_agent_message("room-direct", 24);
+        let verdict = direct_agent_verdict(&[&capped]).expect("hard cap suppresses");
+        assert!(!verdict.actionable);
+        assert_eq!(verdict.source, "loop_cap");
+
+        let fresh_other_room = direct_agent_message("room-other", 1);
+        assert!(direct_agent_verdict(&[&capped, &fresh_other_room]).is_none());
+    }
 }

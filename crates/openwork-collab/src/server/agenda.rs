@@ -2,8 +2,7 @@ use std::fmt::Write as _;
 
 use crate::protocol::{
     AgendaCandidate, AgendaCandidateSet, AgendaDecision, AgendaDecisionRequest,
-    AgendaDecisionResponse, AgendaFocus, AgendaPayload, COLLAB_PROTOCOL_VERSION, MessageView,
-    TriggerEnvelope, entity_id,
+    AgendaDecisionResponse, AgendaFocus, AgendaPayload, MessageView, TriggerEnvelope, entity_id,
 };
 use sqlx::{FromRow, PgPool};
 use time::OffsetDateTime;
@@ -157,7 +156,6 @@ impl Agenda {
                     .reset_agenda_declines(std::slice::from_ref(&claims.sub))
                     .await;
                 let mut trigger = TriggerEnvelope {
-                    protocol_version: COLLAB_PROTOCOL_VERSION,
                     dispatch_id: entity_id("run"),
                     agent_id: claims.sub.clone(),
                     runtime_session_id: claims.runtime_session_id.clone(),

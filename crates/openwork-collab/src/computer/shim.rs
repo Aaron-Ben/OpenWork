@@ -7,10 +7,16 @@ use crate::protocol::{
 
 const HELP: &str = "Usage:
   openwork inbox
+  openwork rooms
+  openwork messages <room-id> [--tail <1..200>]
+  openwork members <room-id>
+  openwork participants
   openwork glance <room-id>
   openwork reply <room-id> [--held-token <token>] (--stdin | --file <path> | -- <body>)
   openwork ack <room-id>
   openwork dm <participant-id> (--stdin | --file <path> | -- <body>)
+  openwork climate show [participant-id]
+  openwork climate note <participant-id> --affinity <-1..1> --trust <-1..1> (--stdin | --file <path> | -- <note>)
   openwork board list
   openwork card list [--board <board-id>]
   openwork card create --board <id> --column <id> --title <text> [--description <text>] [--assignee <id>]
@@ -103,6 +109,21 @@ fn transient_http(error: &reqwest::Error) -> bool {
 async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError> {
     match arguments.as_slice() {
         [command] if command == "inbox" => Ok(AgentCommand::Inbox),
+        [command] if command == "rooms" => Ok(AgentCommand::Rooms),
+        [command, room_id] if command == "messages" => Ok(AgentCommand::Messages {
+            room_id: room_id.clone(),
+            tail: 50,
+        }),
+        [command, room_id, flag, tail] if command == "messages" && flag == "--tail" => {
+            Ok(AgentCommand::Messages {
+                room_id: room_id.clone(),
+                tail: parse_tail(tail)?,
+            })
+        }
+        [command, room_id] if command == "members" => Ok(AgentCommand::Members {
+            room_id: room_id.clone(),
+        }),
+        [command] if command == "participants" => Ok(AgentCommand::Participants),
         [command, room_id] if command == "glance" => Ok(AgentCommand::Glance {
             room_id: room_id.clone(),
         }),
@@ -129,6 +150,35 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
             Ok(AgentCommand::DirectMessage {
                 participant_id: participant_id.clone(),
                 body: parse_body(tail).await?,
+            })
+        }
+        [climate, action] if climate == "climate" && action == "show" => {
+            Ok(AgentCommand::ClimateShow {
+                participant_id: None,
+            })
+        }
+        [climate, action, participant_id] if climate == "climate" && action == "show" => {
+            Ok(AgentCommand::ClimateShow {
+                participant_id: Some(participant_id.clone()),
+            })
+        }
+        [climate, action, participant_id, tail @ ..]
+            if climate == "climate" && action == "note" =>
+        {
+            let body_start = tail
+                .iter()
+                .position(|argument| matches!(argument.as_str(), "--stdin" | "--file" | "--"))
+                .ok_or_else(|| {
+                    ShimError::Arguments(
+                        "Climate note requires --stdin, --file <path>, or -- <note>".to_string(),
+                    )
+                })?;
+            let flags = parse_flags(&tail[..body_start], &["--affinity", "--trust"])?;
+            Ok(AgentCommand::ClimateNote {
+                participant_id: participant_id.clone(),
+                affinity: parse_score(required_flag(&flags, "--affinity")?, "affinity")?,
+                trust: parse_score(required_flag(&flags, "--trust")?, "trust")?,
+                note: parse_body(&tail[body_start..]).await?,
             })
         }
         [command, room_id, tail @ ..] if command == "reply" => {
@@ -176,6 +226,22 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
         }
         _ => Err(ShimError::Arguments(format!("unknown command\n\n{HELP}"))),
     }
+}
+
+fn parse_tail(value: &str) -> Result<u32, ShimError> {
+    value
+        .parse::<u32>()
+        .ok()
+        .filter(|value| (1..=200).contains(value))
+        .ok_or_else(|| ShimError::Arguments("--tail must be an integer from 1 to 200".to_string()))
+}
+
+fn parse_score(value: &str, name: &str) -> Result<f64, ShimError> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && (-1.0..=1.0).contains(value))
+        .ok_or_else(|| ShimError::Arguments(format!("--{name} must be a number from -1 to 1")))
 }
 
 fn parse_flags(
@@ -272,6 +338,34 @@ fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
             render_messages(&mut text, &messages);
             (text, 0)
         }
+        AgentCommandResult::Rooms { rooms } => (
+            serde_json::to_string_pretty(&rooms).map_err(ShimError::Json)?,
+            0,
+        ),
+        AgentCommandResult::Messages { room_id, messages } => {
+            let mut text = format!("Messages in {room_id}");
+            render_messages(&mut text, &messages);
+            (text, 0)
+        }
+        AgentCommandResult::Members { room_id, members } => (
+            format!(
+                "Members in {room_id}\n{}",
+                serde_json::to_string_pretty(&members).map_err(ShimError::Json)?
+            ),
+            0,
+        ),
+        AgentCommandResult::Participants { participants } => (
+            serde_json::to_string_pretty(&participants).map_err(ShimError::Json)?,
+            0,
+        ),
+        AgentCommandResult::Climates { climates } => (
+            serde_json::to_string_pretty(&climates).map_err(ShimError::Json)?,
+            0,
+        ),
+        AgentCommandResult::Climate { climate } => (
+            serde_json::to_string_pretty(&climate).map_err(ShimError::Json)?,
+            0,
+        ),
         AgentCommandResult::MessagePublished { message } => (
             format!(
                 "Published {} in {} at sequence {}",
@@ -365,4 +459,65 @@ enum ShimError {
     Http(#[from] reqwest::Error),
     #[error("Runtime result was invalid: {0}")]
     Json(serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_command, parse_score, parse_tail};
+    use crate::protocol::AgentCommand;
+
+    #[tokio::test]
+    async fn parses_r5_read_and_climate_commands() {
+        assert_eq!(
+            parse_command(vec!["rooms".to_string()]).await.unwrap(),
+            AgentCommand::Rooms
+        );
+        assert_eq!(
+            parse_command(vec![
+                "messages".to_string(),
+                "room-1".to_string(),
+                "--tail".to_string(),
+                "25".to_string(),
+            ])
+            .await
+            .unwrap(),
+            AgentCommand::Messages {
+                room_id: "room-1".to_string(),
+                tail: 25,
+            }
+        );
+        assert_eq!(
+            parse_command(vec![
+                "climate".to_string(),
+                "note".to_string(),
+                "beta".to_string(),
+                "--affinity".to_string(),
+                "0.75".to_string(),
+                "--trust".to_string(),
+                "-0.25".to_string(),
+                "--".to_string(),
+                "Strong technically; verify estimates.".to_string(),
+            ])
+            .await
+            .unwrap(),
+            AgentCommand::ClimateNote {
+                participant_id: "beta".to_string(),
+                affinity: 0.75,
+                trust: -0.25,
+                note: "Strong technically; verify estimates.".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn bounds_r5_numeric_arguments() {
+        assert_eq!(parse_tail("1").unwrap(), 1);
+        assert_eq!(parse_tail("200").unwrap(), 200);
+        assert!(parse_tail("0").is_err());
+        assert!(parse_tail("201").is_err());
+        assert_eq!(parse_score("-1", "trust").unwrap(), -1.0);
+        assert_eq!(parse_score("1", "trust").unwrap(), 1.0);
+        assert!(parse_score("NaN", "trust").is_err());
+        assert!(parse_score("1.1", "trust").is_err());
+    }
 }

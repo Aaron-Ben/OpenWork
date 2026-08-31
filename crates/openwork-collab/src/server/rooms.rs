@@ -112,6 +112,57 @@ impl Rooms {
         .map(|rows| rows.into_iter().map(RoomView::from).collect())
     }
 
+    pub(crate) async fn list_for_agent_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        agent_id: &str,
+    ) -> Result<Vec<RoomView>, sqlx::Error> {
+        sqlx::query_as::<_, RoomRow>(
+            "SELECT room.id, room.kind, room.title
+             FROM collab_rooms room
+             JOIN collab_room_members member
+               ON member.room_id = room.id AND member.participant_id = $1
+             ORDER BY COALESCE(room.last_message_at, room.created_at) DESC, room.id",
+        )
+        .bind(agent_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(RoomView::from).collect())
+    }
+
+    pub(crate) async fn list_members_for_agent_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        agent_id: &str,
+        room_id: &str,
+    ) -> Result<Vec<ParticipantView>, sqlx::Error> {
+        let member: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM collab_room_members
+                WHERE room_id = $1 AND participant_id = $2
+             )",
+        )
+        .bind(room_id)
+        .bind(agent_id)
+        .fetch_one(&mut **transaction)
+        .await?;
+        if !member {
+            return Err(protocol_error(
+                "NOT_FOUND: Room is not visible to this Agent",
+            ));
+        }
+        sqlx::query_as::<_, ParticipantRow>(
+            "SELECT participant.id, participant.kind, participant.display_name
+             FROM collab_room_members member
+             JOIN collab_participants participant ON participant.id = member.participant_id
+             WHERE member.room_id = $1
+             ORDER BY CASE WHEN participant.kind = 'user' THEN 0 ELSE 1 END,
+                      participant.display_name, participant.id",
+        )
+        .bind(room_id)
+        .fetch_all(&mut **transaction)
+        .await
+        .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
+    }
+
     pub(crate) async fn list_members(
         &self,
         room_id: &str,
