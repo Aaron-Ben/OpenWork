@@ -3,10 +3,11 @@ use openwork_core::{
     ClientRequestId, CompactionFinished, CompactionRuntimeState, CompactionStarted,
     CompactionStateCollector, CompactionTraceAttributesV1, ConversationCompactionKind,
     ConversationProjectionSelector, ConversationTranscriptQuery, MessageKind, ModelCallFinished,
-    ModelCallStarted, ModelInput, ModelTraceAttributesV1, NewConversationCompaction,
-    PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads, TraceRecorder,
-    TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
+    ModelCallStarted, ModelCapabilities, ModelInput, ModelTraceAttributesV1,
+    NewConversationCompaction, PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId,
+    SessionInput, SessionStorage, ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1,
+    TracePayloads, TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome,
+    session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
@@ -22,6 +23,15 @@ fn test_database_url() -> Option<String> {
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 fn absolute_time(value: &str) -> OffsetDateTime {
@@ -421,6 +431,7 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             base_url: format!("https://example.invalid/threshold/{model_id}"),
             credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
             enabled: true,
+            capabilities: test_capabilities(),
             config: json!({}),
         })
         .await
@@ -441,7 +452,12 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-threshold")),
-            &ResolvedModel::new(None::<String>, "deepseek", "threshold-test-model"),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "threshold-test-model",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "continue the task"),
         )
@@ -508,7 +524,12 @@ async fn postgres_persists_contextual_input_before_the_visible_user_message() {
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-contextual-input")),
-            &ResolvedModel::new(None::<String>, "deepseek", "contextual-input-test"),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "contextual-input-test",
+                test_capabilities(),
+            ),
             &[Message::text(
                 Role::User,
                 "<skill>\n<name>read-workflow</name>\n<path>/tmp/read-workflow/SKILL.md</path>\nprivate skill body\n</skill>",
@@ -572,7 +593,12 @@ async fn postgres_persists_agent_messages_with_their_contextual_kind() {
             &session_id,
             &turn_id,
             &ClientRequestId::new(unique("request-agent-message")),
-            &ResolvedModel::new(None::<String>, "deepseek", "agent-message-test"),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "agent-message-test",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "continue the task"),
         )
@@ -647,7 +673,9 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     let business_tables: Vec<String> = sqlx::query_scalar(
         "SELECT tablename
          FROM pg_tables
-         WHERE schemaname = 'public' AND tablename <> '_sqlx_migrations'
+         WHERE schemaname = 'public'
+           AND tablename <> '_sqlx_migrations'
+           AND tablename NOT LIKE 'collab\\_%' ESCAPE '\\'
          ORDER BY tablename",
     )
     .fetch_all(storage.pool())
@@ -709,6 +737,16 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 true,
             ),
             (202_608_080_001, "add subagent sessions".to_string(), true),
+            (
+                202_608_130_001,
+                "backfill model capabilities".to_string(),
+                true,
+            ),
+            (
+                202_608_140_001,
+                "widen message kind world state".to_string(),
+                true,
+            ),
         ]
     );
 
@@ -722,6 +760,7 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             base_url: format!("https://example.invalid/{model_id}"),
             credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
             enabled: true,
+            capabilities: test_capabilities(),
             config: json!({}),
         })
         .await
@@ -747,7 +786,12 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &session_id,
             &turn_id,
             &client_request_id,
-            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &ResolvedModel::new(
+                Some(model_id.clone()),
+                "deepseek",
+                "deepseek-v4-flash",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "read the file"),
         )
@@ -928,7 +972,12 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &session_id,
             &continuation_turn_id,
             &ClientRequestId::new(unique("request-after-compaction")),
-            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &ResolvedModel::new(
+                Some(model_id.clone()),
+                "deepseek",
+                "deepseek-v4-flash",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "continue from the summary"),
         )
@@ -1023,10 +1072,10 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     let restarted_chat = ChatStateHandle::spawn_items(restarted_items).expect("restarted chat");
     assert_eq!(
         restarted_chat
-            .conversation_view()
+            .context_view()
             .await
             .expect("restarted view")
-            .messages
+            .items
             .len(),
         5
     );
@@ -1364,13 +1413,21 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
             &session_id,
             &interrupted_turn_id,
             &ClientRequestId::new(unique("request-interrupted")),
-            &ResolvedModel::new(Some(model_id.clone()), "deepseek", "deepseek-v4-flash"),
+            &ResolvedModel::new(
+                Some(model_id.clone()),
+                "deepseek",
+                "deepseek-v4-flash",
+                test_capabilities(),
+            ),
             &[],
             &Message::text(Role::User, "this turn will be interrupted"),
         )
         .await
         .unwrap();
-    assert_eq!(storage.mark_running_interrupted().await.unwrap(), 1);
+    // `mark_running_interrupted` 作用于全库，返回值里也包含其他并发测试留下的
+    // running turn，因此这里不能断言精确计数——那是越界的全局断言。本测试要
+    // 验证的是"自己这个 turn 被标成了 interrupted"，紧接着的状态查询就是它。
+    assert!(storage.mark_running_interrupted().await.unwrap() >= 1);
     let interrupted_status: String = sqlx::query_scalar("SELECT status FROM turns WHERE id = $1")
         .bind(interrupted_turn_id.as_str())
         .fetch_one(storage.pool())
@@ -1384,4 +1441,79 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         .execute(storage.pool())
         .await
         .unwrap();
+}
+
+/// world-state fragment 落库时必须带上 `world_state` kind，且重写幂等。
+///
+/// kind 判错的后果很具体：压缩时 `last_real_user` 会把一段目录树当成用户的最后
+/// 一句话 replay 出去。幂等则是因为同一 Turn 内采样可能重试——按 §8.3，落库失败
+/// 时基线不推进，下一次会原样重新产出同样的 fragment。
+#[tokio::test]
+async fn postgres_persists_world_state_fragments_with_their_own_kind() {
+    let Some(database_url) = test_database_url() else {
+        return;
+    };
+    let storage = PostgresStorage::connect(Some(&database_url)).await.unwrap();
+    storage.migrate().await.unwrap();
+    let session_id = SessionId::new(unique("session-world-state"));
+    storage
+        .create_session(&SessionInput {
+            id: session_id.clone(),
+            title: Some("World state persistence".to_string()),
+            working_directory: "/tmp/openwork-world-state".to_string(),
+            default_model_id: None,
+        })
+        .await
+        .unwrap();
+    let turn_id = TurnId::new(unique("turn-world-state"));
+    storage
+        .begin_turn(
+            &session_id,
+            &turn_id,
+            &ClientRequestId::new(unique("request-world-state")),
+            &ResolvedModel::new(
+                None::<String>,
+                "deepseek",
+                "world-state-test",
+                test_capabilities(),
+            ),
+            &[],
+            &Message::text(Role::User, "continue the task"),
+        )
+        .await
+        .unwrap();
+
+    let fragment_id = unique("world-state-msg");
+    let inserted = storage
+        .append_world_state_fragment(
+            &turn_id,
+            &fragment_id,
+            &Message::text(
+                Role::User,
+                "<user_project_context format_version=\"1\">\nWorking directory: /tmp\n</user_project_context>",
+            ),
+        )
+        .await
+        .unwrap();
+    let duplicate = storage
+        .append_world_state_fragment(
+            &turn_id,
+            &fragment_id,
+            &Message::text(Role::User, "重试不得覆盖第一次写入的内容"),
+        )
+        .await
+        .unwrap();
+    assert!(inserted);
+    assert!(!duplicate, "同一 message_id 重写必须是幂等的");
+
+    let records = storage.load_message_records(&session_id).await.unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].role, Role::User);
+    assert_eq!(records[1].message_kind, MessageKind::WorldState);
+    assert!(matches!(
+        records[1].content.first(),
+        Some(ContentBlock::Text(text)) if text.text.contains("<user_project_context")
+    ));
+
+    storage.delete_session(&session_id).await.unwrap();
 }

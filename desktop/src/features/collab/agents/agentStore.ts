@@ -1,0 +1,49 @@
+import { create } from 'zustand'
+
+import { collabCommands, type CollabAgent, type CollabAgentInput } from '@/bridge/collab'
+import { resolveErrorMessage } from '@/lib/commandError'
+import { useRoomStore } from '@/features/collab/rooms/roomStore'
+
+interface AgentStoreState {
+  agents: CollabAgent[]
+  loading: boolean
+  error: string | null
+  fetchAll: () => Promise<void>
+  create: (input: CollabAgentInput) => Promise<void>
+  update: (agentId: string, input: CollabAgentInput) => Promise<void>
+  setAgenda: (agentId: string, enabled: boolean) => Promise<void>
+  setArchived: (agentId: string, archived: boolean) => Promise<void>
+}
+
+export const useAgentStore = create<AgentStoreState>((set, get) => ({
+  agents: [],
+  loading: false,
+  error: null,
+  fetchAll: async () => {
+    set({ loading: true, error: null })
+    try {
+      set({ agents: await collabCommands.listAgents(), loading: false })
+    } catch (error) {
+      set({ error: resolveErrorMessage(error), loading: false })
+    }
+  },
+  create: async (input) => {
+    const agent = await collabCommands.createAgent(input)
+    await collabCommands.createDirectRoom(agent.id)
+    await Promise.all([get().fetchAll(), useRoomStore.getState().fetchAll()])
+  },
+  update: async (agentId, input) => {
+    await collabCommands.updateAgent(agentId, input)
+    await get().fetchAll()
+  },
+  setAgenda: async (agentId, enabled) => {
+    await collabCommands.setAgentAgenda(agentId, enabled)
+    await get().fetchAll()
+  },
+  setArchived: async (agentId, archived) => {
+    await (archived
+      ? collabCommands.archiveAgent(agentId)
+      : collabCommands.restoreAgent(agentId))
+    await get().fetchAll()
+  },
+}))

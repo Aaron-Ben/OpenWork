@@ -24,9 +24,8 @@ pub use compaction::{
     CompactionError, CompactionRuntimeState, CompactionStateCollectInput, CompactionStateCollector,
     CompactionStateContributor, CompactionStateEntry, CompactionStateError,
     CompactionStateFailurePolicy, CompactionStateWarning, ConversationCompaction,
-    ConversationCompactionKind, ConversationProjectionSelector,
-    DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT, DEFAULT_CONTEXT_WINDOW_TOKENS,
-    NewConversationCompaction, ReminderSection,
+    ConversationCompactionKind, ConversationProjectionSelector, NewConversationCompaction,
+    ReminderSection,
 };
 pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use input::PreparedTurnInput;

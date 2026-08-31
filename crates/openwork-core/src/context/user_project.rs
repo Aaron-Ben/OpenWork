@@ -2,12 +2,8 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use openwork_models::model::ContentBlock;
 use thiserror::Error;
 
-use super::SystemContextPart;
-
-const USER_PROJECT_CONTEXT_KEY: &str = "runtime/user-project-context";
 const MAX_LAYOUT_ENTRIES: usize = 64;
 const MAX_CONTEXT_CHARS: usize = 16 * 1024;
 
@@ -22,7 +18,11 @@ impl UserProjectContextLoader {
         }
     }
 
-    pub(crate) async fn load(&self) -> Result<SystemContextPart, UserProjectContextError> {
+    /// `<user_project_context>` 正文。
+    ///
+    /// 唯一的消费者是 `context/world_state/capture.rs`。这段内容曾经是 System
+    /// 前缀的一部分，现在作为 world-state section 进入 Conversation。
+    pub(crate) async fn load_body(&self) -> Result<String, UserProjectContextError> {
         let working_directory = tokio::fs::canonicalize(&self.working_directory)
             .await
             .map_err(|source| UserProjectContextError::WorkingDirectory {
@@ -61,11 +61,7 @@ impl UserProjectContextLoader {
         if text.chars().count() > MAX_CONTEXT_CHARS {
             return Err(UserProjectContextError::TooLarge(MAX_CONTEXT_CHARS));
         }
-
-        Ok(SystemContextPart::new(
-            USER_PROJECT_CONTEXT_KEY,
-            vec![ContentBlock::text(text)],
-        ))
+        Ok(text)
     }
 }
 
@@ -184,17 +180,12 @@ mod tests {
         fs::create_dir_all(root.join("nested")).expect("nested");
         fs::write(root.join("a-file"), "a").expect("file");
 
-        let part = UserProjectContextLoader::new(root.join("nested"))
-            .load()
+        let text = UserProjectContextLoader::new(root.join("nested"))
+            .load_body()
             .await
             .expect("context");
         let canonical_root = fs::canonicalize(&root).expect("canonical root");
-        let ContentBlock::Text(text) = &part.content[0] else {
-            std::panic::panic_any("text context")
-        };
-        let text = &text.text;
 
-        assert_eq!(part.key, USER_PROJECT_CONTEXT_KEY);
         assert!(text.contains(&format!("Repository root: {}", canonical_root.display())));
         assert!(text.find("- a-file").unwrap() < text.find("- nested/").unwrap());
         assert!(text.find("- nested/").unwrap() < text.find("- z-dir/").unwrap());

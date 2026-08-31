@@ -5,8 +5,8 @@
 
 use openwork_core::plan::{PlanStep, PlanStepStatus, TurnPlan};
 use openwork_core::{
-    ClientRequestId, ModelInput, PostgresStorage, ResolvedModel, SessionId, SessionInput,
-    SessionStorage, TurnOutcome, session::TurnId,
+    ClientRequestId, ModelCapabilities, ModelInput, PostgresStorage, ResolvedModel, SessionId,
+    SessionInput, SessionStorage, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
@@ -21,6 +21,15 @@ fn test_database_url() -> Option<String> {
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 fn china_now() -> PrimitiveDateTime {
@@ -90,6 +99,7 @@ impl Fixture {
                 base_url: format!("https://example.invalid/{model_id}"),
                 credential_ref: None,
                 enabled: true,
+                capabilities: test_capabilities(),
                 config: json!({}),
             })
             .await
@@ -119,7 +129,12 @@ impl Fixture {
                 &self.session_id,
                 &turn_id,
                 &ClientRequestId::new(unique("request-plan")),
-                &ResolvedModel::new(None::<String>, "deepseek", "deepseek-v4-flash"),
+                &ResolvedModel::new(
+                    None::<String>,
+                    "deepseek",
+                    "deepseek-v4-flash",
+                    test_capabilities(),
+                ),
                 &[],
                 &Message::text(Role::User, "do the multi-step thing"),
             )

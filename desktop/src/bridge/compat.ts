@@ -81,7 +81,7 @@ export interface RuntimeStoredMessage {
   sequence: number
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: ContentBlock[]
-  messageKind: 'normal' | 'skill_instruction'
+  messageKind: 'normal' | 'skill_instruction' | 'agent_message' | 'world_state'
   createdAt: string
 }
 
@@ -137,6 +137,7 @@ export interface RuntimeToolDefinition {
 }
 
 export interface RuntimeContextInspectionBudget {
+  contextWindowTokens: number
   systemContextTokens: number
   conversationTokens: number
   toolSurfaceTokens: number

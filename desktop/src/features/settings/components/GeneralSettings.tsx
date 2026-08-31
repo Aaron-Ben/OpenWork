@@ -1,6 +1,5 @@
 import {
   Check,
-  CircleGauge,
   Languages,
   Monitor,
   Moon,
@@ -8,14 +7,10 @@ import {
   Sun,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { setLanguage, type SupportedLanguage } from '@/i18n'
-import {
-  parseContextWindowTokens,
-  useContextWindowStore,
-} from '@/features/settings/contextWindowStore'
 import { useThemeStore, type Theme } from '@/app/themeStore'
 
 export function GeneralSettings() {
@@ -29,7 +24,6 @@ export function GeneralSettings() {
       </div>
       <div className="grid gap-5 pb-8">
         <AppearanceSection />
-        <ContextWindowSection />
       </div>
     </div>
   )
@@ -128,74 +122,6 @@ function AppearanceSection() {
           )
         })}
       </div>
-    </SettingsSection>
-  )
-}
-
-function ContextWindowSection() {
-  const { t } = useTranslation()
-  const contextWindowTokens = useContextWindowStore((state) => state.contextWindowTokens)
-  const setContextWindowTokens = useContextWindowStore((state) => state.setContextWindowTokens)
-  const [draft, setDraft] = useState(String(contextWindowTokens))
-  const [saved, setSaved] = useState(false)
-  const parsed = parseContextWindowTokens(draft)
-
-  useEffect(() => setDraft(String(contextWindowTokens)), [contextWindowTokens])
-
-  return (
-    <SettingsSection
-      icon={CircleGauge}
-      title={t('settings.contextWindow.title')}
-      description={t('settings.contextWindow.description')}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (parsed === null) return
-          setContextWindowTokens(parsed)
-          setSaved(true)
-        }}
-      >
-        <label htmlFor="context-window-tokens" className="font-sans text-sm font-semibold text-ink">
-          {t('settings.contextWindow.sizeLabel')}
-        </label>
-        <p className="mt-1 font-sans text-xs leading-5 text-ink-faint">
-          {t('settings.contextWindow.sizeDescription')}
-        </p>
-        <div className="mt-4 flex items-center gap-2">
-          <input
-            id="context-window-tokens"
-            type="number"
-            min="1"
-            step="1000"
-            inputMode="numeric"
-            value={draft}
-            aria-invalid={parsed === null}
-            className="h-10 min-w-0 flex-1 rounded-lg border border-line-strong bg-paper px-3 font-mono text-sm text-ink outline-none focus:ring-3 focus:ring-clay/20"
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setSaved(false)
-            }}
-          />
-          <span className="shrink-0 font-sans text-sm text-ink-faint">Tokens</span>
-          <button
-            type="submit"
-            disabled={parsed === null || parsed === contextWindowTokens}
-            className="h-10 shrink-0 rounded-lg bg-clay px-4 font-sans text-sm font-medium text-white transition hover:bg-clay/90 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {t('settings.contextWindow.save')}
-          </button>
-        </div>
-        {parsed === null ? (
-          <p className="mt-2 font-sans text-xs text-status-danger-ink" role="alert">
-            {t('settings.contextWindow.invalid')}
-          </p>
-        ) : saved ? (
-          <p className="mt-2 font-sans text-xs text-status-success-ink" role="status">
-            {t('settings.contextWindow.saved')}
-          </p>
-        ) : null}
-      </form>
     </SettingsSection>
   )
 }

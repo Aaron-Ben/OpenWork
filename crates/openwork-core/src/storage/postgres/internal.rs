@@ -247,8 +247,41 @@ pub(super) fn parse_message_kind(value: &str) -> Result<MessageKind, StorageErro
         "normal" => Ok(MessageKind::Normal),
         "skill_instruction" => Ok(MessageKind::SkillInstruction),
         "agent_message" => Ok(MessageKind::AgentMessage),
+        "world_state" => Ok(MessageKind::WorldState),
         other => Err(StorageError::InvalidInput(format!(
             "unknown stored message kind: {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 出库解析必须认得每一个入库写得出的取值。
+    ///
+    /// 解析不认得的后果不是丢一条消息，而是整个会话加载失败——`parse_message_kind`
+    /// 返回 `Err` 会让读取该 Session 的调用整体报错。
+    #[test]
+    fn every_written_kind_can_be_read_back() {
+        for kind in [
+            MessageKind::Normal,
+            MessageKind::SkillInstruction,
+            MessageKind::AgentMessage,
+            MessageKind::WorldState,
+        ] {
+            assert_eq!(
+                parse_message_kind(kind.as_str()).expect("stored kind must parse"),
+                kind
+            );
+        }
+    }
+
+    /// 未知取值仍然要明确失败，不能默默当成 Normal。
+    ///
+    /// 静默降级会把一条 world-state 消息变成用户请求，压缩时被 replay 出去。
+    #[test]
+    fn an_unknown_kind_is_rejected_rather_than_defaulted() {
+        assert!(parse_message_kind("not_a_kind").is_err());
     }
 }

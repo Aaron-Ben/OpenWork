@@ -1,5 +1,4 @@
-mod policy;
-mod projection;
+mod compacted_view;
 mod recovery;
 mod reminder;
 mod state;
@@ -13,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use openwork_agent::Agent;
-use openwork_chat_state::{ChatStateHandle, ConversationView};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView};
 use openwork_models::model::{ModelError, ModelPort};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -21,21 +20,20 @@ use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::context::{ResolvedSystemContext, SystemContextBuilder};
-use crate::model_call::estimate_conversation_tokens;
+use crate::context::{
+    ModelContextLimits, ResolvedSystemContext, SystemContextBuilder, estimate_conversation_tokens,
+};
 use crate::plan::TurnPlan;
 use crate::skills::SkillRoots;
 
-use self::projection::{last_real_user, last_user_source};
+use self::compacted_view::{last_real_user, last_user_source};
 use self::summary::{SummaryTraceContext, generate_summary};
 use super::{
     CompactionStarted, CompactionTraceAttributesV1, CompactionTraceGuard, SessionId,
     SessionStorage, TraceRecorder, TurnId,
 };
 
-pub(crate) use policy::AutomaticCompactionPolicy;
-pub use policy::{DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT, DEFAULT_CONTEXT_WINDOW_TOKENS};
-pub(crate) use projection::{compacted_items, compaction_summary_message};
+pub(crate) use compacted_view::{compacted_items, compaction_summary_message};
 pub use recovery::ConversationProjectionSelector;
 pub(super) use recovery::{CompactionTrigger, ConversationRewindRequest, rewind_conversation};
 pub use reminder::ReminderSection;
@@ -223,6 +221,7 @@ pub(super) struct ConversationCompactionRequest {
     pub model: Arc<dyn ModelPort>,
     pub storage: Arc<dyn SessionStorage>,
     pub state_collector: Arc<CompactionStateCollector>,
+    pub limits: ModelContextLimits,
     /// 当前 Turn 的计划，由 Runner 直接带入。
     ///
     /// contributor 不查库也不解析历史 Tool Call：`turn_plans` 才是权威状态，而那些
@@ -275,7 +274,7 @@ async fn run_compaction_inner(
     let prepare_started = Instant::now();
     let source = request
         .chat
-        .compaction_view()
+        .context_view()
         .await
         .map_err(|error| CompactionError::ChatState(error.to_string()))?;
     if source.items.is_empty() {
@@ -284,17 +283,10 @@ async fn run_compaction_inner(
     let source_message_count =
         u32::try_from(source.items.len()).map_err(|_| CompactionError::MessageCountOverflow)?;
     trace.attributes_mut().source_message_count = Some(source_message_count);
-    let source_conversation = ConversationView {
-        messages: source
-            .items
-            .iter()
-            .map(|item| item.message.clone())
-            .collect(),
-    };
     // Trace is best-effort: a failed measurement leaves the attribute absent
     // rather than failing a compaction the user asked for. The Desktop history
     // renders the missing pair as "—" instead of inventing a zero.
-    if let Ok(tokens) = estimate_conversation_tokens(&source_conversation) {
+    if let Ok(tokens) = estimate_conversation_tokens(&source) {
         trace
             .attributes_mut()
             .record_conversation_tokens_before(tokens);
@@ -347,12 +339,8 @@ async fn run_compaction_inner(
         request.model.as_ref(),
         &request.resolved_model_name,
         &system_context,
-        source_conversation,
-        format!(
-            "{}-compaction-{}",
-            request.session_id,
-            Uuid::new_v4().simple()
-        ),
+        &request.limits,
+        source.clone(),
         summary_trace,
         trace,
     )
@@ -390,11 +378,8 @@ async fn run_compaction_inner(
 
     let install_started = Instant::now();
     let replacement = compacted_items(&persisted, last_user.message.clone())?;
-    let replacement_conversation = ConversationView {
-        messages: replacement
-            .iter()
-            .map(|item| item.message.clone())
-            .collect(),
+    let replacement_conversation = ConversationContextView {
+        items: replacement.clone(),
     };
     if let Ok(tokens) = estimate_conversation_tokens(&replacement_conversation) {
         trace

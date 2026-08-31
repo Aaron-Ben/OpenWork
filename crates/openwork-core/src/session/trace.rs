@@ -12,7 +12,7 @@ use std::time::Instant;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 
-use crate::model_call::ContextBudgetEstimate;
+use crate::context::{ContextBudgetEstimate, ProjectionSummary};
 
 use super::{SessionId, TurnId};
 
@@ -153,6 +153,12 @@ pub struct ModelTraceAttributesV1 {
     #[serde(flatten)]
     request_context_budget: Option<Box<ContextBudgetTraceV1>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_truncated_tool_results: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_original_tool_result_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_projected_tool_result_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_definition_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
@@ -190,6 +196,9 @@ impl ModelTraceAttributesV1 {
             provider_code: None,
             request_message_count: Some(saturating_u64(request.messages.len())),
             request_context_budget: None,
+            request_truncated_tool_results: None,
+            request_original_tool_result_tokens: None,
+            request_projected_tool_result_tokens: None,
             tool_definition_count: Some(saturating_u64(request.tools.len())),
             max_output_tokens: request.max_output_tokens,
             thinking_mode: request.thinking.map(|thinking| match thinking.mode {
@@ -210,6 +219,15 @@ impl ModelTraceAttributesV1 {
             request_estimated_tool_surface_tokens: estimate.tool_surface_tokens,
             request_estimated_input_tokens: estimate.estimated_input_tokens,
         }));
+    }
+
+    pub(crate) fn record_projection_summary(&mut self, summary: ProjectionSummary) {
+        if summary.truncated_tool_results == 0 {
+            return;
+        }
+        self.request_truncated_tool_results = Some(summary.truncated_tool_results);
+        self.request_original_tool_result_tokens = Some(summary.original_tokens);
+        self.request_projected_tool_result_tokens = Some(summary.projected_tokens);
     }
 
     fn record_response(&mut self, response: &ModelResponse) {
@@ -409,16 +427,13 @@ impl CompactionTraceAttributesV1 {
         }
     }
 
-    /// Record the policy the trigger was evaluated against. Only an automatic
-    /// trigger has one; a manual compaction is not measured against a window,
-    /// and recording a guessed default there would be worse than recording
-    /// nothing.
-    pub fn record_policy(&mut self, context_window_tokens: u64, threshold_percent: u8) {
-        self.context_window_tokens = Some(context_window_tokens);
-        self.threshold_percent = Some(threshold_percent);
+    /// Record the model window used by an automatic trigger. Manual compaction
+    /// is not measured against a window and therefore leaves this empty.
+    pub fn record_context_window(&mut self, window_tokens: u64) {
+        self.context_window_tokens = Some(window_tokens);
         self.trigger_percent = self
             .trigger_estimated_input_tokens
-            .and_then(|used| usage_percent(used, context_window_tokens));
+            .and_then(|used| usage_percent(used, window_tokens));
     }
 
     /// Record the agent-loop input estimate that tripped an automatic trigger.
@@ -1853,25 +1868,25 @@ mod tests {
 
     #[test]
     fn compaction_attributes_derive_the_trigger_percent_in_either_order() {
-        let mut policy_first = CompactionTraceAttributesV1::new("threshold");
-        policy_first.record_policy(200_000, 85);
-        policy_first.record_trigger_estimate(170_000);
+        let mut window_first = CompactionTraceAttributesV1::new("threshold");
+        window_first.record_context_window(200_000);
+        window_first.record_trigger_estimate(170_000);
 
         let mut estimate_first = CompactionTraceAttributesV1::new("threshold");
         estimate_first.record_trigger_estimate(170_000);
-        estimate_first.record_policy(200_000, 85);
+        estimate_first.record_context_window(200_000);
 
-        assert_eq!(policy_first.trigger_percent, Some(85));
+        assert_eq!(window_first.trigger_percent, Some(85));
         assert_eq!(estimate_first.trigger_percent, Some(85));
         assert_eq!(estimate_first.context_window_tokens, Some(200_000));
-        assert_eq!(estimate_first.threshold_percent, Some(85));
+        assert_eq!(estimate_first.threshold_percent, None);
     }
 
     #[test]
     fn compaction_attributes_keep_an_overflow_percent_above_one_hundred() {
         let mut attributes = CompactionTraceAttributesV1::new("overflow");
         attributes.record_trigger_estimate(220_000);
-        attributes.record_policy(200_000, 85);
+        attributes.record_context_window(200_000);
 
         assert_eq!(attributes.trigger_percent, Some(110));
     }

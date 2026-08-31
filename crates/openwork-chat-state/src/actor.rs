@@ -4,8 +4,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::commands::ChatStateCommand;
 use crate::state::ConversationState;
 use crate::{
-    AssistantDraftSnapshot, ChatStateError, ConversationCompactionView, ConversationItem,
-    ConversationSnapshot, ConversationView, MessageKind,
+    AssistantDraftSnapshot, ChatStateError, ConversationContextView, ConversationItem,
+    ConversationSnapshot, MessageKind,
 };
 
 #[derive(Clone)]
@@ -138,16 +138,9 @@ impl ChatStateHandle {
         response.await.map_err(|_| ChatStateError::ActorStopped)?
     }
 
-    pub async fn conversation_view(&self) -> Result<ConversationView, ChatStateError> {
+    pub async fn context_view(&self) -> Result<ConversationContextView, ChatStateError> {
         let (respond_to, response) = oneshot::channel();
-        self.send(ChatStateCommand::ConversationView { respond_to })
-            .await?;
-        response.await.map_err(|_| ChatStateError::ActorStopped)
-    }
-
-    pub async fn compaction_view(&self) -> Result<ConversationCompactionView, ChatStateError> {
-        let (respond_to, response) = oneshot::channel();
-        self.send(ChatStateCommand::CompactionView { respond_to })
+        self.send(ChatStateCommand::ContextView { respond_to })
             .await?;
         response.await.map_err(|_| ChatStateError::ActorStopped)
     }
@@ -210,11 +203,8 @@ async fn run_actor(mut state: ConversationState, mut command_rx: mpsc::Receiver<
             ChatStateCommand::ReplaceItems { items, respond_to } => {
                 let _ = respond_to.send(state.replace_items(items));
             }
-            ChatStateCommand::ConversationView { respond_to } => {
-                let _ = respond_to.send(state.conversation_view());
-            }
-            ChatStateCommand::CompactionView { respond_to } => {
-                let _ = respond_to.send(state.compaction_view());
+            ChatStateCommand::ContextView { respond_to } => {
+                let _ = respond_to.send(state.context_view());
             }
             ChatStateCommand::Snapshot { respond_to } => {
                 let _ = respond_to.send(state.snapshot());
@@ -232,7 +222,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn serializes_conversation_writes_and_returns_a_conversation_view() {
+    async fn serializes_conversation_writes_and_returns_a_context_view() {
         let chat = ChatStateHandle::spawn(Vec::new()).expect("chat state");
         chat.append_user(vec![ContentBlock::text("hello")])
             .await
@@ -240,9 +230,9 @@ mod tests {
         chat.begin_draft().await.expect("draft");
         chat.apply_text_delta("not committed").await.expect("delta");
 
-        let view = chat.conversation_view().await.expect("view");
-        assert_eq!(view.messages.len(), 1);
-        assert_eq!(view.messages[0].role, Role::User);
+        let view = chat.context_view().await.expect("view");
+        assert_eq!(view.items.len(), 1);
+        assert_eq!(view.items[0].message.role, Role::User);
     }
 
     #[tokio::test]

@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openwork_core::{
-    ClientRequestId, ModelInput, OpenWorkCore, PermissionDecision, PostgresStorage, SessionId,
-    SessionInput, SessionUpdate, ToolCallId, session::TurnId,
+    ClientRequestId, ModelCapabilities, ModelInput, OpenWorkCore, PermissionDecision,
+    PostgresStorage, SessionId, SessionInput, SessionUpdate, ToolCallId, session::TurnId,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -31,6 +31,12 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
         base_url: "https://api.deepseek.com".to_string(),
         credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
         enabled: true,
+        capabilities: ModelCapabilities {
+            context_window_tokens: 1_048_576,
+            max_output_tokens: 32_768,
+            max_reasoning_tokens: None,
+            accepts_data_blocks: false,
+        },
         config: json!({}),
     })
     .await
@@ -57,7 +63,6 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
             vec![openwork_core::UserInput::text(
                 "Reply with exactly: OPENWORK_RUNTIME_OK. Do not call tools.",
             )],
-            None,
         )
         .await
         .unwrap();

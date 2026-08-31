@@ -1,3 +1,4 @@
+use openwork_models::model::ModelCapabilities;
 use openwork_models::provider::{ModelTier, ProviderKind};
 use serde::Serialize;
 
@@ -18,6 +19,7 @@ pub struct ProviderPreset {
 pub struct ProviderPresetModel {
     pub model_id: &'static str,
     pub model_tier: ModelTier,
+    pub capabilities: ModelCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,6 +53,12 @@ pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
         models: &[ProviderPresetModel {
             model_id: "gpt-5.1",
             model_tier: ModelTier::Plus,
+            capabilities: ModelCapabilities {
+                context_window_tokens: 400_000,
+                max_output_tokens: 32_768,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: true,
+            },
         }],
         website_url: "https://platform.openai.com",
         api_key_url: "https://platform.openai.com/api-keys",
@@ -63,6 +71,12 @@ pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
         models: &[ProviderPresetModel {
             model_id: "claude-sonnet-4-5",
             model_tier: ModelTier::Plus,
+            capabilities: ModelCapabilities {
+                context_window_tokens: 200_000,
+                max_output_tokens: 32_768,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: true,
+            },
         }],
         website_url: "https://www.anthropic.com",
         api_key_url: "https://console.anthropic.com/settings/keys",
@@ -75,6 +89,12 @@ pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
         models: &[ProviderPresetModel {
             model_id: "deepseek-v4-flash",
             model_tier: ModelTier::Plus,
+            capabilities: ModelCapabilities {
+                context_window_tokens: 1_048_576,
+                max_output_tokens: 32_768,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: false,
+            },
         }],
         website_url: "https://www.deepseek.com",
         api_key_url: "https://platform.deepseek.com/api_keys",
@@ -87,6 +107,12 @@ pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
         models: &[ProviderPresetModel {
             model_id: "kimi-k2.6",
             model_tier: ModelTier::Plus,
+            capabilities: ModelCapabilities {
+                context_window_tokens: 262_144,
+                max_output_tokens: 32_768,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: true,
+            },
         }],
         website_url: "https://www.moonshot.cn",
         api_key_url: "https://platform.moonshot.cn/console/api-keys",
@@ -99,6 +125,12 @@ pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
         models: &[ProviderPresetModel {
             model_id: "qwen-plus",
             model_tier: ModelTier::Plus,
+            capabilities: ModelCapabilities {
+                context_window_tokens: 1_000_000,
+                max_output_tokens: 32_768,
+                max_reasoning_tokens: Some(81_920),
+                accepts_data_blocks: false,
+            },
         }],
         website_url: "https://www.aliyun.com/product/bailian",
         api_key_url: "https://bailian.console.aliyun.com",
@@ -111,6 +143,12 @@ pub(crate) const BUILTIN_PRESETS: &[ProviderPreset] = &[
         models: &[ProviderPresetModel {
             model_id: "glm-5.2",
             model_tier: ModelTier::Plus,
+            capabilities: ModelCapabilities {
+                context_window_tokens: 1_000_000,
+                max_output_tokens: 32_768,
+                max_reasoning_tokens: None,
+                accepts_data_blocks: false,
+            },
         }],
         website_url: "https://www.zhipuai.cn",
         api_key_url: "https://open.bigmodel.cn/usercenter/apikeys",

@@ -5,8 +5,8 @@
 //! cascade delete.
 
 use openwork_core::{
-    ClientRequestId, PostgresStorage, ResolvedModel, SessionId, SessionInput, SessionStorage,
-    SubAgentSessionInput, TurnOutcome, session::TurnId,
+    ClientRequestId, ModelCapabilities, PostgresStorage, ResolvedModel, SessionId, SessionInput,
+    SessionStorage, SubAgentSessionInput, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{Message, Role};
 use uuid::Uuid;
@@ -17,6 +17,15 @@ fn test_database_url() -> Option<String> {
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 async fn storage() -> Option<PostgresStorage> {
@@ -217,7 +226,7 @@ async fn deleting_the_parent_cascades_to_its_sub_agents() {
             &child_id,
             &child_turn_id,
             &ClientRequestId::new(unique("request-cascade-child")),
-            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &ResolvedModel::new(None::<String>, "test", "test-model", test_capabilities()),
             &[],
             &Message::text(Role::User, "persist child rows"),
         )
@@ -331,7 +340,7 @@ async fn reconciliation_finds_terminal_results_and_removes_zero_turn_orphans() {
             &SessionId::new(completed.id.clone()),
             &completed_turn,
             &ClientRequestId::new(unique("request-completed")),
-            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &ResolvedModel::new(None::<String>, "test", "test-model", test_capabilities()),
             &[],
             &Message::text(Role::User, "inspect completion"),
         )
@@ -362,7 +371,7 @@ async fn reconciliation_finds_terminal_results_and_removes_zero_turn_orphans() {
             &SessionId::new(interrupted.id.clone()),
             &interrupted_turn,
             &ClientRequestId::new(unique("request-interrupted")),
-            &ResolvedModel::new(None::<String>, "test", "test-model"),
+            &ResolvedModel::new(None::<String>, "test", "test-model", test_capabilities()),
             &[],
             &Message::text(Role::User, "inspect interruption"),
         )

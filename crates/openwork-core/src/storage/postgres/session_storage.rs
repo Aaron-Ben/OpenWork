@@ -84,6 +84,17 @@ impl SessionStorage for PostgresStorage {
             .map_err(|error| error.to_string())
     }
 
+    async fn append_world_state_fragment(
+        &self,
+        turn_id: &TurnId,
+        message_id: &str,
+        message: &Message,
+    ) -> Result<bool, String> {
+        self.append_world_state_fragment_inner(turn_id, message_id, message)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     async fn finish_turn(
         &self,
         turn_id: &TurnId,
@@ -403,6 +414,52 @@ impl PostgresStorage {
                  id, session_id, turn_id, sequence, role, content, message_kind,
                  provider_call_id, tool_name
              ) VALUES ($1, $2, $3, $4, 'user', $5, 'agent_message', NULL, NULL)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(message_id)
+        .bind(session_id.as_str())
+        .bind(turn_id.as_str())
+        .bind(sequence)
+        .bind(serde_json::to_value(&message.content)?)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    /// 与 `append_agent_message_inner` 同构，只有 `message_kind` 不同。
+    ///
+    /// 同样要求 role 为 User、内容非空，同样用 `ON CONFLICT (id) DO NOTHING`
+    /// 保证同一 Turn 内重试是幂等的。
+    async fn append_world_state_fragment_inner(
+        &self,
+        turn_id: &TurnId,
+        message_id: &str,
+        message: &Message,
+    ) -> Result<bool, StorageError> {
+        if message_id.trim().is_empty() {
+            return Err(StorageError::InvalidInput(
+                "world-state fragment id must not be blank".to_string(),
+            ));
+        }
+        if message.role != Role::User || message.content.is_empty() {
+            return Err(StorageError::InvalidInput(
+                "append_world_state_fragment requires a non-empty user-role message".to_string(),
+            ));
+        }
+        let mut transaction = self.pool.begin().await?;
+        let session_id = lock_turn(&mut transaction, turn_id).await?;
+        let sequence: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE session_id = $1",
+        )
+        .bind(session_id.as_str())
+        .fetch_one(&mut *transaction)
+        .await?;
+        let result = sqlx::query(
+            "INSERT INTO messages (
+                 id, session_id, turn_id, sequence, role, content, message_kind,
+                 provider_call_id, tool_name
+             ) VALUES ($1, $2, $3, $4, 'user', $5, 'world_state', NULL, NULL)
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(message_id)

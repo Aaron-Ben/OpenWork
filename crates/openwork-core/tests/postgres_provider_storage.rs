@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use openwork_core::{ApiKeyCipher, PostgresProviderRepository, PostgresStorage};
+use openwork_core::{ApiKeyCipher, ModelCapabilities, PostgresProviderRepository, PostgresStorage};
 use openwork_models::provider::{
     ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderRepository,
 };
@@ -8,6 +8,15 @@ use uuid::Uuid;
 
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4().simple())
+}
+
+fn test_capabilities() -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: 200_000,
+        max_output_tokens: 32_768,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
+    }
 }
 
 #[tokio::test]
@@ -48,12 +57,14 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
                 display_name: Some("Model A".to_string()),
                 model_tier: ModelTier::Lite,
                 enabled: true,
+                capabilities: Some(test_capabilities()),
             },
             ProviderModel {
                 model_id: "model-b".to_string(),
                 display_name: None,
                 model_tier: ModelTier::Pro,
                 enabled: false,
+                capabilities: Some(test_capabilities()),
             },
         ],
         enabled: true,
@@ -92,6 +103,7 @@ async fn core_provider_storage_owns_encrypted_crud_and_model_projection() {
                     display_name: Some("Model C".to_string()),
                     model_tier: ModelTier::Plus,
                     enabled: true,
+                    capabilities: Some(test_capabilities()),
                 }],
                 ..input
             },

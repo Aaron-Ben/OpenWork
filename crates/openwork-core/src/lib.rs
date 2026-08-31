@@ -3,7 +3,6 @@
 pub mod agent;
 mod context;
 mod core;
-mod model_call;
 pub mod plan;
 mod provider;
 pub mod session;
@@ -24,6 +23,7 @@ pub use core::{
     OpenWorkCoreConfig, OpenWorkCoreError,
 };
 pub use openwork_chat_state::MessageKind;
+pub use openwork_models::model::ModelCapabilities;
 pub use openwork_models::provider::ApiCredential as ModelCredential;
 pub use openwork_models::provider::{ProviderInput, ProviderProfile};
 pub use openwork_tools::{PermissionMode, ReapplyFileChangesResult, UndoFileChangesResult};
@@ -35,7 +35,6 @@ pub use session::{
     CompactionStateError, CompactionStateFailurePolicy, CompactionStateWarning,
     CompactionSummaryAttemptTrace, CompactionTraceAttributesV1, CompactionTraceGuard,
     ConversationCompaction, ConversationCompactionKind, ConversationProjectionSelector,
-    DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT, DEFAULT_CONTEXT_WINDOW_TOKENS,
     DEFAULT_TRACE_PAYLOAD_RETENTION_DAYS, DEFAULT_TRACE_PAYLOAD_SLOT_MAX_BYTES, LiveToolCall,
     ModelCallFinished, ModelCallStarted, ModelCallTraceGuard, ModelTraceAttributesV1,
     NewConversationCompaction, NoopSessionStorage, NoopTraceRecorder, ParentLink,

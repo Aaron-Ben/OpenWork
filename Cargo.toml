@@ -2,6 +2,8 @@
 members = [
   "crates/openwork-agent",
   "crates/openwork-chat-state",
+  "crates/openwork-collab",
+  "crates/openwork-credentials",
   "crates/openwork-models",
   "crates/openwork-tools",
   "crates/openwork-core",
@@ -19,6 +21,8 @@ openwork-chat-state = { path = "crates/openwork-chat-state" }
 openwork-models = { path = "crates/openwork-models" }
 openwork-tools = { path = "crates/openwork-tools" }
 openwork-core = { path = "crates/openwork-core" }
+openwork-credentials = { path = "crates/openwork-credentials" }
+openwork-collab = { path = "crates/openwork-collab" }
 async-trait = "0.1"
 aes-gcm = { version = "0.11", features = ["zeroize"] }
 base64 = "0.22"
@@ -36,9 +40,11 @@ uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1.9", features = ["derive"] }
 futures-util = "0.3"
 globset = "0.4"
+hmac = "0.12"
 ignore = "0.4"
 libc = "0.2"
 regex = "1"
+redis = { version = "1", features = ["tokio-comp"] }
 schemars = "1"
 sha2 = "0.10"
 tokio-util = { version = "0.7", features = ["rt"] }

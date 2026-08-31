@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use futures_util::StreamExt;
 use openwork_agent::Agent;
-use openwork_chat_state::{ChatStateError, ChatStateHandle, MessageKind};
+use openwork_chat_state::{
+    ChatStateError, ChatStateHandle, ConversationContextView, ConversationItem, MessageKind,
+};
 use openwork_models::model::{
     ContentBlock, DeliveryState, Message, ModelCallOptions, ModelError, ModelErrorCode, ModelEvent,
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
@@ -18,7 +20,7 @@ use openwork_tools::{
     ToolValidationError,
 };
 use time::OffsetDateTime;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -27,8 +29,11 @@ use crate::agent::{
     AgentTool, FollowupTaskArgs, InterruptAgentArgs, NoArgs, SpawnAgentArgs, WaitAgentArgs,
     parse_args as parse_agent_args, validate_wait_timeout,
 };
-use crate::context::{ResolvedSystemContext, SystemContextBuildError, SystemContextBuilder};
-use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
+use crate::context::{
+    ContextEngine, ModelContextLimits, PrepareContextInput, PreparedModelCall,
+    ResolvedSystemContext, RetainedSections, SystemContextBuildError, SystemContextBuilder,
+    WorldStateBaseline, WorldStateCapture,
+};
 use crate::plan::{
     TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
     validate_args,
@@ -39,9 +44,7 @@ use crate::storage::time::china_now;
 use super::toolset::{ResolvedTurnTool, TurnToolset};
 
 use super::agent_message::AgentMailbox;
-use super::compaction::{
-    AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest, run_compaction,
-};
+use super::compaction::{CompactionTrigger, ConversationCompactionRequest, run_compaction};
 use super::permission_state::{NON_INTERACTIVE_DENIAL, SessionApproval, SessionPermissionState};
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
@@ -50,6 +53,9 @@ use super::{
     ToolCallStarted, ToolCallTraceGuard, ToolProgressUpdate, ToolTraceAttributesV1, TracePayloads,
     TraceRecorder, TraceStatus, TurnId, TurnOutcome,
 };
+
+const INITIAL_WORLD_STATE_SAMPLE_INDEX: u8 = 1;
+const POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX: u8 = 2;
 
 pub(super) struct TurnRunRequest {
     pub session_id: SessionId,
@@ -66,7 +72,7 @@ pub(super) struct TurnRunRequest {
     pub tools: Arc<TurnToolset>,
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
-    pub compaction_policy: AutomaticCompactionPolicy,
+    pub world_state_baseline: Arc<Mutex<WorldStateBaseline>>,
     pub reload_required: Arc<AtomicBool>,
     pub trace: Arc<dyn TraceRecorder>,
     pub cancel: CancellationToken,
@@ -159,6 +165,11 @@ struct SubmittedModelCall {
     estimated_input_tokens: u64,
 }
 
+struct PreparedTurnModelCall {
+    prepared: PreparedModelCall,
+    request_build_ms: u64,
+}
+
 struct CompletedModelCall {
     response: ModelResponse,
     trace_span_id: String,
@@ -218,6 +229,14 @@ impl TurnRunner {
         .with_disabled_skills(self.request.disabled_skill_names.clone())
         .build(&self.system_prompt())
         .await?;
+        let context_engine = ContextEngine::new(ModelContextLimits::from_capabilities(
+            self.request.resolved_model.capabilities,
+        ));
+        let world_state_capture = WorldStateCapture::new(
+            &self.request.working_directory,
+            self.request.skill_roots.clone(),
+        )
+        .with_disabled_skills(self.request.disabled_skill_names.clone());
         for model_call_index in 1..=self.request.agent.policy().max_model_calls {
             self.ensure_not_cancelled()?;
             self.drain_agent_messages().await?;
@@ -225,17 +244,31 @@ impl TurnRunner {
                 phase: SessionPhase::RunningModel,
             })
             .await?;
+            let mut conversation = self.request.chat.context_view().await?;
+            self.sample_world_state(
+                model_call_index,
+                INITIAL_WORLD_STATE_SAMPLE_INDEX,
+                &world_state_capture,
+                &mut conversation,
+            )
+            .await?;
 
-            let threshold_estimate = self
-                .threshold_estimate_before_sampling(&system_context)
+            let mut prepared = self
+                .prepare_model_call(&context_engine, &system_context, conversation)
                 .await?;
+            let threshold_estimate = self.threshold_estimate_before_sampling(&prepared.prepared);
             let compacted_before_sampling = match threshold_estimate {
                 Some(estimated_input_tokens) => {
                     self.compact(
+                        &context_engine,
                         &system_context,
                         CompactionTrigger::Threshold {
                             turn_id: self.request.turn_id.clone(),
-                            policy: self.request.compaction_policy,
+                            context_window_tokens: self
+                                .request
+                                .resolved_model
+                                .capabilities
+                                .context_window_tokens,
                             estimated_input_tokens,
                         },
                     )
@@ -244,14 +277,41 @@ impl TurnRunner {
                 }
                 None => false,
             };
-            let completed_model = match self.call_model(model_call_index, 1, &system_context).await
+            if compacted_before_sampling {
+                let mut conversation = self.request.chat.context_view().await?;
+                self.sample_world_state(
+                    model_call_index,
+                    POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX,
+                    &world_state_capture,
+                    &mut conversation,
+                )
+                .await?;
+                prepared = self
+                    .prepare_model_call(&context_engine, &system_context, conversation)
+                    .await?;
+            }
+            let completed_model = match self
+                .call_model(model_call_index, 1, prepared, &system_context)
+                .await
             {
                 Ok(completed) => completed,
                 Err(error) if !compacted_before_sampling && is_safe_context_overflow(&error) => {
                     self.update(SessionUpdate::DraftCleared).await?;
                     let trigger = self.overflow_trigger(&error);
-                    self.compact(&system_context, trigger).await?;
-                    self.call_model(model_call_index, 2, &system_context)
+                    self.compact(&context_engine, &system_context, trigger)
+                        .await?;
+                    let mut conversation = self.request.chat.context_view().await?;
+                    self.sample_world_state(
+                        model_call_index,
+                        POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX,
+                        &world_state_capture,
+                        &mut conversation,
+                    )
+                    .await?;
+                    let prepared = self
+                        .prepare_model_call(&context_engine, &system_context, conversation)
+                        .await?;
+                    self.call_model(model_call_index, 2, prepared, &system_context)
                         .await?
                 }
                 Err(error) => return Err(error),
@@ -309,6 +369,57 @@ impl TurnRunner {
         ))
     }
 
+    async fn sample_world_state(
+        &self,
+        model_call_index: u32,
+        sample_index: u8,
+        capture: &WorldStateCapture,
+        conversation: &mut ConversationContextView,
+    ) -> Result<(), TurnRunError> {
+        let world = capture
+            .capture()
+            .await
+            .map_err(SystemContextBuildError::from)?;
+        let fragments = {
+            let baseline = self.request.world_state_baseline.lock().await;
+            world.render_diff(&baseline, RetainedSections::scan(&conversation.items))
+        };
+
+        for fragment in &fragments {
+            let message = Message {
+                role: Role::User,
+                content: fragment.content.clone(),
+            };
+            let message_id = format!(
+                "world-state:{}:{model_call_index}:{sample_index}:{}",
+                self.request.turn_id, fragment.section_id
+            );
+            let inserted = self
+                .request
+                .storage
+                .append_world_state_fragment(&self.request.turn_id, &message_id, &message)
+                .await
+                .map_err(TurnRunError::Persistence)?;
+            if inserted {
+                self.request
+                    .chat
+                    .append_user_with_kind(message.content.clone(), MessageKind::WorldState)
+                    .await?;
+                conversation.items.push(ConversationItem::real_with_kind(
+                    message,
+                    MessageKind::WorldState,
+                ));
+            }
+        }
+
+        self.request
+            .world_state_baseline
+            .lock()
+            .await
+            .advance(&world, &fragments);
+        Ok(())
+    }
+
     async fn drain_agent_messages(&self) -> Result<(), TurnRunError> {
         while let Some(delivered) = self.request.mailbox.front().await {
             let message_id = delivered.id.clone();
@@ -334,28 +445,23 @@ impl TurnRunner {
         &mut self,
         model_call_index: u32,
         submission_attempt: u8,
+        prepared: PreparedTurnModelCall,
         system_context: &ResolvedSystemContext,
     ) -> Result<CompletedModelCall, TurnRunError> {
-        let request_build_started = Instant::now();
-        let conversation = self.request.chat.conversation_view().await?;
-        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-            &self.request.resolved_model.model_name,
-            system_context,
-            conversation,
-            self.request.tools.definitions(),
-        ))
-        .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
-        let request = prepared.request;
-        let request_build_ms = elapsed_millis_u64(request_build_started);
+        let request = prepared.prepared.request;
         self.request
             .storage
             .begin_model_call(&self.request.turn_id, model_call_index, submission_attempt)
             .await
             .map_err(TurnRunError::Persistence)?;
         self.request.chat.begin_draft().await?;
-        let mut attributes =
-            ModelTraceAttributesV1::from_request(model_call_index, request_build_ms, &request);
-        attributes.record_context_budget(prepared.context_budget);
+        let mut attributes = ModelTraceAttributesV1::from_request(
+            model_call_index,
+            prepared.request_build_ms,
+            &request,
+        );
+        attributes.record_context_budget(prepared.prepared.context_budget);
+        attributes.record_projection_summary(prepared.prepared.projection_summary);
         let options = ModelCallOptions::new(format!(
             "{}-model-{model_call_index}-submission-{submission_attempt}",
             self.request.turn_id
@@ -381,7 +487,7 @@ impl TurnRunner {
         let trace_span_id = model_trace.span_id().to_string();
         self.last_model_call = Some(SubmittedModelCall {
             trace_span_id: trace_span_id.clone(),
-            estimated_input_tokens: prepared.context_budget.estimated_input_tokens,
+            estimated_input_tokens: prepared.prepared.context_budget.estimated_input_tokens,
         });
         let options = options.with_transport_observer(model_trace.transport_observer());
         let result = self
@@ -414,27 +520,35 @@ impl TurnRunner {
         }
     }
 
+    async fn prepare_model_call(
+        &self,
+        context_engine: &ContextEngine,
+        system_context: &ResolvedSystemContext,
+        conversation: ConversationContextView,
+    ) -> Result<PreparedTurnModelCall, TurnRunError> {
+        let request_build_started = Instant::now();
+        let prepared = context_engine
+            .prepare(PrepareContextInput::new(
+                &self.request.resolved_model.model_name,
+                system_context,
+                conversation,
+                self.request.tools.definitions(),
+            ))
+            .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        Ok(PreparedTurnModelCall {
+            prepared,
+            request_build_ms: elapsed_millis_u64(request_build_started),
+        })
+    }
+
     /// The pre-sampling input estimate when it has reached the compaction
     /// threshold, `None` otherwise. The estimate is returned rather than a bare
     /// bool so the compaction Span can record what actually tripped it.
-    async fn threshold_estimate_before_sampling(
-        &self,
-        system_context: &ResolvedSystemContext,
-    ) -> Result<Option<u64>, TurnRunError> {
-        let conversation = self.request.chat.conversation_view().await?;
-        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-            &self.request.resolved_model.model_name,
-            system_context,
-            conversation,
-            self.request.tools.definitions(),
-        ))
-        .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+    fn threshold_estimate_before_sampling(&self, prepared: &PreparedModelCall) -> Option<u64> {
         let estimated_input_tokens = prepared.context_budget.estimated_input_tokens;
-        Ok(self
-            .request
-            .compaction_policy
-            .should_compact(estimated_input_tokens)
-            .then_some(estimated_input_tokens))
+        prepared
+            .reaches_auto_compact_limit()
+            .then_some(estimated_input_tokens)
     }
 
     /// Build the trigger for a compaction forced by a context overflow, keeping
@@ -443,7 +557,11 @@ impl TurnRunner {
         let submitted = self.last_model_call.clone();
         CompactionTrigger::Overflow {
             turn_id: self.request.turn_id.clone(),
-            policy: self.request.compaction_policy,
+            context_window_tokens: self
+                .request
+                .resolved_model
+                .capabilities
+                .context_window_tokens,
             estimated_input_tokens: submitted.as_ref().map(|call| call.estimated_input_tokens),
             model_span_id: submitted.map(|call| call.trace_span_id),
             error_code: error.code().to_string(),
@@ -452,6 +570,7 @@ impl TurnRunner {
 
     async fn compact(
         &mut self,
+        context_engine: &ContextEngine,
         system_context: &ResolvedSystemContext,
         trigger: CompactionTrigger,
     ) -> Result<(), TurnRunError> {
@@ -471,6 +590,7 @@ impl TurnRunner {
             model: Arc::clone(&self.request.model),
             storage: Arc::clone(&self.request.storage),
             state_collector: Arc::clone(&self.request.compaction_state),
+            limits: context_engine.limits().clone(),
             plan: self.current_plan.clone(),
             reload_required: Arc::clone(&self.request.reload_required),
             trigger,

@@ -18,7 +18,7 @@ use openwork_core::session::{
     TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
 };
 use openwork_core::skills::SkillRoots;
-use openwork_core::{AgentControl, SubAgentHost, SubAgentSpec};
+use openwork_core::{AgentControl, ModelCapabilities, SubAgentHost, SubAgentSpec};
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
@@ -346,6 +346,23 @@ impl SessionStorage for RecordingStorage {
         Ok(inserted)
     }
 
+    async fn append_world_state_fragment(
+        &self,
+        _turn_id: &TurnId,
+        message_id: &str,
+        _message: &Message,
+    ) -> Result<bool, String> {
+        let inserted = self
+            .agent_message_ids
+            .lock()
+            .unwrap()
+            .insert(message_id.to_string());
+        if inserted {
+            self.events.lock().unwrap().push("world_state".to_string());
+        }
+        Ok(inserted)
+    }
+
     async fn finish_turn(
         &self,
         _turn_id: &TurnId,
@@ -510,6 +527,7 @@ struct RuntimeFixture {
 
 struct RuntimeOptions {
     session_id: SessionId,
+    model_capabilities: ModelCapabilities,
     approval: SessionApproval,
     parent_link: Option<ParentLink>,
     agent_control: Option<AgentControl>,
@@ -519,10 +537,20 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             session_id: SessionId::new("session-test"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::Interactive,
             parent_link: None,
             agent_control: None,
         }
+    }
+}
+
+fn test_capabilities(window_tokens: u64, max_output_tokens: u32) -> ModelCapabilities {
+    ModelCapabilities {
+        context_window_tokens: window_tokens,
+        max_output_tokens,
+        max_reasoning_tokens: None,
+        accepts_data_blocks: true,
     }
 }
 
@@ -615,6 +643,7 @@ impl SubAgentHost for SpawningSessionHost {
             SkillRoots::default(),
             RuntimeOptions {
                 session_id: spec.session_id,
+                model_capabilities: test_capabilities(200_000, 32_768),
                 approval: SessionApproval::NonInteractive,
                 parent_link: Some(ParentLink {
                     parent_session_id: spec.parent_session_id,
@@ -739,6 +768,27 @@ fn runtime(
     )
 }
 
+fn runtime_with_capabilities(
+    responses: Vec<ModelResponse>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    model_capabilities: ModelCapabilities,
+) -> RuntimeFixture {
+    runtime_with_options(
+        responses.into_iter().map(Ok).collect(),
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            model_capabilities,
+            ..RuntimeOptions::default()
+        },
+    )
+}
+
 fn runtime_in_workspace(
     responses: Vec<ModelResponse>,
     tool_results: Vec<ToolResult>,
@@ -783,6 +833,27 @@ fn runtime_with_outcomes(
         permission_mode,
         fail_assistant,
         TestWorkspace::new(),
+    )
+}
+
+fn runtime_with_outcomes_and_capabilities(
+    outcomes: Vec<Result<ModelResponse, ModelError>>,
+    tool_results: Vec<ToolResult>,
+    permission_mode: PermissionMode,
+    fail_assistant: bool,
+    model_capabilities: ModelCapabilities,
+) -> RuntimeFixture {
+    runtime_with_options(
+        outcomes,
+        tool_results,
+        permission_mode,
+        fail_assistant,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            model_capabilities,
+            ..RuntimeOptions::default()
+        },
     )
 }
 
@@ -901,7 +972,12 @@ fn runtime_with_options(
             session_id: options.session_id,
             working_directory,
             skill_roots,
-            resolved_model: ResolvedModel::new(None::<String>, "test", "test-model"),
+            resolved_model: ResolvedModel::new(
+                None::<String>,
+                "test",
+                "test-model",
+                options.model_capabilities,
+            ),
             agent,
             chat: chat.clone(),
             model: Arc::new(FakeModel {
@@ -1111,17 +1187,83 @@ async fn start_with_request(fixture: &RuntimeFixture, client_request_id: &str) -
         .turn_id
 }
 
-fn project_instruction_text(request: &ModelRequest) -> Option<&str> {
+/// 请求副本里全部 User 消息的文本。
+fn user_message_texts(request: &ModelRequest) -> Vec<String> {
     request
         .messages
         .iter()
-        .filter(|message| message.role == Role::System)
-        .next_back()
-        .and_then(|message| message.content.first())
-        .and_then(|block| match block {
-            ContentBlock::Text(text) => Some(text.text.as_str()),
+        .filter(|message| message.role == Role::User)
+        .filter_map(|message| match message.content.first() {
+            Some(ContentBlock::Text(text)) => Some(text.text.clone()),
             _ => None,
         })
+        .collect()
+}
+
+/// System 前缀的字节表示，用于断言相邻 Model Call 之间逐字节一致。
+fn system_prefix_bytes(request: &ModelRequest) -> Vec<u8> {
+    let system: Vec<_> = request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .collect();
+    serde_json::to_vec(&system).expect("system prefix bytes")
+}
+
+/// 一条消息是不是 world-state fragment，靠三个 section 的正文标记识别。
+fn is_world_state_message(message: &Message) -> bool {
+    message.role == Role::User
+        && matches!(
+            message.content.first(),
+            Some(ContentBlock::Text(text))
+                if text.text.contains("<user_project_context")
+                    || text.text.contains("<project_instructions>")
+                    || text.text.contains("<available_skills>")
+                    || text.text.contains("不再适用。")
+        )
+}
+
+/// 请求里的 role 序列，**跳过 world-state 消息**。
+///
+/// world-state 是独立机制，有自己的测试。让每个无关测试都去数它的条数，等于
+/// 把三个 section 的变化耦合进整个测试套件——工作区多一个顶层目录就要改一堆
+/// 断言，那些断言也就不再说明它们本来要说明的事。
+fn roles_ignoring_world_state(request: &ModelRequest) -> Vec<Role> {
+    request
+        .messages
+        .iter()
+        .filter(|message| !is_world_state_message(message))
+        .map(|message| message.role)
+        .collect()
+}
+
+/// 存储事件序列，**跳过 world_state 写入**。理由同上。
+///
+/// world-state 的落库顺序（必须在 model_N 之前）由专门的测试断言，不摊派给
+/// 每一条生命周期测试。
+fn events_ignoring_world_state(fixture: &RuntimeFixture) -> Vec<String> {
+    fixture
+        .storage
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| event.as_str() != "world_state")
+        .cloned()
+        .collect()
+}
+
+/// 请求里 world-state 消息的条数，靠三个 section 的正文标记识别。
+fn world_state_message_count(request: &ModelRequest) -> usize {
+    user_message_texts(request)
+        .iter()
+        .filter(|text| {
+            text.contains("<user_project_context")
+                || text.contains("<project_instructions>")
+                || text.contains("<available_skills>")
+                || text.contains("不再适用。")
+        })
+        .count()
 }
 
 async fn wait_for_terminal(
@@ -1187,21 +1329,17 @@ async fn no_tool_turn_completes_after_one_model_call() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].model, "test-model");
     assert_eq!(
-        requests[0]
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        [Role::System, Role::System, Role::User]
+        roles_ignoring_world_state(&requests[0]),
+        [Role::System, Role::User]
     );
     assert_eq!(requests[0].temperature, None);
-    assert_eq!(requests[0].max_output_tokens, None);
+    assert_eq!(requests[0].max_output_tokens, Some(32_768));
     assert_eq!(requests[0].thinking, None);
     let submitted_messages = requests[0].messages.clone();
     drop(requests);
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
     assert_eq!(
-        *fixture.storage.events.lock().unwrap(),
+        events_ignoring_world_state(&fixture),
         ["begin_turn", "model_1", "assistant", "finish_turn"]
     );
     let signals = fixture.trace.signals.lock().unwrap();
@@ -1223,8 +1361,140 @@ async fn no_tool_turn_completes_after_one_model_call() {
     assert!(finished.response_payload.is_none());
 }
 
+/// System 前缀只有一段，三个 section 以 User 消息进入 Conversation（§8.0、§16.2）。
+///
+/// 前缀里再没有会变的东西，所以它在整个 Session 内逐字节不变；三段内容改用正文
+/// 标记而不是 role 表明来源。
 #[tokio::test]
-async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
+async fn world_state_reaches_the_model_as_user_messages_not_system_parts() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("永远先跑测试");
+    let skill_root = workspace.path().join("skills");
+    fs::create_dir_all(&skill_root).expect("skill root");
+    workspace.write_skill(&skill_root, "commit", "Create a commit.");
+    let mut fixture = runtime_in_workspace_with_skill_roots(
+        vec![response("done", Vec::new())],
+        PermissionMode::AcceptEdits,
+        workspace,
+        SkillRoots {
+            agents: Some(skill_root),
+        },
+    );
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let system: Vec<_> = requests[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .collect();
+    assert_eq!(system.len(), 1, "System 前缀只应有 core/agent-system 一段");
+
+    let user_text = user_message_texts(&requests[0]);
+    assert!(
+        user_text
+            .iter()
+            .any(|text| text.contains("<user_project_context")),
+        "项目上下文应作为 User 消息出现"
+    );
+    assert!(
+        user_text
+            .iter()
+            .any(|text| text.contains("<project_instructions>") && text.contains("永远先跑测试")),
+        "AGENTS.md 应带标记作为 User 消息出现"
+    );
+    assert!(
+        user_text
+            .iter()
+            .any(|text| text.contains("<available_skills>")),
+        "skill 清单应作为 User 消息出现"
+    );
+}
+
+/// 没有变化时，第二次 Model Call 不新增任何 world-state 消息，前缀逐字节相同。
+///
+/// 这是整个改造的收益本身。任何一处不确定性都会让它失败。
+#[tokio::test]
+async fn an_unchanged_world_adds_nothing_to_the_next_model_call() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("规范");
+    let mut fixture = runtime_in_workspace(
+        vec![
+            response(
+                "",
+                vec![tool_call("call-1", "read", r#"{"path":"AGENTS.md"}"#)],
+            ),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        workspace,
+    );
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    // §8.3 的顺序：fragment 必须在调用 Provider 之前落库。反过来做的话，落库
+    // 失败时基线已经推进，那次更新永久丢失且不报错。
+    let events = fixture.storage.events.lock().unwrap().clone();
+    let first_world_state = events
+        .iter()
+        .position(|event| event == "world_state")
+        .expect("首次 Model Call 之前应有 world-state 落库");
+    let first_model_call = events
+        .iter()
+        .position(|event| event == "model_1")
+        .expect("model_1");
+    assert!(
+        first_world_state < first_model_call,
+        "world-state 必须先落库再调用 Provider：{events:?}"
+    );
+
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        system_prefix_bytes(&requests[0]),
+        system_prefix_bytes(&requests[1]),
+        "相邻 Model Call 的 System 前缀必须逐字节一致"
+    );
+    // 本 fixture 没有配置任何 skill，因此 skills_catalog 是缺失的。按 §8.2，
+    // "一直不存在"既不渲染也不发消息——所以正确数量是 2 而不是 3。
+    //
+    // 先确认第一次确实发了消息，否则下面的相等断言在"一条都没有"时也成立，
+    // 会变成一条永远为真的假绿。
+    assert_eq!(
+        world_state_message_count(&requests[0]),
+        2,
+        "首次 Model Call 应发出项目上下文与 AGENTS.md 两个 section"
+    );
+    assert!(
+        !user_message_texts(&requests[0])
+            .iter()
+            .any(|text| text.contains("<available_skills>")),
+        "没有 skill 时不该为一个不存在的 section 发消息"
+    );
+    assert_eq!(
+        world_state_message_count(&requests[0]),
+        world_state_message_count(&requests[1]),
+        "没有变化就不该再追加 world-state 消息"
+    );
+}
+
+/// AGENTS.md 在 Turn 中途被改，同一个 Turn 的下一次 Model Call 就能看到（§8.3）。
+///
+/// 采样按 Model Call 而不是按 Turn，所以模型能看见自己动作的后果。重发带取代
+/// 声明，否则历史里会同时躺着两份互相矛盾的项目规范。
+#[tokio::test]
+async fn an_agents_md_edit_is_seen_by_the_next_model_call_in_the_same_turn() {
     let workspace = TestWorkspace::new();
     workspace.write_instructions("instruction-v1");
     let mut fixture = runtime_in_workspace(
@@ -1237,8 +1507,7 @@ async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
                     r#"{"replaceProjectInstruction":"instruction-v2"}"#,
                 )],
             ),
-            response("first turn done", Vec::new()),
-            response("second turn done", Vec::new()),
+            response("done", Vec::new()),
         ],
         Vec::new(),
         PermissionMode::AcceptEdits,
@@ -1246,42 +1515,21 @@ async fn project_instructions_stay_stable_within_a_turn_and_reload_next_turn() {
         workspace,
     );
 
-    start_with_request(&fixture, "project-instructions-turn-1").await;
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-    start_with_request(&fixture, "project-instructions-turn-2").await;
+    start(&fixture).await;
     assert!(matches!(
         wait_for_terminal(&mut fixture.updates).await,
         TurnOutcome::Completed { .. }
     ));
 
-    {
-        let requests = fixture.model.requests.lock().unwrap();
-        assert_eq!(requests.len(), 3);
-        assert_eq!(
-            project_instruction_text(&requests[0]),
-            Some("instruction-v1")
-        );
-        assert_eq!(
-            project_instruction_text(&requests[1]),
-            Some("instruction-v1")
-        );
-        assert_eq!(
-            project_instruction_text(&requests[2]),
-            Some("instruction-v2")
-        );
-    }
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let second = user_message_texts(&requests[1]);
     assert!(
-        fixture
-            .chat
-            .snapshot()
-            .await
-            .expect("chat snapshot")
-            .messages
-            .iter()
-            .all(|message| message.role != Role::System)
+        second.iter().any(|text| {
+            text.contains("以下 AGENTS.md 指令取代先前提供的全部 AGENTS.md 指令。")
+                && text.contains("instruction-v2")
+        }),
+        "同一 Turn 内的下一次 Model Call 应带取代声明重发新的 AGENTS.md"
     );
 }
 
@@ -1322,9 +1570,12 @@ async fn invalid_project_instructions_fail_before_model_and_leave_no_draft() {
     ));
     let requests = fixture.model.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
-    assert_eq!(
-        project_instruction_text(&requests[0]),
-        Some("valid instruction")
+    // 修好之后，规范以带标记的 User 消息重新进入 Conversation，而不再是 System 前缀。
+    assert!(
+        user_message_texts(&requests[0])
+            .iter()
+            .any(|text| text.contains("<project_instructions>")
+                && text.contains("valid instruction"))
     );
 }
 
@@ -1356,7 +1607,7 @@ async fn tool_result_is_in_the_next_model_request() {
             .any(|message| message.role == Role::Tool)
     );
     assert_eq!(
-        *fixture.storage.events.lock().unwrap(),
+        events_ignoring_world_state(&fixture),
         [
             "begin_turn",
             "model_1",
@@ -1418,7 +1669,7 @@ async fn agent_message_is_persisted_after_tool_results_and_seen_by_the_same_turn
         )]
     );
     assert_eq!(
-        *fixture.storage.events.lock().unwrap(),
+        events_ignoring_world_state(&fixture),
         [
             "begin_turn",
             "model_1",
@@ -1574,6 +1825,7 @@ async fn a_child_terminal_answer_is_delivered_to_its_parent_session() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -1648,6 +1900,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-failed-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id: parent_session_id.clone(),
@@ -1680,6 +1933,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-cancelled-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -1756,6 +2010,7 @@ async fn a_child_still_completes_when_its_parent_can_no_longer_be_reached() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-orphan-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id: orphan_parent_id,
@@ -2465,7 +2720,9 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         .await
         .expect("compaction");
 
-    assert_eq!(compaction.source_message_count, 2);
+    // 首次 Model Call 之前追加了项目上下文，因此压缩源是
+    // world-state + user + assistant = 3。
+    assert_eq!(compaction.source_message_count, 3);
     assert_eq!(compaction.summary, compaction_summary());
     {
         let signals = fixture.trace.signals.lock().unwrap();
@@ -2481,7 +2738,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         assert_eq!(compact_trace.status, TraceStatus::Succeeded);
         assert_eq!(compact_trace.attempt_count, Some(1));
         assert_eq!(compact_trace.attributes.trigger, "manual");
-        assert_eq!(compact_trace.attributes.source_message_count, Some(2));
+        assert_eq!(compact_trace.attributes.source_message_count, Some(3));
         assert!(compact_trace.attributes.prepare_ms.is_some());
         assert_eq!(
             compact_trace.attributes.summary_max_output_tokens,
@@ -2592,18 +2849,8 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         let requests = fixture.model.requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_eq!(
-            requests[1]
-                .messages
-                .iter()
-                .map(|message| message.role)
-                .collect::<Vec<_>>(),
-            [
-                Role::System,
-                Role::System,
-                Role::User,
-                Role::Assistant,
-                Role::User
-            ]
+            roles_ignoring_world_state(&requests[1]),
+            [Role::System, Role::User, Role::Assistant, Role::User]
         );
         assert!(requests[1].tools.is_empty());
         assert_eq!(requests[1].max_output_tokens, Some(16_384));
@@ -2625,28 +2872,21 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
     wait_for_terminal(&mut fixture.updates).await;
     let requests = fixture.model.requests.lock().unwrap();
     assert_eq!(
-        requests[2]
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        [
-            Role::System,
-            Role::System,
-            Role::User,
-            Role::User,
-            Role::User,
-            Role::User
-        ]
+        roles_ignoring_world_state(&requests[2]),
+        [Role::System, Role::User, Role::User, Role::User, Role::User]
     );
-    let ContentBlock::Text(projected_summary) = &requests[2].messages[3].content[0] else {
-        panic!("expected projected summary")
-    };
-    assert!(projected_summary.text.contains(compaction_summary()));
+    // 按标记查找而不是按下标：world-state 消息会改变位置，绑定下标的断言每次
+    // 上下文结构调整都要跟着改，而且改错了也不会有人发现。
+    assert!(
+        user_message_texts(&requests[2])
+            .iter()
+            .any(|text| text.contains(compaction_summary())),
+        "压缩摘要应出现在投影里"
+    );
 }
 
 #[tokio::test]
-async fn manual_compaction_rematerializes_the_same_explicit_user_skill_catalog() {
+async fn manual_compaction_keeps_the_dynamic_skill_catalog_out_of_the_summary() {
     let workspace = TestWorkspace::new();
     let user_root = workspace.path().join("user-skills");
     let skill_path = workspace.write_skill(&user_root, "review", "Review changes when requested.");
@@ -2672,23 +2912,17 @@ async fn manual_compaction_rematerializes_the_same_explicit_user_skill_catalog()
 
     let requests = fixture.model.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
-    let catalog_text = |request: &ModelRequest| {
-        request
-            .messages
-            .iter()
-            .filter(|message| message.role == Role::System)
-            .find_map(|message| match message.content.first() {
-                Some(ContentBlock::Text(text)) if text.text.contains("<available_skills>") => {
-                    Some(text.text.clone())
-                }
-                _ => None,
-            })
-            .expect("skill catalog")
-    };
-    let turn_catalog = catalog_text(&requests[0]);
-    let compaction_catalog = catalog_text(&requests[1]);
-    assert_eq!(turn_catalog, compaction_catalog);
+    let turn_catalog = user_message_texts(&requests[0])
+        .into_iter()
+        .find(|text| text.contains("<available_skills>"))
+        .expect("turn skill catalog");
     assert!(turn_catalog.contains(skill_path.to_str().expect("UTF-8 path")));
+    assert!(
+        !user_message_texts(&requests[1])
+            .iter()
+            .any(|text| text.contains("<available_skills>")),
+        "动态 skill catalog 不应进入摘要输入"
+    );
 }
 
 #[tokio::test]
@@ -2811,24 +3045,14 @@ async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
     assert!(requests[1].tools.is_empty());
     assert!(!requests[2].tools.is_empty());
     assert_eq!(
-        requests[2]
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        [
-            Role::System,
-            Role::System,
-            Role::User,
-            Role::User,
-            Role::User
-        ]
+        roles_ignoring_world_state(&requests[2]),
+        [Role::System, Role::User, Role::User, Role::User]
     );
 }
 
 #[tokio::test]
 async fn context_budget_threshold_compacts_before_the_first_provider_submission() {
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             response(compaction_summary(), Vec::new()),
             response("continued after threshold compaction", Vec::new()),
@@ -2836,13 +3060,13 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
     let accepted = fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("threshold-request"),
             openwork_core::session::PreparedTurnInput::text("do the task"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -2912,7 +3136,7 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
 
 #[tokio::test]
 async fn compacted_tool_turn_records_the_seven_documented_spans() {
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             response(compaction_summary(), Vec::new()),
             response(
@@ -2932,6 +3156,7 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
         ],
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(10_000, 1),
     );
     fixture
         .chat
@@ -2946,10 +3171,9 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
 
     let accepted = fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("seven-span-threshold-request"),
             openwork_core::session::PreparedTurnInput::text("inspect the project"),
-            10_000,
             BTreeSet::new(),
         )
         .await
@@ -3005,7 +3229,7 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
 
 #[tokio::test]
 async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget() {
-    let mut fixture = runtime_with_outcomes(
+    let mut fixture = runtime_with_outcomes_and_capabilities(
         vec![
             Ok(response(compaction_summary(), Vec::new())),
             Err(ModelError::context_overflow(
@@ -3015,14 +3239,14 @@ async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget(
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
 
     fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("threshold-overflow-request"),
             openwork_core::session::PreparedTurnInput::text("do the task"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -3637,6 +3861,7 @@ async fn child_active_turn_owns_and_releases_its_slot_at_terminal() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-slot-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -3697,6 +3922,7 @@ async fn explorer_denies_ask_then_runs_readonly_without_permission_card() {
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-readonly-child"),
+            model_capabilities: test_capabilities(200_000, 32_768),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -4436,7 +4662,7 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
     // 压缩把模型看到的对话整体换成"用户消息重放 + 摘要 + reminder"三条，原来的
     // update_plan Tool Call 和它的结果都不在其中。所以压缩之后 reminder 是当前计划
     // 唯一的载体——它错了模型就完全失忆，而不是少了一层冗余。
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             // 第 1 轮开头的压缩
             response(compaction_summary(), Vec::new()),
@@ -4462,13 +4688,13 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
     fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("plan-compaction-request"),
             openwork_core::session::PreparedTurnInput::text("do the multi-step task"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -4510,7 +4736,7 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
 async fn clearing_the_plan_removes_it_from_the_next_reminder() {
     // collector 在 collect 返回 None 时会结转旧值，所以清空计划若实现成"没有数据"，
     // 模型会一直看到一份已经删掉的计划，而且全程不报错。
-    let mut fixture = runtime(
+    let mut fixture = runtime_with_capabilities(
         vec![
             response(compaction_summary(), Vec::new()),
             response(
@@ -4536,13 +4762,13 @@ async fn clearing_the_plan_removes_it_from_the_next_reminder() {
         Vec::new(),
         PermissionMode::AcceptEdits,
         false,
+        test_capabilities(2, 1),
     );
     fixture
         .handle
-        .start_turn_with_context_window(
+        .start_turn(
             ClientRequestId::new("plan-clear-request"),
             openwork_core::session::PreparedTurnInput::text("do then abandon the plan"),
-            1,
             BTreeSet::new(),
         )
         .await
@@ -4650,5 +4876,114 @@ async fn a_turn_without_a_plan_reports_nothing_rather_than_zero() {
         *fixture.storage.unfinished_plan_steps.lock().unwrap(),
         Some(None),
         "简单任务本就不该建计划，把它记成 0 会污染规则生效率的分母"
+    );
+}
+
+/// 溢出压缩之后重新提交的那次请求，必须仍然带着 world state。
+///
+/// 压缩把历史尾部换成摘要，被换走的 world-state fragment 等于模型再也看不到了。
+/// §9.3 的自愈本来就是为这一刻准备的：扫描会发现消息不在了，把 previous 判成
+/// `Absent` 并重发。但重发只发生在**采样点**，而压缩后重建请求的路径上没有采样。
+///
+/// 后果很具体：模型刚丢掉全部历史，紧接着的这次提交连工作目录和项目规范都没有，
+/// 要等下一轮循环才补上——而这一次提交恰恰是它最需要上下文的时候。
+#[tokio::test]
+async fn a_request_rebuilt_after_compaction_still_carries_world_state() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("永远先跑测试");
+    let mut fixture = runtime_with_outcomes_in_workspace(
+        vec![
+            Err(ModelError::context_overflow(
+                "input exceeds the model context window",
+            )),
+            Ok(response(compaction_summary(), Vec::new())),
+            Ok(response("recovered after compaction", Vec::new())),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        workspace,
+    );
+
+    start(&fixture).await;
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let resubmitted = requests.last().expect("resubmitted request");
+    let texts = user_message_texts(resubmitted);
+
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("<user_project_context")),
+        "压缩后重新提交的请求缺少项目上下文：{texts:?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("<project_instructions>") && text.contains("永远先跑测试")),
+        "压缩后重新提交的请求缺少 AGENTS.md：{texts:?}"
+    );
+}
+
+/// 摘要请求里不该出现 world-state fragment（§9.2）。
+///
+/// 它们不是对话事实，是当时的环境快照。让模型去总结一份目录列表有两重代价：
+/// 压缩恰好发生在窗口最紧张的时刻，白白占额度；而且模型可能把目录结构当成
+/// 对话内容写进摘要，于是一份过时的环境快照被冻结进摘要，此后再也不会更新。
+///
+/// 摘要请求靠"没有工具面"识别——`summary.rs` 传的 tool_definitions 是空的。
+#[tokio::test]
+async fn the_summary_request_excludes_world_state_fragments() {
+    let workspace = TestWorkspace::new();
+    workspace.write_instructions("永远先跑测试");
+    let mut fixture = runtime_in_workspace(
+        vec![
+            response("first answer", Vec::new()),
+            response(compaction_summary(), Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        workspace,
+    );
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+
+    fixture
+        .handle
+        .compact_conversation(BTreeSet::new())
+        .await
+        .expect("compaction");
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let summary_request = requests
+        .iter()
+        .find(|request| request.tools.is_empty())
+        .expect("summary request");
+    let texts = user_message_texts(summary_request);
+
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains("<user_project_context")),
+        "摘要请求不该带项目上下文：{texts:?}"
+    );
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains("<project_instructions>")),
+        "摘要请求不该带 AGENTS.md：{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("first answer"))
+            || summary_request
+                .messages
+                .iter()
+                .any(|message| message.role == Role::Assistant),
+        "真实对话事实必须保留，否则摘要没有可总结的内容：{texts:?}"
     );
 }

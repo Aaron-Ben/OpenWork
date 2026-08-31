@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { coreCommands } from '@/bridge/commands'
-import type { ProviderConfig } from '@/features/models/contracts'
+import type { ProviderConfig } from '@/bridge/providerContracts'
 import { createSessionRuntimeView } from '@/features/chat/runtimeReducer'
 import { useRuntimeStore } from '@/features/chat/runtimeStore'
 import { buildTranscript } from '@/features/chat/transcript'

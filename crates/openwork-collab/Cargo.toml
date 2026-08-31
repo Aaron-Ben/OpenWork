@@ -1,0 +1,29 @@
+[package]
+name = "openwork-collab"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+hmac.workspace = true
+libc.workspace = true
+axum = "0.8"
+reqwest.workspace = true
+redis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["formatting", "macros", "serde"] }
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "net", "process", "signal", "time"] }
+tokio-util.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

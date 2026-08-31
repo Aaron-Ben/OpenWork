@@ -8,6 +8,7 @@ pub struct ModelInput {
     pub base_url: String,
     pub credential_ref: Option<String>,
     pub enabled: bool,
+    pub capabilities: ModelCapabilities,
     pub config: Value,
 }
 
@@ -22,6 +23,21 @@ pub struct ModelRecord {
     pub credential_ref: Option<String>,
     pub enabled: bool,
     pub config: Value,
+}
+
+impl ModelRecord {
+    pub fn capabilities(&self) -> Result<Option<ModelCapabilities>, StorageError> {
+        let Some(value) = self.config.get("capabilities") else {
+            return Ok(None);
+        };
+        let capabilities = serde_json::from_value::<ModelCapabilities>(value.clone())?;
+        capabilities.validate().map(Some).map_err(|error| {
+            StorageError::InvalidInput(format!(
+                "model {} has invalid capabilities: {error}",
+                self.id
+            ))
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

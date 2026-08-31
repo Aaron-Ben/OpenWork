@@ -69,9 +69,8 @@ export const coreCommands = {
     sessionId: string,
     clientRequestId: string,
     input: RuntimeUserInput[],
-    contextWindowTokens: number,
   ): Promise<RuntimeTurnAccepted> =>
-    invoke('runtime_turn_start', { sessionId, clientRequestId, input, contextWindowTokens }),
+    invoke('runtime_turn_start', { sessionId, clientRequestId, input }),
   cancelTurn: (sessionId: string, turnId: string): Promise<boolean> =>
     invoke('runtime_turn_cancel', { sessionId, turnId }),
   undoFileChanges: (

@@ -21,12 +21,24 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 openwork-core = { workspace = true }
 openwork-models = { workspace = true }
+openwork-collab = { workspace = true }
 dotenvy = { workspace = true }
 serde = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time"] }
+serde_json = { workspace = true }
+reqwest.workspace = true
+libc.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "time"] }
+tokio-util.workspace = true
+thiserror = { workspace = true }
+tracing.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 
 [dev-dependencies]
-serde_json = { workspace = true }
+axum = "0.8"
+redis.workspace = true
+sqlx.workspace = true
+tauri = { version = "2", features = ["test"] }
+tempfile = "3"
+uuid.workspace = true

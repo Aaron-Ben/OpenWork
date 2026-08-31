@@ -81,13 +81,12 @@ describe('trace command bridge', () => {
       text: 'Use $commit.',
     }]
 
-    await coreCommands.startTurn('session-1', 'request-1', input, 258_000)
+    await coreCommands.startTurn('session-1', 'request-1', input)
 
     expect(invoke).toHaveBeenCalledWith('runtime_turn_start', {
       sessionId: 'session-1',
       clientRequestId: 'request-1',
       input,
-      contextWindowTokens: 258_000,
     })
   })
 })

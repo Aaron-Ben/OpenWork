@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bot, PanelLeftClose, Puzzle, Settings as SettingsIcon, SlidersHorizontal } from 'lucide-react'
+import { Activity, ArrowLeft, Bot, PanelLeftClose, Puzzle, Settings as SettingsIcon, SlidersHorizontal, UsersRound } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -14,9 +14,11 @@ interface SidebarProps {
   expanded: boolean
   onToggleExpanded: () => void
   onNavigate: (next: AppView) => void
+  collabUnreadCount?: number
+  onOpenCollab?: () => void
 }
 
-export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: SidebarProps) {
+export function Sidebar({ view, expanded, onToggleExpanded, onNavigate, collabUnreadCount = 0, onOpenCollab = () => undefined }: SidebarProps) {
   const { t } = useTranslation()
   const reduceMotion = useReducedMotion()
 
@@ -69,6 +71,7 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
             {t('activity.navigation')}
           </SettingsNavItem>
         </nav>
+        <WorkbenchFooter unreadCount={collabUnreadCount} onOpenCollab={onOpenCollab} onOpenSettings={() => onNavigate('settings-models')} />
       </motion.aside>
     )
   }
@@ -95,20 +98,43 @@ export function Sidebar({ view, expanded, onToggleExpanded, onNavigate }: Sideba
           />
         </motion.div>
       </div>
-      <div data-sidebar-footer="true" className="grid shrink-0 gap-1 border-t border-line px-3 py-2">
+      <WorkbenchFooter unreadCount={collabUnreadCount} onOpenCollab={onOpenCollab} onOpenSettings={() => onNavigate('settings-models')} />
+    </motion.aside>
+  )
+}
+
+function WorkbenchFooter({ unreadCount, onOpenCollab, onOpenSettings }: {
+  unreadCount: number
+  onOpenCollab: () => void
+  onOpenSettings: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div data-sidebar-footer="true" className="grid shrink-0 grid-cols-2 gap-1 border-t border-line px-3 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          className="relative h-9 justify-start rounded-xl px-3"
+          aria-label={t('collab.switchTo')}
+          title={t('collab.switchTo')}
+          onClick={onOpenCollab}
+        >
+          <UsersRound size={17} className="shrink-0" />
+          <span className="truncate">{t('collab.brand')}</span>
+          {unreadCount > 0 ? <span data-collab-unread={unreadCount} className="absolute -right-1 -top-1 rounded-full bg-clay px-1 text-[10px] text-white">{unreadCount}</span> : null}
+        </Button>
         <Button
           type="button"
           variant="ghost"
           className="h-9 w-full justify-start rounded-xl px-3"
           aria-label={t('sidebar.settings')}
           title={t('sidebar.settings')}
-          onClick={() => onNavigate('settings-models')}
+          onClick={onOpenSettings}
         >
           <SettingsIcon size={17} className="shrink-0" />
           <span>{t('sidebar.settings')}</span>
         </Button>
-      </div>
-    </motion.aside>
+    </div>
   )
 }
 

@@ -3,7 +3,7 @@ import { Bot, Check, Loader2, Pencil, Plus, Trash2, X, Zap } from "lucide-react"
 import { useTranslation } from "react-i18next";
 
 import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
-import type { ProviderConfig, TestResult } from "../contracts";
+import type { ProviderConfig, TestResult } from "@/bridge/providerContracts";
 import { useModelStore } from "../modelStore";
 import { providerTestResultStyle, ProviderFormModal } from "./ProviderFormModal";
 
@@ -19,6 +19,7 @@ export function ModelSettings() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editing, setEditing] = useState<ProviderConfig | undefined>(undefined);
+  const [editingModelId, setEditingModelId] = useState<string | undefined>(undefined);
   const [tests, setTests] = useState<TestState>({});
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -26,12 +27,14 @@ export function ModelSettings() {
   function openCreate() {
     setModalMode("create");
     setEditing(undefined);
+    setEditingModelId(undefined);
     setModalOpen(true);
   }
 
-  function openEdit(provider: ProviderConfig) {
+  function openEdit(provider: ProviderConfig, modelId?: string) {
     setModalMode("edit");
     setEditing(provider);
+    setEditingModelId(modelId);
     setModalOpen(true);
   }
 
@@ -109,10 +112,19 @@ export function ModelSettings() {
                         provider.models.map((model) => (
                           <span
                             key={model.modelId}
-                            className="inline-flex items-baseline gap-1 rounded-md bg-paper-hover px-1.5 py-0.5 font-mono text-[11px] text-ink-soft"
+                            className="inline-flex flex-wrap items-baseline gap-x-1 gap-y-0.5 rounded-md bg-paper-hover px-1.5 py-0.5 font-mono text-[11px] text-ink-soft"
                           >
                             {model.modelId}
                             <span className="font-sans text-[10px] text-ink-faint">{model.modelTier}</span>
+                            {!model.capabilities ? (
+                              <button
+                                type="button"
+                                onClick={() => openEdit(provider, model.modelId)}
+                                className="basis-full text-left font-sans text-[10px] text-status-danger-ink underline decoration-dotted underline-offset-2"
+                              >
+                                {t("settings.models.capabilitiesMissing")}
+                              </button>
+                            ) : null}
                           </span>
                         ))
                       ) : (
@@ -174,7 +186,13 @@ export function ModelSettings() {
         </ul>
       )}
 
-      <ProviderFormModal open={modalOpen} mode={modalMode} initial={editing} onClose={() => setModalOpen(false)} />
+      <ProviderFormModal
+        open={modalOpen}
+        mode={modalMode}
+        initial={editing}
+        focusModelId={editingModelId}
+        onClose={() => setModalOpen(false)}
+      />
     </div>
   );
 }

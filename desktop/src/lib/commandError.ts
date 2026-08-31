@@ -10,6 +10,7 @@ export type CommandErrorCode =
   | 'operation_conflict'
   | 'skill_unavailable'
   | 'model_request_failed'
+  | 'collaboration_unavailable'
   | 'internal_error'
 
 export interface CommandError {
@@ -29,6 +30,7 @@ const COMMAND_ERROR_CODES = new Set<CommandErrorCode>([
   'operation_conflict',
   'skill_unavailable',
   'model_request_failed',
+  'collaboration_unavailable',
   'internal_error',
 ])
 

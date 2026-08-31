@@ -1,0 +1,6 @@
+{
+  // rust-analyzer 使用独立的 target 目录（target/rust-analyzer/），
+  // 避免它的 cargo check 与终端里的 cargo build 争抢 target/debug 的
+  // 目录级排他锁，导致 "Blocking waiting for file lock on build directory"。
+  "rust-analyzer.cargo.targetDir": true
+}

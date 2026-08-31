@@ -50,6 +50,7 @@ const inspection: RuntimeContextWindowInspection = {
     },
   ],
   budget: {
+    contextWindowTokens: 1_000,
     systemContextTokens: 100,
     conversationTokens: 200,
     toolSurfaceTokens: 50,
@@ -65,7 +66,6 @@ describe('ContextWindowDrawer', () => {
       <ContextWindowDrawer
         sessionId="session-1"
         inspection={inspection}
-        contextWindowTokens={1_000}
         highlightedTurnId="turn-2"
         loading={false}
         error={null}

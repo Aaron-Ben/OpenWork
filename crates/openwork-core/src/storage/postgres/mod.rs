@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use openwork_chat_state::{ConversationItem, MessageKind};
-use openwork_models::model::{ContentBlock, Message, Role, TokenUsage};
+use openwork_models::model::{ContentBlock, Message, ModelCapabilities, Role, TokenUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Acquire, Executor, PgPool, Postgres, Transaction, postgres::PgPoolOptions};

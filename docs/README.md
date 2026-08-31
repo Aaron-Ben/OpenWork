@@ -2,6 +2,8 @@
 
 一个功能一篇文档。每篇描述**这个功能是什么、边界在哪、怎么验收**，不记录迁移过程。
 
+跨功能且容易混淆的领域术语以 [architecture.md](architecture.md) 为准；具体 interface、状态机和验收仍由下面各 owning 文档约束。
+
 ## 索引
 
 | 文档 | 内容 |
@@ -15,6 +17,9 @@
 | [update-plan.md](update-plan.md) | Turn 级任务清单、Core 控制工具、持久化与 Desktop 投影 |
 | [skills.md](skills.md) | Skill 目录契约、`$` 精确路径选择、三层渐进披露、只读边界 |
 | [multi-agent.md](multi-agent.md) | 只读子 Agent：身份与拓扑、五个控制工具、mailbox 与信封、并发限额、非交互授权、重启对账 |
+| [collaboration.md](collaboration.md) | 本机 BYOA Runtime、身份、通信、AgentRunner、消息协调、Board 与 Agenda |
+| [collaboration-desktop.md](collaboration-desktop.md) | macOS Desktop supervisor、Tauri command、SSE 投影与协作界面 |
+| [collaboration-data-model.md](collaboration-data-model.md) | 协作 PostgreSQL、Redis、本机文件、事务与并发不变量 |
 | [permissions.md](permissions.md) | 效果模型、只读判定、`default` / `acceptEdits` 两模式、内置规则、命令解析、审批卡片、会话状态 |
 | [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
@@ -22,21 +27,20 @@
 
 规范类文档在 [`.claude/rules/`](../.claude/rules/)：目前有 [database.md](../.claude/rules/database.md)（时间字段与迁移规范）。
 
-外部参考资料在 [`references/`](references/)：**它们描述别的项目怎么做，不约束 OpenWork。**
-
-| 文档 | 内容 |
-|---|---|
-| [references/codex-multi-agent.md](references/codex-multi-agent.md) | Codex 的多代理实现：AgentPath 身份、AgentControl 控制平面、mailbox 通信、四层资源限额、角色即配置层、V1/V2 差异 |
+外部参考资料如需保留，放在 `references/`。它们只描述其他项目，不约束 OpenWork；被 OpenWork 采纳的决定必须进入对应 owning 文档。
 
 ## 事实来源
 
 | 问题 | 看哪里 |
 |---|---|
-| 当前实际是什么 | 源码 + `crates/openwork-core/migrations/` |
-| 应该是什么、为什么 | 本目录 |
+| 当前实际是什么 | 源码 + 各 owning crate 的 `migrations/`；尚未实现的目标以文档中的提示为准 |
+| 协作 Runtime 和业务语义 | [collaboration.md](collaboration.md) |
+| 协作存储与并发约束 | [collaboration-data-model.md](collaboration-data-model.md) |
+| 协作 Desktop 投影 | [collaboration-desktop.md](collaboration-desktop.md) |
+| 其他功能应该是什么、为什么 | 本目录对应 owning 文档 |
 | 怎么跑起来、有哪些命令 | 仓库根 [AGENTS.md](../AGENTS.md) |
 
-文档描述目标状态。**代码与目标有差距时，各篇的"尚未实施"小节会明确列出**——按文档写新代码，不要照抄尚未收敛的现状。
+Owning 文档描述当前约束和已确认目标。**代码与目标有差距时，各篇的“尚未实施”小节必须明确列出**；没有该提示的内容应与实现和自动化证据一致。
 
 ## 阅读顺序
 
@@ -45,7 +49,7 @@
 1. [architecture.md](architecture.md) —— 建立词汇和边界
 2. [session-runtime.md](session-runtime.md) —— 一次请求怎么跑完
 3. [context-window.md](context-window.md) —— 模型每次看到什么
-4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [update-plan.md](update-plan.md) / [trace.md](trace.md) / [skills.md](skills.md) / [multi-agent.md](multi-agent.md)
+4. 按需读 [compaction.md](compaction.md) / [tools.md](tools.md) / [update-plan.md](update-plan.md) / [trace.md](trace.md) / [skills.md](skills.md) / [multi-agent.md](multi-agent.md)；协作模式先读 [collaboration.md](collaboration.md)，再按需读 Desktop 或数据模型文档
 
 ## 维护原则
 

@@ -141,11 +141,10 @@ pub async fn runtime_turn_start(
     session_id: String,
     client_request_id: String,
     input: Vec<openwork_core::UserInput>,
-    context_window_tokens: Option<u64>,
 ) -> Result<TurnAccepted, CommandError> {
     let session_id = SessionId::new(session_id);
     let client_request_id = ClientRequestId::new(client_request_id);
-    core.start_turn(&session_id, client_request_id, input, context_window_tokens)
+    core.start_turn(&session_id, client_request_id, input)
         .await
         .map_err(CommandError::from)
 }

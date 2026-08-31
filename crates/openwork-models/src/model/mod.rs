@@ -1,5 +1,6 @@
 //! 厂商无关的模型合同；这是协议类型的唯一所有者。
 
+mod capabilities;
 mod error;
 mod event;
 mod message;
@@ -7,6 +8,7 @@ mod port;
 mod request;
 mod response;
 
+pub use capabilities::{ModelCapabilities, ModelCapabilitiesError};
 pub use error::{DeliveryState, ModelError, ModelErrorCode, ModelFailurePhase, RetryHint};
 pub use event::ModelEvent;
 pub use message::{

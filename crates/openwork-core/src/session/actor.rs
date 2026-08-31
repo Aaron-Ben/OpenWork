@@ -7,18 +7,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
-use openwork_models::model::ModelPort;
+use openwork_models::model::{ModelCapabilities, ModelPort};
 use openwork_tools::{ApprovalSessionAction, PermissionMode};
-use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
+use crate::context::{
+    BoundedItem, ModelContextLimits, WorldStateBaseline, check_item_tokens,
+    estimate_serialized_tokens,
+};
 use crate::skills::SkillRoots;
-use crate::{AgentControl, TurnSlot};
+use crate::{AgentControl, AgentControlError, TurnSlot};
 
 use super::agent_message::{AgentMailbox, AgentMessage};
 use super::compaction::{
-    AutomaticCompactionPolicy, CompactionTrigger, ConversationCompactionRequest,
-    ConversationRewindRequest, new_trace_id, rewind_conversation, run_compaction,
+    CompactionTrigger, ConversationCompactionRequest, ConversationRewindRequest, new_trace_id,
+    rewind_conversation, run_compaction,
 };
 use super::permission_state::{PermissionModeOrigin, SessionPermissionState};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
@@ -62,6 +66,7 @@ pub struct SessionRuntimeConfig {
 #[derive(Clone)]
 pub struct SessionHandle {
     session_id: SessionId,
+    model_capabilities: ModelCapabilities,
     command_tx: mpsc::Sender<SessionCommand>,
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
     reload_required: Arc<AtomicBool>,
@@ -84,6 +89,7 @@ impl SessionHandle {
         global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
     ) -> Self {
         let session_id = config.session_id.clone();
+        let model_capabilities = config.resolved_model.capabilities;
         let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
         let (runner_tx, runner_rx) = mpsc::channel(RUNNER_EVENT_BUFFER);
         let (update_tx, _) = broadcast::channel(UPDATE_BROADCAST_CAPACITY);
@@ -100,6 +106,7 @@ impl SessionHandle {
         tokio::spawn(actor.run());
         Self {
             session_id,
+            model_capabilities,
             command_tx,
             update_tx,
             reload_required,
@@ -108,6 +115,10 @@ impl SessionHandle {
 
     pub fn session_id(&self) -> &SessionId {
         &self.session_id
+    }
+
+    pub(crate) fn model_capabilities(&self) -> ModelCapabilities {
+        self.model_capabilities
     }
 
     pub fn requires_reload(&self) -> bool {
@@ -124,47 +135,11 @@ impl SessionHandle {
         input: PreparedTurnInput,
         disabled_skill_names: BTreeSet<String>,
     ) -> Result<TurnAccepted, SessionError> {
-        self.start_turn_with_policy(
-            client_request_id,
-            input,
-            AutomaticCompactionPolicy::default(),
-            disabled_skill_names,
-        )
-        .await
-    }
-
-    pub async fn start_turn_with_context_window(
-        &self,
-        client_request_id: ClientRequestId,
-        input: PreparedTurnInput,
-        context_window_tokens: u64,
-        disabled_skill_names: BTreeSet<String>,
-    ) -> Result<TurnAccepted, SessionError> {
-        let compaction_policy =
-            AutomaticCompactionPolicy::for_context_window(context_window_tokens)
-                .ok_or(SessionError::InvalidContextWindowTokens)?;
-        self.start_turn_with_policy(
-            client_request_id,
-            input,
-            compaction_policy,
-            disabled_skill_names,
-        )
-        .await
-    }
-
-    async fn start_turn_with_policy(
-        &self,
-        client_request_id: ClientRequestId,
-        input: PreparedTurnInput,
-        compaction_policy: AutomaticCompactionPolicy,
-        disabled_skill_names: BTreeSet<String>,
-    ) -> Result<TurnAccepted, SessionError> {
         let (respond_to, response) = oneshot::channel();
         self.send(SessionCommand::StartTurn {
             turn_id: TurnId::generate(),
             client_request_id,
             input,
-            compaction_policy,
             disabled_skill_names,
             turn_slot: None,
             respond_to,
@@ -185,7 +160,6 @@ impl SessionHandle {
             turn_id: TurnId::generate(),
             client_request_id: ClientRequestId::generate(),
             input: PreparedTurnInput::text(message),
-            compaction_policy: AutomaticCompactionPolicy::default(),
             disabled_skill_names,
             turn_slot: Some(turn_slot),
             respond_to,
@@ -213,15 +187,25 @@ impl SessionHandle {
         task_name: impl Into<String>,
         kind: super::AgentMessageKind,
         body: impl Into<String>,
-    ) -> Result<(), SessionError> {
-        self.send(SessionCommand::DeliverAgentMessage {
-            child_session_id,
-            child_turn_id,
-            task_name: task_name.into(),
-            kind,
-            body: body.into(),
-        })
-        .await
+    ) -> Result<(), AgentControlError> {
+        let task_name = task_name.into();
+        let message = AgentMessage::new(&child_session_id, &child_turn_id, task_name, kind, body);
+        let model_message = message.clone().into_model_message();
+        let tokens = estimate_serialized_tokens(&model_message.content)
+            .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))?;
+        let limits = ModelContextLimits::from_capabilities(self.model_capabilities);
+        check_item_tokens(
+            BoundedItem::AgentMessage {
+                task_name: &message.task_name,
+            },
+            tokens,
+            &limits,
+        )
+        .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))?;
+
+        self.send(SessionCommand::DeliverAgentMessage { message })
+            .await
+            .map_err(|error| AgentControlError::DeliveryFailed(error.to_string()))
     }
 
     pub async fn resolve_permission(
@@ -332,7 +316,6 @@ enum SessionCommand {
         turn_id: TurnId,
         client_request_id: ClientRequestId,
         input: PreparedTurnInput,
-        compaction_policy: AutomaticCompactionPolicy,
         disabled_skill_names: BTreeSet<String>,
         turn_slot: Option<TurnSlot>,
         respond_to: oneshot::Sender<Result<TurnAccepted, SessionError>>,
@@ -348,11 +331,7 @@ enum SessionCommand {
         respond_to: oneshot::Sender<Result<(), SessionError>>,
     },
     DeliverAgentMessage {
-        child_session_id: SessionId,
-        child_turn_id: TurnId,
-        task_name: String,
-        kind: super::AgentMessageKind,
-        body: String,
+        message: AgentMessage,
     },
     SetPermissionMode {
         mode: PermissionMode,
@@ -408,6 +387,7 @@ struct SessionActor {
     tools: Arc<TurnToolset>,
     storage: Arc<dyn SessionStorage>,
     compaction_state: Arc<CompactionStateCollector>,
+    world_state_baseline: Arc<Mutex<WorldStateBaseline>>,
     reload_required: Arc<AtomicBool>,
     trace: Arc<dyn TraceRecorder>,
     approval: SessionApproval,
@@ -458,6 +438,7 @@ impl SessionActor {
             tools: config.tools,
             storage: config.storage,
             compaction_state: config.compaction_state,
+            world_state_baseline: Arc::new(Mutex::new(WorldStateBaseline::default())),
             reload_required,
             trace: config.trace,
             approval: config.approval,
@@ -503,7 +484,6 @@ impl SessionActor {
                 turn_id,
                 client_request_id,
                 input,
-                compaction_policy,
                 disabled_skill_names,
                 turn_slot,
                 respond_to,
@@ -512,7 +492,6 @@ impl SessionActor {
                     turn_id,
                     client_request_id,
                     input,
-                    compaction_policy,
                     disabled_skill_names,
                     turn_slot,
                 );
@@ -540,22 +519,8 @@ impl SessionActor {
                 let result = self.resolve_permission(turn_id, tool_call_id, decision);
                 let _ = respond_to.send(result);
             }
-            SessionCommand::DeliverAgentMessage {
-                child_session_id,
-                child_turn_id,
-                task_name,
-                kind,
-                body,
-            } => {
-                self.mailbox
-                    .push(AgentMessage::new(
-                        &child_session_id,
-                        &child_turn_id,
-                        task_name,
-                        kind,
-                        body,
-                    ))
-                    .await;
+            SessionCommand::DeliverAgentMessage { message } => {
+                self.mailbox.push(message).await;
             }
             SessionCommand::SetPermissionMode { mode, respond_to } => {
                 self.set_permission_mode(mode, PermissionModeOrigin::UserToggle);
@@ -612,7 +577,6 @@ impl SessionActor {
         turn_id: TurnId,
         client_request_id: ClientRequestId,
         input: PreparedTurnInput,
-        compaction_policy: AutomaticCompactionPolicy,
         disabled_skill_names: BTreeSet<String>,
         turn_slot: Option<TurnSlot>,
     ) -> Result<TurnAccepted, SessionError> {
@@ -676,7 +640,7 @@ impl SessionActor {
             tools: Arc::clone(&self.tools),
             storage: Arc::clone(&self.storage),
             compaction_state: Arc::clone(&self.compaction_state),
-            compaction_policy,
+            world_state_baseline: Arc::clone(&self.world_state_baseline),
             reload_required: Arc::clone(&self.reload_required),
             trace: Arc::clone(&self.trace),
             cancel,
@@ -709,6 +673,7 @@ impl SessionActor {
             model: Arc::clone(&self.model),
             storage: Arc::clone(&self.storage),
             state_collector: Arc::clone(&self.compaction_state),
+            limits: ModelContextLimits::from_capabilities(self.resolved_model.capabilities),
             // 手动压缩在 Turn 活动时会被上面的 SessionActive 挡下，所以这里必然没有
             // 当前计划。传 None 让 collector 结转上次的值，而不是当作一次清空。
             plan: None,

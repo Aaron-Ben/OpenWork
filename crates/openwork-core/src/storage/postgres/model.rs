@@ -3,6 +3,14 @@ use super::*;
 impl PostgresStorage {
     pub async fn upsert_model(&self, input: &ModelInput) -> Result<(), StorageError> {
         validate_model(input)?;
+        let mut config = input.config.clone();
+        config
+            .as_object_mut()
+            .expect("validated model config")
+            .insert(
+                "capabilities".to_string(),
+                serde_json::to_value(input.capabilities)?,
+            );
         sqlx::query(
             "INSERT INTO models (
                  id, display_name, provider_kind, model_name, base_url,
@@ -25,7 +33,7 @@ impl PostgresStorage {
         .bind(&input.base_url)
         .bind(&input.credential_ref)
         .bind(input.enabled)
-        .bind(&input.config)
+        .bind(config)
         .execute(&self.pool)
         .await?;
         Ok(())

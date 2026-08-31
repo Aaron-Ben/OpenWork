@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use openwork_agent::{Agent, AgentBuilder, AgentDefinition, explorer_definition};
-use openwork_chat_state::{ChatStateHandle, ConversationView};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView, ConversationItem};
 use openwork_models::ProviderFactory;
 use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
@@ -23,10 +23,11 @@ use thiserror::Error;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 use crate::context::{
-    CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
-    ContextInspectionSystemPart, ContextWindowInspection, SystemContextBuilder, list_skills,
+    BoundedItem, CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextEngine, ContextInspectionBudget,
+    ContextInspectionMessage, ContextInspectionSystemPart, ContextWindowInspection,
+    ModelContextLimits, PrepareContextInput, ProjectedMessageOrigin, SystemContextBuilder,
+    check_item_tokens, estimate_serialized_tokens, list_skills,
 };
-use crate::model_call::{ModelRequestBuilder, ModelRequestInput};
 use crate::plan::{TurnPlan, TurnPlanRecord};
 use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
 use crate::session::{
@@ -130,6 +131,8 @@ pub enum OpenWorkCoreError {
     DefaultModelMissing(String),
     #[error("model not found: {0}")]
     ModelNotFound(String),
+    #[error("model capabilities are missing for {0}; open Settings > Models and edit its provider")]
+    ModelCapabilitiesMissing(String),
     #[error("session has an active turn and cannot be changed: {0}")]
     SessionActive(String),
     #[error("file change not found: {0}")]
@@ -364,6 +367,14 @@ impl OpenWorkCore {
         &self,
         input: &SessionInput,
     ) -> Result<SessionRecord, OpenWorkCoreError> {
+        if let Some(model_id) = input.default_model_id.as_deref() {
+            let model = self
+                .storage
+                .load_model(model_id)
+                .await?
+                .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
+            require_model_capabilities(&model)?;
+        }
         Ok(self.storage.create_session(input).await?)
     }
 
@@ -463,6 +474,7 @@ impl OpenWorkCore {
             .load_model(model_id)
             .await?
             .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
+        let capabilities = require_model_capabilities(&model)?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
         let (agent, tools, control_surface) = if loaded.session.is_sub_agent() {
             let (agent, tools) =
@@ -499,44 +511,68 @@ impl OpenWorkCore {
             .iter()
             .rev()
             .find_map(|message| message.turn_id.clone());
-        let mut conversation = Vec::with_capacity(conversation_records.len());
+        let mut conversation_items = Vec::with_capacity(conversation_records.len());
         for message in &conversation_records {
             if message.role == Role::System {
                 return Err(OpenWorkCoreError::RuntimeComponent(
                     "persisted system messages are not valid Conversation input".to_string(),
                 ));
             }
-            conversation.push(Message {
-                role: message.role,
-                content: message.content.clone(),
-            });
+            conversation_items.push(ConversationItem::persisted_with_kind(
+                message.id.clone(),
+                message.sequence,
+                message.message_kind,
+                Message {
+                    role: message.role,
+                    content: message.content.clone(),
+                },
+            ));
         }
 
-        let prepared = ModelRequestBuilder::build(ModelRequestInput::new(
-            &model.model_name,
-            &system_context,
-            ConversationView {
-                messages: conversation,
-            },
-            tools.definitions(),
-        ))
-        .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
-        let projected_conversation = prepared
-            .request
-            .messages
+        let turn_ids_by_message_id = conversation_records
             .iter()
-            .skip(system_context.parts().len());
-        let inspected_messages = conversation_records
-            .into_iter()
-            .zip(projected_conversation)
-            .map(|(record, projected)| ContextInspectionMessage {
-                message_id: record.id,
-                turn_id: record.turn_id,
-                role: projected.role,
-                content: projected.content.clone(),
+            .map(|record| (record.id.as_str(), record.turn_id.clone()))
+            .collect::<HashMap<_, _>>();
+        let context_engine =
+            ContextEngine::new(ModelContextLimits::from_capabilities(capabilities));
+        let prepared = context_engine
+            .prepare(PrepareContextInput::new(
+                &model.model_name,
+                &system_context,
+                ConversationContextView {
+                    items: conversation_items,
+                },
+                tools.definitions(),
+            ))
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        let inspected_messages = prepared
+            .conversation_messages()
+            .iter()
+            .zip(prepared.conversation_provenance())
+            .enumerate()
+            .map(|(index, (message, provenance))| {
+                let (message_id, turn_id) = match provenance {
+                    ProjectedMessageOrigin::Persisted { message_id } => (
+                        message_id.clone(),
+                        turn_ids_by_message_id
+                            .get(message_id.as_str())
+                            .cloned()
+                            .flatten(),
+                    ),
+                    ProjectedMessageOrigin::Synthesized => {
+                        (format!("context-synthesized-{index}"), None)
+                    }
+                };
+                ContextInspectionMessage {
+                    message_id,
+                    turn_id,
+                    role: message.role,
+                    content: message.content.clone(),
+                }
             })
             .collect();
         let budget = prepared.context_budget;
+        let tool_surface = prepared.request.tools;
 
         Ok(ContextWindowInspection {
             schema_version: CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION,
@@ -552,15 +588,15 @@ impl OpenWorkCore {
                 })
                 .collect(),
             conversation: inspected_messages,
-            tool_surface: prepared.request.tools,
+            tool_surface,
             budget: ContextInspectionBudget {
+                context_window_tokens: capabilities.context_window_tokens,
                 system_context_tokens: budget.system_context_tokens,
                 conversation_tokens: budget.conversation_tokens,
                 tool_surface_tokens: budget.tool_surface_tokens,
                 estimated_input_tokens: budget.estimated_input_tokens,
                 reserved_output_tokens: budget.reserved_output_tokens,
-                auto_compaction_threshold_percent:
-                    crate::session::DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT,
+                auto_compaction_threshold_percent: crate::context::AUTO_COMPACT_THRESHOLD_PERCENT,
             },
         })
     }
@@ -595,7 +631,6 @@ impl OpenWorkCore {
         session_id: &SessionId,
         client_request_id: ClientRequestId,
         input: Vec<crate::UserInput>,
-        context_window_tokens: Option<u64>,
     ) -> Result<TurnAccepted, OpenWorkCoreError> {
         let _workspace_operation = self.workspace_operation_guard(session_id).await;
         let handle = self.session_handle(session_id).await?;
@@ -617,6 +652,7 @@ impl OpenWorkCore {
         if user_content.is_empty() {
             return Err(SessionError::EmptyInput.into());
         }
+        let limits = ModelContextLimits::from_capabilities(handle.model_capabilities());
 
         let disabled_skill_names = self.disabled_skill_names.read().await.clone();
         let has_skill_input = input
@@ -633,13 +669,23 @@ impl OpenWorkCore {
         } else {
             Vec::new()
         };
-        let prepared_input = PreparedTurnInput::new(
-            skills
-                .into_iter()
-                .map(|skill| skill.into_message())
-                .collect(),
-            user_content,
-        );
+        let skill_messages = skills
+            .into_iter()
+            .map(|skill| {
+                let skill_name = skill.name.clone();
+                let message = skill.into_message();
+                let tokens = estimate_serialized_tokens(&message.content)
+                    .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+                check_item_tokens(
+                    BoundedItem::SkillInstruction { name: &skill_name },
+                    tokens,
+                    &limits,
+                )
+                .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+                Ok(message)
+            })
+            .collect::<Result<Vec<_>, OpenWorkCoreError>>()?;
+        let prepared_input = PreparedTurnInput::new(skill_messages, user_content);
 
         // The parent workspace guard is held and no parent Turn is active at
         // this point, so no legitimate spawn can be in progress. A zero-Turn
@@ -648,23 +694,9 @@ impl OpenWorkCore {
         self.reconcile_sub_agent_sessions(session_id, &handle)
             .await?;
 
-        let accepted = match context_window_tokens {
-            Some(context_window_tokens) => {
-                handle
-                    .start_turn_with_context_window(
-                        client_request_id,
-                        prepared_input,
-                        context_window_tokens,
-                        disabled_skill_names,
-                    )
-                    .await?
-            }
-            None => {
-                handle
-                    .start_turn(client_request_id, prepared_input, disabled_skill_names)
-                    .await?
-            }
-        };
+        let accepted = handle
+            .start_turn(client_request_id, prepared_input, disabled_skill_names)
+            .await?;
         Ok(accepted)
     }
 
@@ -733,7 +765,8 @@ impl OpenWorkCore {
                     kind,
                     body,
                 )
-                .await?;
+                .await
+                .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         }
         Ok(())
     }
@@ -1097,7 +1130,8 @@ impl OpenWorkCore {
         if !model.enabled {
             return Err(OpenWorkCoreError::ModelDisabled(model.id));
         }
-        let runtime = provider_runtime(&model, self.credentials.as_ref()).await?;
+        let capabilities = require_model_capabilities(&model)?;
+        let runtime = provider_runtime(&model, capabilities, self.credentials.as_ref()).await?;
         let model_port = Arc::from(self.provider_factory.build(&runtime));
         let conversation = self.storage.load_conversation_items(session_id).await?;
         let chat = ChatStateHandle::spawn_items(conversation)
@@ -1155,6 +1189,7 @@ impl OpenWorkCore {
                     Some(model.id),
                     model.provider_kind,
                     model.model_name,
+                    capabilities,
                 ),
                 agent,
                 chat,
@@ -1491,6 +1526,7 @@ fn mark_file_changes_state(
 
 async fn provider_runtime(
     model: &ModelRecord,
+    capabilities: openwork_models::model::ModelCapabilities,
     credentials: &dyn CredentialResolver,
 ) -> Result<ProviderRuntimeConfig, OpenWorkCoreError> {
     let provider_kind = parse_provider_kind(&model.provider_kind)?;
@@ -1519,12 +1555,21 @@ async fn provider_runtime(
                 display_name: Some(model.display_name.clone()),
                 model_tier: ModelTier::Plus,
                 enabled: model.enabled,
+                capabilities: Some(capabilities),
             }],
             enabled: model.enabled,
         },
         credential,
         adapter_options,
     })
+}
+
+fn require_model_capabilities(
+    model: &ModelRecord,
+) -> Result<openwork_models::model::ModelCapabilities, OpenWorkCoreError> {
+    model
+        .capabilities()?
+        .ok_or_else(|| OpenWorkCoreError::ModelCapabilitiesMissing(model.id.clone()))
 }
 
 fn parse_provider_kind(value: &str) -> Result<ProviderKind, OpenWorkCoreError> {
@@ -1550,6 +1595,15 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn test_capabilities() -> openwork_models::model::ModelCapabilities {
+        openwork_models::model::ModelCapabilities {
+            context_window_tokens: 200_000,
+            max_output_tokens: 32_768,
+            max_reasoning_tokens: None,
+            accepts_data_blocks: true,
+        }
+    }
 
     struct FixedTestCredential;
 
@@ -1797,6 +1851,7 @@ mod tests {
                 base_url: "http://127.0.0.1:9".to_string(),
                 credential_ref: Some("test:credential".to_string()),
                 enabled: true,
+                capabilities: test_capabilities(),
                 config: serde_json::json!({}),
             })
             .await
@@ -1886,6 +1941,7 @@ mod tests {
                 base_url: "http://127.0.0.1:9".to_string(),
                 credential_ref: Some("test:credential".to_string()),
                 enabled: true,
+                capabilities: test_capabilities(),
                 config: serde_json::json!({}),
             })
             .await
@@ -1963,7 +2019,6 @@ mod tests {
             Arc::new(crate::session::NoopSessionStorage),
         )
         .expect("default toolset");
-
         let definition = tools
             .resolve(COMPACTION_TRANSCRIPT_TOOL_NAME)
             .expect("conversation history tool");

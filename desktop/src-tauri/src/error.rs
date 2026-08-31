@@ -16,6 +16,7 @@ pub enum CommandErrorCode {
     OperationConflict,
     SkillUnavailable,
     ModelRequestFailed,
+    CollaborationUnavailable,
     InternalError,
 }
 
@@ -45,6 +46,12 @@ impl From<OpenWorkCoreError> for CommandError {
             OpenWorkCoreError::ModelNotFound(id) => Self::new(
                 CommandErrorCode::ConfigurationInvalid,
                 format!("Model not found: {id}"),
+            ),
+            OpenWorkCoreError::ModelCapabilitiesMissing(id) => Self::new(
+                CommandErrorCode::ConfigurationInvalid,
+                format!(
+                    "Model capabilities are missing for {id}; open Settings > Models and edit its provider"
+                ),
             ),
             OpenWorkCoreError::SessionActive(id) => Self::new(
                 CommandErrorCode::OperationConflict,
@@ -102,10 +109,6 @@ impl From<OpenWorkCoreError> for CommandError {
             OpenWorkCoreError::Session(SessionError::EmptyInput) => Self::new(
                 CommandErrorCode::InvalidRequest,
                 "Turn input must not be empty",
-            ),
-            OpenWorkCoreError::Session(SessionError::InvalidContextWindowTokens) => Self::new(
-                CommandErrorCode::InvalidRequest,
-                "Context window token capacity must be positive",
             ),
             OpenWorkCoreError::Session(SessionError::ActorStopped) => Self::new(
                 CommandErrorCode::InternalError,
@@ -215,6 +218,15 @@ impl From<OpenWorkCoreError> for CommandError {
     }
 }
 
+impl From<crate::collab_client::CollabClientError> for CommandError {
+    fn from(error: crate::collab_client::CollabClientError) -> Self {
+        Self::new(
+            CommandErrorCode::CollaborationUnavailable,
+            error.to_string(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use openwork_core::{CompactionError, OpenWorkCoreError, RuntimeTurnId};
@@ -250,6 +262,17 @@ mod tests {
 
         assert_eq!(error.code, CommandErrorCode::SkillUnavailable);
         assert_eq!(error.message, "Selected skill is unavailable: commit");
+    }
+
+    #[test]
+    fn missing_model_capabilities_point_to_the_model_settings() {
+        let error = CommandError::from(OpenWorkCoreError::ModelCapabilitiesMissing(
+            "model-1".to_string(),
+        ));
+
+        assert_eq!(error.code, CommandErrorCode::ConfigurationInvalid);
+        assert!(error.message.contains("Model capabilities are missing"));
+        assert!(error.message.contains("Settings > Models"));
     }
 
     #[tokio::test]

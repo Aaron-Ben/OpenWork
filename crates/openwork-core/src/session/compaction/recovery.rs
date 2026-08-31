@@ -2,19 +2,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use openwork_chat_state::{ChatStateHandle, ConversationView};
+use openwork_chat_state::{ChatStateHandle, ConversationContextView};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::policy::AutomaticCompactionPolicy;
-use super::projection::compacted_items;
+use super::compacted_view::compacted_items;
 use super::{
     CompactionError, CompactionStateCollector, ConversationCompaction, ConversationCompactionKind,
     elapsed_millis, new_trace_id,
 };
-use crate::model_call::estimate_conversation_tokens;
+use crate::context::estimate_conversation_tokens;
 use crate::session::{
     CompactionStarted, CompactionTraceAttributesV1, CompactionTraceGuard, SessionId,
     SessionStorage, TraceRecorder, TurnId,
@@ -44,13 +43,13 @@ pub(crate) enum CompactionTrigger {
     /// The pre-sampling estimate reached the configured threshold.
     Threshold {
         turn_id: TurnId,
-        policy: AutomaticCompactionPolicy,
+        context_window_tokens: u64,
         estimated_input_tokens: u64,
     },
     /// The provider rejected the request for exceeding its input budget.
     Overflow {
         turn_id: TurnId,
-        policy: AutomaticCompactionPolicy,
+        context_window_tokens: u64,
         /// What the failed submission was estimated at. Absent only if the
         /// overflow surfaced before any request was measured.
         estimated_input_tokens: Option<u64>,
@@ -89,15 +88,15 @@ impl CompactionTrigger {
         match self {
             Self::Manual => {}
             Self::Threshold {
-                policy,
+                context_window_tokens,
                 estimated_input_tokens,
                 ..
             } => {
                 attributes.record_trigger_estimate(*estimated_input_tokens);
-                attributes.record_policy(policy.context_window_tokens, policy.threshold_percent);
+                attributes.record_context_window(*context_window_tokens);
             }
             Self::Overflow {
-                policy,
+                context_window_tokens,
                 estimated_input_tokens,
                 model_span_id,
                 error_code,
@@ -106,7 +105,7 @@ impl CompactionTrigger {
                 if let Some(estimated_input_tokens) = estimated_input_tokens {
                     attributes.record_trigger_estimate(*estimated_input_tokens);
                 }
-                attributes.record_policy(policy.context_window_tokens, policy.threshold_percent);
+                attributes.record_context_window(*context_window_tokens);
                 attributes.record_overflow_trigger(model_span_id.as_deref(), error_code);
             }
         }
@@ -163,7 +162,7 @@ async fn rewind_conversation_inner(
     trace: &mut CompactionTraceGuard,
 ) -> Result<ConversationCompaction, CompactionError> {
     let prepare_started = Instant::now();
-    if let Ok(source) = request.chat.conversation_view().await
+    if let Ok(source) = request.chat.context_view().await
         && let Ok(tokens) = estimate_conversation_tokens(&source)
     {
         trace
@@ -212,11 +211,8 @@ async fn rewind_conversation_inner(
 
     let install_started = Instant::now();
     let replacement = compacted_items(&checkpoint, last_user)?;
-    let replacement_conversation = ConversationView {
-        messages: replacement
-            .iter()
-            .map(|item| item.message.clone())
-            .collect(),
+    let replacement_conversation = ConversationContextView {
+        items: replacement.clone(),
     };
     if let Ok(tokens) = estimate_conversation_tokens(&replacement_conversation) {
         trace

@@ -1,21 +1,35 @@
 use openwork_models::model::ContentBlock;
 use serde::Serialize;
 
+mod budget;
 mod builder;
+mod engine;
 mod inspection;
+mod item_limits;
+mod limits;
+mod normalize;
 mod project_instructions;
+mod projection;
 mod skill_catalog;
 mod user_project;
+mod world_state;
 
+pub(crate) use budget::{
+    ContextBudgetError, ContextBudgetEstimate, estimate_conversation_tokens,
+    estimate_serialized_tokens,
+};
 pub(crate) use builder::{SystemContextBuildError, SystemContextBuilder};
+pub(crate) use engine::{ContextEngine, PrepareContextInput, PreparedModelCall};
 pub use inspection::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
     ContextInspectionSystemPart, ContextWindowInspection,
 };
-use project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
-use skill_catalog::SkillCatalogLoader;
+pub(crate) use item_limits::{BoundedItem, check_item_tokens};
+pub(crate) use limits::{AUTO_COMPACT_THRESHOLD_PERCENT, ModelContextLimits};
+pub(crate) use normalize::{NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request};
+pub(crate) use projection::{ProjectionSummary, project_items};
 pub(crate) use skill_catalog::list_skills;
-use user_project::{UserProjectContextError, UserProjectContextLoader};
+pub(crate) use world_state::{RetainedSections, WorldStateBaseline, WorldStateCapture};
 
 /// One independently assembled system-context contribution.
 #[derive(Debug, Clone, PartialEq, Serialize)]

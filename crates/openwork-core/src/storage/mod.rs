@@ -1,4 +1,3 @@
-mod credential;
 mod postgres;
 mod provider;
 pub(crate) mod time;
@@ -10,7 +9,7 @@ mod trace;
 const TRACE_PAYLOAD_ADVISORY_LOCK: i64 = 0x4f50_454e_574f_524b;
 
 pub use crate::session::ConversationProjectionSelector;
-pub use credential::{API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError};
+pub use openwork_credentials::{API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError};
 pub(crate) use postgres::is_valid_task_name;
 pub use postgres::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,

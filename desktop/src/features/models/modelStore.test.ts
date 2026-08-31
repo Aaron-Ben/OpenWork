@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProviderConfig } from './contracts'
+import type { ProviderConfig } from '@/bridge/providerContracts'
 import { selectDefaultModel } from './modelStore'
 
 const providers: ProviderConfig[] = [

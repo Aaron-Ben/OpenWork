@@ -28,7 +28,6 @@ import { EMPTY_RUNTIME_VIEW, useRuntimeStore } from './runtimeStore'
 import { buildTranscript } from './transcript'
 import { useTurnActions } from './useTurn'
 import { contextUsageFromTrace, type ContextUsage } from './contextUsage'
-import { useContextWindowStore } from '@/features/settings/contextWindowStore'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { useNavigationStore } from '@/app/navigationStore'
 
@@ -83,7 +82,6 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const loadState = useSessionStore((state) => sessionId ? state.loadStateBySession[sessionId] : undefined)
   const reloadSession = useSessionStore((state) => state.reload)
   const providers = useModelStore((state) => state.providers)
-  const contextWindowTokens = useContextWindowStore((state) => state.contextWindowTokens)
   const messageFocus = useNavigationStore((state) => state.messageFocus)
   const clearMessageFocus = useNavigationStore((state) => state.clearMessageFocus)
   const requestMessageFocus = useNavigationStore((state) => state.requestMessageFocus)
@@ -129,6 +127,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
       enabled: true,
     }
   }, [providers, session?.defaultModelId])
+  const contextWindowTokens = sessionModel?.capabilities?.contextWindowTokens ?? null
 
   const refreshSkills = useCallback(async () => {
     const requestSequence = skillRefreshSequenceRef.current + 1
@@ -198,6 +197,10 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
 
   useEffect(() => {
     if (!sessionId) return
+    if (contextWindowTokens === null) {
+      setContextUsage(null)
+      return
+    }
     let active = true
     const activeSessionId = sessionId
     const totalTokens = contextWindowTokens
@@ -249,7 +252,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         setContextInspection(value)
         setContextUsage({
           usedTokens: value.budget.estimatedInputTokens,
-          totalTokens: contextWindowTokens,
+          totalTokens: value.budget.contextWindowTokens,
           estimated: true,
         })
       })
@@ -262,7 +265,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     return () => {
       active = false
     }
-  }, [contextInspectorOpen, contextInspectionRefresh, contextInspectionRevision, contextWindowTokens, sessionId])
+  }, [contextInspectorOpen, contextInspectionRefresh, contextInspectionRevision, sessionId])
 
   async function send(skills: RuntimeSkillInput[] = []) {
     const submittedRevision = draftRevisionRef.current
@@ -422,7 +425,6 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           <ContextWindowDrawer
             sessionId={sessionId}
             inspection={contextInspection}
-            contextWindowTokens={contextWindowTokens}
             highlightedTurnId={runtime.turnId}
             loading={contextInspectionLoading}
             error={contextInspectionError}

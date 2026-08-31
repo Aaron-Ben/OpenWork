@@ -45,6 +45,14 @@ describe('ProviderFormModal layout', () => {
       plusModelsText: 'deepseek-v4-flash',
       proModelsText: '',
       extraBodyText: '',
+      capabilitiesByModel: {
+        'deepseek-v4-flash': {
+          contextWindowTokens: '200000',
+          maxOutputTokens: '32768',
+          maxReasoningTokens: '',
+          acceptsDataBlocks: false,
+        },
+      },
     }
 
     expect(buildProviderInput(draft, 'edit')).toMatchObject({
@@ -67,9 +75,59 @@ describe('ProviderFormModal layout', () => {
       plusModelsText: '',
       proModelsText: '',
       extraBodyText: '',
+      capabilitiesByModel: {},
     }, 'create')).toEqual({
       ok: false,
       errorKey: 'modelRequired',
+    })
+  })
+
+  it('requires explicit model capabilities and applies the Core generation reserve rule', () => {
+    const draft = {
+      name: 'Custom',
+      baseUrl: 'https://example.com',
+      apiKey: 'secret',
+      kind: 'openai' as const,
+      liteModelsText: '',
+      plusModelsText: 'custom-model',
+      proModelsText: '',
+      extraBodyText: '',
+      capabilitiesByModel: {
+        'custom-model': {
+          contextWindowTokens: '',
+          maxOutputTokens: '100',
+          maxReasoningTokens: '20',
+          acceptsDataBlocks: true,
+        },
+      },
+    }
+
+    expect(buildProviderInput(draft, 'create')).toEqual({
+      ok: false,
+      errorKey: 'contextWindowTokensInvalid',
+      model: 'custom-model',
+    })
+
+    draft.capabilitiesByModel['custom-model'].contextWindowTokens = '120'
+    expect(buildProviderInput(draft, 'create')).toEqual({
+      ok: false,
+      errorKey: 'generationReservationExhaustsWindow',
+      model: 'custom-model',
+    })
+
+    draft.capabilitiesByModel['custom-model'].contextWindowTokens = '121'
+    expect(buildProviderInput(draft, 'create')).toMatchObject({
+      ok: true,
+      input: {
+        models: [{
+          capabilities: {
+            contextWindowTokens: 121,
+            maxOutputTokens: 100,
+            maxReasoningTokens: 20,
+            acceptsDataBlocks: true,
+          },
+        }],
+      },
     })
   })
 

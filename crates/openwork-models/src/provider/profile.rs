@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::model::ModelCapabilities;
+
 use super::ProviderKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,6 +33,8 @@ pub struct ProviderModel {
     pub model_tier: ModelTier,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ModelCapabilities>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

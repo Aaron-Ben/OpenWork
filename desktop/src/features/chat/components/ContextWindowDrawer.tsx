@@ -17,7 +17,6 @@ import { formatTokenCount } from './ContextUsageIndicator'
 interface ContextWindowDrawerProps {
   sessionId: string
   inspection: RuntimeContextWindowInspection | null
-  contextWindowTokens: number
   highlightedTurnId?: string | null
   loading: boolean
   error: string | null
@@ -30,7 +29,6 @@ interface ContextWindowDrawerProps {
 export function ContextWindowDrawer({
   sessionId,
   inspection,
-  contextWindowTokens,
   highlightedTurnId,
   loading,
   error,
@@ -51,6 +49,7 @@ export function ContextWindowDrawer({
 
   const currentTurnId = highlightedTurnId ?? inspection?.currentTurnId ?? null
   const usedTokens = inspection?.budget.estimatedInputTokens ?? 0
+  const contextWindowTokens = inspection?.budget.contextWindowTokens ?? 0
   const usedPercent = contextWindowTokens > 0
     ? Math.min(100, Math.max(0, Math.round((usedTokens / contextWindowTokens) * 100)))
     : 0
