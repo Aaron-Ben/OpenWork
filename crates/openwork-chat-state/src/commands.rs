@@ -3,7 +3,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     AssistantDraftSnapshot, ChatStateError, ConversationContextView, ConversationItem,
-    ConversationSnapshot, MessageKind,
+    ConversationSnapshot, MessageKind, ToolResultPruning,
 };
 
 pub(crate) enum ChatStateCommand {
@@ -42,6 +42,9 @@ pub(crate) enum ChatStateCommand {
     ReplaceItems {
         items: Vec<ConversationItem>,
         respond_to: oneshot::Sender<Result<(), ChatStateError>>,
+    },
+    SetToolResultPruning {
+        pruning: ToolResultPruning,
     },
     ContextView {
         respond_to: oneshot::Sender<ConversationContextView>,

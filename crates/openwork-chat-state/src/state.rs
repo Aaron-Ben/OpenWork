@@ -5,13 +5,14 @@ use thiserror::Error;
 
 use crate::{
     AssistantDraftSnapshot, ConversationContextView, ConversationItem, ConversationSnapshot,
-    MessageKind,
+    MessageKind, ToolResultPruning,
 };
 
 pub(crate) struct ConversationState {
     items: Vec<ConversationItem>,
     draft: Option<AssistantDraftSnapshot>,
     unresolved_tool_calls: HashSet<String>,
+    tool_result_pruning: ToolResultPruning,
 }
 
 impl ConversationState {
@@ -24,6 +25,7 @@ impl ConversationState {
             items: Vec::new(),
             draft: None,
             unresolved_tool_calls: HashSet::new(),
+            tool_result_pruning: ToolResultPruning::default(),
         };
         for item in items {
             state.append_existing(item)?;
@@ -123,7 +125,8 @@ impl ConversationState {
         if self.draft.is_some() {
             return Err(ChatStateError::DraftAlreadyActive);
         }
-        let replacement = Self::try_new(messages)?;
+        let mut replacement = Self::try_new(messages)?;
+        replacement.tool_result_pruning = std::mem::take(&mut self.tool_result_pruning);
         *self = replacement;
         Ok(())
     }
@@ -135,14 +138,22 @@ impl ConversationState {
         if self.draft.is_some() {
             return Err(ChatStateError::DraftAlreadyActive);
         }
-        let replacement = Self::try_new_items(items)?;
+        let mut replacement = Self::try_new_items(items)?;
+        replacement.tool_result_pruning = std::mem::take(&mut self.tool_result_pruning);
         *self = replacement;
         Ok(())
+    }
+
+    /// Pruning state outlives replacements: a compaction or reload changes the
+    /// items, not which results the projection has committed to shorten.
+    pub(crate) fn set_tool_result_pruning(&mut self, pruning: ToolResultPruning) {
+        self.tool_result_pruning = pruning;
     }
 
     pub(crate) fn context_view(&self) -> ConversationContextView {
         ConversationContextView {
             items: self.items.clone(),
+            tool_result_pruning: self.tool_result_pruning.clone(),
         }
     }
 

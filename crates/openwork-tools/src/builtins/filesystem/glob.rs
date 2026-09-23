@@ -1,32 +1,36 @@
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::SystemTime;
+
 use async_trait::async_trait;
-use globset::{Glob as GlobPattern, GlobSet};
+use globset::GlobMatcher;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::builtins::truncate_output;
+use super::scan::{
+    Interrupt, SCAN_TIMEOUT, ScanBudget, compile_glob, display_path, relative_to_root,
+};
+use crate::context::PathIntent;
 use crate::policy::AccessKind;
+use crate::spill::{SpillFile, SpillWriter};
 use crate::{
-    AnalysisUnit, Effect, InvocationAnalysis, TextToolOutput, Tool, ToolCallContext,
-    ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AnalysisUnit, AsyncFileSystem, Effect, InvocationAnalysis, TextToolOutput, Tool,
+    ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
 
-use crate::context::PathIntent;
-
-const DEFAULT_MAX_RESULTS: usize = 200;
-const MAX_RESULTS: usize = 2000;
-const MAX_OUTPUT_BYTES: usize = 32 * 1024;
+/// Paths returned (tools.md §9 glob).
+const MAX_RESULTS: usize = 100;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GlobInput {
-    /// Glob pattern, for example `**/*.rs` or `src/**/*.ts`.
+    /// Glob pattern relative to `path`, for example `**/*.rs` or `src/**/*.ts`.
     pub pattern: String,
     /// Directory to search; defaults to the working directory.
     #[serde(default = "default_path")]
     pub path: String,
-    /// Maximum number of matching paths. Defaults to 200 and is capped at 2000.
-    #[serde(default = "default_max_results")]
-    pub max_results: usize,
 }
 
 #[derive(Debug, Default)]
@@ -42,7 +46,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &'static str {
-        "Find files by name pattern (e.g. \"**/*.rs\"). Respects .gitignore. Returns matching file paths, one per line."
+        "Find files by name pattern (e.g. \"**/*.rs\"). Respects .gitignore. Returns at most 100 paths, most recently modified first, and the exact number of matches; when results are cut, the full list is saved to a file you can read."
     }
 
     fn risk(&self) -> ToolRisk {
@@ -70,66 +74,33 @@ impl Tool for GlobTool {
         call: ToolCallContext,
         input: GlobInput,
     ) -> Result<TextToolOutput, ToolExecutionError> {
-        if input.max_results == 0 || input.max_results > MAX_RESULTS {
-            return Err(ToolExecutionError::invalid_arguments(format!(
-                "maxResults must be between 1 and {MAX_RESULTS}"
-            )));
-        }
-        let glob = GlobPattern::new(&input.pattern).map_err(|error| {
-            ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
-        })?;
-        let set = GlobSet::builder().add(glob).build().map_err(|error| {
-            ToolExecutionError::invalid_arguments(format!("invalid glob: {error}"))
-        })?;
+        let matcher = compile_glob(&input.pattern)?;
         let root = session
             .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
             .await?;
-        let mut files = session
+        let workspace = session
             .filesystem
-            .walk_files(root.as_path())
+            .canonicalize(&session.working_directory)
             .await
-            .map_err(|error| ToolExecutionError::execution(format!("glob failed: {error}")))?;
-        let mut matches = Vec::with_capacity(input.max_results.min(64));
-        let mut scanned = 0usize;
-        while matches.len() < input.max_results {
-            let path = tokio::select! {
-                _ = call.cancel.cancelled() => {
-                    return Err(ToolExecutionError::cancelled("glob cancelled"));
-                }
-                path = files.next() => path
-                    .map_err(|error| ToolExecutionError::execution(format!("glob failed: {error}")))?,
-            };
-            let Some(path) = path else {
-                break;
-            };
-            scanned += 1;
-            if scanned.is_multiple_of(250) {
-                call.report_progress(crate::ToolProgress::Message {
-                    message: format!("glob scanned {scanned} files"),
-                });
-            }
-            let relative = relative_path(root.as_path(), &path);
-            if set.is_match(&relative) {
-                matches.push(relative.display().to_string());
-            }
-        }
-        matches.sort();
-        let limit_reached = matches.len() >= input.max_results;
-        let mut output = if matches.is_empty() {
-            "no files matched\n".to_string()
-        } else {
-            format!("{}\n", matches.join("\n"))
+            .unwrap_or_else(|_| session.working_directory.clone());
+        let request = ScanRequest {
+            filesystem: session.filesystem.clone(),
+            root: root.as_path().to_path_buf(),
+            workspace,
+            matcher,
+            spill_path: session
+                .spill
+                .as_ref()
+                .map(|spill| spill.file_for(&call.call_id)),
+            budget: ScanBudget::new(call.cancel.clone(), SCAN_TIMEOUT),
         };
-        if limit_reached {
-            output.push_str(&format!(
-                "[result limit reached at {}; more matches may exist]\n",
-                input.max_results
-            ));
+        let scan = tokio::task::spawn_blocking(move || scan(request))
+            .await
+            .map_err(|error| ToolExecutionError::execution(format!("glob task failed: {error}")))?;
+        if scan.interrupt == Some(Interrupt::Cancelled) {
+            return Err(ToolExecutionError::cancelled("glob cancelled"));
         }
-        Ok(TextToolOutput::new(truncate_output(
-            output,
-            MAX_OUTPUT_BYTES,
-        )))
+        Ok(TextToolOutput::new(scan.render(&input)))
     }
 }
 
@@ -137,89 +108,245 @@ fn default_path() -> String {
     ".".to_string()
 }
 
-fn default_max_results() -> usize {
-    DEFAULT_MAX_RESULTS
+struct ScanRequest {
+    filesystem: Arc<dyn AsyncFileSystem>,
+    root: PathBuf,
+    workspace: PathBuf,
+    matcher: GlobMatcher,
+    spill_path: Option<PathBuf>,
+    budget: ScanBudget,
 }
 
-fn relative_path(root: &std::path::Path, path: &std::path::Path) -> std::path::PathBuf {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    if relative.as_os_str().is_empty() {
-        path.file_name()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| path.to_path_buf())
-    } else {
-        relative.to_path_buf()
+struct Scan {
+    /// Newest first.
+    newest: Vec<String>,
+    total: u64,
+    interrupt: Option<Interrupt>,
+    spill: Option<SpillFile>,
+}
+
+/// Keeps the [`MAX_RESULTS`] most recently modified matches in a min-heap, so
+/// memory does not depend on the number of matches. The full list goes to
+/// the spill writer in traversal order.
+fn scan(request: ScanRequest) -> Scan {
+    let mut heap = BinaryHeap::<Reverse<(SystemTime, String)>>::with_capacity(MAX_RESULTS + 1);
+    let mut spill = SpillWriter::new(request.spill_path.clone());
+    let mut total = 0u64;
+    let mut interrupt = None;
+    for entry in request.filesystem.walk_files(&request.root) {
+        if let Some(stop) = request.budget.check() {
+            interrupt = Some(stop);
+            break;
+        }
+        let Ok(entry) = entry else { continue };
+        if !request
+            .matcher
+            .is_match(relative_to_root(&request.root, &entry.path))
+        {
+            continue;
+        }
+        total += 1;
+        let display = display_path(&request.workspace, &entry.path);
+        spill.push(format!("{display}\n").as_bytes());
+        heap.push(Reverse((
+            entry.modified.unwrap_or(SystemTime::UNIX_EPOCH),
+            display,
+        )));
+        if heap.len() > MAX_RESULTS {
+            heap.pop();
+        }
+    }
+    let newest = heap
+        .into_sorted_vec()
+        .into_iter()
+        .map(|Reverse((_, display))| display)
+        .collect::<Vec<_>>();
+    let truncated = total > newest.len() as u64;
+    Scan {
+        newest,
+        total,
+        interrupt,
+        spill: spill.finish(truncated),
+    }
+}
+
+impl Scan {
+    fn render(&self, input: &GlobInput) -> String {
+        let timed_out = self.interrupt == Some(Interrupt::TimedOut);
+        if self.total == 0 {
+            return if timed_out {
+                format!(
+                    "No files match {} in {} before the search timed out after {}s — narrow the path or pattern",
+                    input.pattern,
+                    input.path,
+                    SCAN_TIMEOUT.as_secs()
+                )
+            } else {
+                format!("No files match {} in {}", input.pattern, input.path)
+            };
+        }
+        let mut text = self.newest.join("\n");
+        let saved = match &self.spill {
+            Some(spill) if spill.capped => format!(
+                "; the first 64 MB of the full list is saved to {}",
+                spill.path.display()
+            ),
+            Some(spill) => format!("; full list saved to {}", spill.path.display()),
+            None => String::new(),
+        };
+        if timed_out {
+            text.push_str(&format!(
+                "\n\n[at least {} files; search timed out after {}s — narrow the path or pattern{saved}]",
+                self.total,
+                SCAN_TIMEOUT.as_secs()
+            ));
+        } else if self.total > self.newest.len() as u64 {
+            text.push_str(&format!(
+                "\n\n[showing the {} most recently modified of {} files{saved}]",
+                self.newest.len(),
+                self.total
+            ));
+        }
+        text
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use tokio_util::sync::CancellationToken;
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{PermissionProfile, ToolCallId, ToolErrorCode, ToolOutput};
+    use crate::{PermissionProfile, SpillDirectory, ToolCallId, ToolErrorCode, ToolOutput};
 
-    #[tokio::test]
-    async fn streams_only_the_requested_number_of_matches() {
-        let workspace = TestDirectory::new("glob-limit");
-        for name in ["a.rs", "b.rs", "c.rs"] {
-            std::fs::write(workspace.path().join(name), name).expect("write fixture");
-        }
-        let session = ToolSessionContext::local(
+    fn session(workspace: &TestDirectory) -> ToolSessionContext {
+        ToolSessionContext::local(
             workspace.path().to_path_buf(),
             PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
-        );
+        )
+    }
 
-        let result = GlobTool
+    async fn glob(session: &ToolSessionContext, pattern: &str, path: &str) -> String {
+        GlobTool
             .execute(
-                &session,
-                ToolCallContext::new(ToolCallId::new("glob-limit"), CancellationToken::new()),
+                session,
+                ToolCallContext::new(ToolCallId::new("glob"), CancellationToken::new()),
                 GlobInput {
-                    pattern: "*.rs".to_string(),
-                    path: ".".to_string(),
-                    max_results: 2,
+                    pattern: pattern.to_string(),
+                    path: path.to_string(),
                 },
             )
             .await
             .expect("glob result")
-            .into_tool_result();
+            .into_tool_result()
+            .text_content()
+    }
 
+    fn set_modified(path: &std::path::Path, seconds: u64) {
+        let file = std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open fixture");
+        file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+            .expect("set mtime");
+    }
+
+    /// tools.md §12 #24: at most 100 paths, newest first, exact total, full
+    /// list on disk.
+    #[tokio::test]
+    async fn acc_24_returns_the_newest_hundred_with_an_exact_total() {
+        let workspace = TestDirectory::new("glob-newest");
+        for index in 0..150u64 {
+            let path = workspace.path().join(format!("f{index:03}.rs"));
+            std::fs::write(&path, "").expect("write fixture");
+            set_modified(&path, 1_000_000 + index);
+        }
+        std::fs::write(workspace.path().join("skip.txt"), "").expect("write fixture");
+        let spill_root = workspace.path().join(".spill");
+        let session = session(&workspace).with_spill_directory(SpillDirectory::new(&spill_root));
+
+        let text = glob(&session, "*.rs", ".").await;
+
+        let (listing, footer) = text.split_once("\n\n").expect("footer");
+        let listed = listing.lines().collect::<Vec<_>>();
+        assert_eq!(listed.len(), MAX_RESULTS);
+        assert_eq!(listed.first(), Some(&"f149.rs"));
+        assert_eq!(listed.last(), Some(&"f050.rs"));
+        let saved = spill_root.join("glob.txt");
         assert_eq!(
-            result
-                .text_content()
-                .lines()
-                .filter(|line| !line.starts_with('['))
-                .count(),
-            2
+            footer,
+            format!(
+                "[showing the 100 most recently modified of 150 files; full list saved to {}]",
+                saved.display()
+            )
         );
-        assert!(result.text_content().contains("result limit reached"));
+        assert_eq!(
+            std::fs::read_to_string(saved)
+                .expect("spill file")
+                .lines()
+                .count(),
+            150
+        );
+    }
+
+    #[tokio::test]
+    async fn matches_relative_to_the_search_root_and_shows_workspace_paths() {
+        let workspace = TestDirectory::new("glob-relative");
+        std::fs::create_dir_all(workspace.path().join("desktop/src")).expect("create dirs");
+        std::fs::write(workspace.path().join("desktop/src/app.ts"), "").expect("write fixture");
+
+        let text = glob(&session(&workspace), "src/**/*.ts", "desktop").await;
+
+        assert_eq!(text, "desktop/src/app.ts");
+    }
+
+    #[tokio::test]
+    async fn reports_no_matches() {
+        let workspace = TestDirectory::new("glob-none");
+        assert_eq!(
+            glob(&session(&workspace), "*.rs", ".").await,
+            "No files match *.rs in ."
+        );
     }
 
     #[tokio::test]
     async fn observes_cancellation_while_traversing() {
         let workspace = TestDirectory::new("glob-cancel");
         std::fs::write(workspace.path().join("a.rs"), "fixture").expect("write fixture");
-        let session = ToolSessionContext::local(
-            workspace.path().to_path_buf(),
-            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
-        );
         let cancel = CancellationToken::new();
         cancel.cancel();
 
         let error = GlobTool
             .execute(
-                &session,
+                &session(&workspace),
                 ToolCallContext::new(ToolCallId::new("glob-cancel"), cancel),
                 GlobInput {
                     pattern: "*.rs".to_string(),
                     path: ".".to_string(),
-                    max_results: 10,
                 },
             )
             .await
             .expect_err("cancelled traversal");
 
         assert_eq!(error.code, ToolErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn timeout_reports_at_least_the_counted_files() {
+        let scan = Scan {
+            newest: vec!["a.rs".to_string()],
+            total: 1,
+            interrupt: Some(Interrupt::TimedOut),
+            spill: None,
+        };
+        assert_eq!(
+            scan.render(&GlobInput {
+                pattern: "*.rs".to_string(),
+                path: ".".to_string()
+            }),
+            "a.rs\n\n[at least 1 files; search timed out after 30s — narrow the path or pattern]"
+        );
     }
 }

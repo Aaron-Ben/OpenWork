@@ -169,10 +169,14 @@ async fn undo_refuses_to_overwrite_an_external_change() {
     let root = TestDirectory::new("undo-conflict");
     let context = session(root.path());
     let toolset = builtin_registry()
-        .finalize(&ToolsetConfig::from_names(["write"]), context.clone())
+        .finalize(
+            &ToolsetConfig::from_names(["read", "write"]),
+            context.clone(),
+        )
         .expect("toolset");
     let path = root.path().join("README.md");
     std::fs::write(&path, "before\n").expect("write fixture");
+    call(&toolset, "read-before", "read", json!({"path": path})).await;
 
     let changed = call(
         &toolset,
@@ -251,10 +255,14 @@ async fn reapply_refuses_to_overwrite_a_change_made_after_undo() {
     let root = TestDirectory::new("reapply-conflict");
     let context = session(root.path());
     let toolset = builtin_registry()
-        .finalize(&ToolsetConfig::from_names(["write"]), context.clone())
+        .finalize(
+            &ToolsetConfig::from_names(["read", "write"]),
+            context.clone(),
+        )
         .expect("toolset");
     let path = root.path().join("README.md");
     std::fs::write(&path, "before\n").expect("write fixture");
+    call(&toolset, "read-before", "read", json!({"path": path})).await;
 
     let changed = call(
         &toolset,

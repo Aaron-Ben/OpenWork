@@ -4,7 +4,9 @@ use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use openwork_agent::{Agent, AgentBuilder, AgentDefinition, explorer_definition};
-use openwork_chat_state::{ChatStateHandle, ConversationContextView, ConversationItem};
+use openwork_chat_state::{
+    ChatStateHandle, ConversationContextView, ConversationItem, ToolResultPruning,
+};
 use openwork_models::ProviderFactory;
 use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
@@ -12,9 +14,9 @@ use openwork_models::provider::{
     ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
 };
 use openwork_tools::{
-    FileChangeArtifact, FileChangeReapplyError, FileChangeUndoError, FinalizedToolset,
-    PermissionMode, PermissionProfile, ReapplyFileChangesResult, ToolSessionContext,
-    UndoFileChangesResult, builtin_registry,
+    FileChangeArtifact, FileChangeReapplyError, FileChangeUndoError, FileObservations,
+    FinalizedToolset, PermissionMode, PermissionProfile, ReapplyFileChangesResult, SpillDirectory,
+    ToolSessionContext, UndoFileChangesResult, builtin_registry,
     reapply_file_changes as reapply_workspace_file_changes,
     undo_file_changes as undo_workspace_file_changes,
 };
@@ -39,6 +41,7 @@ use crate::session::{
     TurnAccepted, TurnId, TurnToolset,
 };
 use crate::skills::{SkillRoots, resolve_selected_skills};
+use crate::spill::{SPILL_RETENTION, SpillRoot};
 use crate::storage::{
     ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
     PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
@@ -53,6 +56,9 @@ pub struct OpenWorkCoreConfig {
     pub database_url: Option<String>,
     pub trace_content: TraceContentConfig,
     pub agents_skills_root: Option<PathBuf>,
+    /// Root of the per-session spill directories (tools.md §10). `None`
+    /// keeps tool results bounded without saving the omitted content.
+    pub spill_root: Option<PathBuf>,
 }
 
 impl OpenWorkCoreConfig {
@@ -61,7 +67,8 @@ impl OpenWorkCoreConfig {
         Self {
             database_url: std::env::var("DATABASE_URL").ok(),
             trace_content: TraceContentConfig::default(),
-            agents_skills_root: home.map(|home| home.join(".agents/skills")),
+            agents_skills_root: home.as_ref().map(|home| home.join(".agents/skills")),
+            spill_root: home.map(|home| home.join(".openwork/spill")),
         }
     }
 }
@@ -178,6 +185,8 @@ pub struct OpenWorkCore {
     providers: Option<Arc<dyn ProviderRepository>>,
     skill_roots: SkillRoots,
     skill_permission_roots: Vec<PathBuf>,
+    spill_root: Option<SpillRoot>,
+    file_observations: Mutex<HashMap<SessionId, FileObservations>>,
     disabled_skill_names: RwLock<BTreeSet<String>>,
     skill_status_update: Mutex<()>,
     update_tx: broadcast::Sender<SessionUpdateEnvelope>,
@@ -208,6 +217,7 @@ impl OpenWorkCore {
             SkillRoots {
                 agents: config.agents_skills_root,
             },
+            config.spill_root.map(SpillRoot::new),
         )
         .await
     }
@@ -221,6 +231,7 @@ impl OpenWorkCore {
             None,
             TraceContentConfig::default(),
             SkillRoots::default(),
+            None,
         )
         .await
     }
@@ -235,6 +246,7 @@ impl OpenWorkCore {
             None,
             TraceContentConfig::default(),
             SkillRoots::default(),
+            None,
         )
         .await
     }
@@ -245,8 +257,12 @@ impl OpenWorkCore {
         providers: Option<Arc<dyn ProviderRepository>>,
         trace_content: TraceContentConfig,
         skill_roots: SkillRoots,
+        spill_root: Option<SpillRoot>,
     ) -> Result<Arc<Self>, OpenWorkCoreError> {
         storage.migrate().await?;
+        if let Some(spill_root) = &spill_root {
+            spill_root.purge_older_than(SPILL_RETENTION).await;
+        }
         let disabled_skill_names = RwLock::new(storage.disabled_skill_names().await?);
         let permission_root_source = skill_roots.clone();
         let skill_permission_roots = spawn_skill_filesystem_task(move || {
@@ -271,6 +287,8 @@ impl OpenWorkCore {
             providers,
             skill_roots,
             skill_permission_roots,
+            spill_root,
+            file_observations: Mutex::new(HashMap::new()),
             disabled_skill_names,
             skill_status_update: Mutex::new(()),
             update_tx,
@@ -283,6 +301,43 @@ impl OpenWorkCore {
 
     pub fn storage(&self) -> &PostgresStorage {
         &self.storage
+    }
+
+    /// Which old tool results the projection prunes, as persisted
+    /// (compaction.md §1.1).
+    async fn tool_result_pruning(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<ToolResultPruning, OpenWorkCoreError> {
+        Ok(ToolResultPruning {
+            through_sequence: self
+                .storage
+                .load_tool_result_pruned_through(session_id)
+                .await?,
+            spill_directory: self
+                .spill_root
+                .as_ref()
+                .map(|spill_root| spill_root.session(session_id).path().to_path_buf()),
+        })
+    }
+
+    /// Tool state that outlives one Turn's toolset: the spill directory and
+    /// the read-before-edit table (tools.md §9, §10).
+    async fn session_tool_state(&self, session_id: &SessionId) -> SessionToolState {
+        let observations = self
+            .file_observations
+            .lock()
+            .await
+            .entry(session_id.clone())
+            .or_default()
+            .clone();
+        SessionToolState {
+            spill: self
+                .spill_root
+                .as_ref()
+                .map(|spill_root| spill_root.session(session_id)),
+            observations,
+        }
     }
 
     pub async fn list_providers(&self) -> Result<ProviderIndex, OpenWorkCoreError> {
@@ -477,8 +532,11 @@ impl OpenWorkCore {
         let capabilities = require_model_capabilities(&model)?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
         let (agent, tools, control_surface) = if loaded.session.is_sub_agent() {
-            let (agent, tools) =
-                build_explorer_agent_and_tools(&working_directory, &self.skill_permission_roots)?;
+            let (agent, tools) = build_explorer_agent_and_tools(
+                &working_directory,
+                &self.skill_permission_roots,
+                self.session_tool_state(session_id).await,
+            )?;
             (agent, tools, ControlToolSurface::SubAgent)
         } else {
             let control = self.agent_control_for_root(session_id).await?;
@@ -486,6 +544,7 @@ impl OpenWorkCore {
                 session_id,
                 &working_directory,
                 &self.skill_permission_roots,
+                self.session_tool_state(session_id).await,
                 self.storage.clone(),
             )?;
             (
@@ -541,6 +600,7 @@ impl OpenWorkCore {
                 &system_context,
                 ConversationContextView {
                     items: conversation_items,
+                    tool_result_pruning: self.tool_result_pruning(session_id).await?,
                 },
                 tools.definitions(),
             ))
@@ -623,6 +683,20 @@ impl OpenWorkCore {
         self.storage.delete_session(session_id).await?;
         self.unload_runtime_session_tree(session_id, &children)
             .await;
+        let mut session_ids = children
+            .iter()
+            .map(|child| SessionId::new(child.id.clone()))
+            .collect::<Vec<_>>();
+        session_ids.push(session_id.clone());
+        {
+            let mut observations = self.file_observations.lock().await;
+            for id in &session_ids {
+                observations.remove(id);
+            }
+        }
+        if let Some(spill_root) = &self.spill_root {
+            spill_root.remove_sessions(&session_ids).await;
+        }
         Ok(())
     }
 
@@ -1136,49 +1210,54 @@ impl OpenWorkCore {
         let conversation = self.storage.load_conversation_items(session_id).await?;
         let chat = ChatStateHandle::spawn_items(conversation)
             .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
+        chat.set_tool_result_pruning(self.tool_result_pruning(session_id).await?)
+            .await
+            .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
-        let (agent, tools, control_surface, approval, parent_link, agent_control) = if let (
-            Some(parent_session_id),
-            Some(task_name),
-        ) = (
-            loaded.session.parent_session_id.as_deref(),
-            loaded.session.task_name.as_deref(),
-        ) {
-            let parent_session_id = SessionId::new(parent_session_id);
-            let agent_control = self.agent_control_for_root(&parent_session_id).await?;
-            let (agent, tools) =
-                build_explorer_agent_and_tools(&working_directory, &self.skill_permission_roots)?;
-            (
-                agent,
-                tools,
-                ControlToolSurface::SubAgent,
-                SessionApproval::NonInteractive,
-                Some(ParentLink {
-                    parent_session_id,
-                    task_name: task_name.to_string(),
-                    agent_control: agent_control.clone(),
-                }),
-                agent_control,
-            )
-        } else {
-            let agent_control = self.agent_control_for_root(session_id).await?;
-            let (agent, tools) = build_default_agent_and_tools(
-                session_id,
-                &working_directory,
-                &self.skill_permission_roots,
-                self.storage.clone(),
-            )?;
-            (
-                agent,
-                tools,
-                ControlToolSurface::Root {
-                    max_active_sub_agent_turns: agent_control.max_active_turns(),
-                },
-                SessionApproval::Interactive,
-                None,
-                agent_control,
-            )
-        };
+        let (agent, tools, control_surface, approval, parent_link, agent_control) =
+            if let (Some(parent_session_id), Some(task_name)) = (
+                loaded.session.parent_session_id.as_deref(),
+                loaded.session.task_name.as_deref(),
+            ) {
+                let parent_session_id = SessionId::new(parent_session_id);
+                let agent_control = self.agent_control_for_root(&parent_session_id).await?;
+                let (agent, tools) = build_explorer_agent_and_tools(
+                    &working_directory,
+                    &self.skill_permission_roots,
+                    self.session_tool_state(session_id).await,
+                )?;
+                (
+                    agent,
+                    tools,
+                    ControlToolSurface::SubAgent,
+                    SessionApproval::NonInteractive,
+                    Some(ParentLink {
+                        parent_session_id,
+                        task_name: task_name.to_string(),
+                        agent_control: agent_control.clone(),
+                    }),
+                    agent_control,
+                )
+            } else {
+                let agent_control = self.agent_control_for_root(session_id).await?;
+                let (agent, tools) = build_default_agent_and_tools(
+                    session_id,
+                    &working_directory,
+                    &self.skill_permission_roots,
+                    self.session_tool_state(session_id).await,
+                    self.storage.clone(),
+                )?;
+                (
+                    agent,
+                    tools,
+                    ControlToolSurface::Root {
+                        max_active_sub_agent_turns: agent_control.max_active_turns(),
+                    },
+                    SessionApproval::Interactive,
+                    None,
+                    agent_control,
+                )
+            };
 
         Ok(SessionHandle::spawn_with_global_updates(
             SessionRuntimeConfig {
@@ -1335,6 +1414,7 @@ fn build_default_agent_and_tools(
     session_id: &SessionId,
     working_directory: &Path,
     skill_permission_roots: &[PathBuf],
+    state: SessionToolState,
     storage: Arc<dyn SessionStorage>,
 ) -> Result<(Agent, FinalizedToolset), OpenWorkCoreError> {
     let mut definition = AgentDefinition::default();
@@ -1348,10 +1428,7 @@ fn build_default_agent_and_tools(
         .register(ConversationTranscriptTool::new(session_id.clone(), storage))
         .finalize(
             agent.toolset_config(),
-            ToolSessionContext::local(
-                working_directory.to_path_buf(),
-                skill_permission_profile(working_directory, skill_permission_roots),
-            ),
+            tool_session_context(working_directory, skill_permission_roots, state),
         )
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
     Ok((agent, tools))
@@ -1360,6 +1437,7 @@ fn build_default_agent_and_tools(
 fn build_explorer_agent_and_tools(
     working_directory: &Path,
     skill_permission_roots: &[PathBuf],
+    state: SessionToolState,
 ) -> Result<(Agent, FinalizedToolset), OpenWorkCoreError> {
     let agent = AgentBuilder::new(explorer_definition())
         .build()
@@ -1367,13 +1445,46 @@ fn build_explorer_agent_and_tools(
     let tools = builtin_registry()
         .finalize(
             agent.toolset_config(),
-            ToolSessionContext::local(
-                working_directory.to_path_buf(),
-                skill_permission_profile(working_directory, skill_permission_roots),
-            ),
+            tool_session_context(working_directory, skill_permission_roots, state),
         )
         .map_err(|error| OpenWorkCoreError::RuntimeComponent(error.to_string()))?;
     Ok((agent, tools))
+}
+
+/// Per-session tool state that Core keeps across Turns.
+#[derive(Debug, Clone, Default)]
+struct SessionToolState {
+    spill: Option<SpillDirectory>,
+    observations: FileObservations,
+}
+
+fn tool_session_context(
+    working_directory: &Path,
+    skill_permission_roots: &[PathBuf],
+    state: SessionToolState,
+) -> ToolSessionContext {
+    let Some(spill) = state.spill else {
+        return ToolSessionContext::local(
+            working_directory.to_path_buf(),
+            skill_permission_profile(working_directory, skill_permission_roots),
+        )
+        .with_file_observations(state.observations);
+    };
+    // The spill directory needs the skill roots' rules: readable without a
+    // prompt, never writable by a tool. The sandbox switch (permissions.md
+    // P1) makes every non-credential path readable and hard-protects
+    // `~/.openwork`, and this entry goes away with the old rule engine.
+    let read_only_roots = skill_permission_roots
+        .iter()
+        .cloned()
+        .chain([spill.path().to_path_buf()])
+        .collect::<Vec<_>>();
+    ToolSessionContext::local(
+        working_directory.to_path_buf(),
+        skill_permission_profile(working_directory, &read_only_roots),
+    )
+    .with_spill_directory(spill)
+    .with_file_observations(state.observations)
 }
 
 fn skill_permission_profile(
@@ -1650,7 +1761,8 @@ mod tests {
         std::fs::create_dir_all(&workspace).expect("workspace");
 
         let (agent, tools) =
-            build_explorer_agent_and_tools(&workspace, &[]).expect("explorer toolset");
+            build_explorer_agent_and_tools(&workspace, &[], SessionToolState::default())
+                .expect("explorer toolset");
 
         assert_eq!(agent.definition().name, "explorer");
         assert_eq!(
@@ -1733,6 +1845,7 @@ mod tests {
             None,
             TraceContentConfig::default(),
             roots.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -1748,6 +1861,7 @@ mod tests {
             None,
             TraceContentConfig::default(),
             roots,
+            None,
         )
         .await
         .unwrap();
@@ -2016,6 +2130,7 @@ mod tests {
             &SessionId::new("session-history-tool"),
             Path::new("/tmp"),
             &[],
+            SessionToolState::default(),
             Arc::new(crate::session::NoopSessionStorage),
         )
         .expect("default toolset");
@@ -2023,6 +2138,79 @@ mod tests {
             .resolve(COMPACTION_TRANSCRIPT_TOOL_NAME)
             .expect("conversation history tool");
         assert_eq!(definition.risk_hint, openwork_tools::ToolRisk::ReadOnly);
+    }
+
+    /// tools.md §12 #26: a spilled result names a file the model can read
+    /// without a prompt and cannot write.
+    #[tokio::test]
+    async fn spilled_output_is_readable_without_approval_and_not_writable() {
+        let root = std::env::temp_dir().join(format!(
+            "openwork-core-spill-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace = root.join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let spill_root = SpillRoot::new(root.join(".openwork/spill"));
+        let session_id = SessionId::new("session-spill");
+        let (_, tools) = build_default_agent_and_tools(
+            &session_id,
+            &workspace,
+            &[],
+            SessionToolState {
+                spill: Some(spill_root.session(&session_id)),
+                ..SessionToolState::default()
+            },
+            Arc::new(crate::session::NoopSessionStorage),
+        )
+        .expect("default toolset");
+
+        let bash = ToolInvocation::new("bash", json!({ "command": "seq 1 20000" }));
+        let permit = match tools.authorize(&bash, PermissionMode::Default, &[]) {
+            Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
+            other => panic!("bash must be runnable: {other:?}"),
+        };
+        let output = tools
+            .call(
+                openwork_tools::ToolCallContext::new(
+                    openwork_tools::ToolCallId::new("call-seq"),
+                    tokio_util::sync::CancellationToken::new(),
+                ),
+                bash,
+                permit,
+            )
+            .await
+            .text_content();
+        let spilled = spill_root.session(&session_id).path().join("call-seq.txt");
+        assert!(output.contains(&format!("Full output saved at {}", spilled.display())));
+
+        let read = ToolInvocation::new(
+            "read",
+            json!({ "path": &spilled, "offset": 19_999, "limit": 2 }),
+        );
+        let Authorization::Allow { permit, .. } =
+            tools.authorize(&read, PermissionMode::Default, &[])
+        else {
+            panic!("reading a spill file needs no approval");
+        };
+        let read_back = tools
+            .call(
+                openwork_tools::ToolCallContext::new(
+                    openwork_tools::ToolCallId::new("call-read"),
+                    tokio_util::sync::CancellationToken::new(),
+                ),
+                read,
+                permit,
+            )
+            .await
+            .text_content();
+        assert_eq!(read_back, "19999\t19999\n20000\t20000");
+
+        let write = ToolInvocation::new("write", json!({ "path": spilled, "content": "tampered" }));
+        assert!(matches!(
+            tools.authorize(&write, PermissionMode::AcceptEdits, &[]),
+            Authorization::Deny { .. }
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2046,6 +2234,7 @@ mod tests {
             &SessionId::new("session-skill-paths"),
             &workspace,
             &permission_roots,
+            SessionToolState::default(),
             Arc::new(crate::session::NoopSessionStorage),
         )
         .expect("default toolset");

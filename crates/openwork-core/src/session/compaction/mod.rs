@@ -1,4 +1,5 @@
 mod compacted_view;
+mod prune;
 mod recovery;
 mod reminder;
 mod state;
@@ -34,6 +35,7 @@ use super::{
 };
 
 pub(crate) use compacted_view::{compacted_items, compaction_summary_message};
+pub(super) use prune::advance_tool_result_pruning;
 pub use recovery::ConversationProjectionSelector;
 pub(super) use recovery::{CompactionTrigger, ConversationRewindRequest, rewind_conversation};
 pub use reminder::ReminderSection;
@@ -378,9 +380,7 @@ async fn run_compaction_inner(
 
     let install_started = Instant::now();
     let replacement = compacted_items(&persisted, last_user.message.clone())?;
-    let replacement_conversation = ConversationContextView {
-        items: replacement.clone(),
-    };
+    let replacement_conversation = ConversationContextView::new(replacement.clone());
     if let Ok(tokens) = estimate_conversation_tokens(&replacement_conversation) {
         trace
             .attributes_mut()

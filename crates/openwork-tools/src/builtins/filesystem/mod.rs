@@ -3,6 +3,7 @@ mod glob;
 mod grep;
 mod list;
 mod read;
+mod scan;
 mod write;
 
 pub(crate) use edit::EditTool;
@@ -11,6 +12,21 @@ pub(crate) use grep::GrepTool;
 pub(crate) use list::ListTool;
 pub(crate) use read::ReadTool;
 pub(crate) use write::WriteTool;
+
+use std::path::Path;
+
+use crate::ToolSessionContext;
+
+/// How a file tool names a path back to the model: relative to the working
+/// directory when inside it, matching what `grep` and `glob` print.
+async fn workspace_display(session: &ToolSessionContext, path: &Path) -> String {
+    let workspace = session
+        .filesystem
+        .canonicalize(&session.working_directory)
+        .await
+        .unwrap_or_else(|_| session.working_directory.clone());
+    scan::display_path(&workspace, path)
+}
 
 #[cfg(test)]
 pub(super) mod test_support {

@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::backend::{AsyncFileSystem, LocalFileSystem, ProcessBackend, TokioProcessBackend};
 use crate::policy::{AccessKind, PermissionProfile, lexical_normalize, path_is_within};
-use crate::{ExecutionPermit, ToolExecutionError, ToolProgress};
+use crate::{ExecutionPermit, FileObservations, SpillDirectory, ToolExecutionError, ToolProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolCallId(String);
@@ -82,6 +82,12 @@ pub struct ToolSessionContext {
     pub environment: Arc<HashMap<String, String>>,
     pub filesystem: Arc<dyn AsyncFileSystem>,
     pub process_backend: Arc<dyn ProcessBackend>,
+    /// Where bounded results keep their complete text. `None` disables
+    /// spilling: results stay bounded but name no file.
+    pub spill: Option<SpillDirectory>,
+    /// What the model has read or written, for read-before-edit. Core shares
+    /// one table across a Session's Turns.
+    pub observations: FileObservations,
     write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
 }
 
@@ -136,8 +142,20 @@ impl ToolSessionContext {
             environment,
             filesystem,
             process_backend,
+            spill: None,
+            observations: FileObservations::new(),
             write_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn with_spill_directory(mut self, spill: SpillDirectory) -> Self {
+        self.spill = Some(spill);
+        self
+    }
+
+    pub fn with_file_observations(mut self, observations: FileObservations) -> Self {
+        self.observations = observations;
+        self
     }
 
     pub(crate) fn check_path(&self, path: &Path, kind: AccessKind) -> Result<(), String> {

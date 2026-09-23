@@ -122,7 +122,7 @@ mod tests {
     }
 
     fn view(items: Vec<ConversationItem>) -> ConversationContextView {
-        ConversationContextView { items }
+        ConversationContextView::new(items)
     }
 
     fn user_item(sequence: i64, kind: MessageKind, text: &str) -> ConversationItem {

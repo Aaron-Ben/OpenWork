@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use openwork_chat_state::ConversationContextView;
-use openwork_models::model::{Message, ToolDefinition};
+use openwork_models::model::{ContentBlock, Message, ToolDefinition};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -39,7 +39,7 @@ impl ContextBudgetEstimate {
         let mut conversation_bytes = 0_u64;
         for message in conversation {
             conversation_bytes =
-                conversation_bytes.saturating_add(serialized_bytes(&message.content)?);
+                conversation_bytes.saturating_add(model_visible_bytes(&message.content)?);
         }
         let tool_surface_bytes = if tool_definitions.is_empty() {
             0
@@ -74,7 +74,7 @@ pub(crate) fn estimate_conversation_tokens(
 ) -> Result<u64, ContextBudgetError> {
     let mut bytes = 0_u64;
     for item in &conversation.items {
-        bytes = bytes.saturating_add(serialized_bytes(&item.message.content)?);
+        bytes = bytes.saturating_add(model_visible_bytes(&item.message.content)?);
     }
     Ok(estimate_tokens(bytes))
 }
@@ -85,6 +85,30 @@ pub(crate) fn estimate_serialized_tokens(
     value: &impl Serialize,
 ) -> Result<u64, ContextBudgetError> {
     Ok(estimate_tokens(serialized_bytes(value)?))
+}
+
+/// Bytes of `content` as the model sees it. Tool-result Artifacts exist for
+/// the interface only and never reach a provider (tools.md §10), so they are
+/// left out; a file-change Artifact alone can hold two copies of a file.
+fn model_visible_bytes(content: &[ContentBlock]) -> Result<u64, ContextBudgetError> {
+    let has_artifacts = content.iter().any(
+        |block| matches!(block, ContentBlock::ToolResult(result) if !result.artifacts.is_empty()),
+    );
+    if !has_artifacts {
+        return serialized_bytes(&content);
+    }
+    let visible = content
+        .iter()
+        .cloned()
+        .map(|block| match block {
+            ContentBlock::ToolResult(mut result) => {
+                result.artifacts.clear();
+                ContentBlock::ToolResult(result)
+            }
+            other => other,
+        })
+        .collect::<Vec<_>>();
+    serialized_bytes(&visible)
 }
 
 fn serialized_bytes(value: &impl Serialize) -> Result<u64, ContextBudgetError> {
@@ -123,7 +147,7 @@ pub(crate) enum ContextBudgetError {
 
 #[cfg(test)]
 mod tests {
-    use openwork_models::model::{ContentBlock, Message, Role};
+    use openwork_models::model::{Message, Role};
 
     use super::*;
     use crate::context::{ResolvedSystemContext, SystemContextPart};
@@ -158,6 +182,43 @@ mod tests {
         assert_eq!(system_context.parts().len(), 2);
         assert_eq!(conversation.len(), 1);
         assert_eq!(tools.len(), 1);
+    }
+
+    /// tools.md §12 #38: Artifacts never reach the model, so they must not
+    /// count toward the budget either. A file-change Artifact carries the
+    /// whole file before and after the edit; counting it would trigger
+    /// compaction for content the model never sees.
+    #[test]
+    fn tool_result_artifacts_do_not_count_toward_the_conversation() {
+        use openwork_models::model::{ToolResultArtifact, ToolResultBlock, ToolResultState};
+
+        let result = |artifacts: Vec<ToolResultArtifact>| Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "call-1".to_string(),
+                name: "edit".to_string(),
+                output: vec![ContentBlock::text("Edited src/lib.rs:3 (+1 -1)")],
+                state: ToolResultState::Success,
+                artifacts,
+            })],
+        };
+        let artifact = ToolResultArtifact {
+            kind: "file_change".to_string(),
+            payload: serde_json::json!({ "afterContent": "x".repeat(100_000) }),
+        };
+        let system_context = ResolvedSystemContext::for_test(Vec::new());
+
+        let with_artifact =
+            ContextBudgetEstimate::measure(&system_context, &[result(vec![artifact])], &[], None)
+                .expect("estimate");
+        let without_artifact =
+            ContextBudgetEstimate::measure(&system_context, &[result(Vec::new())], &[], None)
+                .expect("estimate");
+
+        assert_eq!(
+            with_artifact.conversation_tokens,
+            without_artifact.conversation_tokens
+        );
     }
 
     #[test]

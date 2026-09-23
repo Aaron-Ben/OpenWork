@@ -7,6 +7,7 @@ pub mod plan;
 mod provider;
 pub mod session;
 pub mod skills;
+mod spill;
 pub mod storage;
 mod user_input;
 

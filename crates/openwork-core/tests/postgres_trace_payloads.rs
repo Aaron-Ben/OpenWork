@@ -783,8 +783,14 @@ async fn retention_purges_expired_unannotated_payloads_and_preserves_shared_bodi
     .unwrap();
     drop(recorder);
 
+    // The purge is database-wide: expired spans left by other tests sharing
+    // TEST_DATABASE_URL are deleted too. The per-span assertions below pin
+    // exactly which of this test's mappings were removed.
     let deleted_mapping_count = storage.purge_expired_trace_payloads(30).await.unwrap();
-    assert_eq!(deleted_mapping_count, 4);
+    assert!(
+        deleted_mapping_count >= 4,
+        "the expired span's 4 mappings must be purged, got {deleted_mapping_count}"
+    );
 
     let expired_mapping_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM trace_span_payloads WHERE span_id = $1")

@@ -8,6 +8,9 @@ license.workspace = true
 openwork-models = { workspace = true }
 async-trait.workspace = true
 globset.workspace = true
+grep-matcher.workspace = true
+grep-regex.workspace = true
+grep-searcher.workspace = true
 ignore.workspace = true
 libc.workspace = true
 regex.workspace = true

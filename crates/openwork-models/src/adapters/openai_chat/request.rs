@@ -286,6 +286,38 @@ mod tests {
     use super::*;
     use crate::model::{Message, ThinkingConfig, ToolDefinition};
 
+    /// tools.md §12 #38: a tool result reaches the provider as its text
+    /// output only; Artifacts stay out of the model context.
+    #[test]
+    fn tool_result_artifacts_are_not_sent_to_the_provider() {
+        use crate::model::{ToolResultArtifact, ToolResultBlock, ToolResultState};
+
+        let message = Message {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(ToolResultBlock {
+                id: "call-1".to_string(),
+                name: "edit".to_string(),
+                output: vec![ContentBlock::text("Edited src/lib.rs:3 (+1 -1)")],
+                state: ToolResultState::Success,
+                artifacts: vec![ToolResultArtifact {
+                    kind: "file_change".to_string(),
+                    payload: json!({ "afterContent": "ARTIFACT-ONLY" }),
+                }],
+            })],
+        };
+
+        let body = openai_chat_message(&message).expect("tool message");
+
+        assert_eq!(
+            body,
+            json!({
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "content": "Edited src/lib.rs:3 (+1 -1)",
+            })
+        );
+    }
+
     #[test]
     fn builds_text_chat_completion_body() {
         let req = ModelRequest {

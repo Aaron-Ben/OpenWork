@@ -10,6 +10,7 @@ mod limits;
 mod normalize;
 mod project_instructions;
 mod projection;
+mod prune;
 mod skill_catalog;
 mod user_project;
 mod world_state;
@@ -28,6 +29,7 @@ pub(crate) use item_limits::{BoundedItem, check_item_tokens};
 pub(crate) use limits::{AUTO_COMPACT_THRESHOLD_PERCENT, ModelContextLimits};
 pub(crate) use normalize::{NormalizationPolicy, ProjectedMessageOrigin, normalize_for_request};
 pub(crate) use projection::{ProjectionSummary, project_items};
+pub(crate) use prune::{prunable_text, prune_tool_results, spill_file};
 pub(crate) use skill_catalog::list_skills;
 pub(crate) use world_state::{RetainedSections, WorldStateBaseline, WorldStateCapture};
 

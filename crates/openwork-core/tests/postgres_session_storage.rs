@@ -747,6 +747,11 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 "widen message kind world state".to_string(),
                 true,
             ),
+            (
+                202_609_240_001,
+                "add tool result pruning watermark".to_string(),
+                true,
+            ),
         ]
     );
 

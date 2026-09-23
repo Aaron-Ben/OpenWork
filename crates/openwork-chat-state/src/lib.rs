@@ -11,4 +11,4 @@ pub use actor::ChatStateHandle;
 pub use item::{ConversationItem, ConversationItemOrigin, MessageKind, SyntheticReason};
 pub use snapshot::{AssistantDraftSnapshot, ConversationSnapshot};
 pub use state::ChatStateError;
-pub use view::ConversationContextView;
+pub use view::{ConversationContextView, ToolResultPruning};

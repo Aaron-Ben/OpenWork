@@ -210,6 +210,48 @@ impl PostgresStorage {
         Ok(session)
     }
 
+    /// The tool-result pruning watermark (compaction.md §1.1); `None` when
+    /// nothing has been pruned.
+    pub async fn load_tool_result_pruned_through(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<i64>, StorageError> {
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT tool_result_pruned_through_sequence FROM sessions WHERE id = $1",
+        )
+        .bind(session_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))
+    }
+
+    /// Moves the watermark forward to `through_sequence` and returns the value
+    /// now stored. It never moves back: pruned results stay pruned, so the
+    /// same history keeps producing the same request bytes.
+    pub async fn advance_tool_result_pruned_through(
+        &self,
+        session_id: &SessionId,
+        through_sequence: i64,
+    ) -> Result<i64, StorageError> {
+        if through_sequence <= 0 {
+            return Err(StorageError::InvalidInput(
+                "tool result pruning watermark must be positive".to_string(),
+            ));
+        }
+        sqlx::query_scalar::<_, i64>(
+            "UPDATE sessions
+                 SET tool_result_pruned_through_sequence =
+                     GREATEST(COALESCE(tool_result_pruned_through_sequence, $2), $2)
+                 WHERE id = $1
+                 RETURNING tool_result_pruned_through_sequence",
+        )
+        .bind(session_id.as_str())
+        .bind(through_sequence)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| StorageError::SessionNotFound(session_id.to_string()))
+    }
+
     pub async fn rename_session(
         &self,
         session_id: &SessionId,

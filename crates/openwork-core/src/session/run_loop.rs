@@ -44,7 +44,9 @@ use crate::storage::time::china_now;
 use super::toolset::{ResolvedTurnTool, TurnToolset};
 
 use super::agent_message::AgentMailbox;
-use super::compaction::{CompactionTrigger, ConversationCompactionRequest, run_compaction};
+use super::compaction::{
+    CompactionTrigger, ConversationCompactionRequest, advance_tool_result_pruning, run_compaction,
+};
 use super::permission_state::{NON_INTERACTIVE_DENIAL, SessionApproval, SessionPermissionState};
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
@@ -256,7 +258,16 @@ impl TurnRunner {
             let mut prepared = self
                 .prepare_model_call(&context_engine, &system_context, conversation)
                 .await?;
-            let threshold_estimate = self.threshold_estimate_before_sampling(&prepared.prepared);
+            let mut threshold_estimate =
+                self.threshold_estimate_before_sampling(&prepared.prepared);
+            if threshold_estimate.is_some()
+                && let Some(pruned) = self
+                    .prune_before_compacting(&context_engine, &system_context)
+                    .await?
+            {
+                threshold_estimate = self.threshold_estimate_before_sampling(&pruned.prepared);
+                prepared = pruned;
+            }
             let compacted_before_sampling = match threshold_estimate {
                 Some(estimated_input_tokens) => {
                     self.compact(
@@ -297,20 +308,33 @@ impl TurnRunner {
                 Ok(completed) => completed,
                 Err(error) if !compacted_before_sampling && is_safe_context_overflow(&error) => {
                     self.update(SessionUpdate::DraftCleared).await?;
-                    let trigger = self.overflow_trigger(&error);
-                    self.compact(&context_engine, &system_context, trigger)
-                        .await?;
-                    let mut conversation = self.request.chat.context_view().await?;
-                    self.sample_world_state(
-                        model_call_index,
-                        POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX,
-                        &world_state_capture,
-                        &mut conversation,
-                    )
-                    .await?;
-                    let prepared = self
-                        .prepare_model_call(&context_engine, &system_context, conversation)
-                        .await?;
+                    // Pruning alone is enough only when it brought the estimate
+                    // under the threshold; otherwise summarize as before.
+                    let pruned = self
+                        .prune_before_compacting(&context_engine, &system_context)
+                        .await?
+                        .filter(|pruned| {
+                            self.threshold_estimate_before_sampling(&pruned.prepared)
+                                .is_none()
+                        });
+                    let prepared = match pruned {
+                        Some(pruned) => pruned,
+                        None => {
+                            let trigger = self.overflow_trigger(&error);
+                            self.compact(&context_engine, &system_context, trigger)
+                                .await?;
+                            let mut conversation = self.request.chat.context_view().await?;
+                            self.sample_world_state(
+                                model_call_index,
+                                POST_COMPACTION_WORLD_STATE_SAMPLE_INDEX,
+                                &world_state_capture,
+                                &mut conversation,
+                            )
+                            .await?;
+                            self.prepare_model_call(&context_engine, &system_context, conversation)
+                                .await?
+                        }
+                    };
                     self.call_model(model_call_index, 2, prepared, &system_context)
                         .await?
                 }
@@ -539,6 +563,30 @@ impl TurnRunner {
             prepared,
             request_build_ms: elapsed_millis_u64(request_build_started),
         })
+    }
+
+    /// Prunes old tool results before a threshold or overflow compaction
+    /// (compaction.md §1.1) and returns the request rebuilt on the pruned
+    /// projection. `None` means nothing new could be pruned, so the caller
+    /// summarizes exactly as it would have without pruning.
+    async fn prune_before_compacting(
+        &self,
+        context_engine: &ContextEngine,
+        system_context: &ResolvedSystemContext,
+    ) -> Result<Option<PreparedTurnModelCall>, TurnRunError> {
+        let advanced = advance_tool_result_pruning(
+            self.request.storage.as_ref(),
+            &self.request.chat,
+            &self.request.session_id,
+        )
+        .await;
+        if !advanced {
+            return Ok(None);
+        }
+        let conversation = self.request.chat.context_view().await?;
+        self.prepare_model_call(context_engine, system_context, conversation)
+            .await
+            .map(Some)
     }
 
     /// The pre-sampling input estimate when it has reached the compaction

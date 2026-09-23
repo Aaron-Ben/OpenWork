@@ -1,67 +1,40 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use ignore::WalkBuilder;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
-const WALK_BUFFER_SIZE: usize = 64;
-
-/// Incremental stream of files discovered by a filesystem traversal.
-///
-/// Dropping the stream closes its bounded receiver. The blocking producer then
-/// stops at its next send instead of collecting the remainder of the tree.
-pub struct FileWalk {
-    receiver: mpsc::Receiver<io::Result<PathBuf>>,
-    producer: Option<JoinHandle<io::Result<()>>>,
+/// One file found by a traversal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkEntry {
+    pub path: PathBuf,
+    /// Last modification time; `None` when the platform cannot report it.
+    pub modified: Option<SystemTime>,
 }
 
-impl FileWalk {
-    pub async fn next(&mut self) -> io::Result<Option<PathBuf>> {
-        match self.receiver.recv().await {
-            Some(path) => path.map(Some),
-            None => {
-                if let Some(producer) = self.producer.take() {
-                    producer.await.map_err(io::Error::other)??;
-                }
-                Ok(None)
+/// Blocking traversal of the files under `root` that respects `.gitignore`
+/// and skips hidden entries. Symlinks are not followed, so the walk stays
+/// inside `root`. Consume it inside `spawn_blocking`.
+pub(super) fn local_file_walk(
+    root: &Path,
+) -> impl Iterator<Item = io::Result<WalkEntry>> + Send + use<> {
+    WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .build()
+        .filter_map(|entry| match entry {
+            Err(error) => Some(Err(io::Error::other(error.to_string()))),
+            Ok(entry) if entry.file_type().is_some_and(|kind| kind.is_file()) => {
+                let modified = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok());
+                Some(Ok(WalkEntry {
+                    path: entry.into_path(),
+                    modified,
+                }))
             }
-        }
-    }
-}
-
-pub(super) fn local_file_walk(root: PathBuf) -> FileWalk {
-    let (sender, receiver) = mpsc::channel(WALK_BUFFER_SIZE);
-    let producer = tokio::task::spawn_blocking(move || {
-        for entry in WalkBuilder::new(root)
-            .hidden(true)
-            .git_ignore(true)
-            .git_exclude(true)
-            .build()
-        {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    if sender
-                        .blocking_send(Err(io::Error::other(error.to_string())))
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                    continue;
-                }
-            };
-            if entry.file_type().is_some_and(|kind| kind.is_file())
-                && sender.blocking_send(Ok(entry.into_path())).is_err()
-            {
-                return Ok(());
-            }
-        }
-        Ok(())
-    });
-
-    FileWalk {
-        receiver,
-        producer: Some(producer),
-    }
+            Ok(_) => None,
+        })
 }

@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::walk::local_file_walk;
 use super::{
     AsyncFileSystem, AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, FileSystemEntry,
-    FileWalk,
+    WalkEntry,
 };
 
 #[derive(Debug, Default)]
@@ -35,6 +35,10 @@ impl AsyncFileSystem for LocalFileSystem {
             return Err(file_too_large(bytes.len() as u64, max_bytes));
         }
         String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+
+    fn open_reader(&self, path: &Path) -> io::Result<Box<dyn io::Read + Send>> {
+        Ok(Box::new(std::fs::File::open(path)?))
     }
 
     async fn atomic_write(
@@ -90,8 +94,8 @@ impl AsyncFileSystem for LocalFileSystem {
         Ok(entries)
     }
 
-    async fn walk_files(&self, root: &Path) -> io::Result<FileWalk> {
-        Ok(local_file_walk(root.to_path_buf()))
+    fn walk_files(&self, root: &Path) -> Box<dyn Iterator<Item = io::Result<WalkEntry>> + Send> {
+        Box::new(local_file_walk(root))
     }
 }
 
@@ -316,18 +320,27 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    #[tokio::test]
-    async fn file_walk_yields_entries_incrementally() {
+    #[test]
+    fn file_walk_yields_files_with_modification_times() {
         let root = temp_path("walk-root");
-        std::fs::create_dir_all(&root).expect("create walk root");
+        std::fs::create_dir_all(root.join("nested")).expect("create walk root");
         std::fs::write(root.join("one.txt"), "one").expect("write fixture");
-        std::fs::write(root.join("two.txt"), "two").expect("write fixture");
+        std::fs::write(root.join("nested/two.txt"), "two").expect("write fixture");
 
-        let mut walk = LocalFileSystem.walk_files(&root).await.expect("start walk");
-        let first = walk.next().await.expect("next file").expect("a file");
+        let mut entries = LocalFileSystem
+            .walk_files(&root)
+            .collect::<io::Result<Vec<_>>>()
+            .expect("walk");
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
 
-        assert!(first.starts_with(&root));
-        drop(walk);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.path.strip_prefix(&root).expect("inside root"))
+                .collect::<Vec<_>>(),
+            [Path::new("nested/two.txt"), Path::new("one.txt")]
+        );
+        assert!(entries.iter().all(|entry| entry.modified.is_some()));
         let _ = std::fs::remove_dir_all(root);
     }
 

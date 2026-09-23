@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use openwork_chat_state::ConversationItem;
 use openwork_models::model::{Message, TokenUsage};
 
 use crate::plan::TurnPlan;
@@ -132,6 +133,25 @@ pub trait SessionStorage: Send + Sync {
         session_id: &SessionId,
         compaction_id: &str,
     ) -> Result<(), String>;
+
+    /// The persisted Conversation with message sequences. Tool-result pruning
+    /// places its watermark by sequence, and items appended during a run do
+    /// not carry one until they are reloaded (compaction.md §1.1).
+    async fn load_conversation_items(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Vec<ConversationItem>, String> {
+        Err("tool result pruning requires durable storage".to_string())
+    }
+
+    /// Moves the pruning watermark forward and returns the stored value.
+    async fn advance_tool_result_pruning(
+        &self,
+        _session_id: &SessionId,
+        _through_sequence: i64,
+    ) -> Result<i64, String> {
+        Err("tool result pruning requires durable storage".to_string())
+    }
 }
 
 #[derive(Debug, Default)]

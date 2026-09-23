@@ -5,7 +5,7 @@ use crate::commands::ChatStateCommand;
 use crate::state::ConversationState;
 use crate::{
     AssistantDraftSnapshot, ChatStateError, ConversationContextView, ConversationItem,
-    ConversationSnapshot, MessageKind,
+    ConversationSnapshot, MessageKind, ToolResultPruning,
 };
 
 #[derive(Clone)]
@@ -138,6 +138,15 @@ impl ChatStateHandle {
         response.await.map_err(|_| ChatStateError::ActorStopped)?
     }
 
+    /// Sets which old tool results the projection prunes (compaction.md §1.1).
+    pub async fn set_tool_result_pruning(
+        &self,
+        pruning: ToolResultPruning,
+    ) -> Result<(), ChatStateError> {
+        self.send(ChatStateCommand::SetToolResultPruning { pruning })
+            .await
+    }
+
     pub async fn context_view(&self) -> Result<ConversationContextView, ChatStateError> {
         let (respond_to, response) = oneshot::channel();
         self.send(ChatStateCommand::ContextView { respond_to })
@@ -202,6 +211,9 @@ async fn run_actor(mut state: ConversationState, mut command_rx: mpsc::Receiver<
             }
             ChatStateCommand::ReplaceItems { items, respond_to } => {
                 let _ = respond_to.send(state.replace_items(items));
+            }
+            ChatStateCommand::SetToolResultPruning { pruning } => {
+                state.set_tool_result_pruning(pruning);
             }
             ChatStateCommand::ContextView { respond_to } => {
                 let _ = respond_to.send(state.context_view());
@@ -313,6 +325,33 @@ mod tests {
         assert_eq!(
             chat.snapshot().await.expect("snapshot").messages,
             [Message::text(Role::User, "old")]
+        );
+    }
+
+    /// compaction.md §1.1: installing a compacted or reloaded Conversation
+    /// changes the items, not which results the projection has committed to
+    /// prune.
+    #[tokio::test]
+    async fn pruning_survives_replacing_the_conversation() {
+        let chat = ChatStateHandle::spawn(vec![Message::text(Role::User, "old")]).expect("chat");
+        let pruning = ToolResultPruning {
+            through_sequence: Some(4),
+            spill_directory: Some(std::path::PathBuf::from("/spill/session")),
+        };
+        chat.set_tool_result_pruning(pruning.clone())
+            .await
+            .expect("set pruning");
+
+        chat.replace_items(vec![ConversationItem::real(Message::text(
+            Role::User,
+            "summary",
+        ))])
+        .await
+        .expect("replace");
+
+        assert_eq!(
+            chat.context_view().await.expect("view").tool_result_pruning,
+            pruning
         );
     }
 }

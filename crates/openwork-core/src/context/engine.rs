@@ -9,7 +9,7 @@ use super::normalize::{NormalizationError, ProjectedMessageOrigin};
 use super::{
     BoundedItem, ContextBudgetError, ContextBudgetEstimate, ModelContextLimits,
     NormalizationPolicy, ProjectionSummary, ResolvedSystemContext, check_item_tokens,
-    estimate_serialized_tokens, normalize_for_request, project_items,
+    estimate_serialized_tokens, normalize_for_request, project_items, prune_tool_results,
 };
 
 pub(crate) struct ContextEngine {
@@ -29,7 +29,11 @@ impl ContextEngine {
         &self,
         input: PrepareContextInput<'_>,
     ) -> Result<PreparedModelCall, ContextError> {
-        let projected = project_items(&input.conversation.items, &self.limits);
+        let pruned = prune_tool_results(
+            &input.conversation.items,
+            &input.conversation.tool_result_pruning,
+        );
+        let projected = project_items(&pruned, &self.limits);
         let normalized = normalize_for_request(
             &projected.items,
             &NormalizationPolicy {
@@ -235,7 +239,7 @@ mod tests {
         engine().prepare(PrepareContextInput::new(
             "model-under-test",
             system_context,
-            ConversationContextView { items },
+            ConversationContextView::new(items),
             &[],
         ))
     }
@@ -249,7 +253,7 @@ mod tests {
             .prepare(PrepareContextInput::new(
                 "model-under-test",
                 system_context,
-                ConversationContextView { items },
+                ConversationContextView::new(items),
                 &[],
             ))
             .expect("prepare succeeds")
@@ -269,9 +273,7 @@ mod tests {
             .prepare(PrepareContextInput::new(
                 "model-under-test",
                 &system_context,
-                ConversationContextView {
-                    items: vec![user("hello")],
-                },
+                ConversationContextView::new(vec![user("hello")]),
                 std::slice::from_ref(&tool),
             ))
             .expect("prepare succeeds");

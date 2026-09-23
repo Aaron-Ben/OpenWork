@@ -4,16 +4,15 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::builtins::truncate_output;
 use crate::context::PathIntent;
 use crate::permission::analyze_bash;
 use crate::policy::AccessKind;
+use crate::spill::saved_at;
 use crate::{
-    InvocationAnalysis, ProcessRequest, ProcessStatus, Tool, ToolCallContext, ToolErrorCode,
-    ToolExecutionError, ToolId, ToolResult, ToolRisk, ToolSessionContext,
+    CapturedOutput, InvocationAnalysis, ProcessRequest, ProcessStatus, Tool, ToolCallContext,
+    ToolErrorCode, ToolExecutionError, ToolId, ToolResult, ToolRisk, ToolSessionContext,
 };
 
-const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
 
@@ -40,7 +39,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &'static str {
-        "Run a shell command via `sh -c` in the working directory. Returns combined stdout/stderr and the exit code. Subject to approval."
+        "Run a shell command via `sh -c` in the working directory. Returns stdout and stderr merged in arrival order, and the exit code. Long output keeps its first 2 KB and last 14 KB; the complete output is saved to a file you can read or grep."
     }
 
     fn risk(&self) -> ToolRisk {
@@ -78,23 +77,15 @@ impl Tool for BashTool {
                     working_directory: working_directory.as_path().to_path_buf(),
                     environment: session.environment.as_ref().clone(),
                     timeout: Duration::from_millis(timeout_ms),
+                    spill_path: session
+                        .spill
+                        .as_ref()
+                        .map(|spill| spill.file_for(&call.call_id)),
                 },
                 &call,
             )
             .await?;
-        let stdout = output.stdout.render_lossy();
-        let stderr = output.stderr.render_lossy();
-        let mut combined = String::new();
-        if !stdout.is_empty() {
-            combined.push_str(&stdout);
-        }
-        if !stderr.is_empty() {
-            if !combined.is_empty() {
-                combined.push('\n');
-            }
-            combined.push_str("[stderr]\n");
-            combined.push_str(&stderr);
-        }
+        let mut combined = render_output(&output.output);
         let footer = match output.status {
             ProcessStatus::Exited { exit_code } => format!(
                 "\n[exit {exit_code}; duration {} ms]",
@@ -108,7 +99,6 @@ impl Tool for BashTool {
                 format!("\n[cancelled; duration {} ms]", output.elapsed.as_millis())
             }
         };
-        let mut combined = truncate_output(combined, MAX_OUTPUT_BYTES.saturating_sub(footer.len()));
         combined.push_str(&footer);
 
         Ok(match output.status {
@@ -121,6 +111,31 @@ impl Tool for BashTool {
 
 fn default_timeout_ms() -> u64 {
     DEFAULT_TIMEOUT_MS
+}
+
+/// Head, an omission marker naming the spill file, then the tail
+/// (tools.md §9 bash). Build logs put their noise first and their errors
+/// last, hence the short head.
+fn render_output(output: &CapturedOutput) -> String {
+    let mut text = output.head_lossy();
+    if output.is_truncated() {
+        let saved = match output.spill_path() {
+            Some(path) if output.spill_is_capped() => {
+                format!(
+                    " The first 64 MB of the output is saved at {}.",
+                    path.display()
+                )
+            }
+            Some(path) => format!(" {}", saved_at(path)),
+            None => String::new(),
+        };
+        text.push_str(&format!(
+            "\n... ({} bytes omitted.{saved})\n",
+            output.omitted_bytes()
+        ));
+    }
+    text.push_str(&output.tail_lossy());
+    text
 }
 
 #[cfg(test)]
@@ -281,5 +296,41 @@ mod tests {
                 |item| matches!(item, ToolProgress::Stderr { chunk } if chunk.contains("err"))
             )
         );
+    }
+
+    /// tools.md §12 #25 and #26: long output shows its first 2 KB and last
+    /// 14 KB, names the omitted byte count, and saves the complete output.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn acc_25_long_output_keeps_head_and_tail_and_spills_the_rest() {
+        let spill_root =
+            std::env::temp_dir().join(format!("openwork-bash-spill-{}", std::process::id()));
+        let session = session().with_spill_directory(crate::SpillDirectory::new(&spill_root));
+        let result = BashTool
+            .execute(
+                &session,
+                call("long-output"),
+                BashInput {
+                    command: "seq 1 20000".to_string(),
+                    timeout_ms: 5_000,
+                },
+            )
+            .await
+            .expect("seq completes")
+            .into_tool_result();
+
+        let text = result.text_content();
+        let saved = spill_root.join("long-output.txt");
+        let total = (1..=20000).map(|n| format!("{n}\n")).collect::<String>();
+        let omitted = total.len() - 16 * 1024;
+        assert!(text.starts_with("1\n2\n3\n"));
+        assert!(text.contains(&format!(
+            "... ({omitted} bytes omitted. Full output saved at {} — use read with offset/limit, or grep, to look at it.)",
+            saved.display()
+        )));
+        assert!(text.contains("19999\n20000\n\n[exit 0;"));
+        assert!(text.len() < 16 * 1024 + 512);
+        assert_eq!(std::fs::read_to_string(&saved).expect("spill file"), total);
+        let _ = std::fs::remove_dir_all(spill_root);
     }
 }

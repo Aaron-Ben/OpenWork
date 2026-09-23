@@ -211,9 +211,7 @@ async fn rewind_conversation_inner(
 
     let install_started = Instant::now();
     let replacement = compacted_items(&checkpoint, last_user)?;
-    let replacement_conversation = ConversationContextView {
-        items: replacement.clone(),
-    };
+    let replacement_conversation = ConversationContextView::new(replacement.clone());
     if let Ok(tokens) = estimate_conversation_tokens(&replacement_conversation) {
         trace
             .attributes_mut()

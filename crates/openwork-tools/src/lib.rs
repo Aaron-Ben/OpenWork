@@ -6,17 +6,19 @@ mod context;
 mod definition;
 mod file_change;
 mod invocation;
+mod observation;
 mod permission;
 pub mod policy;
 mod progress;
 mod registry;
 mod result;
+mod spill;
 mod tool;
 
 pub use backend::{
     AsyncFileSystem, AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, CapturedOutput,
-    FileSystemEntry, FileWalk, LocalFileSystem, ProcessBackend, ProcessOutput, ProcessRequest,
-    ProcessStatus, TokioProcessBackend,
+    FileSystemEntry, LocalFileSystem, ProcessBackend, ProcessOutput, ProcessRequest, ProcessStatus,
+    TokioProcessBackend, WalkEntry,
 };
 pub use builtins::builtin_registry;
 pub use context::{ToolCallContext, ToolCallId, ToolSessionContext};
@@ -27,6 +29,7 @@ pub use file_change::{
     reapply_file_changes, undo_file_changes,
 };
 pub use invocation::ToolInvocation;
+pub use observation::FileObservations;
 pub use permission::{
     AnalysisUnit, ApprovalCard, ApprovalSessionAction, AskSource, Authorization,
     AuthorizationEvidence, CardUnit, DecisionSource, Effect, EffectDisplay, ExecGrantSuggestion,
@@ -42,4 +45,5 @@ pub use registry::{
 pub use result::{
     ToolError, ToolErrorCode, ToolExecutionError, ToolResult, ToolResultContent, ToolResultStatus,
 };
+pub use spill::{MAX_RESULT_BYTES, SpillDirectory};
 pub use tool::{TextToolOutput, Tool, ToolOutput};

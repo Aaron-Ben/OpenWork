@@ -42,10 +42,7 @@ async fn read_can_open_an_agents_skill_outside_the_workspace_without_approval() 
         )
         .await;
 
-    assert_eq!(
-        result.text_content(),
-        "     1\tinstructions from the user skill"
-    );
+    assert_eq!(result.text_content(), "1\tinstructions from the user skill");
 }
 
 #[tokio::test]
@@ -84,7 +81,7 @@ async fn all_read_only_file_tools_can_use_the_agents_root() {
         (
             "grep",
             json!({ "pattern": "unique skill", "path": skill_directory }),
-            "SKILL.md:1:unique skill instructions",
+            "SKILL.md\n1:unique skill instructions",
         ),
         (
             "glob",

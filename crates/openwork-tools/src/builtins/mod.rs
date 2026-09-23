@@ -1,8 +1,5 @@
 mod filesystem;
-mod output;
 mod process;
-
-pub(crate) use output::truncate_output;
 
 use filesystem::{EditTool, GlobTool, GrepTool, ListTool, ReadTool, WriteTool};
 use process::BashTool;
@@ -57,11 +54,8 @@ mod tests {
                 "edit",
                 &["filePath", "oldString", "newString", "replaceAll"][..],
             ),
-            (
-                "grep",
-                &["pattern", "path", "glob", "outputMode", "maxResults"][..],
-            ),
-            ("glob", &["pattern", "path", "maxResults"][..]),
+            ("grep", &["pattern", "path", "glob", "outputMode"][..]),
+            ("glob", &["pattern", "path"][..]),
             ("list", &["path", "offset", "limit"][..]),
             ("bash", &["command", "timeoutMs"][..]),
         ];

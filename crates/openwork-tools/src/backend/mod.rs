@@ -14,7 +14,7 @@ mod walk;
 
 pub use filesystem::LocalFileSystem;
 pub use process::TokioProcessBackend;
-pub use walk::FileWalk;
+pub use walk::WalkEntry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileSystemEntry {
@@ -48,6 +48,9 @@ pub enum AtomicWriteError {
 pub trait AsyncFileSystem: Send + Sync {
     async fn read_to_string(&self, path: &Path) -> io::Result<String>;
     async fn read_to_string_limited(&self, path: &Path, max_bytes: usize) -> io::Result<String>;
+    /// Opens a file for streaming reads. Blocking: call it and consume the
+    /// reader inside `spawn_blocking`.
+    fn open_reader(&self, path: &Path) -> io::Result<Box<dyn io::Read + Send>>;
     async fn atomic_write(
         &self,
         path: &Path,
@@ -63,7 +66,9 @@ pub trait AsyncFileSystem: Send + Sync {
     async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
     async fn is_symlink(&self, path: &Path) -> io::Result<bool>;
     async fn read_dir(&self, path: &Path) -> io::Result<Vec<FileSystemEntry>>;
-    async fn walk_files(&self, root: &Path) -> io::Result<FileWalk>;
+    /// Files under `root`, honouring `.gitignore`. Blocking: iterate inside
+    /// `spawn_blocking`.
+    fn walk_files(&self, root: &Path) -> Box<dyn Iterator<Item = io::Result<WalkEntry>> + Send>;
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +78,9 @@ pub struct ProcessRequest {
     pub working_directory: PathBuf,
     pub environment: HashMap<String, String>,
     pub timeout: Duration,
+    /// Where to keep the complete output if it does not fit in the captured
+    /// head and tail. `None` keeps only the bounded capture.
+    pub spill_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,17 +90,19 @@ pub enum ProcessStatus {
     Cancelled,
 }
 
+/// stdout and stderr merged in arrival order, as a terminal shows them, and
+/// bounded to a head and a tail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedOutput {
     head: Vec<u8>,
     tail: Vec<u8>,
     total_bytes: u64,
+    spill_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessOutput {
-    pub stdout: CapturedOutput,
-    pub stderr: CapturedOutput,
+    pub output: CapturedOutput,
     pub status: ProcessStatus,
     pub elapsed: Duration,
 }

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use async_trait::async_trait;
 use futures_util::stream;
 use openwork_agent::{AgentBuilder, AgentDefinition, explorer_definition};
-use openwork_chat_state::ChatStateHandle;
+use openwork_chat_state::{ChatStateHandle, ConversationItem, MessageKind, ToolResultPruning};
 use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::session::{
     AgentMessageKind, ClientRequestId, CompactionError, CompactionRuntimeState,
@@ -265,6 +265,18 @@ struct RecordingStorage {
     agent_message_ids: Mutex<HashSet<String>>,
     /// 外层 Option = finish_turn 是否被调用过；内层 = 该 Turn 有没有计划。
     unfinished_plan_steps: Mutex<Option<Option<usize>>>,
+    /// 落库顺序的消息日志，序号即下标 + 1；供修剪重新载入带序号的 Conversation。
+    conversation: Mutex<Vec<(MessageKind, Message)>>,
+    tool_result_pruned_through: Mutex<Option<i64>>,
+}
+
+impl RecordingStorage {
+    fn log(&self, kind: MessageKind, message: &Message) {
+        self.conversation
+            .lock()
+            .unwrap()
+            .push((kind, message.clone()));
+    }
 }
 
 #[async_trait]
@@ -275,10 +287,14 @@ impl SessionStorage for RecordingStorage {
         _turn_id: &TurnId,
         _client_request_id: &ClientRequestId,
         _model: &ResolvedModel,
-        _contextual_messages: &[Message],
-        _user_message: &Message,
+        contextual_messages: &[Message],
+        user_message: &Message,
     ) -> Result<(), String> {
         self.events.lock().unwrap().push("begin_turn".to_string());
+        for message in contextual_messages {
+            self.log(MessageKind::SkillInstruction, message);
+        }
+        self.log(MessageKind::Normal, user_message);
         Ok(())
     }
 
@@ -302,26 +318,24 @@ impl SessionStorage for RecordingStorage {
     async fn append_assistant_message(
         &self,
         _turn_id: &TurnId,
-        _message: &Message,
+        message: &Message,
         _usage: Option<TokenUsage>,
     ) -> Result<String, String> {
         self.events.lock().unwrap().push("assistant".to_string());
         if self.fail_assistant {
             Err("assistant write failed".to_string())
         } else {
+            self.log(MessageKind::Normal, message);
             Ok("msg-recording".to_string())
         }
     }
 
-    async fn append_tool_result(
-        &self,
-        _turn_id: &TurnId,
-        _message: &Message,
-    ) -> Result<(), String> {
+    async fn append_tool_result(&self, _turn_id: &TurnId, message: &Message) -> Result<(), String> {
         self.events.lock().unwrap().push("tool_result".to_string());
         if self.fail_tool_result.load(Ordering::Relaxed) {
             Err("tool result write failed".to_string())
         } else {
+            self.log(MessageKind::Normal, message);
             Ok(())
         }
     }
@@ -330,7 +344,7 @@ impl SessionStorage for RecordingStorage {
         &self,
         _turn_id: &TurnId,
         message_id: &str,
-        _message: &Message,
+        message: &Message,
     ) -> Result<bool, String> {
         let inserted = self
             .agent_message_ids
@@ -342,6 +356,7 @@ impl SessionStorage for RecordingStorage {
                 .lock()
                 .unwrap()
                 .push("agent_message".to_string());
+            self.log(MessageKind::AgentMessage, message);
         }
         Ok(inserted)
     }
@@ -350,7 +365,7 @@ impl SessionStorage for RecordingStorage {
         &self,
         _turn_id: &TurnId,
         message_id: &str,
-        _message: &Message,
+        message: &Message,
     ) -> Result<bool, String> {
         let inserted = self
             .agent_message_ids
@@ -359,6 +374,7 @@ impl SessionStorage for RecordingStorage {
             .insert(message_id.to_string());
         if inserted {
             self.events.lock().unwrap().push("world_state".to_string());
+            self.log(MessageKind::WorldState, message);
         }
         Ok(inserted)
     }
@@ -389,7 +405,7 @@ impl SessionStorage for RecordingStorage {
         &self,
         _turn_id: &TurnId,
         plan: &TurnPlan,
-        _success_tool_result: &Message,
+        success_tool_result: &Message,
     ) -> Result<(), String> {
         // 一次事件即代表"计划与成功 Tool Result 一起落库"，与真实实现的原子性对应。
         self.events.lock().unwrap().push("plan_commit".to_string());
@@ -397,6 +413,7 @@ impl SessionStorage for RecordingStorage {
             return Err("plan commit failed".to_string());
         }
         self.plans.lock().unwrap().push(plan.clone());
+        self.log(MessageKind::Normal, success_tool_result);
         Ok(())
     }
 
@@ -467,6 +484,43 @@ impl SessionStorage for RecordingStorage {
         _runtime_reminder: String,
     ) -> Result<ConversationCompaction, String> {
         Err("rewind is not supported by this recording storage".to_string())
+    }
+
+    async fn load_conversation_items(
+        &self,
+        _session_id: &SessionId,
+    ) -> Result<Vec<ConversationItem>, String> {
+        // The log is the raw transcript; after a compaction it no longer
+        // matches the Chat State, so pruning falls back to summarizing.
+        if !self.compactions.lock().unwrap().is_empty() {
+            return Err("recording storage cannot rebuild a compacted view".to_string());
+        }
+        Ok(self
+            .conversation
+            .lock()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(index, (kind, message))| {
+                ConversationItem::persisted_with_kind(
+                    format!("recorded-{index}"),
+                    i64::try_from(index + 1).unwrap(),
+                    *kind,
+                    message.clone(),
+                )
+            })
+            .collect())
+    }
+
+    async fn advance_tool_result_pruning(
+        &self,
+        _session_id: &SessionId,
+        through_sequence: i64,
+    ) -> Result<i64, String> {
+        let mut stored = self.tool_result_pruned_through.lock().unwrap();
+        let advanced = stored.map_or(through_sequence, |current| current.max(through_sequence));
+        *stored = Some(advanced);
+        Ok(advanced)
     }
 
     async fn load_compaction_last_user_message(
@@ -932,6 +986,8 @@ fn runtime_with_options(
         plans: Mutex::new(Vec::new()),
         agent_message_ids: Mutex::new(HashSet::new()),
         unfinished_plan_steps: Mutex::new(None),
+        conversation: Mutex::new(Vec::new()),
+        tool_result_pruned_through: Mutex::new(None),
     });
     let trace = Arc::new(RecordingTrace::default());
     let registry = AgentDefinition::default().tool_names.into_iter().fold(
@@ -4985,5 +5041,322 @@ async fn the_summary_request_excludes_world_state_fragments() {
                 .iter()
                 .any(|message| message.role == Role::Assistant),
         "真实对话事实必须保留，否则摘要没有可总结的内容：{texts:?}"
+    );
+}
+
+// compaction.md §1.1 —— 修剪先于摘要。
+//
+// 阈值是否触发取决于整份请求的估算，其中 System Context 与工具定义的大小
+// 由实现决定。测试因此先用足够大的窗口跑一遍同样的脚本，从 Trace 读出每次
+// Model Call 的估算，再据此选窗口，让阈值恰好在预期的那一次触发。
+
+const LONG_RESULT_CHARS: usize = 30_000;
+const SPILL_MARKER: &str = "... [tool result pruned: ";
+
+fn read_turn(results: &[usize]) -> (Vec<ModelResponse>, Vec<ToolResult>) {
+    let mut responses = results
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            response(
+                "",
+                vec![tool_call(
+                    &format!("read-{index}"),
+                    "read",
+                    &format!(r#"{{"path":"file-{index}.txt"}}"#),
+                )],
+            )
+        })
+        .collect::<Vec<_>>();
+    responses.push(response("done", Vec::new()));
+    let tool_results = results
+        .iter()
+        .enumerate()
+        .map(|(index, chars)| {
+            let letter = char::from(b'a' + u8::try_from(index).unwrap());
+            ToolResult::succeeded(letter.to_string().repeat(*chars))
+        })
+        .collect();
+    (responses, tool_results)
+}
+
+/// Input estimate of every ordinary Model Call, in call order.
+fn estimated_inputs(fixture: &RuntimeFixture) -> Vec<u64> {
+    fixture
+        .trace
+        .signals
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|signal| match signal {
+            TraceSignal::ModelCallFinished(finished)
+                if finished.started.parent_span_id.is_none() =>
+            {
+                serde_json::to_value(&finished.attributes).unwrap()["requestEstimatedInputTokens"]
+                    .as_u64()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+async fn run_to_completion(fixture: &mut RuntimeFixture) {
+    start(fixture).await;
+    let outcome = wait_for_terminal(&mut fixture.updates).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+}
+
+/// Runs the script with a window too large to ever compact.
+async fn calibrate(results: &[usize]) -> Vec<u64> {
+    let (responses, tool_results) = read_turn(results);
+    let mut fixture = runtime_with_capabilities(
+        responses,
+        tool_results,
+        PermissionMode::AcceptEdits,
+        false,
+        test_capabilities(10_000_000, 4_096),
+    );
+    run_to_completion(&mut fixture).await;
+    estimated_inputs(&fixture)
+}
+
+/// A window whose auto-compaction limit equals `limit` (85% of the input
+/// budget, rounded up).
+fn capabilities_with_limit(limit: u64) -> ModelCapabilities {
+    let input_budget = (limit * 100).div_ceil(85);
+    test_capabilities(input_budget + 4_096, 4_096)
+}
+
+/// The text of each tool result in one recorded request, by call id.
+fn tool_result_texts(request: &ModelRequest) -> HashMap<String, String> {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult(result) => Some((
+                result.id.clone(),
+                result
+                    .output
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text(text) => Some(text.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn with_spill_directory(fixture: &RuntimeFixture) -> PathBuf {
+    let directory = fixture.workspace.path().join(".spill");
+    fixture
+        .chat
+        .set_tool_result_pruning(ToolResultPruning {
+            through_sequence: None,
+            spill_directory: Some(directory.clone()),
+        })
+        .await
+        .expect("set spill directory");
+    directory
+}
+
+#[tokio::test]
+async fn threshold_prunes_old_tool_results_instead_of_summarizing_when_that_is_enough() {
+    let results = [LONG_RESULT_CHARS, LONG_RESULT_CHARS, LONG_RESULT_CHARS, 10];
+    let estimates = calibrate(&results).await;
+    // Call 4 is the first to carry three long results; call 3 carries two.
+    let limit = (estimates[2] + estimates[3]) / 2;
+    let (responses, tool_results) = read_turn(&results);
+    let mut fixture = runtime_with_capabilities(
+        responses,
+        tool_results,
+        PermissionMode::AcceptEdits,
+        false,
+        capabilities_with_limit(limit),
+    );
+    let spill = with_spill_directory(&fixture).await;
+
+    run_to_completion(&mut fixture).await;
+
+    assert!(fixture.storage.compactions.lock().unwrap().is_empty());
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(requests.len(), 5, "no summary request was made");
+    let at_threshold = tool_result_texts(&requests[3]);
+    for pruned in ["read-0", "read-1"] {
+        let text = &at_threshold[pruned];
+        assert!(text.contains(SPILL_MARKER), "{pruned} is pruned");
+        assert!(text.contains(&format!(
+            "Full result at {}",
+            spill.join(format!("{pruned}.txt")).display()
+        )));
+    }
+    assert_eq!(
+        at_threshold["read-2"].len(),
+        LONG_RESULT_CHARS,
+        "the latest model response's result is never pruned"
+    );
+    assert_eq!(
+        std::fs::read_to_string(spill.join("read-0.txt")).expect("spill file"),
+        "a".repeat(LONG_RESULT_CHARS),
+        "the marker names a file holding the complete result"
+    );
+    let next = tool_result_texts(&requests[4]);
+    assert_eq!(
+        next["read-0"], at_threshold["read-0"],
+        "pruned results stay pruned with identical bytes"
+    );
+    assert_eq!(next["read-2"].len(), LONG_RESULT_CHARS);
+    drop(requests);
+    assert!(estimated_inputs(&fixture)[3] < limit);
+    let watermark = fixture
+        .storage
+        .tool_result_pruned_through
+        .lock()
+        .unwrap()
+        .expect("watermark persisted");
+    let log = fixture.storage.conversation.lock().unwrap();
+    let (_, at_watermark) = &log[usize::try_from(watermark - 1).unwrap()];
+    assert!(
+        matches!(&at_watermark.content[..], [ContentBlock::ToolCall(call)] if call.id == "read-2"),
+        "the watermark sits on the latest model response"
+    );
+    let persisted = log
+        .iter()
+        .find_map(|(_, message)| match &message.content[..] {
+            [ContentBlock::ToolResult(result)] if result.id == "read-0" => {
+                Some(result.output.clone())
+            }
+            _ => None,
+        })
+        .expect("persisted result");
+    assert_eq!(
+        persisted,
+        vec![ContentBlock::text("a".repeat(LONG_RESULT_CHARS))],
+        "the persisted transcript keeps the original"
+    );
+}
+
+#[tokio::test]
+async fn manual_compaction_does_not_prune_first() {
+    let (mut responses, tool_results) = read_turn(&[LONG_RESULT_CHARS, LONG_RESULT_CHARS]);
+    responses.push(response(compaction_summary(), Vec::new()));
+    let mut fixture = runtime_with_capabilities(
+        responses,
+        tool_results,
+        PermissionMode::AcceptEdits,
+        false,
+        test_capabilities(10_000_000, 4_096),
+    );
+    with_spill_directory(&fixture).await;
+    run_to_completion(&mut fixture).await;
+
+    fixture
+        .handle
+        .compact_conversation(BTreeSet::new())
+        .await
+        .expect("manual compaction");
+
+    assert_eq!(
+        *fixture.storage.tool_result_pruned_through.lock().unwrap(),
+        None
+    );
+    let requests = fixture.model.requests.lock().unwrap();
+    let summary_input = tool_result_texts(requests.last().expect("summary request"));
+    assert_eq!(summary_input["read-0"].len(), LONG_RESULT_CHARS);
+}
+
+#[tokio::test]
+async fn pruning_that_is_not_enough_is_followed_by_a_summary_of_the_pruned_projection() {
+    // The long result belongs to the latest response and cannot be pruned;
+    // pruning the earlier one saves too little.
+    let results = [9_000, LONG_RESULT_CHARS];
+    let estimates = calibrate(&results).await;
+    let limit = estimates[2] - 2_000;
+    assert!(limit > estimates[1], "call 2 must stay under the limit");
+    let (mut responses, tool_results) = read_turn(&results);
+    responses.insert(2, response(compaction_summary(), Vec::new()));
+    let mut fixture = runtime_with_capabilities(
+        responses,
+        tool_results,
+        PermissionMode::AcceptEdits,
+        false,
+        capabilities_with_limit(limit),
+    );
+    with_spill_directory(&fixture).await;
+
+    run_to_completion(&mut fixture).await;
+
+    let compactions = fixture.storage.compactions.lock().unwrap();
+    assert_eq!(compactions.len(), 1);
+    assert_eq!(compactions[0].kind, ConversationCompactionKind::Threshold);
+    drop(compactions);
+    let requests = fixture.model.requests.lock().unwrap();
+    let summary_input = tool_result_texts(&requests[2]);
+    assert!(
+        summary_input["read-0"].contains(SPILL_MARKER),
+        "the summary model reads the pruned projection"
+    );
+    assert_eq!(summary_input["read-1"].len(), LONG_RESULT_CHARS);
+}
+
+#[tokio::test]
+async fn overflow_resubmits_after_pruning_without_a_summary() {
+    let results = [LONG_RESULT_CHARS, LONG_RESULT_CHARS, 10];
+    let (responses, tool_results) = read_turn(&results);
+    let mut outcomes = responses.into_iter().map(Ok).collect::<Vec<_>>();
+    outcomes.insert(2, Err(ModelError::context_overflow("prompt is too long")));
+    let mut fixture = runtime_with_options(
+        outcomes,
+        tool_results,
+        PermissionMode::AcceptEdits,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            model_capabilities: test_capabilities(10_000_000, 4_096),
+            ..RuntimeOptions::default()
+        },
+    );
+    with_spill_directory(&fixture).await;
+
+    run_to_completion(&mut fixture).await;
+
+    assert!(fixture.storage.compactions.lock().unwrap().is_empty());
+    assert_eq!(
+        *fixture.storage.model_submissions.lock().unwrap(),
+        [(1, 1), (2, 1), (3, 1), (3, 2), (4, 1)]
+    );
+    let requests = fixture.model.requests.lock().unwrap();
+    let resubmitted = tool_result_texts(&requests[3]);
+    assert!(resubmitted["read-0"].contains(SPILL_MARKER));
+    assert_eq!(resubmitted["read-1"].len(), LONG_RESULT_CHARS);
+}
+
+#[tokio::test]
+async fn nothing_to_prune_compacts_exactly_as_before() {
+    let mut fixture = runtime_with_capabilities(
+        vec![
+            response(compaction_summary(), Vec::new()),
+            response("continued after threshold compaction", Vec::new()),
+        ],
+        Vec::new(),
+        PermissionMode::AcceptEdits,
+        false,
+        test_capabilities(2, 1),
+    );
+    with_spill_directory(&fixture).await;
+
+    run_to_completion(&mut fixture).await;
+
+    assert_eq!(fixture.storage.compactions.lock().unwrap().len(), 1);
+    assert_eq!(
+        *fixture.storage.tool_result_pruned_through.lock().unwrap(),
+        None
     );
 }

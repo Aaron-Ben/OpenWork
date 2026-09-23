@@ -220,6 +220,25 @@ impl SessionStorage for PostgresStorage {
             .await
             .map_err(|error| error.to_string())
     }
+
+    async fn load_conversation_items(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<ConversationItem>, String> {
+        PostgresStorage::load_conversation_items(self, session_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn advance_tool_result_pruning(
+        &self,
+        session_id: &SessionId,
+        through_sequence: i64,
+    ) -> Result<i64, String> {
+        self.advance_tool_result_pruned_through(session_id, through_sequence)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl PostgresStorage {

@@ -192,14 +192,16 @@ impl FinalizedToolset {
                 false,
             );
         };
-        entry
+        let call_id = call.call_id.clone();
+        let result = entry
             .tool
             .call(
                 &self.session,
                 call.with_execution_permit(permit),
                 invocation.input,
             )
-            .await
+            .await;
+        crate::spill::bound_result(result, self.session.spill.as_ref(), &call_id).await
     }
 }
 

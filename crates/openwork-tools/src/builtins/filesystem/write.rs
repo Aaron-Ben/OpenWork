@@ -12,8 +12,10 @@ use crate::{
     ToolSessionContext,
 };
 
+use super::workspace_display;
 use crate::context::PathIntent;
 use crate::file_change::build_file_change;
+use crate::observation::content_hash;
 
 const MAX_BYTES: usize = 1024 * 1024;
 
@@ -103,6 +105,12 @@ impl Tool for WriteTool {
                 )));
             }
         };
+        let display = workspace_display(session, resolved.as_path()).await;
+        if let Some(content) = &before {
+            session
+                .observations
+                .check_current(resolved.as_path(), &display, content.as_bytes())?;
+        }
         let condition = match &before {
             Some(content) => AtomicWriteCondition::Matches(content.as_bytes().to_vec()),
             None => AtomicWriteCondition::MustNotExist,
@@ -112,23 +120,25 @@ impl Tool for WriteTool {
             .atomic_write(resolved.as_path(), input.content.as_bytes(), condition)
             .await
             .map_err(|error| map_atomic_write_error(resolved.as_path(), error))?;
-        let message = format!(
-            "{} {} bytes to {}",
-            match outcome {
-                AtomicWriteOutcome::Created => "created",
-                AtomicWriteOutcome::Overwritten => "overwrote",
-                AtomicWriteOutcome::Unchanged => "left unchanged",
-            },
-            input.content.len(),
-            resolved.as_path().display()
-        );
+        session
+            .observations
+            .record(resolved.as_path(), content_hash(input.content.as_bytes()));
         let Some(change) = build_file_change(
             call.call_id.as_str(),
             Path::new(&input.path),
             before.as_deref(),
             &input.content,
         ) else {
-            return Ok(ToolResult::succeeded(message));
+            return Ok(ToolResult::succeeded(format!(
+                "{display} unchanged: the content is identical"
+            )));
+        };
+        let message = match outcome {
+            AtomicWriteOutcome::Created => format!("Created {display} (+{})", change.additions),
+            AtomicWriteOutcome::Overwritten | AtomicWriteOutcome::Unchanged => format!(
+                "Overwrote {display} (+{} -{})",
+                change.additions, change.deletions
+            ),
         };
         let artifact = change.to_result_artifact().map_err(|error| {
             ToolExecutionError::execution(format!("failed to encode file change: {error}"))
@@ -247,5 +257,48 @@ mod tests {
 
         assert_eq!(error.code, ToolErrorCode::PermissionDenied);
         assert!(!outside_target.join("created.txt").exists());
+    }
+
+    /// tools.md §12 #28: write reports one line; the diff stays in the
+    /// artifact.
+    #[tokio::test]
+    async fn acc_28_write_reports_one_line() {
+        use crate::ToolOutput;
+
+        let workspace = TestDirectory::new("write-summary");
+        let session = ToolSessionContext::local(
+            workspace.path().to_path_buf(),
+            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
+        );
+        let write = |content: &str| WriteInput {
+            path: "src/new.rs".to_string(),
+            content: content.to_string(),
+        };
+        let call = |id: &str| ToolCallContext::new(ToolCallId::new(id), CancellationToken::new());
+
+        let created = WriteTool
+            .execute(&session, call("create"), write("a\nb\nc\n"))
+            .await
+            .expect("create")
+            .into_tool_result();
+        assert_eq!(created.text_content(), "Created src/new.rs (+3)");
+        assert_eq!(created.artifacts.len(), 1);
+
+        let overwritten = WriteTool
+            .execute(&session, call("overwrite"), write("a\nB\nc\nd\n"))
+            .await
+            .expect("overwrite")
+            .into_tool_result();
+        assert_eq!(overwritten.text_content(), "Overwrote src/new.rs (+2 -1)");
+
+        let unchanged = WriteTool
+            .execute(&session, call("same"), write("a\nB\nc\nd\n"))
+            .await
+            .expect("same content")
+            .into_tool_result();
+        assert_eq!(
+            unchanged.text_content(),
+            "src/new.rs unchanged: the content is identical"
+        );
     }
 }
