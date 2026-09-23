@@ -5,6 +5,7 @@ members = [
   "crates/openwork-collab",
   "crates/openwork-credentials",
   "crates/openwork-models",
+  "crates/openwork-sandbox",
   "crates/openwork-tools",
   "crates/openwork-core",
   "desktop/src-tauri",
@@ -19,6 +20,7 @@ license = "Apache-2.0"
 openwork-agent = { path = "crates/openwork-agent" }
 openwork-chat-state = { path = "crates/openwork-chat-state" }
 openwork-models = { path = "crates/openwork-models" }
+openwork-sandbox = { path = "crates/openwork-sandbox" }
 openwork-tools = { path = "crates/openwork-tools" }
 openwork-core = { path = "crates/openwork-core" }
 openwork-credentials = { path = "crates/openwork-credentials" }
