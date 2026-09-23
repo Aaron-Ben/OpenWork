@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/check.sh)",
+      "Bash(TEST_DATABASE_URL=* scripts/check.sh)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git restore *)",
+      "Bash(rm -rf *)",
+      "Bash(rm -r *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-context.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
