@@ -53,3 +53,8 @@ sha2 = "0.10"
 tokio-util = { version = "0.7", features = ["rt"] }
 tree-sitter = "0.25.10"
 tree-sitter-bash = "0.25.1"
+
+# 抑制 lint 用 #[expect(lint, reason = "...")]：lint 不再触发时会报错，不会留下过时的抑制。
+[workspace.lints.clippy]
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"

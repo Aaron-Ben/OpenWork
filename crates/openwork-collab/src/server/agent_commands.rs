@@ -8,7 +8,7 @@ use crate::protocol::{
 use super::{
     agents::Agents,
     auth::{AgentClaims, authorize_agent_transaction},
-    board::{Board, BoardOperationError},
+    board::{Board, BoardOperationError, NewCard},
     climate::{Climate, ClimateOperationError},
     command_requests::CommandRequests,
     coordination::{Coordination, HeldBinding, HeldReservation},
@@ -246,12 +246,14 @@ impl AgentCommands {
             } => {
                 match Board::create_card_in(
                     &mut transaction,
-                    &board_id,
-                    &column_id,
-                    &title,
-                    description.as_deref(),
-                    assignee_id.as_deref(),
-                    &claims.sub,
+                    NewCard {
+                        board_id: &board_id,
+                        column_id: &column_id,
+                        title: &title,
+                        description: description.as_deref(),
+                        assignee_id: assignee_id.as_deref(),
+                        actor_id: &claims.sub,
+                    },
                 )
                 .await
                 {

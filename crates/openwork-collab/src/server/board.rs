@@ -4,6 +4,16 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 use crate::protocol::{BoardColumnView, BoardView, CardView, entity_id};
 
+/// 新建 Card 的内容，以及由谁创建。
+pub(crate) struct NewCard<'a> {
+    pub(crate) board_id: &'a str,
+    pub(crate) column_id: &'a str,
+    pub(crate) title: &'a str,
+    pub(crate) description: Option<&'a str>,
+    pub(crate) assignee_id: Option<&'a str>,
+    pub(crate) actor_id: &'a str,
+}
+
 #[derive(Clone)]
 pub(crate) struct Board {
     pool: PgPool,
@@ -342,16 +352,18 @@ impl Board {
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn create_card_in(
         transaction: &mut Transaction<'_, Postgres>,
-        board_id: &str,
-        column_id: &str,
-        title: &str,
-        description: Option<&str>,
-        assignee_id: Option<&str>,
-        actor_id: &str,
+        new_card: NewCard<'_>,
     ) -> Result<CardView, BoardOperationError> {
+        let NewCard {
+            board_id,
+            column_id,
+            title,
+            description,
+            assignee_id,
+            actor_id,
+        } = new_card;
         let title = valid_title(title, 500, "card title must be 1..500 bytes")?;
         lock_board(transaction, board_id).await?;
         let column_exists: Option<String> = sqlx::query_scalar(

@@ -8,7 +8,7 @@ use crate::protocol::{
 };
 
 use super::{
-    agents::Agents,
+    agents::{AgentFields, Agents},
     board::{Board, BoardOperationError},
     inventory::EngineInventory,
     messages::Messages,
@@ -18,17 +18,18 @@ use super::{
     scheduler::Scheduler,
 };
 
+/// 由 `server` 在启动时用共享的各个组件直接组装。
 #[derive(Clone)]
 pub(crate) struct DesktopCommands {
-    pool: PgPool,
-    agents: Agents,
-    board: Board,
-    inventory: EngineInventory,
-    messages: Messages,
-    rooms: Rooms,
-    observability: Observability,
-    scheduler: Scheduler,
-    session: RuntimeSession,
+    pub(super) pool: PgPool,
+    pub(super) agents: Agents,
+    pub(super) board: Board,
+    pub(super) inventory: EngineInventory,
+    pub(super) messages: Messages,
+    pub(super) rooms: Rooms,
+    pub(super) observability: Observability,
+    pub(super) scheduler: Scheduler,
+    pub(super) session: RuntimeSession,
 }
 
 enum PostCommitEffect {
@@ -51,31 +52,6 @@ enum PostCommitEffect {
 }
 
 impl DesktopCommands {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        pool: PgPool,
-        agents: Agents,
-        board: Board,
-        inventory: EngineInventory,
-        messages: Messages,
-        rooms: Rooms,
-        observability: Observability,
-        scheduler: Scheduler,
-        session: RuntimeSession,
-    ) -> Self {
-        Self {
-            pool,
-            agents,
-            board,
-            inventory,
-            messages,
-            rooms,
-            observability,
-            scheduler,
-            session,
-        }
-    }
-
     pub(crate) async fn execute(
         &self,
         request: DesktopCommandRequest,
@@ -171,12 +147,14 @@ impl DesktopCommands {
             } => {
                 let agent = Agents::create_in(
                     transaction,
-                    &display_name,
-                    role.as_deref(),
-                    &persona,
-                    &engine_id,
-                    &main_model_id,
-                    &triage_model_id,
+                    AgentFields {
+                        display_name: &display_name,
+                        role: role.as_deref(),
+                        persona: &persona,
+                        engine_id: &engine_id,
+                        main_model_id: &main_model_id,
+                        triage_model_id: &triage_model_id,
+                    },
                 )
                 .await?;
                 let effect = agent_effect(&agent);
@@ -199,12 +177,14 @@ impl DesktopCommands {
                 let agent = Agents::update_in(
                     transaction,
                     &agent_id,
-                    &display_name,
-                    role.as_deref(),
-                    &persona,
-                    &engine_id,
-                    &main_model_id,
-                    &triage_model_id,
+                    AgentFields {
+                        display_name: &display_name,
+                        role: role.as_deref(),
+                        persona: &persona,
+                        engine_id: &engine_id,
+                        main_model_id: &main_model_id,
+                        triage_model_id: &triage_model_id,
+                    },
                 )
                 .await?;
                 let effect = agent_effect(&agent);

@@ -4,6 +4,16 @@ use uuid::Uuid;
 
 use crate::protocol::{AgentAssignment, AgentView, EngineId, ParticipantView};
 
+/// 创建与更新 Agent 时由用户填写的字段。
+pub(crate) struct AgentFields<'a> {
+    pub(crate) display_name: &'a str,
+    pub(crate) role: Option<&'a str>,
+    pub(crate) persona: &'a str,
+    pub(crate) engine_id: &'a str,
+    pub(crate) main_model_id: &'a str,
+    pub(crate) triage_model_id: &'a str,
+}
+
 #[derive(Clone)]
 pub(crate) struct Agents {
     pool: PgPool,
@@ -14,16 +24,18 @@ impl Agents {
         Self { pool }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn create_in(
         transaction: &mut Transaction<'_, Postgres>,
-        display_name: &str,
-        role: Option<&str>,
-        persona: &str,
-        engine_id: &str,
-        main_model_id: &str,
-        triage_model_id: &str,
+        fields: AgentFields<'_>,
     ) -> Result<AgentView, sqlx::Error> {
+        let AgentFields {
+            display_name,
+            role,
+            persona,
+            engine_id,
+            main_model_id,
+            triage_model_id,
+        } = fields;
         let display_name = required(display_name, "display name")?;
         let persona = required(persona, "persona")?;
         let engine_id = required(engine_id, "Engine id")?;
@@ -101,17 +113,19 @@ impl Agents {
         Self::get_in(transaction, agent_id).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn update_in(
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,
-        display_name: &str,
-        role: Option<&str>,
-        persona: &str,
-        engine_id: &str,
-        main_model_id: &str,
-        triage_model_id: &str,
+        fields: AgentFields<'_>,
     ) -> Result<AgentView, sqlx::Error> {
+        let AgentFields {
+            display_name,
+            role,
+            persona,
+            engine_id,
+            main_model_id,
+            triage_model_id,
+        } = fields;
         let display_name = required(display_name, "display name")?;
         let persona = required(persona, "persona")?;
         let engine_id = required(engine_id, "Engine id")?;

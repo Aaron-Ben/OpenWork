@@ -248,10 +248,6 @@ mod tests {
 
     use super::*;
 
-    /// 三个 section 的 `ID` 常量要通过 trait 才能访问。
-    #[allow(unused_imports)]
-    use super::WorldStateSection as _;
-
     fn state(project: &str, agents: Option<&str>, skills: Option<&str>) -> WorldState {
         WorldState {
             project_context: ProjectContextState::new(project),

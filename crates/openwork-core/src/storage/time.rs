@@ -15,10 +15,7 @@ pub(crate) const CHINA_OFFSET: UtcOffset = match UtcOffset::from_hms(8, 0, 0) {
 
 /// 当前的东八区墙上时间。
 ///
-/// 目前落库的时间要么来自列默认值 / SQL 的 `CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'`，
-/// 要么来自 [`to_china`] 转换的既有瞬间，因此还没有调用点。保留它是为了让"Rust 侧需要
-/// 当前时间"时有唯一合法入口，而不是让人临时写 `now_utc() + 8h`。
-#[allow(dead_code)]
+/// Rust 侧需要"当前时间"时的唯一入口，不要临时写 `now_utc() + 8h`。
 pub(crate) fn china_now() -> PrimitiveDateTime {
     to_china(OffsetDateTime::now_utc())
 }
@@ -34,7 +31,6 @@ pub(crate) fn to_china(value: OffsetDateTime) -> PrimitiveDateTime {
 ///
 /// 偏移量必须如实标注：库里存的是东八区，若标成 `Z`，前端会在已经是东八区的值上
 /// 再做一次换算，最终偏 16 小时且全程不报错。
-#[allow(dead_code)]
 pub(crate) fn to_wire(value: PrimitiveDateTime) -> Option<String> {
     value.assume_offset(CHINA_OFFSET).format(&Rfc3339).ok()
 }

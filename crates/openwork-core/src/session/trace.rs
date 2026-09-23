@@ -870,18 +870,10 @@ impl ModelCallTraceGuard {
     }
 
     pub fn finish_success(mut self, response: &ModelResponse) {
-        let provider_request_id = response.provider_request_id.clone();
-        let usage = response.usage;
-        self.finish(
+        self.finish(ModelCallOutcome::responded(
             TraceStatus::Succeeded,
-            provider_request_id,
-            usage,
-            None,
-            None,
-            Some(response),
-            None,
-            None,
-        );
+            response,
+        ));
     }
 
     pub fn finish_success_with_message(
@@ -889,16 +881,10 @@ impl ModelCallTraceGuard {
         response: &ModelResponse,
         response_message_id: String,
     ) {
-        self.finish(
-            TraceStatus::Succeeded,
-            response.provider_request_id.clone(),
-            response.usage,
-            None,
-            None,
-            Some(response),
-            None,
-            Some(response_message_id),
-        );
+        self.finish(ModelCallOutcome {
+            response_message_id: Some(response_message_id),
+            ..ModelCallOutcome::responded(TraceStatus::Succeeded, response)
+        });
     }
 
     pub fn finish_failure(
@@ -909,16 +895,11 @@ impl ModelCallTraceGuard {
         error_message: impl Into<String>,
         model_error: Option<&ModelError>,
     ) {
-        self.finish(
-            status,
+        self.finish(ModelCallOutcome {
             provider_request_id,
-            None,
-            Some(error_code.into()),
-            Some(error_message.into()),
-            None,
             model_error,
-            None,
-        );
+            ..ModelCallOutcome::failed(status, error_code.into(), error_message.into())
+        });
     }
 
     /// Finish a provider call that returned a complete response whose content
@@ -932,33 +913,27 @@ impl ModelCallTraceGuard {
         error_code: impl Into<String>,
         error_message: impl Into<String>,
     ) {
-        self.finish(
-            status,
-            response.provider_request_id.clone(),
-            response.usage,
-            Some(error_code.into()),
-            Some(error_message.into()),
-            Some(response),
-            None,
-            None,
-        );
+        self.finish(ModelCallOutcome {
+            error_code: Some(error_code.into()),
+            error_message: Some(error_message.into()),
+            ..ModelCallOutcome::responded(status, response)
+        });
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn finish(
-        &mut self,
-        status: TraceStatus,
-        provider_request_id: Option<String>,
-        usage: Option<TokenUsage>,
-        error_code: Option<String>,
-        error_message: Option<String>,
-        response: Option<&ModelResponse>,
-        model_error: Option<&ModelError>,
-        response_message_id: Option<String>,
-    ) {
+    fn finish(&mut self, outcome: ModelCallOutcome<'_>) {
         if self.finished {
             return;
         }
+        let ModelCallOutcome {
+            status,
+            provider_request_id,
+            usage,
+            error_code,
+            error_message,
+            response,
+            model_error,
+            response_message_id,
+        } = outcome;
         let (
             attributes,
             attempt_count,
@@ -1062,16 +1037,54 @@ impl Drop for ModelCallTraceGuard {
                 "model trace scope dropped before explicit finish",
             )
         };
-        self.finish(
+        self.finish(ModelCallOutcome::failed(
             status,
-            None,
-            None,
-            Some(code.to_string()),
-            Some(message.to_string()),
-            None,
-            None,
-            None,
-        );
+            code.to_string(),
+            message.to_string(),
+        ));
+    }
+}
+
+/// 一次 Model Call 如何结束。由各个 `finish_*` 方法构造，交给 `ModelCallTraceGuard::finish`
+/// 统一写入 Span。
+struct ModelCallOutcome<'a> {
+    status: TraceStatus,
+    provider_request_id: Option<String>,
+    usage: Option<TokenUsage>,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    response: Option<&'a ModelResponse>,
+    model_error: Option<&'a ModelError>,
+    response_message_id: Option<String>,
+}
+
+impl<'a> ModelCallOutcome<'a> {
+    /// 拿到了完整响应：请求 ID 与用量取自响应本身。
+    fn responded(status: TraceStatus, response: &'a ModelResponse) -> Self {
+        Self {
+            status,
+            provider_request_id: response.provider_request_id.clone(),
+            usage: response.usage,
+            error_code: None,
+            error_message: None,
+            response: Some(response),
+            model_error: None,
+            response_message_id: None,
+        }
+    }
+
+    /// 没有可用的响应就结束了。
+    fn failed(status: TraceStatus, error_code: String, error_message: String) -> Self {
+        Self {
+            status,
+            provider_request_id: None,
+            usage: None,
+            error_code: Some(error_code),
+            error_message: Some(error_message),
+            response: None,
+            model_error: None,
+            response_message_id: None,
+        }
     }
 }
 

@@ -100,17 +100,17 @@ impl CollaborationServer {
             session.signing_key().clone(),
         );
         let agent_commands = AgentCommands::new(pool.clone(), coordination.clone());
-        let desktop_commands = DesktopCommands::new(
-            pool.clone(),
-            agents.clone(),
+        let desktop_commands = DesktopCommands {
+            pool: pool.clone(),
+            agents: agents.clone(),
             board,
-            inventory.clone(),
-            messages.clone(),
+            inventory: inventory.clone(),
+            messages: messages.clone(),
             rooms,
-            observability.clone(),
-            scheduler.clone(),
-            session.clone(),
-        );
+            observability: observability.clone(),
+            scheduler: scheduler.clone(),
+            session: session.clone(),
+        };
 
         let listener = tokio::net::TcpListener::bind(options.runtime_bind).await?;
         let runtime_addr = listener.local_addr()?;
