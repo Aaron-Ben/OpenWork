@@ -17,9 +17,9 @@
 **核心不变量：**
 
 1. **子 Agent 就是一个 Session。** 它有自己的 `sessions` 行、`turns` 行、`messages` 行、ChatState、压缩状态和 Trace。`session/run_loop.rs` 不因多智能体增加任何分支——[architecture.md §3](architecture.md) 不变量 #2「Agent Loop 只有一处」继续成立。
-2. **子 Agent 不可写。** 工具池里没有 `write` / `edit`，`bash` 只放行可证明只读的调用，其余一律 Deny。
+2. **子 Agent 不可写。** 工具池里没有 `write` / `edit`；explorer 的模式上限是 `accept-edits`：它的 `bash` 写工作区由内核拒绝，且它无法请求越界。
 3. **子→父的消息永不触发 Turn。** 它只入队；父在自己的 Turn 内消费。用户没有输入就不会产生模型调用。
-4. **父子共享工作目录与路径边界。** 子 Agent 用父的 `working_directory` 和 `PermissionProfile` 构造 `ToolSessionContext`，不放宽也不收紧。
+4. **父子共享工作目录与沙箱后端，模式只收紧不放宽。** 子 Agent 用父的 `working_directory` 和沙箱后端构造 `ToolSessionContext`；生效模式取父会话生效模式与角色上限中较窄者，派生时取快照（[permissions.md §6.6](permissions.md)）。
 5. **子 Agent 的 Trace 完全独立。** 不与父共享 `trace_id`，不设跨 Trace 的 `parent_span_id`。
 
 ## 2. 对象与所有权
@@ -76,9 +76,14 @@ AgentDefinition {
     description: "回答关于代码库的具体、范围明确的问题",
     system_prompt: EXPLORER_SYSTEM_PROMPT,
     tool_names: ["read", "grep", "glob", "list", "bash"],
+    sandbox_ceiling: SandboxMode::AcceptEdits,
     policy: AgentPolicy { max_model_calls: 15, doom_loop_threshold: 3 },
 }
 ```
+
+`sandbox_ceiling` 是角色允许的最宽沙箱模式，取值与用户模式相同：`AcceptEdits` / `Auto`。子 Agent 的生效模式取父会话生效模式与它中**较窄**的那个（[permissions.md §6.6](permissions.md)），所以 explorer 在任何父会话下都是 `accept-edits`：工具面里没有 `write` / `edit`，而 `accept-edits` 下 bash 写不了工作区——"只读角色"对工作区由内核保证。它仍能写临时目录，这让 here-document 之类需要临时文件的写法照常可用，也不影响工作区。
+
+**不为子 Agent 单设第三个模式。** `accept-edits` 加上没有写工具，已经等于"不能改工作区"；再加一个只能写 `/dev/null` 的取值，换来的只是临时目录不可写，代价是 here-document 失败和多一套要测试的规则。
 
 参照物：codex 的 `explorer.toml` 是一个 **0 字节的空文件**——真正起作用的全是描述文本。在没有第二个角色之前做目录发现、frontmatter 解析、启停状态和管理 UI，是把 Skill 系统重做一遍换不到东西。
 
@@ -86,7 +91,7 @@ AgentDefinition {
 
 1. **身份与产出形态**——你在回答一个被委派的具体问题；最终回答就是交付物，直接、完整、可独立阅读，不要说"我可以继续查"。
 2. **只读边界**——你不能修改任何文件。
-3. **可用的 `bash` 命令族**——显式列出可证明只读的形态（`git status` / `git log` / `git diff` / `rg` / `ls` / `cat` 等）。**不列清楚会产生一类沉默失败**：模型想跑 `cargo check` 被 Deny，只能靠试错找边界，浪费轮次。
+3. **`bash` 的边界在哪**——命令在不能写工作区的沙箱里执行：查看类命令（`git status` / `git log` / `git diff` / `rg` / `ls` / `cat` 等）直接可用，任何会写工作区的命令（包括 `cargo check` 写 `target/`）都会被拒绝，且你无法请求越界；临时目录可写。**不说清楚会产生一类沉默失败**：模型只能靠试错找边界，浪费轮次。
 4. **不要反问**——没有人会回答你的澄清问题，信息不足时给出基于现有证据的最佳答案并标注不确定处。
 
 ## 5. 工具面
@@ -230,11 +235,17 @@ pub enum SessionApproval {
 }
 ```
 
-这**不是第三个 `PermissionMode`**。[permissions.md](permissions.md) 把模式定义为"用户选择的审批尺度"，而这里既不是用户选的也不是尺度，是"没有人"。规则集、只读判定、内置 deny 全部照旧，改变的只有 `Ask` 的落地方式。
+这**不是一个沙箱模式**。沙箱模式决定命令能写哪里，而这里决定的是"需要问的时候有没有人可问"——答案是没有。沙箱、四档路径、硬保护全部照旧，改变的只有"需要问"的落地方式（[permissions.md §6.6](permissions.md)）：
 
-`Ask` 落到 `NonInteractive` 时，立即返回一个 `denied` 的 Tool Result，附带一句可操作的说明："子 Agent 无法请求授权，改用可证明只读的命令。"模型收到后能自行换命令继续，不会卡死。
+| 本该出卡片的情况 | 非交互 Session |
+|---|---|
+| 越界请求 | 立即返回 `denied` 的 Tool Result |
+| 危险命令检测命中 | 同上 |
+| 沙箱不可用 | bash 不执行（与交互式 Session 相同，不是特例） |
 
-于是 explorer 拿着 `bash` 也是安全的：可证明只读的调用（`git log` / `git diff` / `rg` / `ls` / `cat`）自动放行，其余一律拒绝。放行的那部分正是 [permissions.md §2.3](permissions.md) 明确背书的判定，不是新开的口子。
+拒绝附带一句可操作的说明：子 Agent 无法请求授权，在当前模式内能做什么，做不到的事报告给父 Agent。模型收到后能自行换做法继续，不会卡死。
+
+于是 explorer 拿着 `bash` 也是安全的：它在 `accept-edits` 沙箱里执行，`git log` / `git diff` / `rg` / `ls` / `cat` 直接运行，对工作区（以及工作区外除临时目录以外）的写入都被内核拒绝，而它又无法越界。**边界是沙箱，不是一份命令清单。**
 
 ## 8. 重启对账
 
@@ -320,8 +331,8 @@ pub enum SessionApproval {
 12. 端到端：主 Agent 并行派出 3 个 explorer 并汇总结果；
 13. 第 4 个 `spawn_agent` 返回 `agent_limit_reached`，模型能继续；
 14. 空闲子 Agent 不占并发名额，`followup_task` 能复用它；
-15. 子 Agent 调 `cargo check` 被 Deny 且拿到可操作说明，改用只读命令后成功；
-16. 子 Agent 调 `git log` 经只读判定自动放行，不产生审批卡片；
+15. explorer 调 `cargo check` 因写 `target/` 被沙箱拒绝，结果带拒绝标记；带越界请求重试时直接被拒并拿到可操作说明；
+16. explorer 调 `git log` / `rg` 在沙箱内直接执行，不产生审批卡片；父会话为 `auto` 时 explorer 的生效模式仍是 `accept-edits`，写工作区被内核拒绝；
 17. 子 Agent 的工具面里没有 `write` / `edit` / `spawn_agent` / `update_plan`；
 18. `wait_agent` 超时返回后模型可继续，也可再次 wait。
 

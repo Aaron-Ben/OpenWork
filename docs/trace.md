@@ -326,7 +326,7 @@ Trace 是 best-effort：队列满时 `try_send` 直接丢，批量写失败丢�
 
 **权限不是独立 Span。** Tool Span 包围完整生命周期，`permission_wait_ms` 只记录等待用户决定的累计耗时。
 
-关键属性：`permissionPolicy`、`permissionDecision`、`permissionDecisionSource`、`executionMs`、`artifactCount`、`artifactTypes`、`errorRetryable`、`resultPersisted`、`outputTruncated`。
+关键属性：`permissionDecision`、`permissionDecisionSource`、`sandboxMode`、`sandboxDenied`、`escalationPaths`、`dangerMatch`、`executionMs`、`artifactCount`、`artifactTypes`、`errorRetryable`、`resultPersisted`、`outputTruncated`。权限与沙箱属性的完整定义见 [permissions.md §7](permissions.md)。
 
 `status` 表示**工具执行**的结果，持久化失败不得伪装成工具失败：工具成功但 Message 写入失败时，Span 保持 `succeeded` 并记 `resultPersisted=false`。
 

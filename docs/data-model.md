@@ -167,6 +167,9 @@ CREATE TABLE sessions (
     -- 发起它的 Tool Call Span。Trace 是 best-effort，Span 可能没落库，故不建外键。
     spawn_span_id       TEXT,
 
+    -- 旧工具结果修剪的水位线，只增不减；NULL 表示从未修剪（compaction.md §1.1）
+    tool_result_pruned_through_sequence BIGINT,
+
     CONSTRAINT sessions_subagent_fields_consistent CHECK (
         (parent_session_id IS     NULL AND task_name IS     NULL AND agent_role IS     NULL) OR
         (parent_session_id IS NOT NULL AND task_name IS NOT NULL AND agent_role IS NOT NULL)
@@ -176,6 +179,9 @@ CREATE TABLE sessions (
     ),
     CONSTRAINT sessions_spawn_depth_at_most_one CHECK (
         parent_session_id IS NULL OR parent_session_id <> id
+    ),
+    CONSTRAINT sessions_tool_result_pruned_through_positive CHECK (
+        tool_result_pruned_through_sequence IS NULL OR tool_result_pruned_through_sequence > 0
     )
 );
 
@@ -191,6 +197,8 @@ CREATE INDEX idx_sessions_parent
 Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。**也不保存子 Agent 的 mailbox**——未消费的 Agent Message 只在内存里，事实来源是子 Session 自己的 `turns` 与 `messages`，重启后由父的下一个用户 Turn 做幂等对账，见 [multi-agent.md §8](multi-agent.md)。
 
 子 Agent 的深度上限有两道防线：工具面不给它注册 `spawn_agent`，`sessions_spawn_depth_at_most_one` 在数据库兜底。**只靠工具面不够**——那是运行时决策，判断写错就没有第二道防线。
+
+`tool_result_pruned_through_sequence` 是投影状态而不是消息内容：`messages` 里的 Tool Result 从不因修剪而改变。它必须落库，因为修剪只进不退——重启后若恢复成未修剪，同一段历史的请求字节就变了，提示词缓存随之作废。
 
 `list_sessions` 加 `WHERE parent_session_id IS NULL`：子 Agent 不进顶层会话列表。删除父会话时 `ON DELETE CASCADE` 连带删除子 Session 及其 `turns` / `messages` / `trace_spans`。
 

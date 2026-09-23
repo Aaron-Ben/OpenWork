@@ -19,7 +19,7 @@ OpenWorkCore
         └── ActiveTurn?
 ```
 
-子 Agent 本身也是一个 `SessionActor`，走完全相同的路径。**它不是这张表的例外，只是它的 `SessionApproval` 是 `NonInteractive`**（Ask 立即 Deny，见 [permissions.md](permissions.md)）。整套设计见 [multi-agent.md](multi-agent.md)。
+子 Agent 本身也是一个 `SessionActor`，走完全相同的路径。**它不是这张表的例外，只是它的 `SessionApproval` 是 `NonInteractive`**（本该出卡片的越界与危险命令立即 Deny，见 [permissions.md §6.6](permissions.md)）。整套设计见 [multi-agent.md](multi-agent.md)。
 
 | 状态 | 唯一 Owner | 其他组件怎么访问 |
 |---|---|---|

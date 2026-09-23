@@ -10,10 +10,11 @@ OpenWork 是本地 Agent 工作台：Rust workspace + Tauri 2 / React 桌面应�
 desktop/src          ← 只通过 Tauri Command/Event
 desktop/src-tauri    → openwork-core, openwork-models, openwork-collab
 openwork-core             → openwork-agent, openwork-chat-state, openwork-models,
-                            openwork-tools, openwork-credentials
-openwork-agent            → openwork-models, openwork-tools
+                            openwork-tools, openwork-sandbox, openwork-credentials
+openwork-agent            → openwork-models, openwork-tools, openwork-sandbox
 openwork-chat-state       → openwork-models
-openwork-tools            → openwork-models
+openwork-tools            → openwork-models, openwork-sandbox
+openwork-sandbox          → 无 OpenWork 依赖
 openwork-models           → 无 OpenWork 依赖
 openwork-credentials      → 无 OpenWork 依赖
 
@@ -22,7 +23,8 @@ openwork-collab           → 独立协作分支；内部单向依赖见下文
 
 **这个方向不可逆转。** 具体禁止：
 
-- `openwork-models` / `openwork-tools` 反向依赖 `openwork-core`；
+- `openwork-models` / `openwork-tools` / `openwork-sandbox` 反向依赖 `openwork-core`；
+- `openwork-sandbox` 依赖任何其他 OpenWork crate，或自己启动工具进程（启动自检除外）、做审批决定；
 - Desktop 直接依赖 SQLx、Provider Adapter 或 Tool Executor；
 - `openwork-agent` 启动异步运行循环；
 - `openwork-chat-state` 执行工具或决定权限；
@@ -50,7 +52,7 @@ src/
 
 ### openwork-agent
 
-回答"这个 Agent 是什么"——**静态定义，不含运行状态**：System Prompt、可用工具集、默认模型参数、最大 Model Call 次数、Permission Mode。
+回答"这个 Agent 是什么"——**静态定义，不含运行状态**：System Prompt、可用工具集、默认模型参数、最大 Model Call 次数、沙箱模式上限（`sandbox_ceiling`，见 [multi-agent.md §4](multi-agent.md)）。
 
 `AgentBuilder::build` 返回近似不可变的 `Agent`。**它不得启动任何异步循环。**
 
@@ -68,9 +70,34 @@ Message/ContentBlock、Model Request/Response/Event、`ModelPort` trait、各 Pr
 
 ### openwork-tools
 
-工具的四层运行时（契约 / 工具集 / 会话上下文 / 调用上下文）、路径安全策略、文件与进程后端、内置工具实现。详见 [tools.md](tools.md)。
+工具的四层运行时（契约 / 工具集 / 会话上下文 / 调用上下文）、路径解析（`CheckedPath`）、文件与进程后端、内置工具实现、危险命令检测（`tree-sitter-bash`）。详见 [tools.md](tools.md)。
 
-分工：Tools 提供风险信息并在**执行时**强制路径/进程边界；Core 拥有 Tool Call 生命周期和用户授权等待。
+分工：Tools 在**执行时**强制边界——bash 经 `openwork-sandbox` 包装后启动，文件工具用 `openwork-sandbox` 的同一组路径函数做围栏；Core 拥有 Tool Call 生命周期、越界校验和用户授权等待。
+
+### openwork-sandbox
+
+**回答"这一次调用能读写哪里"，并让内核兑现它。** 详见 [permissions.md §2.4、§3](permissions.md)。
+
+```text
+src/
+├── tiers.rs      四档路径与可写设备的唯一清单，及其两种渲染（路径匹配 / Seatbelt 过滤器）
+├── policy.rs     SandboxMode、SandboxPolicy、PathGrant；check(路径, 读写, actor)；越界请求校验
+├── seatbelt.rs   Seatbelt profile 生成与 argv 包装（路径与正则都经 -D 参数传入）
+├── probe.rs      启动时的功能性自检
+├── backend.rs    SandboxBackend：自检结论（进程内缓存）+ 包装 argv
+└── denial.rs     区分"命令被内核拒绝"与"沙箱本身没能启动"
+```
+
+| 它拥有 | 它不拥有 |
+|---|---|
+| 模式（`auto` / `accept-edits`，子 Agent 的角色上限也取这两者之一）与四档路径的**唯一定义**：可写根、受保护子路径、凭据禁读 | 启动工具进程——`ProcessBackend` 负责。唯一的例外是启动自检：它自己运行两次 `sandbox-exec`，那是一次性的环境检查，不是 Tool Call |
+| Seatbelt profile 与 `sandbox-exec` argv；越界请求的路径校验（数量、绝对路径、硬保护、过宽、是否带来新权限） | 越界是否批准、`justification` 是否为空——Core 负责 |
+| 自检结论（可用 / 不可用及原因） | 危险命令检测——它关心 bash 语法，不关心沙箱，留在 `openwork-tools` |
+| 拒绝识别 | 会话模式的存储——Core 负责 |
+
+**单独成 crate 的理由是多个消费者共享同一份事实**：`openwork-tools` 用它包装 bash、做文件工具围栏；`openwork-core` 用它盖章每次调用的策略、校验越界请求、写 Trace 与策略上下文；`openwork-agent` 用它声明角色的模式上限。三处若各自持有路径知识，"bash 能写而 write 工具不能写"这类不一致就会出现——对等测试（[permissions.md §2.4](permissions.md)）也只有在同一个 crate 提供推导函数时才有意义。
+
+**无 OpenWork 依赖**，只依赖标准库与序列化；平台差异（P2 的 Linux 后端）也收在它内部。
 
 ### openwork-credentials
 
@@ -112,7 +139,7 @@ Desktop 是唯一 supervisor：每次启动创建一个 RuntimeSession 和临时
 4. **模型总是用户显式选择**（`providerId + model`），没有自动选择或跨模型 fallback。
 5. **Trace 是 best-effort** —— Trace/队列/数据库失败不得让 Turn 失败。正文写入失败时 Span 本身仍须落库。
 6. **同一份内容只有一个权威副本** —— `messages` 已有的内容，Trace 只留指针不复制。
-7. **权限 `Allow` 不能绕过 `ToolSessionContext` 的路径边界**——对六个文件工具成立。`bash` 没有执行期边界，审批即边界，见 [permissions.md §1.2](permissions.md)。
+7. **用户批准不能绕过执行期边界**——批准只能换来这一次调用更宽的沙箱策略，不能跳过它。文件工具由 `ToolSessionContext` 的路径围栏强制，`bash` 由 OS 沙箱强制，两者读同一个 `SandboxPolicy`；硬保护路径在任何批准下都不可写。见 [permissions.md §2](permissions.md)。
 
 ## 4. 对外 API
 

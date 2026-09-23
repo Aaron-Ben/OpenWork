@@ -20,12 +20,14 @@
 | [collaboration.md](collaboration.md) | 本机 BYOA Runtime、身份、通信、AgentRunner、消息协调、Board 与 Agenda |
 | [collaboration-desktop.md](collaboration-desktop.md) | macOS Desktop supervisor、Tauri command、SSE 投影与协作界面 |
 | [collaboration-data-model.md](collaboration-data-model.md) | 协作 PostgreSQL、Redis、本机文件、事务与并发不变量 |
-| [permissions.md](permissions.md) | 效果模型、只读判定、`default` / `acceptEdits` 两模式、内置规则、命令解析、审批卡片、会话状态 |
+| [permissions.md](permissions.md) | 文件沙箱、`auto` / `accept-edits` 两模式、四档路径、被拒后一次性越界、危险命令检测、审批卡片、会话状态 |
 | [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
 | [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |
 
 规范类文档在 [`.claude/rules/`](../.claude/rules/)：目前有 [database.md](../.claude/rules/database.md)（时间字段与迁移规范）。
+
+进行中的开发计划放在 `plans/`：它们回答按什么顺序做、做到什么程度算完成、何时需要决策，**不定义功能**，完成后删除。当前：[plans/sandbox-and-tools.md](plans/sandbox-and-tools.md)。
 
 外部参考资料如需保留，放在 `references/`。它们只描述其他项目，不约束 OpenWork；被 OpenWork 采纳的决定必须进入对应 owning 文档。
 
