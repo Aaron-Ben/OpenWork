@@ -4,6 +4,7 @@ pub mod daemon;
 pub mod engine;
 mod home;
 pub mod opencode;
+mod prompt;
 mod runner;
 mod scheduling;
 pub mod shim;

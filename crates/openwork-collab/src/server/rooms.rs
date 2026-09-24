@@ -122,6 +122,20 @@ impl Rooms {
         .map(|rows| rows.into_iter().map(RoomView::from).collect())
     }
 
+    /// `room_ids` 对应的房间，按 ID 排序；标题是存储的原值，Direct Room 为空。
+    pub(crate) async fn views(
+        pool: &PgPool,
+        room_ids: &[String],
+    ) -> Result<Vec<RoomView>, sqlx::Error> {
+        sqlx::query_as::<_, RoomRow>(
+            "SELECT id, kind, title FROM collab_rooms WHERE id = ANY($1) ORDER BY id",
+        )
+        .bind(room_ids)
+        .fetch_all(pool)
+        .await
+        .map(|rows| rows.into_iter().map(RoomView::from).collect())
+    }
+
     pub(crate) async fn list_for_agent_in(
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,

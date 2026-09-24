@@ -15,7 +15,7 @@ if [[ " $* " == *" --agent openwork-triage "* ]]; then
   exit 0
 fi
 
-room_id="$(print -r -- "$prompt" | sed -n 's/^room_id: //p' | head -n 1)"
+room_id="$(print -r -- "$prompt" | sed -n 's/^# \(room-[0-9a-f]*\).*/\1/p' | head -n 1)"
 printf '%s\n%s' 'Agent says `code` $(literal) --as=admin' 'second line' \
   | openwork reply "$room_id" --stdin >/dev/null || exit $?
 session_id="ses_helper"

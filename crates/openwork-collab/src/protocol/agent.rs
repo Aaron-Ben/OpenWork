@@ -38,6 +38,22 @@ pub struct InboxResponse {
     pub messages: Vec<MessageView>,
     pub climates: Vec<ClimateView>,
     pub carried_over: bool,
+    /// 本批消息所在的房间；Direct Room 没有标题。
+    pub rooms: Vec<RoomView>,
+    /// 全部 active 参与者加上本批消息的作者，人类在前、其余按显示名排序。
+    /// 没有未读消息时也返回，供 Agenda Turn 渲染名册（collaboration.md §7.2）。
+    pub team: Vec<TeamMember>,
+}
+
+/// 名册中的一位参与者。`archived` 只会出现在本批消息的作者身上。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMember {
+    pub id: String,
+    pub kind: String,
+    pub display_name: String,
+    pub role: Option<String>,
+    pub archived: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

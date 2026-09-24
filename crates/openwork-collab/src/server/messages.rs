@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::protocol::{DeliveryRange, InboxResponse, MessageView, TriggerEnvelope, entity_id};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
-use super::{auth::AgentClaims, climate::Climate};
+use super::{agents::Agents, auth::AgentClaims, climate::Climate, rooms::Rooms};
 
 const INBOX_MESSAGE_LIMIT: usize = 200;
 
@@ -287,6 +287,8 @@ impl Messages {
                 messages: Vec::new(),
                 climates: Vec::new(),
                 carried_over: false,
+                rooms: Vec::new(),
+                team: Agents::team(&self.pool, &[]).await?,
             });
         }
         let allocations = water_fill(
@@ -368,6 +370,8 @@ impl Messages {
         }
         let participant_ids = participant_ids.into_iter().collect::<Vec<_>>();
         let climates = Climate::for_participants(&self.pool, &claims.sub, &participant_ids).await?;
+        let team = Agents::team(&self.pool, &participant_ids).await?;
+        let rooms = Rooms::views(&self.pool, &ranges.keys().cloned().collect::<Vec<_>>()).await?;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         Ok(InboxResponse {
             trigger: Some(TriggerEnvelope {
@@ -392,6 +396,8 @@ impl Messages {
             messages,
             climates,
             carried_over,
+            rooms,
+            team,
         })
     }
 }

@@ -2,7 +2,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 use uuid::Uuid;
 
-use crate::protocol::{AgentAssignment, AgentView, EngineId, ParticipantView};
+use crate::protocol::{AgentAssignment, AgentView, EngineId, ParticipantView, TeamMember};
 
 /// 创建与更新 Agent 时由用户填写的字段。
 pub(crate) struct AgentFields<'a> {
@@ -258,6 +258,28 @@ impl Agents {
         .map(|rows| rows.into_iter().map(ParticipantView::from).collect())
     }
 
+    /// 渲染名册所需的参与者：全部 active 参与者，加上 `author_ids` 里已归档的 Agent（它们的
+    /// 消息仍在本批里，需要显示名）。人类在前，其余按显示名排序（collaboration.md §7.2）。
+    pub(crate) async fn team(
+        pool: &PgPool,
+        author_ids: &[String],
+    ) -> Result<Vec<TeamMember>, sqlx::Error> {
+        sqlx::query_as::<_, TeamMemberRow>(
+            "SELECT participant.id, participant.kind, participant.display_name, profile.role,
+                    profile.archived_at IS NOT NULL AS archived
+             FROM collab_participants participant
+             LEFT JOIN collab_agent_profiles profile ON profile.agent_id = participant.id
+             WHERE participant.kind = 'user' OR profile.archived_at IS NULL
+                OR participant.id = ANY($1)
+             ORDER BY CASE WHEN participant.kind = 'user' THEN 0 ELSE 1 END,
+                      participant.display_name, participant.id",
+        )
+        .bind(author_ids)
+        .fetch_all(pool)
+        .await
+        .map(|rows| rows.into_iter().map(TeamMember::from).collect())
+    }
+
     pub(crate) async fn is_active_participant_in(
         transaction: &mut Transaction<'_, Postgres>,
         participant_id: &str,
@@ -396,6 +418,27 @@ struct ParticipantRow {
     id: String,
     kind: String,
     display_name: String,
+}
+
+#[derive(FromRow)]
+struct TeamMemberRow {
+    id: String,
+    kind: String,
+    display_name: String,
+    role: Option<String>,
+    archived: bool,
+}
+
+impl From<TeamMemberRow> for TeamMember {
+    fn from(row: TeamMemberRow) -> Self {
+        Self {
+            id: row.id,
+            kind: row.kind,
+            display_name: row.display_name,
+            role: row.role,
+            archived: row.archived,
+        }
+    }
 }
 
 impl From<ParticipantRow> for ParticipantView {

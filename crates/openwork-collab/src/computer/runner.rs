@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::protocol::{
-    AgendaDecisionRequest, AgentAssignment, AppendRunEventsRequest, ClimateView, FinishRunRequest,
-    MessageView, OpenRunRequest, RunEventInput, TriageReportRequest, entity_id,
+    AgendaDecisionRequest, AgentAssignment, AppendRunEventsRequest, FinishRunRequest,
+    OpenRunRequest, RunEventInput, TeamMember, TriageReportRequest, entity_id,
 };
 
 use super::{
@@ -20,6 +20,7 @@ use super::{
         TurnResult,
     },
     home::{AgentHome, HomeError},
+    prompt::{MessageTurn, agenda_turn_prompt, message_turn_prompt},
     scheduling::{RunnerResources, engine_backoff_after},
     triage::parse_triage,
 };
@@ -193,7 +194,7 @@ impl AgentRunner {
         self.refresh_token_if_needed().await?;
         let inbox = self.client.inbox().await?;
         let Some(trigger) = inbox.trigger else {
-            return self.maybe_agenda(cancellation).await;
+            return self.maybe_agenda(&inbox.team, cancellation).await;
         };
         self.quiet_since = Instant::now();
         let run = self.client.open_run(&OpenRunRequest { trigger }).await?;
@@ -320,13 +321,16 @@ impl AgentRunner {
             .await?;
             return Ok(());
         }
-        let prompt = build_prompt(
-            &self.assignment,
-            &inbox.messages,
-            &inbox.climates,
-            &verdict.prompt_note,
-            inbox.carried_over,
-        );
+        let prompt = message_turn_prompt(&MessageTurn {
+            self_id: &self.assignment.id,
+            now: OffsetDateTime::now_utc(),
+            triage_note: &verdict.prompt_note,
+            messages: &inbox.messages,
+            rooms: &inbox.rooms,
+            team: &inbox.team,
+            climates: &inbox.climates,
+            carried_over: inbox.carried_over,
+        });
         self.execute_main_run(run.id, prompt, cancellation).await?;
         self.quiet_since = Instant::now();
         Ok(())
@@ -426,7 +430,11 @@ impl AgentRunner {
         Ok(())
     }
 
-    async fn maybe_agenda(&mut self, cancellation: CancellationToken) -> Result<(), RunnerError> {
+    async fn maybe_agenda(
+        &mut self,
+        team: &[TeamMember],
+        cancellation: CancellationToken,
+    ) -> Result<(), RunnerError> {
         let now = Instant::now();
         if !agenda_due(
             self.assignment.agenda_enabled,
@@ -520,7 +528,8 @@ impl AgentRunner {
         })?;
         let run = self.client.open_run(&OpenRunRequest { trigger }).await?;
         let _run_heartbeat = RunHeartbeat::start(self.client.clone(), run.id.clone());
-        let prompt = build_agenda_prompt(&self.assignment, &brief);
+        let prompt =
+            agenda_turn_prompt(&self.assignment.id, OffsetDateTime::now_utc(), &brief, team);
         self.execute_main_run(run.id, prompt, cancellation).await?;
         self.quiet_since = Instant::now();
         Ok(())
@@ -693,58 +702,6 @@ fn agenda_due(
         && !backoff_active
 }
 
-fn build_prompt(
-    assignment: &AgentAssignment,
-    messages: &[MessageView],
-    climates: &[ClimateView],
-    triage_note: &str,
-    carried_over: bool,
-) -> String {
-    let mut prompt = format!(
-        "You are {}. {}\nHandle the following durable collaboration delivery.\n",
-        assignment.display_name, assignment.persona
-    );
-    if !triage_note.trim().is_empty() {
-        prompt.push_str(&format!("Triage focus: {triage_note}\n"));
-    }
-    if carried_over {
-        prompt.push_str(
-            "This is the oldest bounded inbox batch; more unread messages remain for a later run.\n",
-        );
-    }
-    if !climates.is_empty() {
-        prompt.push_str(
-            "Private Climate context follows. These are your subjective current impressions, not objective facts.\n",
-        );
-        for climate in climates {
-            prompt.push_str(&format!(
-                "about {}: affinity={}, trust={}, note={}\n",
-                climate.about_participant_id,
-                climate.affinity,
-                climate.trust,
-                climate.last_note.as_deref().unwrap_or("none"),
-            ));
-        }
-    }
-    for message in messages {
-        prompt.push_str(&format!(
-            "room_id: {}\n[{}] {}: {}\n",
-            message.room_id, message.sequence, message.author_id, message.body
-        ));
-    }
-    prompt.push_str(
-        "Publish collaboration actions with the openwork CLI. Assistant text alone is not sent.\n",
-    );
-    prompt
-}
-
-fn build_agenda_prompt(assignment: &AgentAssignment, focused_brief: &str) -> String {
-    format!(
-        "You are {}. {}\nHandle this proactive collaboration turn.\n{}\n",
-        assignment.display_name, assignment.persona, focused_brief
-    )
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error(transparent)]
@@ -772,11 +729,10 @@ impl RunnerError {
 mod tests {
     use std::time::Duration;
 
-    use crate::protocol::{AgentAssignment, ClimateView, MessageView};
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
-    use super::{agenda_due, build_prompt, next_trigger, token_needs_refresh};
+    use super::{agenda_due, next_trigger, token_needs_refresh};
 
     #[test]
     fn refreshes_agent_token_with_five_minutes_remaining() {
@@ -807,46 +763,6 @@ mod tests {
             Some(Duration::from_secs(60)),
             false
         ));
-    }
-
-    #[test]
-    fn main_prompt_projects_only_the_current_private_climate_snapshot() {
-        let assignment = AgentAssignment {
-            id: "alpha".to_string(),
-            display_name: "Alpha".to_string(),
-            role: None,
-            persona: "Investigate carefully.".to_string(),
-            engine_id: "opencode".to_string(),
-            main_model_id: "local/main".to_string(),
-            triage_model_id: "local/triage".to_string(),
-            config_revision: 1,
-            agenda_enabled: false,
-        };
-        let prompt = build_prompt(
-            &assignment,
-            &[MessageView {
-                id: "msg-1".to_string(),
-                room_id: "room-1".to_string(),
-                sequence: 1,
-                author_id: "beta".to_string(),
-                body: "Please review this.".to_string(),
-            }],
-            &[ClimateView {
-                agent_id: "alpha".to_string(),
-                about_participant_id: "beta".to_string(),
-                affinity: 0.75,
-                trust: 0.5,
-                last_note: Some("Strong technically; verify estimates.".to_string()),
-                updated_at: "2026-08-31T20:00:00+08:00".to_string(),
-            }],
-            "",
-            false,
-        );
-
-        assert!(prompt.contains("subjective current impressions"));
-        assert!(prompt.contains("about beta: affinity=0.75, trust=0.5"));
-        assert!(prompt.contains("Strong technically; verify estimates."));
-        assert!(prompt.contains("Please review this."));
     }
 
     #[tokio::test]

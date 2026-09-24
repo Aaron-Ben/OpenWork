@@ -12,9 +12,9 @@ const HELP: &str = "Usage:
   openwork members <room-id>
   openwork participants
   openwork glance <room-id>
-  openwork reply <room-id> [--held-token <token>] (--stdin | --file <path> | -- <body>)
+  openwork reply <room-id> [--held-token <token>] (<body> | --stdin | --file <path>)
   openwork ack <room-id>
-  openwork dm <participant-id> (--stdin | --file <path> | -- <body>)
+  openwork dm <participant-id> (<body> | --stdin | --file <path>)
   openwork climate show [participant-id]
   openwork climate note <participant-id> --affinity <-1..1> --trust <-1..1> (--stdin | --file <path> | -- <note>)
   openwork board list
@@ -57,11 +57,8 @@ struct ShimOutput {
 
 async fn run() -> Result<ShimOutput, ShimError> {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if arguments.is_empty() || arguments == ["--help"] || arguments == ["help"] {
-        return Ok(ShimOutput {
-            text: HELP.to_string(),
-            exit_code: 0,
-        });
+    if let Some(text) = help_request(&arguments) {
+        return Ok(ShimOutput { text, exit_code: 0 });
     }
     let command = parse_command(arguments).await?;
     let base_url = std::env::var("OPENWORK_RUNTIME_BASE_URL")
@@ -100,6 +97,42 @@ async fn run() -> Result<ShimOutput, ShimError> {
         }
     };
     render(response)
+}
+
+/// 没有参数、`help`，或 `--` 之前出现 `--help` / `-h` 时返回帮助文本。子命令后面的
+/// `--help` 只返回匹配最长前缀的那几行用法，找不到时返回全部用法。
+fn help_request(arguments: &[String]) -> Option<String> {
+    let options = arguments
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .collect::<Vec<_>>();
+    let asked = arguments.is_empty()
+        || arguments == ["help"]
+        || options
+            .iter()
+            .any(|argument| matches!(argument.as_str(), "--help" | "-h"));
+    if !asked {
+        return None;
+    }
+    let words = options
+        .iter()
+        .take_while(|argument| !argument.starts_with('-'))
+        .map(|argument| argument.as_str())
+        .collect::<Vec<_>>();
+    for length in (1..=words.len()).rev() {
+        let prefix = format!("  openwork {}", words[..length].join(" "));
+        let lines = HELP
+            .lines()
+            .filter(|line| {
+                line.strip_prefix(&prefix)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+            })
+            .collect::<Vec<_>>();
+        if !lines.is_empty() {
+            return Some(format!("Usage:\n{}", lines.join("\n")));
+        }
+    }
+    Some(HELP.to_string())
 }
 
 fn transient_http(error: &reqwest::Error) -> bool {
@@ -205,6 +238,16 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
             } else {
                 (None, tail)
             };
+            let positional = body_arguments.first().is_none_or(|first| first != "--");
+            if positional
+                && body_arguments
+                    .iter()
+                    .any(|argument| argument == "--held-token")
+            {
+                return Err(ShimError::Arguments(
+                    "put --held-token before the message body".to_string(),
+                ));
+            }
             Ok(AgentCommand::Reply {
                 room_id: room_id.clone(),
                 body: parse_body(body_arguments).await?,
@@ -306,16 +349,21 @@ fn required_flag<'a>(
         .ok_or_else(|| ShimError::Arguments(format!("missing {name}")))
 }
 
+/// 正文可以直接写在 id 之后（多个参数按空格拼接，与 Cumora `reply <convo_id> "<body>"` 相同），
+/// 也可以用 `--stdin` / `--file` 避开 shell 引号，或用 `--` 发送以 `--` 开头的文本。
 async fn parse_body(arguments: &[String]) -> Result<String, ShimError> {
     let body = match arguments {
+        [] => return Err(missing_body()),
         [flag] if flag == "--stdin" => read_stdin_body()?,
         [flag, path] if flag == "--file" => read_file_body(path).await?,
-        [separator, body] if separator == "--" => body.clone(),
-        _ => {
-            return Err(ShimError::Arguments(
-                "body requires --stdin, --file <path>, or -- <body>".to_string(),
-            ));
+        [separator] if separator == "--" => return Err(missing_body()),
+        [separator, words @ ..] if separator == "--" => words.join(" "),
+        [first, ..] if first.starts_with("--") => {
+            return Err(ShimError::Arguments(format!(
+                "unknown option {first}; to send text that starts with --, put -- before it"
+            )));
         }
+        words => words.join(" "),
     };
     if body.len() > MESSAGE_BODY_MAX_BYTES {
         return Err(ShimError::Arguments(format!(
@@ -323,6 +371,13 @@ async fn parse_body(arguments: &[String]) -> Result<String, ShimError> {
         )));
     }
     Ok(body)
+}
+
+fn missing_body() -> ShimError {
+    ShimError::Arguments(
+        "missing message body; write it after the id, or use --stdin or --file <path> for text with quotes or $"
+            .to_string(),
+    )
 }
 
 fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
@@ -363,7 +418,13 @@ fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut text = format!("Room {room_id} at {compose_anchor}\nMembers: {names}");
-            render_messages(&mut text, &messages);
+            if messages.is_empty() {
+                text.push_str(&format!(
+                    "\nNo new messages since you last read this room (latest sequence {compose_anchor})."
+                ));
+            } else {
+                render_messages(&mut text, &messages);
+            }
             (text, 0)
         }
         AgentCommandResult::Rooms { rooms } => (
@@ -495,8 +556,62 @@ enum ShimError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_command, parse_score, parse_tail};
-    use crate::protocol::AgentCommand;
+    use super::{help_request, parse_command, parse_score, parse_tail, render};
+    use crate::protocol::{
+        AgentCommand, AgentCommandResponse, AgentCommandResult, ParticipantView,
+    };
+
+    /// 子命令后面的 `--help` 只显示这个子命令的用法；`--` 之后的 `--help` 是正文。
+    #[test]
+    fn help_after_a_subcommand_shows_only_that_usage() {
+        let help = |values: &[&str]| help_request(&arguments(values));
+        assert_eq!(
+            help(&["reply", "--help"]).as_deref(),
+            Some(
+                "Usage:\n  openwork reply <room-id> [--held-token <token>] (<body> | --stdin | --file <path>)"
+            )
+        );
+        assert_eq!(
+            help(&["card", "move", "-h"]).as_deref(),
+            Some("Usage:\n  openwork card move <card-id> --column <id> [--before-card <card-id>]")
+        );
+        assert_eq!(
+            help(&["glance", "room-1", "--help"]).as_deref(),
+            Some("Usage:\n  openwork glance <room-id>")
+        );
+        assert_eq!(help(&["reply", "room-1", "--", "--help"]), None);
+        assert_eq!(help(&["reply", "room-1", "Ship it."]), None);
+        assert!(help(&["--help"]).unwrap().contains("  openwork card move"));
+        assert!(
+            help(&["frobnicate", "--help"])
+                .unwrap()
+                .contains("  openwork inbox")
+        );
+    }
+
+    /// glance 没有新消息时说明原因，而不是只写 `(no messages)`。
+    #[test]
+    fn empty_glance_says_nothing_new_since_the_last_read() {
+        let output = render(AgentCommandResponse {
+            result: AgentCommandResult::Glance {
+                room_id: "room-1".to_string(),
+                compose_anchor: 3,
+                members: vec![ParticipantView {
+                    id: "bo".to_string(),
+                    kind: "agent".to_string(),
+                    display_name: "Bo".to_string(),
+                }],
+                messages: Vec::new(),
+            },
+            effects: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            output.text,
+            "Room room-1 at 3\nMembers: Bo (bo)\nNo new messages since you last read this room (latest sequence 3)."
+        );
+    }
 
     #[tokio::test]
     async fn parses_read_and_climate_commands() {
@@ -538,6 +653,95 @@ mod tests {
                 trust: -0.25,
                 note: "Strong technically; verify estimates.".to_string(),
             }
+        );
+    }
+
+    fn arguments(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn reply(body: &str, held_token: Option<&str>) -> AgentCommand {
+        AgentCommand::Reply {
+            room_id: "room-1".to_string(),
+            body: body.to_string(),
+            held_token: held_token.map(str::to_string),
+        }
+    }
+
+    /// 正文可以直接跟在房间 id 后面（Cumora `reply <convo_id> "<body>"`）；多个参数按空格拼接，
+    /// `--` 仍然可用。
+    #[tokio::test]
+    async fn reply_and_dm_accept_the_body_as_plain_arguments() {
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1", "Ship it today."]))
+                .await
+                .unwrap(),
+            reply("Ship it today.", None)
+        );
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1", "Ship", "it", "today."]))
+                .await
+                .unwrap(),
+            reply("Ship it today.", None)
+        );
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1", "--", "--not-a-flag"]))
+                .await
+                .unwrap(),
+            reply("--not-a-flag", None)
+        );
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply",
+                "room-1",
+                "--held-token",
+                "hold-1",
+                "Still needed."
+            ]))
+            .await
+            .unwrap(),
+            reply("Still needed.", Some("hold-1"))
+        );
+        assert_eq!(
+            parse_command(arguments(&["dm", "bo", "Can you review card-7?"]))
+                .await
+                .unwrap(),
+            AgentCommand::DirectMessage {
+                participant_id: "bo".to_string(),
+                body: "Can you review card-7?".to_string(),
+            }
+        );
+    }
+
+    /// 缺正文或把选项写在正文之后时，拒绝并告诉模型正确写法（模型可见文本逐字断言）。
+    #[tokio::test]
+    async fn misplaced_options_and_missing_bodies_are_rejected_with_the_usage() {
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1"]))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "invalid arguments: missing message body; write it after the id, or use --stdin or --file <path> for text with quotes or $"
+        );
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply",
+                "room-1",
+                "Still needed.",
+                "--held-token",
+                "hold-1"
+            ]))
+            .await
+            .unwrap_err()
+            .to_string(),
+            "invalid arguments: put --held-token before the message body"
+        );
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1", "--tail", "5"]))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "invalid arguments: unknown option --tail; to send text that starts with --, put -- before it"
         );
     }
 

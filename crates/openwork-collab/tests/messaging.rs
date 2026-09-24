@@ -4,8 +4,8 @@ use openwork_collab::{
     protocol::{
         AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
         AgentTokenResponse, AgentView, DesktopCommand, DesktopCommandRequest, DesktopCommandResult,
-        FinishRunRequest, InboxResponse, OpenRunRequest, RoomView, RunView, TriagePayload,
-        request_id,
+        FinishRunRequest, InboxResponse, OpenRunRequest, RoomView, RunView, TeamMember,
+        TriagePayload, request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -354,7 +354,7 @@ async fn failed_run_keeps_the_durable_delivery_and_human_triage_is_deterministic
     fixture.stop().await;
 }
 
-/// collaboration.md §7、§12 #7：被点名的是别人时，Agent 完成 Turn 后既不回复也不 ack。
+/// collaboration.md §8.4、§16 #7：被点名的是别人时，Agent 完成 Turn 后既不回复也不 ack。
 /// 这批 delivery 仍要结算，否则同一条 User 消息会在每次 poll 重新触发完整 Turn。
 #[tokio::test]
 async fn a_completed_silent_run_settles_its_delivery_so_the_agent_is_not_woken_again() {
@@ -503,6 +503,58 @@ async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room
     assert!(inbox.messages.iter().any(|message| {
         message.room_id == quiet.id && message.body == "quiet room must keep its own inbox window"
     }));
+
+    fixture.stop().await;
+}
+
+/// collaboration.md §7.2、§16 #8：inbox 带上本批房间的类型与标题，以及渲染名册所需的
+/// 全部 active 参与者；已归档且没有出现在本批消息里的 Agent 不在其中。
+#[tokio::test]
+async fn acc_08_inbox_carries_room_headers_and_the_active_team() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let ada = fixture.create_agent("Ada").await;
+    let bo = fixture.create_agent("Bo").await;
+    let cy = fixture.create_agent("Cy").await;
+    let room = fixture
+        .create_group(vec![ada.id.clone(), bo.id.clone()])
+        .await;
+    fixture
+        .send_user(&room.id, "Bo, check the migration.")
+        .await;
+    fixture
+        .desktop(DesktopCommand::ArchiveAgent {
+            agent_id: cy.id.clone(),
+        })
+        .await;
+
+    let token = fixture.token(&ada.id).await;
+    let inbox = fixture.inbox(&token).await;
+
+    assert_eq!(
+        inbox.rooms,
+        vec![RoomView {
+            id: room.id.clone(),
+            kind: "group".to_string(),
+            title: Some("R5 coordination".to_string()),
+        }]
+    );
+    let member = |id: &str, kind: &str, name: &str, role: Option<&str>| TeamMember {
+        id: id.to_string(),
+        kind: kind.to_string(),
+        display_name: name.to_string(),
+        role: role.map(str::to_string),
+        archived: false,
+    };
+    assert_eq!(
+        inbox.team,
+        vec![
+            member("local-user", "user", "User", None),
+            member(&ada.id, "agent", "Ada", Some("Collaborator")),
+            member(&bo.id, "agent", "Bo", Some("Collaborator")),
+        ]
+    );
 
     fixture.stop().await;
 }
