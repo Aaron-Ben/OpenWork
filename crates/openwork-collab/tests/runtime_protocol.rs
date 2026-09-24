@@ -335,6 +335,7 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
             body: "I am on it.".to_string(),
             held_token: None,
             quoted_message_id: None,
+            continuation: false,
         },
     };
     let first_result = fixture

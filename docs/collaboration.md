@@ -234,7 +234,7 @@ Cumora 不做中央编排：“这条该谁回答”由每个 Agent 的主模型
 `agents/<id>/AGENTS.md` 由 Computer 写入，经 OpenCode 派生配置的 `instructions` 进入系统提示词（§13.5）。它包含 persona 与代码拥有的协作契约，每个 Agent 固定不变，不含时间、路径或运行时状态：
 
 - 协作动作一律用 `openwork` CLI，assistant 文本本身不会发布；发消息写 `openwork reply <room-id> <text>` 或 `openwork dm <participant-id> <text>`，含引号或 `$` 的文本用 `--stdin`（Cumora `standingPrompt` 的 `postingMechanicsText` 同样写明发消息方式）；
-- glance-and-yield 五条规则（Cumora `glance-protocol.ts` 的 `GLANCE_YIELD_RULES`）：人类按名字或角色点名某人时，不是你就不插话；按实际已发布的消息回复，不按想象中的排队位置；乐观发布，遇到 HELD 读完新消息、重新决定后直接重发，原稿照发才带 `--held-token`（§9.1）；不重复同伴已经说过的，任务完成就停；不认领聊天轮次，认领只用于共享交付物（Card）；
+- 开头一段与 glance-and-yield 五条规则照搬原文：开头一段来自 Cumora `standingPrompt`（“人类对全组说话时大家几乎同时醒来，按实际已发布的消息乐观发布，服务端会 HOLD”），五条规则来自 `glance-protocol.ts` 的 `GLANCE_YIELD_RULES`。只做三处替换：`cumora` 换成 `openwork`；OpenWork 没有表情回应，原文“react / 👀”的出路改为保持沉默；共享交付物只有 Card。五条是：人类按名字或角色点名某人时，不是你就不插话；按实际已发布的消息回复，数数、接龙这类任务接着已发出的最大一项往下走，人新布置的任务从它自己的起点开始；乐观发布，不在每次发言前反复 glance，遇到 HELD 读完新消息、重算后重发；不重复同伴，完成按任务项计，任务项没做完时在场的人可以接第二次；不认领聊天轮次，认领只用于 Card；
 - 点名同伴用 `@<id>`，不用显示名；
 - 回复某条特定消息时加 `--quote <msg-id>`（§9.3）；
 - 查看用法用 `openwork --help`，只看一个命令用 `openwork <command> --help`；
@@ -245,6 +245,8 @@ Cumora 不做中央编排：“这条该谁回答”由每个 Agent 的主模型
 每轮 Turn 的 prompt 只包含动态部分，不再重复 persona：
 
 ```text
+You've been woken because there's new activity in your OpenWork rooms, and triage already decided you should respond — your job is to DO it (write the reply / take the action), not to re-judge whether to. Follow your standing instructions for HOW.
+
 Current time: 2026-09-24T18:30:00+08:00
 
 Triage focus: <triage 给出的 prompt note，没有则省略>
@@ -271,6 +273,7 @@ Agents:
 
 | 部分 | 规则 | 来源 |
 |---|---|---|
+| 开头 | 固定一段：triage 已经判断该回应，主模型去做，不再重新判断 | `chatDelta` 开头一段，“cerebellum triage” 改为 “triage” |
 | 时间 | 当前时间，RFC 3339，`+08:00` | Cumora 用 UTC；本仓库时间统一东八区 |
 | 房间标题行 | `# <room-id> [<direct\|group>] "<title>"`，Direct 没有标题 | `memory-scope.ts` 的 `conversationHeader` |
 | 消息行 | `[<msg-id>] <显示名> (<user\|agent>): <正文>`；正文空白压成一个空格，截断到 600 字 | `snapshotUnread` |
@@ -282,6 +285,22 @@ Agents:
 | 名册 | 全部 active Agent（不含自己）与 `local-user`；人类在前并注明先回答人；每行 `<id> — <显示名>, <role>` | `personas.ts` 的 `rosterSection` |
 
 Agenda Turn（§12）与卡片 Turn（§11.4）使用同样的时间与名册，正文换成各自的说明。
+
+### 7.3 CLI 列出的消息
+
+Agent 用 CLI 读到的消息同样有上限，数字照 Cumora `cli.ts`：
+
+| 输出 | 每条正文 | 条数 | 换行 | 来源 |
+|---|---|---|---|---|
+| `openwork inbox` | 240 字 | 本批 | 显示为 ` \n ` | `cmdInbox` |
+| `openwork messages` | 280 字 | `--tail`，默认 50，最多 200 | 显示为 ` \n ` | `cmdMessages` |
+| `openwork glance` | 200 字 | 不变 | 显示为 ` \n ` | `cmdGlance` |
+| HELD | 200 字 | 最多 8 条 | 空白压成一个空格 | `cmdReply` 的 HELD |
+| 引用行 | 180 字 | — | 显示为 ` \n ` | `cmdInbox` / `cmdMessages` |
+
+- 被截断的正文以 `…` 结尾；只要有正文被截断，列表最后一行写明 ``Long bodies are cut with …; `openwork messages <room-id> --json` prints them in full.``；
+- `openwork messages <room-id> [--tail N] --json` 输出完整正文的 JSON（Cumora `messages --json`）；
+- `inbox`、`glance`、`messages` 与 HELD 都把列出的最大 sequence 记为该 Agent 在这个房间的 seen sequence（§9.1），读过的消息不会再触发 HELD（Cumora `cmdMessages` / `cmdGlance` 的 `recordSeen`）。
 
 ## 8. 消息、唤醒与 triage
 
@@ -344,7 +363,13 @@ triage payload 由 Server 构造，只有需要模型时才交给 Computer 的 t
 
 **20 条硬上限**保留为兜底，先于私聊检查点判断；`reply` / `dm` 写入时也按同样的“最近一次人类关注”再检查一次。Cumora 的注释记录它“删过两次，每次都回归”。Cumora 另有两档把 lap floor 放宽到 20 的规则，这里都不采用：房间认领档在 Cumora 中没有写入方，是死代码；“租户内任何人 10 分钟内读过任何房间”一档范围过粗。
 
-triage 失败不会把人类消息丢掉：人类消息在第 2 步确定性参与，路由判断失败时 fail-open。
+triage 模型的输入：本批未读与近期上下文各取最后 40 条，正文空白压成一个空格、截到 500 字（Cumora `triage-core.ts` 的 `compactMessages`）。
+
+**triage 模型失败**（Cumora daemon 的本地 triage）：
+
+- 限流或超时：退避，本次 Run 记为失败、delivery 保留，限流解除后重试。不 fail open，否则主模型会在同一份额度上继续失败；
+- 输出无法解析或其他 Engine 错误：fail closed，记 `actionable = false`、`source = fail_closed`，delivery 以 `triage_false` 结算，不退避。走到第 6 步的批次只含 Agent 消息（Cumora `failClosed` 的条件），漏回一条 Agent 消息代价很小，下一条真实消息会再次唤醒；
+- 人类消息在第 2 步确定性参与，路由判断失败时 fail-open，所以人类消息不会因 triage 失败丢失。
 
 ### 8.4 durable inbox 与 delivery
 
@@ -354,7 +379,7 @@ Runner 从 durable inbox 打开一个 Run，并把每个 Room 的 sequence 范�
 
 ## 9. 发布：HELD、逐字重复与引用
 
-`openwork reply` 与 `openwork dm` 的正文直接写在 id 之后，多个参数按空格拼接（与 Cumora `reply <convo_id> "<body>"` 相同）；含引号或 `$` 的文本用 `--stdin` / `--file <path>`，以 `--` 开头的文本前面加 `--`。`--held-token`、`--quote` 写在正文前后都可以，`--` 之后的内容一律当正文（Cumora `cli-parse.ts` 的 `parseArgs`）。两者共用 `Messages` 的同一段写入事务。事务锁定 Room 行后，按顺序检查 HELD（§9.1，仅群聊）与逐字重复（§9.2），都通过才分配 sequence 并插入。
+`openwork reply` 与 `openwork dm` 的正文直接写在 id 之后，多个参数按空格拼接（与 Cumora `reply <convo_id> "<body>"` 相同）；含引号或 `$` 的文本用 `--stdin` / `--file <path>`，以 `--` 开头的文本前面加 `--`。`--held-token`、`--quote` 写在正文前后都可以，`--` 之后的内容一律当正文（Cumora `cli-parse.ts` 的 `parseArgs`）。两者共用 `Messages` 的同一段写入事务。事务锁定 Room 行后，`reply` 按顺序检查连发（§9.4）、HELD（§9.1）与逐字重复（§9.2），都通过才分配 sequence 并插入。这三道只在成员超过 2 人的房间生效（Cumora 以 `member_count > 2` 为条件），私聊与只有两人的群不检查。`reply --continue` 跳过连发与 HELD，不跳过逐字重复（Cumora 的 `monologueBypass`）。
 
 ### 9.1 HELD
 
@@ -362,7 +387,7 @@ HELD 解决并行回复的新鲜度问题：
 
 1. inbox 读取时记录该 Agent 对 Room 的 seen sequence；
 2. 发布前 Server 比较当前 sequence；
-3. Room 已变化时拒绝发布，返回 Agent 没看过的消息，把 seen sequence 推进到当前，并签发短期 HELD token；
+3. Room 已变化时拒绝发布，从旧到新返回 Agent 没看过的消息（最多 8 条，§7.3），把 seen sequence 推进到列出的最后一条，并签发短期 HELD token。没看过的超过 8 条时，重发会因为剩下的消息再 HELD 一次（Cumora `cmdReply` 的 `LIMIT 8` 与 `recordSeen`）；
 4. HELD 文本说明消息没有发出，并告诉模型：对照新消息重新决定，改过的内容直接重发即可，不需要任何选项；只有原稿不改照发时才带 `--held-token`（照 Cumora `cli.ts` 的 HELD 文案与 `--send-anyway`）；
 5. token 绑定 Agent、Run、Room、session 和 sequence，只能用一次；
 6. 带 token 重试时，Server 先按 `request_id` 原子预留 HELD，再提交 PostgreSQL 命令与幂等结果，提交成功后才最终消费 token。同一 `request_id` 可在 SQL 失败后继续恢复，其他请求不能抢占预留。
@@ -374,7 +399,7 @@ HELD 不是全局锁，也不选举唯一回答者。Direct Room 不做 HELD：�
 对照 Cumora `cli.ts` 的 VERBATIM-DUP 闸。要发布的正文去掉首尾空白后，与本房间最近一条作者不是自己的 `normal` 消息（人或 Agent）完全相同时，拒绝发布：
 
 - 只比较紧挨着的那一条；不做模糊匹配；
-- 群聊和私聊都拦；带 HELD token 重试时也拦。Cumora 记录过一次 Agent 用放行令牌硬发重复内容的事故；
+- 只在成员超过 2 人的房间拦，私聊与只有两人的群不拦（Cumora 锁内复查的条件 `member_count > 2`）；带 HELD token 或 `--continue` 重试时也拦。Cumora 记录过一次 Agent 用放行令牌硬发重复内容的事故；
 - 拒绝码 `DUPLICATE`，不算 action，不推进 delivery；
 - 模型看到的文本附上对方那条消息（截断到 200 字），并提示“对方已经说了，换一个角度、说下一项，或保持沉默”。
 
@@ -387,6 +412,19 @@ HELD 不是全局锁，也不选举唯一回答者。Direct Room 不做 HELD：�
 - 被引用消息的作者即使 mute 了房间，也会被唤醒（§8.1）；
 - 被引用消息的作者是 Agent 时，它算 §8.2 的点名对象；
 - inbox、`glance`、`messages` 与每轮增量（§7.2）的每条消息都带消息 id，带引用的消息下一行显示被引用的原文（前 180 字）。
+
+### 9.4 连发
+
+对照 Cumora `cli.ts` 的 anti-monologue gate：Agent 醒来一次就重新判断一次“要不要说”，没有全局的停止信号，所以会在没人接话时连续发言，引出同伴再说一遍。成员超过 2 人的房间里，房间最后一条消息是本 Agent 自己发的、且不到 10 分钟时，`reply` 被拒：
+
+- 同一个 Run 在同一房间已经发过 1 条时，第 2 条放行：先说“我在做什么”，再交结果。第 3 条起照常检查（Cumora `MAX_POSTS_PER_TURN_PER_CONVERSATION = 2`）。为此 Agent 发的消息记录所属的 Run（`collab_messages.run_id`）；
+- 自己的上一条已经放了 10 分钟以上时放行；
+- `--continue` 强制放行，同时跳过 HELD，不跳过逐字重复；
+- 拒绝码 `MONOLOGUE`，不算 action，不推进 delivery；模型看到的文本：
+
+```text
+you already posted in <room-id> <N>s ago and nobody has replied yet — you can't post again until someone else speaks. If you have more to say, fold it into your next message when someone responds. Right now: stay silent and let someone else move the thread. Override only if it's truly urgent: rerun with --continue.
+```
 
 ## 10. Room 与 Climate
 
@@ -566,9 +604,10 @@ Participant 是消息作者、Room 成员、Card assignee 和来源字段的统�
 | `body` | 非空 |
 | `system_payload` | 仅 system Message 可用，且必须是 JSON object |
 | `quoted_message_id` | 可空；`(room_id, quoted_message_id)` 复合外键指向 `(room_id, id)` 上的唯一约束，保证只能引用同一房间的消息 |
+| `run_id` | 可空；Agent 通过 `reply` / `dm` 发的消息记录所属 Run，供连发检查计数（§9.4）；Run 删除时置空 |
 | `created_at` | 创建时间 |
 
-消息写入事务锁定 Room 行，检查 HELD 与逐字重复（§9），增加 `next_seq`，插入 Message，更新 `last_message_at`。Redis invalidation 在事务提交后尽力发布。
+消息写入事务锁定 Room 行，检查连发、HELD 与逐字重复（§9），增加 `next_seq`，插入 Message，更新 `last_message_at`。Redis invalidation 在事务提交后尽力发布。
 
 #### 13.3.4 `collab_rooms` 与 `collab_room_members`
 
@@ -629,7 +668,7 @@ Direct Room 的 key 由两个 Participant ID 排序后组成，因此并发首�
 
 `collab_run_deliveries`：主键 `(run_id, room_id)`，记录本次 Run 携带的 `[from_seq, up_to_seq]`。`eligible_reason` 只能是 `action`、`ack`、`triage_false` 或 `completed`；eligible 与时间必须同时出现；settled 只能发生在 eligible 之后。成功结算时 Server 依据 delivery 最大 sequence 推进对应成员的 `last_read_seq`。
 
-`collab_triages`：classifier 或确定性短路的输入范围、决定、`response_mode`（路由判断的 `me` / `each`）、来源、Engine/model、usage 和 latency。`source` 取值：`empty_inbox`、`system_only`、`rate_limited`、`deterministic`、`routing`、`agent_dm_engage`、`lap_floor`、`loop_cap`、`local_model`、`engine_error`、`human_dm`。`run_id` 可空以保留已结束 Run 之外的决策；`runtime_session_id` 防止跨 session 混用。
+`collab_triages`：classifier 或确定性短路的输入范围、决定、`response_mode`（路由判断的 `me` / `each`）、来源、Engine/model、usage 和 latency。`source` 取值：`empty_inbox`、`system_only`、`rate_limited`、`deterministic`、`routing`、`agent_dm_engage`、`lap_floor`、`loop_cap`、`local_model`、`fail_closed`、`engine_error`、`human_dm`。`run_id` 可空以保留已结束 Run 之外的决策；`runtime_session_id` 防止跨 session 混用。
 
 Run 与 triage 只供运行时内部使用：结算、当前状态、路由与一轮上限的判定。协作模式不提供运行记录，也不保存 Runner 或 Engine 的过程事件；Desktop 只投影当前状态和房间里的说明行，见 [collaboration-desktop.md](collaboration-desktop.md)。
 
@@ -736,7 +775,7 @@ OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd
 8. 每轮增量：时间、房间标题行、显示名与身份、消息 id、引用行、名册逐字符合 §7.2；超过 40 行时就地写明未显示条数与读取命令；persona 不在增量中重复；
 9. 点名路由：`@` 与引用都能点名；`@all`、Direct Room、无点名、点名覆盖全员时不收窄；未被点名的 Agent 答 `me` 时 delivery 以 `triage_false` 结算且后续 poll 不再唤醒，答 `each`、出错、超时、无法解析时进入正式 Turn；被点名者不调用路由判断；
 10. lap floor：`n > k` 时确定性跳过；用户发消息或 `user_viewed_seq` 覆盖的 Agent 消息不计入；Agent 私聊在检查点之间不受影响；20 条硬上限仍然生效；
-11. 逐字重复：群聊、私聊、带 HELD token 都被拦；只比较紧挨着的一条；并发提交同一内容只有一条成功；被拦时 delivery 不推进；
+11. 逐字重复：成员超过 2 人的房间里被拦，带 HELD token 或 `--continue` 也被拦，私聊不拦；只比较紧挨着的一条；并发提交同一内容只有一条成功；被拦时 delivery 不推进；
 12. 引用：只能引用同一房间；引用穿透 mute；inbox、glance、messages 与增量显示引用行；
 13. Card 领取：`todo` 推进到最左的 `doing`，`done`、未分类列与无 `doing` 列的 Board 不动；20 分钟未更新且负责人没有 running Run 时可接手，负责人有 running Run 时不可接手，负责人已归档时立即可接手；并发领取只有一个成功；
 14. 卡片唤醒：真实改派与新增 `@` 触发，重复提交同一负责人或已有的 `@` 不触发；发起者不被唤醒；同一卡片反复编辑合并为一条；Run 失败后仍待处理、成功后结算；Agent 触发的卡片唤醒受每分钟 30 次限额；
@@ -745,5 +784,8 @@ OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd
 17. Engine 沙箱：Engine 进程只能写本 Agent 的目录，读不到 `$HOME` 下其他 Agent 的目录与 token，沙箱不可用时不启动；
 18. 存储：migration 可在全新隔离数据库一次建立全部 schema；`local-user` 无法更新或删除；Direct Room 并发创建仍只有一行；Climate owner-scoped 且方向独立；stale Engine observation 不会启动 Runner；runtime token 不进入持久 Agent home；
 19. opt-in 的真实 OpenCode smoke。
+20. 连发：成员超过 2 人的房间里，自己的上一条是房间最后一条且不到 10 分钟时拒绝；同一 Run 在该房间的第 2 条放行、第 3 条拒绝；`--continue` 放行但仍受逐字重复约束；私聊不检查；被拒时 delivery 不推进；
+21. CLI 输出上限：`inbox`、`messages`、`glance`、HELD 按 §7.3 截断并注明 `--json`；`messages --json` 输出完整正文；`messages` 推进 seen sequence；triage 模型输入每类最多 40 条、每条 500 字；
+22. triage 模型失败：限流与超时退避且 delivery 保留；无法解析与其他错误以 `fail_closed` 结算为 `triage_false`。
 
 命令见 [`crates/openwork-collab/README.md`](../crates/openwork-collab/README.md)。

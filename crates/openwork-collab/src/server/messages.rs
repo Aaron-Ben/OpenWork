@@ -12,6 +12,19 @@ const INBOX_MESSAGE_LIMIT: usize = 200;
 const QUOTE_BODY_MAX_CHARS: i32 = 180;
 /// Characters of the peer message shown back in a DUPLICATE rejection (collaboration.md §9.2, Cumora `cli.ts`).
 const DUPLICATE_PEER_MAX_CHARS: i32 = 200;
+/// Unseen peer messages listed in one HELD response (collaboration.md §7.3, Cumora `cmdReply` `LIMIT 8`).
+const HELD_MESSAGE_LIMIT: i64 = 8;
+/// Seconds an Agent's own last message blocks its next group post (collaboration.md §9.4, Cumora `MIN_GAP_MS`).
+const MONOLOGUE_WINDOW_SECONDS: f64 = 600.0;
+/// Posts one Run may make in one room before the monologue check applies again
+/// (collaboration.md §9.4, Cumora `MAX_POSTS_PER_TURN_PER_CONVERSATION`).
+const POSTS_PER_RUN_PER_ROOM: i64 = 2;
+
+/// 消息作者；Agent 通过 `reply` / `dm` 发的消息带所属 Run，供连发检查计数（collaboration.md §9.4）。
+pub(crate) struct MessageAuthor<'a> {
+    pub(crate) id: &'a str,
+    pub(crate) run_id: Option<&'a str>,
+}
 
 #[derive(Clone)]
 pub(crate) struct Messages {
@@ -48,7 +61,11 @@ impl Messages {
             ),
             None => None,
         };
-        Self::insert_in(transaction, room_id, "local-user", body, quoted).await
+        let author = MessageAuthor {
+            id: "local-user",
+            run_id: None,
+        };
+        Self::insert_in(transaction, room_id, author, body, quoted).await
     }
 
     /// 本房间里 `quoted_id` 这条消息的引用摘要；不在本房间时返回 `None`。
@@ -72,19 +89,15 @@ impl Messages {
         .map(|row| row.map(QuotedMessageView::from))
     }
 
-    /// 逐字重复拦截（collaboration.md §9.2，Cumora `cli.ts` 的 VERBATIM-DUP）：先锁住房间行，
-    /// 再比较 `body` 与本房间最近一条别人发的 normal 消息（两边都去掉首尾空白）。相同时返回
-    /// 给模型的拒绝说明。锁保持到事务结束，所以随后的插入不会被并发的同一内容抢先。
+    /// 逐字重复拦截（collaboration.md §9.2，Cumora `cli.ts` 的 VERBATIM-DUP）：比较 `body` 与本房间
+    /// 最近一条别人发的 normal 消息（两边都去掉首尾空白），相同时返回给模型的拒绝说明。调用方必须已在
+    /// 本事务里锁住房间行（`Runs::reply_context_in`），这样随后的插入不会被并发的同一内容抢先。
     pub(crate) async fn duplicate_of_last_peer_in(
         transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
         author_id: &str,
         body: &str,
     ) -> Result<Option<String>, sqlx::Error> {
-        sqlx::query("SELECT id FROM collab_rooms WHERE id = $1 FOR UPDATE")
-            .bind(room_id)
-            .execute(&mut **transaction)
-            .await?;
         let last_peer: Option<(String, String, String)> = sqlx::query_as(
             "SELECT message.body, LEFT(message.body, $3), author.display_name
              FROM collab_messages message
@@ -106,6 +119,44 @@ impl Messages {
                     "your message is identical to the latest message from {name} in {room_id}: \"{shown}\". {name} already said it; pick a different angle, the next item in a sequence, or stay silent."
                 )
             }))
+    }
+
+    /// 连发检查（collaboration.md §9.4，Cumora `cli.ts` 的 anti-monologue gate）：房间最后一条是
+    /// `agent_id` 自己发的且不到 10 分钟时返回给模型的拒绝说明。同一 Run 在本房间已发过、但还没发满
+    /// 两条时放行（先说在做什么，再交结果）。调用方必须已锁住房间行。
+    pub(crate) async fn monologue_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        agent_id: &str,
+        run_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let latest: Option<(String, f64, i64)> = sqlx::query_as(
+            "SELECT latest.author_id,
+                    EXTRACT(EPOCH FROM (
+                        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai') - latest.created_at
+                    ))::DOUBLE PRECISION,
+                    (SELECT COUNT(*) FROM collab_messages own
+                     WHERE own.room_id = $1 AND own.run_id = $2)
+             FROM collab_messages latest
+             WHERE latest.room_id = $1
+             ORDER BY latest.sequence DESC
+             LIMIT 1",
+        )
+        .bind(room_id)
+        .bind(run_id)
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let Some((author_id, age_seconds, posts_this_run)) = latest else {
+            return Ok(None);
+        };
+        let same_turn_delivery = (1..POSTS_PER_RUN_PER_ROOM).contains(&posts_this_run);
+        if same_turn_delivery || author_id != agent_id || age_seconds >= MONOLOGUE_WINDOW_SECONDS {
+            return Ok(None);
+        }
+        let seconds = age_seconds.round().max(1.0);
+        Ok(Some(format!(
+            "you already posted in {room_id} {seconds}s ago and nobody has replied yet — you can't post again until someone else speaks. If you have more to say, fold it into your next message when someone responds. Right now: stay silent and let someone else move the thread. Override only if it's truly urgent: rerun with --continue."
+        )))
     }
 
     /// 引用目标不在本房间时给模型与用户的说明。
@@ -171,7 +222,7 @@ impl Messages {
     pub(crate) async fn insert_in(
         transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
-        author_id: &str,
+        author: MessageAuthor<'_>,
         body: &str,
         quoted: Option<QuotedMessageView>,
     ) -> Result<MessageView, sqlx::Error> {
@@ -181,7 +232,8 @@ impl Messages {
             &NewMessage {
                 id: &id,
                 room_id,
-                author_id,
+                author_id: author.id,
+                run_id: author.run_id,
                 kind: "normal",
                 body,
                 quoted_message_id: quoted.as_ref().map(|quoted| quoted.id.as_str()),
@@ -192,7 +244,7 @@ impl Messages {
             id,
             room_id: room_id.to_string(),
             sequence,
-            author_id: author_id.to_string(),
+            author_id: author.id.to_string(),
             body: body.to_string(),
             quoted,
         })
@@ -220,6 +272,7 @@ impl Messages {
         Self::views(&mut **transaction, rows).await
     }
 
+    /// `(after_sequence, up_to_sequence]` 之间别人发的消息，从旧到新最多 8 条（HELD 列出的范围）。
     pub(crate) async fn between_in(
         transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
@@ -232,12 +285,13 @@ impl Messages {
              FROM collab_messages
              WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
                AND author_id <> $4
-             ORDER BY sequence LIMIT 50",
+             ORDER BY sequence LIMIT $5",
         )
         .bind(room_id)
         .bind(after_sequence)
         .bind(up_to_sequence)
         .bind(agent_id)
+        .bind(HELD_MESSAGE_LIMIT)
         .fetch_all(&mut **transaction)
         .await?;
         Self::views(&mut **transaction, rows).await
@@ -555,6 +609,7 @@ struct NewMessage<'a> {
     id: &'a str,
     room_id: &'a str,
     author_id: &'a str,
+    run_id: Option<&'a str>,
     kind: &'a str,
     body: &'a str,
     quoted_message_id: Option<&'a str>,
@@ -575,8 +630,9 @@ async fn insert(
     .fetch_one(&mut **transaction)
     .await?;
     sqlx::query(
-        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body, quoted_message_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO collab_messages
+             (id, room_id, sequence, author_id, kind, body, quoted_message_id, run_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(message.id)
     .bind(message.room_id)
@@ -585,6 +641,7 @@ async fn insert(
     .bind(message.kind)
     .bind(message.body)
     .bind(message.quoted_message_id)
+    .bind(message.run_id)
     .execute(&mut **transaction)
     .await?;
     Ok(sequence)

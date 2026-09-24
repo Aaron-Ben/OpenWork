@@ -284,6 +284,8 @@ pub enum AgentCommand {
         body: String,
         held_token: Option<String>,
         quoted_message_id: Option<String>,
+        /// `--continue`：跳过连发检查与 HELD，不跳过逐字重复（collaboration.md §9.4）。
+        continuation: bool,
     },
     Ack {
         room_id: String,

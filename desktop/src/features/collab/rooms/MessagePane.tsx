@@ -17,6 +17,7 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
   const messages = useMessageStore((state) => state.byRoom[room.id])
   const open = useMessageStore((state) => state.open)
   const send = useMessageStore((state) => state.send)
+  const markViewed = useMessageStore((state) => state.markViewed)
   const members = useRoomStore((state) => membersForRoom(state, room.id))
   const fetchMembers = useRoomStore((state) => state.fetchMembers)
   const addMember = useRoomStore((state) => state.addMember)
@@ -35,6 +36,16 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
     setAtBottom(true)
     void open(room.id)
   }, [open, room.id])
+
+  useEffect(() => {
+    const onForeground = () => void markViewed(room.id)
+    window.addEventListener('focus', onForeground)
+    document.addEventListener('visibilitychange', onForeground)
+    return () => {
+      window.removeEventListener('focus', onForeground)
+      document.removeEventListener('visibilitychange', onForeground)
+    }
+  }, [markViewed, room.id])
 
   const latestSequence = messages?.messages[messages.messages.length - 1]?.sequence ?? 0
   useLayoutEffect(() => {

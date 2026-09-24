@@ -88,7 +88,7 @@ fn business_modules_own_persistence_without_a_universal_store() {
             "transport/orchestration adapter owns business SQL: {adapter}"
         );
     }
-    let commands = std::fs::read_to_string(server_root.join("agent_commands.rs")).unwrap();
+    let commands = source_text(&server_root.join("agent_commands"));
     for forbidden in ["sqlx::query", "FromRow", "struct MessageRow", "INSERT INTO"] {
         assert!(
             !commands.contains(forbidden),
@@ -215,7 +215,7 @@ fn persistent_home_stays_separate_from_runtime_credentials() {
 fn agent_commands_are_typed_and_group_membership_is_user_owned() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let agent_protocol = std::fs::read_to_string(crate_root.join("src/protocol/agent.rs")).unwrap();
-    let shim = std::fs::read_to_string(crate_root.join("src/computer/shim.rs")).unwrap();
+    let shim = source_text(&crate_root.join("src/computer/shim"));
     let climate = std::fs::read_to_string(crate_root.join("src/server/climate.rs")).unwrap();
 
     for required in [

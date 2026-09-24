@@ -19,6 +19,7 @@
 | K2 | 点名路由：点名对象的确定、triage 第 2′ 步的 `me`/`each` 判断、`routing` source、fail-open | §8.2、§8.3 | §16 #9 |
 | K3 | lap floor 与用户查看：`collab_rooms.user_viewed_seq`、Desktop 上报、triage 第 4 步 | §8.3、§13.3.4 | §16 #10 |
 | K4 | 逐字重复拦截：锁内检查、`DUPLICATE` 拒绝码与模型可见文本 | §9.2 | §16 #11 |
+| K8 | 对齐 Cumora 的差距：连发闸（`MONOLOGUE`、`--continue`、`collab_messages.run_id`）；私聊不做逐字重复拦截；CLI 输出与 triage 输入的上限、`messages --json`、`messages` 推进 seen；triage 模型失败的 fail closed；`AGENTS.md` 规则与增量开头照搬原文；Desktop 回到前台补报 `collab_room_viewed` | §7.1–§7.3、§8.3、§9.2、§9.4；collaboration-desktop.md §7.2 | §16 #11、#20–#22；collaboration-desktop.md §12 #10 |
 | K6 | Column `kind` 替换 `is_terminal`；领取即推进；超时接手（含 running Run 条件） | §11.1、§11.3 | §16 #13、#15 |
 | K7 | 卡片唤醒：`collab_card_wakes`、触发条件、合并、Run `card` trigger、结算、限额 | §11.4、§13.3.6 | §16 #14 |
 | U1 | 删除运行记录：页面、`collab_run_list`/`collab_run_trace`、Server `observability`、`collab_run_events`（新迁移删表）、Runner 事件上报；Runner heartbeat 增加 `paused` 状态 | collaboration-desktop.md §1、§4.4；collaboration.md §5 | collaboration-desktop.md §12 #9 |

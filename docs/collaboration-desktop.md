@@ -198,7 +198,7 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 - 正文中的 `@<id>` 渲染成该成员识别色的提及标签；Markdown 与行内代码沿用 `MarkdownRenderer`。
 - **卡片链接**：正文中（代码块与行内代码之外）匹配 `card-[0-9a-f]{32}` 的 id 渲染成胶囊，显示看板图标与卡片标题；标题从已加载的 Board 快照中查找，没加载时先读取一次 Board 列表，卡片已删除时只显示 id 且不可点击。点击后房间右侧栏切换为这张卡片的预览（§7.5），胶囊描边变为 clay。对照 Cumora `src/components/CardLink.tsx` 与 `src/desktop/BoardPeekPane.tsx`。
 - 悬停消息时显示浮动工具条：**引用回复**、复制。
-- 打开房间、以及房间可见时有新消息到达并滚动到底部，都上报 `collab_room_viewed`，`upToSeq` 为视口中最新的 sequence。窗口不在前台时不上报；只在出现比上次上报更新的消息时上报，失败时下次刷新重试。这个命令只增不减、天然幂等，不带 requestId、不进幂等账本。
+- 打开房间、房间可见时有新消息到达并滚动到底部、以及窗口回到前台时，都上报 `collab_room_viewed`，`upToSeq` 为视口中最新的 sequence（Cumora 以用户读房间的时间作为人类关注）。窗口不在前台时不上报；只在出现比上次上报更新的消息时上报，失败时下次刷新重试。这个命令只增不减、天然幂等，不带 requestId、不进幂等账本。
 - Agent 之间的房间只读：没有输入框，底部显示“这是 Agent 之间的私聊，你只能查看”。
 
 ### 7.3 说明行
@@ -298,7 +298,7 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 7. 正常 shutdown 后没有协作 child，当前 runtime 目录为空；
 8. PostgreSQL/Redis 在 Desktop shutdown 后仍可连接；
 9. React bridge 参数与 Rust command DTO 一致，契约测试覆盖新增字段；`collab_run_list`、`collab_run_trace` 与运行记录页不存在；
-10. 未读数与 `collab_room_viewed`：打开房间后未读归零，窗口不在前台时不上报，`user_viewed_seq` 不回退；
+10. 未读数与 `collab_room_viewed`：打开房间后未读归零，窗口不在前台时不上报、回到前台时补报，`user_viewed_seq` 不回退；
 11. 说明行：路由、一轮上限、硬上限各按 §7.3 的条件出现，同一段对话每类最多一次；
 12. 引用回复：发送带 `quotedMessageId`，消息与输入框正确显示引用；`@` 补全候选为 `@all` 与房间内 Agent；卡片链接：代码中的 id 不渲染，已删除的卡片不可点击，点击后右侧栏显示该卡片预览，“打开看板”选中这张卡片；
 13. Agent `activity` 的六种状态与卡片 `agentState` 的三种状态各有渲染测试；

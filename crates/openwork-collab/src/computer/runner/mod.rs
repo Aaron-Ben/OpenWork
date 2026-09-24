@@ -22,10 +22,12 @@ use super::{
     home::{AgentHome, HomeError},
     prompt::{MessageTurn, agenda_turn_prompt, message_turn_prompt},
     scheduling::{RunnerResources, engine_backoff_after},
-    triage::parse_triage,
 };
 
+mod classify;
 mod routing;
+
+use classify::Classified;
 
 const AGENDA_QUIET_WINDOW: Duration = Duration::from_secs(90);
 const AGENDA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
@@ -229,58 +231,27 @@ impl AgentRunner {
             }
         };
         let payload = routed.payload;
-        let (verdict, triage_usage, triage_model) = if let Some(verdict) = payload.verdict {
-            (verdict, EngineUsage::default(), payload.model)
-        } else {
-            let prompt = format!(
-                "{}\n\n{}",
-                payload.instructions.unwrap_or_default(),
-                payload.input.unwrap_or_default()
-            );
-            let result = async {
-                let _permit = self.resources.triage_permit(&cancellation).await?;
-                self.resources.gate(&cancellation).await?;
-                self.engine
-                    .adapter
-                    .classify(ClassifyRequest {
-                        cwd: self.home.work_root.clone(),
-                        config_root: self.home.config_root.clone(),
-                        confinement: self.home.confinement.clone(),
-                        prompt,
-                        model: Some(payload.model.clone()),
-                        environment: self.home.environment.clone(),
-                        cancellation: cancellation.clone(),
-                    })
-                    .await
-            }
-            .await;
-            self.resources.observe_result(&result).await;
-            match result {
-                Ok(result) => match parse_triage(&result.text) {
-                    Ok(verdict) => (verdict, result.usage, result.model.unwrap_or(payload.model)),
-                    Err(error) => {
-                        self.note_triage_failure();
-                        self.finish_triage_failure(&run.id, error.to_string(), false, false)
-                            .await?;
-                        return Ok(());
-                    }
-                },
-                Err(error) => {
-                    let interrupted = matches!(error, EngineError::Cancelled);
-                    let rate_limited = error.is_rate_limited();
+        let (verdict, triage_usage, triage_model) = match payload.verdict.clone() {
+            Some(verdict) => (verdict, EngineUsage::default(), payload.model),
+            None => match self.classify_triage(&payload, &cancellation).await {
+                Classified::Verdict {
+                    verdict,
+                    usage,
+                    model,
+                } => (verdict, usage, model),
+                Classified::Retry {
+                    message,
+                    interrupted,
+                    rate_limited,
+                } => {
                     if !interrupted {
                         self.note_triage_failure();
                     }
-                    self.finish_triage_failure(
-                        &run.id,
-                        error.to_string(),
-                        interrupted,
-                        rate_limited,
-                    )
-                    .await?;
+                    self.finish_triage_failure(&run.id, message, interrupted, rate_limited)
+                        .await?;
                     return Ok(());
                 }
-            }
+            },
         };
         self.triage_trouble_streak = 0;
         self.triage_backoff_until = None;

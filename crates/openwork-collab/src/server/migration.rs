@@ -31,6 +31,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "user viewed sequence",
         include_str!("../../migrations/202609240004_user_viewed_seq.sql"),
     ),
+    (
+        202_609_240_005,
+        "monologue run and fail closed triage",
+        include_str!("../../migrations/202609240005_monologue_fail_closed.sql"),
+    ),
 ];
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {

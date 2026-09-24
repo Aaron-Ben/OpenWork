@@ -1,6 +1,6 @@
 //! 每轮 Turn 发给 Engine 的增量 prompt（collaboration.md §7.2）。
 //!
-//! 只渲染动态部分：时间、triage 提示、未读摘要、Climate 与名册。persona 与协作契约由
+//! 只渲染动态部分：开头一段、时间、triage 提示、未读摘要、Climate 与名册。persona 与协作契约由
 //! `AGENTS.md` 作为系统提示词提供（§7.1），这里不重复。格式照搬 Cumora BYOA 的
 //! `chatDelta` / `snapshotUnread` / `renderInboxDigest`（`computer/daemon.ts`）。
 
@@ -32,9 +32,13 @@ pub(super) struct MessageTurn<'a> {
     pub(super) carried_over: bool,
 }
 
+/// 消息 Turn 开头的一段（Cumora `chatDelta`，“cerebellum triage” 改为 “triage”）：triage 已经判断该回应，
+/// 主模型不再重新判断。
+const WOKEN: &str = "You've been woken because there's new activity in your OpenWork rooms, and triage already decided you should respond — your job is to DO it (write the reply / take the action), not to re-judge whether to. Follow your standing instructions for HOW.";
+
 /// 消息 Turn 的增量 prompt。`messages` 按到达顺序排列；房间按第一次出现的顺序分组。
 pub(super) fn message_turn_prompt(turn: &MessageTurn<'_>) -> String {
-    let mut prompt = time_line(turn.now);
+    let mut prompt = format!("{WOKEN}\n\n{}", time_line(turn.now));
     if !turn.triage_note.trim().is_empty() {
         prompt.push_str(&format!("\n\nTriage focus: {}", turn.triage_note.trim()));
     }
@@ -294,7 +298,8 @@ mod tests {
         }
     }
 
-    /// collaboration.md §7.2、§16 #8：时间、房间标题行、显示名与身份、消息 id、Climate 与名册逐字符合；
+    /// collaboration.md §7.2、§16 #8：开头一段、时间、房间标题行、显示名与身份、消息 id、Climate 与名册
+    /// 逐字符合；
     /// persona 不在增量里。
     #[test]
     fn acc_08_message_turn_prompt_renders_the_documented_delta() {
@@ -323,7 +328,9 @@ mod tests {
 
         assert_eq!(
             message_turn_prompt(&input),
-            "Current time: 2026-09-24T18:30:00+08:00\n\
+            "You've been woken because there's new activity in your OpenWork rooms, and triage already decided you should respond — your job is to DO it (write the reply / take the action), not to re-judge whether to. Follow your standing instructions for HOW.\n\
+             \n\
+             Current time: 2026-09-24T18:30:00+08:00\n\
              \n\
              Triage focus: A human is waiting.\n\
              \n\

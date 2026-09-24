@@ -11,25 +11,20 @@ use super::{
     board::{Board, BoardOperationError, NewCard},
     climate::{Climate, ClimateOperationError},
     command_requests::CommandRequests,
-    coordination::{Coordination, HeldBinding, HeldReservation},
+    coordination::Coordination,
     messages::Messages,
-    rooms::{Rooms, get_or_create_direct_room},
+    rooms::Rooms,
     runs::Runs,
-    triage::AGENT_LOOP_HARD_CAP,
 };
+
+mod reply;
+
+use reply::{ReplyInput, direct_message};
 
 #[derive(Clone)]
 pub(crate) struct AgentCommands {
     pool: PgPool,
     coordination: Coordination,
-}
-
-struct ReplyInput<'a> {
-    room_id: &'a str,
-    body: &'a str,
-    held_token: Option<&'a str>,
-    quoted_message_id: Option<&'a str>,
-    request_id: &'a str,
 }
 
 impl AgentCommands {
@@ -107,16 +102,13 @@ impl AgentCommands {
             AgentCommand::Rooms => success(AgentCommandResult::Rooms {
                 rooms: Rooms::list_for_agent_in(&mut transaction, &claims.sub).await?,
             }),
-            AgentCommand::Messages { room_id, tail } => success(AgentCommandResult::Messages {
-                messages: Messages::list_for_agent_in(
-                    &mut transaction,
-                    &claims.sub,
-                    &room_id,
-                    tail,
-                )
-                .await?,
-                room_id,
-            }),
+            AgentCommand::Messages { room_id, tail } => {
+                let messages =
+                    Messages::list_for_agent_in(&mut transaction, &claims.sub, &room_id, tail)
+                        .await?;
+                self.record_listed(&claims.sub, &room_id, &messages).await;
+                success(AgentCommandResult::Messages { messages, room_id })
+            }
             AgentCommand::Members { room_id } => success(AgentCommandResult::Members {
                 members: Rooms::list_members_for_agent_in(&mut transaction, &claims.sub, &room_id)
                     .await?,
@@ -139,6 +131,7 @@ impl AgentCommands {
                 body,
                 held_token,
                 quoted_message_id,
+                continuation,
             } => {
                 let (response, reserved) = self
                     .reply(
@@ -151,6 +144,7 @@ impl AgentCommands {
                             held_token: held_token.as_deref(),
                             quoted_message_id: quoted_message_id.as_deref(),
                             request_id: &request_id,
+                            continuation,
                         },
                     )
                     .await?;
@@ -398,14 +392,7 @@ impl AgentCommands {
         let messages =
             Messages::glance_in(transaction, room_id, compose_anchor, &claims.sub).await?;
         let members = Rooms::list_members_for_agent_in(transaction, &claims.sub, room_id).await?;
-        if let Some(peer_max) = messages.last().map(|message| message.sequence)
-            && let Err(error) = self
-                .coordination
-                .record_seen(&claims.sub, room_id, peer_max)
-                .await
-        {
-            tracing::warn!(%error, %room_id, "glance seen update failed open");
-        }
+        self.record_listed(&claims.sub, room_id, &messages).await;
         Ok(success(AgentCommandResult::Glance {
             room_id: room_id.to_string(),
             compose_anchor,
@@ -414,261 +401,20 @@ impl AgentCommands {
         }))
     }
 
-    async fn reply(
-        &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        run_id: &str,
-        claims: &AgentClaims,
-        input: ReplyInput<'_>,
-    ) -> Result<(AgentCommandResponse, bool), sqlx::Error> {
-        let ReplyInput {
-            room_id,
-            body,
-            held_token,
-            quoted_message_id,
-            request_id,
-        } = input;
-        if !Messages::valid_body(body) {
-            return Ok((error("INVALID_ARGUMENT", "message body is invalid"), false));
-        }
-        let context = Runs::reply_context_in(transaction, run_id, room_id, &claims.sub).await?;
-        let Some((snapshot_anchor, room_kind, member_count)) = context else {
-            return Ok((error("NOT_FOUND", "Room is not in the active Run"), false));
-        };
-        let quoted = match quoted_message_id {
-            Some(quoted_id) => match Messages::quote_in(transaction, room_id, quoted_id).await? {
-                Some(quoted) => Some(quoted),
-                None => {
-                    return Ok((
-                        error("NOT_FOUND", &Messages::quote_not_found(quoted_id, room_id)),
-                        false,
-                    ));
-                }
-            },
-            None => None,
-        };
-        if room_kind == "direct" && held_token.is_some() {
-            return Ok((
-                error(
-                    "INVALID_ARGUMENT",
-                    "HELD token is not valid for a Direct Room",
-                ),
-                false,
-            ));
-        }
-        if Messages::agent_loop_capped_in(transaction, room_id, AGENT_LOOP_HARD_CAP).await? {
-            return Ok((
-                error(
-                    "LOOP_CAP",
-                    "Agent conversation reached its deterministic loop cap",
-                ),
-                false,
-            ));
-        }
-        let mut held_reserved = false;
-        if room_kind == "group" && member_count > 2 {
-            match held_token {
-                Some(token) => {
-                    let binding = match self
-                        .coordination
-                        .reserve_held(&claims.sub, room_id, token, request_id)
-                        .await
-                    {
-                        Ok(HeldReservation::Reserved(binding)) => {
-                            held_reserved = true;
-                            binding
-                        }
-                        Ok(HeldReservation::Missing) => {
-                            return Ok((error("HELD", "retry token is invalid or expired"), false));
-                        }
-                        Ok(HeldReservation::OwnedByAnotherRequest) => {
-                            return Ok((
-                                error("HELD", "retry token belongs to another request"),
-                                false,
-                            ));
-                        }
-                        Err(redis_error) => {
-                            tracing::warn!(%redis_error, %room_id, "HELD token reservation failed closed");
-                            return Ok((
-                                error("RATE_LIMITED", "coordination is temporarily unavailable"),
-                                false,
-                            ));
-                        }
-                    };
-                    if binding.agent_id != claims.sub
-                        || binding.run_id != run_id
-                        || binding.room_id != room_id
-                        || binding.runtime_session_id != claims.runtime_session_id
-                    {
-                        return Ok((
-                            error("HELD", "retry token does not match this Run"),
-                            held_reserved,
-                        ));
-                    }
-                    if let Some(peer_max) = Messages::peer_max_in(
-                        transaction,
-                        room_id,
-                        &claims.sub,
-                        binding.shown_peer_max,
-                    )
-                    .await?
-                    {
-                        let response = self
-                            .hold_reply(
-                                transaction,
-                                run_id,
-                                claims,
-                                room_id,
-                                binding.shown_peer_max,
-                                peer_max,
-                            )
-                            .await?;
-                        return Ok((response, held_reserved));
-                    }
-                }
-                None => {
-                    let seen_baseline = match self.coordination.get_seen(&claims.sub, room_id).await
-                    {
-                        Ok(Some(sequence)) if sequence > 0 => sequence,
-                        Ok(_) => snapshot_anchor,
-                        Err(error) => {
-                            tracing::warn!(%error, %room_id, "seen lookup failed; using durable snapshot");
-                            snapshot_anchor
-                        }
-                    };
-                    if let Some(peer_max) =
-                        Messages::peer_max_in(transaction, room_id, &claims.sub, seen_baseline)
-                            .await?
-                    {
-                        let response = self
-                            .hold_reply(
-                                transaction,
-                                run_id,
-                                claims,
-                                room_id,
-                                seen_baseline,
-                                peer_max,
-                            )
-                            .await?;
-                        return Ok((response, false));
-                    }
-                }
-            }
-        }
-        if let Some(reason) =
-            Messages::duplicate_of_last_peer_in(transaction, room_id, &claims.sub, body).await?
-        {
-            return Ok((error("DUPLICATE", &reason), held_reserved));
-        }
-        let message = Messages::insert_in(transaction, room_id, &claims.sub, body, quoted).await?;
-        Runs::mark_delivery_action_in(transaction, run_id, room_id).await?;
-        Ok((
-            AgentCommandResponse {
-                result: AgentCommandResult::MessagePublished {
-                    message: message.clone(),
-                },
-                effects: vec![message_effect(&message)],
-            },
-            held_reserved,
-        ))
-    }
-
-    async fn hold_reply(
-        &self,
-        transaction: &mut Transaction<'_, Postgres>,
-        run_id: &str,
-        claims: &AgentClaims,
-        room_id: &str,
-        seen_baseline: i64,
-        peer_max: i64,
-    ) -> Result<AgentCommandResponse, sqlx::Error> {
-        let messages =
-            Messages::between_in(transaction, room_id, seen_baseline, peer_max, &claims.sub)
-                .await?;
-        let shown_peer_max = messages
-            .last()
-            .map(|message| message.sequence)
-            .ok_or(sqlx::Error::RowNotFound)?;
-        let binding = HeldBinding {
-            agent_id: claims.sub.clone(),
-            run_id: run_id.to_string(),
-            room_id: room_id.to_string(),
-            runtime_session_id: claims.runtime_session_id.clone(),
-            shown_peer_max,
-        };
-        let retry_token = match self.coordination.issue_held(&binding).await {
-            Ok(token) => token,
-            Err(redis_error) => {
-                tracing::warn!(%redis_error, %room_id, "HELD token issuance failed closed");
-                return Ok(error(
-                    "RATE_LIMITED",
-                    "coordination is temporarily unavailable",
-                ));
-            }
+    /// 列给模型看过的消息算作看过（collaboration.md §7.3，Cumora `recordSeen`）：推进 seen sequence，
+    /// 之后的 `reply` 不会因为这些消息被 HELD。Redis 失败时照常返回，最多多一次 HELD。
+    async fn record_listed(&self, agent_id: &str, room_id: &str, messages: &[MessageView]) {
+        let Some(latest) = messages.last().map(|message| message.sequence) else {
+            return;
         };
         if let Err(error) = self
             .coordination
-            .record_seen(&claims.sub, room_id, shown_peer_max)
+            .record_seen(agent_id, room_id, latest)
             .await
         {
-            tracing::warn!(%error, %room_id, "HELD seen update failed open");
+            tracing::warn!(%error, %room_id, "listing seen update failed open");
         }
-        Ok(success(AgentCommandResult::Held {
-            room_id: room_id.to_string(),
-            retry_token,
-            messages,
-        }))
     }
-}
-
-async fn direct_message(
-    transaction: &mut Transaction<'_, Postgres>,
-    run_id: &str,
-    claims: &AgentClaims,
-    participant_id: &str,
-    body: &str,
-) -> Result<AgentCommandResponse, sqlx::Error> {
-    if participant_id == claims.sub {
-        return Ok(error("INVALID_ARGUMENT", "cannot DM yourself"));
-    }
-    if !Messages::valid_body(body) {
-        return Ok(error("INVALID_ARGUMENT", "message body is invalid"));
-    }
-    let participant_active = Agents::is_active_participant_in(transaction, participant_id).await?;
-    if !participant_active {
-        return Ok(error(
-            "NOT_FOUND",
-            "participant does not exist or is archived",
-        ));
-    }
-    let (room_id, _) =
-        get_or_create_direct_room(transaction, &claims.sub, participant_id, &claims.sub).await?;
-    if Messages::agent_loop_capped_in(transaction, &room_id, AGENT_LOOP_HARD_CAP).await? {
-        return Ok(error(
-            "LOOP_CAP",
-            "Agent conversation reached its deterministic loop cap",
-        ));
-    }
-    if let Some(reason) =
-        Messages::duplicate_of_last_peer_in(transaction, &room_id, &claims.sub, body).await?
-    {
-        return Ok(error("DUPLICATE", &reason));
-    }
-    let message = Messages::insert_in(transaction, &room_id, &claims.sub, body, None).await?;
-    Runs::mark_delivery_action_in(transaction, run_id, &room_id).await?;
-    Ok(AgentCommandResponse {
-        result: AgentCommandResult::DirectMessageSent {
-            room_id: room_id.clone(),
-            message: message.clone(),
-        },
-        effects: vec![
-            AgentCommandEffect::DirectRoomOpened {
-                room_id: room_id.clone(),
-                participant_id: participant_id.to_string(),
-            },
-            message_effect(&message),
-        ],
-    })
 }
 
 fn success(result: AgentCommandResult) -> AgentCommandResponse {

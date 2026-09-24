@@ -44,6 +44,11 @@ fn decided(verdict: TriageVerdict, model: String) -> TriagePayload {
     }
 }
 
+/// Unread and recent messages each given to the triage model (collaboration.md §8.3, Cumora `compactMessages`).
+const TRIAGE_MESSAGES_MAX: usize = 40;
+/// Characters of one message body given to the triage model (collaboration.md §8.3, Cumora `compactMessages`).
+const TRIAGE_BODY_MAX_CHARS: usize = 500;
+
 const AGENT_LOOP_TRIAGE_INTERVAL: i64 = 8;
 pub(super) const AGENT_LOOP_HARD_CAP: i64 = 20;
 
@@ -247,12 +252,12 @@ impl InboxTriage {
         }
         if !recent.is_empty() {
             input.push_str("\nRecent posted context:\n");
-            for message in recent {
+            for message in latest(recent.iter()) {
                 append_message(&mut input, message);
             }
         }
         input.push_str("\nUnread durable inbox:\n");
-        for message in unread {
+        for message in latest(unread.iter().copied()) {
             append_message(&mut input, message);
         }
         Ok(input)
@@ -387,12 +392,13 @@ impl InboxTriage {
                 | "loop_cap"
                 | "lap_floor"
                 | "routing"
+                | "fail_closed"
         ) {
             return Err(protocol_error("INVALID_ARGUMENT: invalid triage source"));
         }
         if matches!(
             request.verdict.source.as_str(),
-            "system_only" | "loop_cap" | "lap_floor"
+            "system_only" | "loop_cap" | "lap_floor" | "fail_closed"
         ) && request.verdict.actionable
         {
             return Err(protocol_error(
@@ -572,6 +578,24 @@ struct TriageMessage {
     quoted_agent_id: Option<String>,
 }
 
+/// 最后 40 条，保持原来的先后顺序。
+fn latest<'a>(
+    messages: impl ExactSizeIterator<Item = &'a TriageMessage>,
+) -> impl Iterator<Item = &'a TriageMessage> {
+    let skip = messages.len().saturating_sub(TRIAGE_MESSAGES_MAX);
+    messages.skip(skip)
+}
+
+/// 正文空白压成一个空格、截到 500 字（Cumora `compactMessages`）。
+fn excerpt(body: &str) -> String {
+    body.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(TRIAGE_BODY_MAX_CHARS)
+        .collect()
+}
+
 fn append_message(input: &mut String, message: &TriageMessage) {
     let _ = writeln!(
         input,
@@ -585,7 +609,7 @@ fn append_message(input: &mut String, message: &TriageMessage) {
         message.author_id,
         message.author_kind,
         message.author_name,
-        message.body,
+        excerpt(&message.body),
     );
 }
 
@@ -595,7 +619,7 @@ fn protocol_error(message: &str) -> sqlx::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{TriageMessage, agent_loop_verdict};
+    use super::{TriageMessage, agent_loop_verdict, append_message, latest};
 
     /// 每条 Agent 消息都来自不同的 Agent，lap floor 不会触发，只检验检查点与硬上限。
     fn agent_message(room_id: &str, room_kind: &str, agent_streak: i64) -> TriageMessage {
@@ -622,6 +646,29 @@ mod tests {
             agent_streak,
             agent_authors,
         }
+    }
+
+    /// collaboration.md §8.3、§16 #21：triage 模型只看最后 40 条，正文空白压成一个空格、截到 500 字
+    /// （Cumora `compactMessages`）。
+    #[test]
+    fn acc_21_triage_input_keeps_the_latest_forty_messages_cut_to_500_chars() {
+        let messages = (1..=45)
+            .map(|sequence| agent_message("room-group", "group", sequence))
+            .collect::<Vec<_>>();
+        let kept = latest(messages.iter())
+            .map(|message| message.sequence)
+            .collect::<Vec<_>>();
+        assert_eq!(kept, (6..=45).collect::<Vec<_>>());
+
+        let mut long = agent_message("room-group", "group", 1);
+        long.body = format!("first line\n\n  second {}", "x".repeat(600));
+        let mut input = String::new();
+        append_message(&mut input, &long);
+        let body_line = input
+            .lines()
+            .find_map(|line| line.strip_prefix("body: "))
+            .expect("body line");
+        assert_eq!(body_line, format!("first line second {}", "x".repeat(482)));
     }
 
     /// collaboration.md §8.3、§16 #10：自最近一次人类关注后 Agent 消息数超过发言的 Agent 数，

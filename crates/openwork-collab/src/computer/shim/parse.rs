@@ -1,149 +1,39 @@
+//! `openwork` 命令行参数的解析（collaboration.md §7.1、§9）。选项写在正文前后都可以，`--` 之后
+//! 一律是正文（Cumora `cli-parse.ts` 的 `parseArgs`）。
+
 use std::io::Read as _;
 
-use crate::protocol::{
-    AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
-    MESSAGE_BODY_MAX_BYTES, request_id,
-};
+use super::{HELP, ShimError, render::Format};
+use crate::protocol::{AgentCommand, MESSAGE_BODY_MAX_BYTES};
 
-const HELP: &str = "Usage:
-  openwork inbox
-  openwork rooms
-  openwork messages <room-id> [--tail <1..200>]
-  openwork members <room-id>
-  openwork participants
-  openwork glance <room-id>
-  openwork reply <room-id> [--quote <message-id>] [--held-token <token>] (<body> | --stdin | --file <path>)
-  openwork ack <room-id>
-  openwork dm <participant-id> (<body> | --stdin | --file <path>)
-  openwork climate show [participant-id]
-  openwork climate note <participant-id> --affinity <-1..1> --trust <-1..1> (--stdin | --file <path> | -- <note>)
-  openwork board list
-  openwork board show <board-id>
-  openwork card list [--board <board-id>]
-  openwork card show <card-id>
-  openwork card create --board <id> --column <id> --title <text> [--description <text>] [--assignee <id>]
-  openwork card claim <card-id>
-  openwork card assign <card-id> <participant-id>
-  openwork card update <card-id> --title <text> [--description <text>]
-  openwork card move <card-id> --column <id> [--before-card <card-id>]";
+/// `messages … --json` 要完整正文（collaboration.md §7.3，Cumora `messages --json`）；返回去掉该选项
+/// 后的参数。其他命令的 `--json` 原样留给解析，按未知选项报错。
+pub(super) fn output_format(arguments: Vec<String>) -> (Vec<String>, Format) {
+    if arguments.first().map(String::as_str) != Some("messages") {
+        return (arguments, Format::Text);
+    }
+    let (rest, json) = take_switch(&arguments, "--json");
+    (rest, if json { Format::Json } else { Format::Text })
+}
 
-pub fn main() -> i32 {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("could not start openwork shim: {error}");
-            return 1;
-        }
-    };
-    match runtime.block_on(run()) {
-        Ok(output) => {
-            println!("{}", output.text);
-            output.exit_code
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            1
+/// 去掉 `--` 之前出现的开关 `switch`，返回其余参数（原顺序）与它是否出现过。
+fn take_switch(arguments: &[String], switch: &str) -> (Vec<String>, bool) {
+    let mut rest = Vec::with_capacity(arguments.len());
+    let mut found = false;
+    let mut literal = false;
+    for argument in arguments {
+        literal |= argument == "--";
+        if !literal && argument == switch {
+            found = true;
+        } else {
+            rest.push(argument.clone());
         }
     }
+    (rest, found)
 }
 
-struct ShimOutput {
-    text: String,
-    exit_code: i32,
-}
-
-async fn run() -> Result<ShimOutput, ShimError> {
-    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if let Some(text) = help_request(&arguments) {
-        return Ok(ShimOutput { text, exit_code: 0 });
-    }
-    let command = parse_command(arguments).await?;
-    let base_url = std::env::var("OPENWORK_RUNTIME_BASE_URL")
-        .map_err(|_| ShimError::Environment("OPENWORK_RUNTIME_BASE_URL is not set"))?;
-    let token_file = std::env::var("OPENWORK_RUNTIME_TOKEN_FILE")
-        .map_err(|_| ShimError::Environment("OPENWORK_RUNTIME_TOKEN_FILE is not set"))?;
-    let token = tokio::fs::read_to_string(token_file).await?;
-    let request = AgentCommandRequest {
-        request_id: request_id(),
-        command,
-    };
-    let client = reqwest::Client::new();
-    let mut delay = std::time::Duration::from_millis(100);
-    let mut attempts = 0;
-    let response = loop {
-        attempts += 1;
-        let response = client
-            .post(format!("{}/agent/commands", base_url.trim_end_matches('/')))
-            .bearer_auth(token.trim())
-            .json(&request)
-            .timeout(std::time::Duration::from_secs(20))
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status);
-        let response = match response {
-            Ok(response) => response.json::<AgentCommandResponse>().await,
-            Err(error) => Err(error),
-        };
-        match response {
-            Ok(response) => break response,
-            Err(error) if transient_http(&error) && attempts < 3 => {
-                tokio::time::sleep(delay).await;
-                delay *= 2;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    };
-    render(response)
-}
-
-/// 没有参数、`help`，或 `--` 之前出现 `--help` / `-h` 时返回帮助文本。子命令后面的
-/// `--help` 只返回匹配最长前缀的那几行用法，找不到时返回全部用法。
-fn help_request(arguments: &[String]) -> Option<String> {
-    let options = arguments
-        .iter()
-        .take_while(|argument| argument.as_str() != "--")
-        .collect::<Vec<_>>();
-    let asked = arguments.is_empty()
-        || arguments == ["help"]
-        || options
-            .iter()
-            .any(|argument| matches!(argument.as_str(), "--help" | "-h"));
-    if !asked {
-        return None;
-    }
-    let words = options
-        .iter()
-        .take_while(|argument| !argument.starts_with('-'))
-        .map(|argument| argument.as_str())
-        .collect::<Vec<_>>();
-    for length in (1..=words.len()).rev() {
-        let prefix = format!("  openwork {}", words[..length].join(" "));
-        let lines = HELP
-            .lines()
-            .filter(|line| {
-                line.strip_prefix(&prefix)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
-            })
-            .collect::<Vec<_>>();
-        if !lines.is_empty() {
-            return Some(format!("Usage:\n{}", lines.join("\n")));
-        }
-    }
-    Some(HELP.to_string())
-}
-
-fn transient_http(error: &reqwest::Error) -> bool {
-    error.status().is_none_or(|status| {
-        status.is_server_error()
-            || status == reqwest::StatusCode::REQUEST_TIMEOUT
-            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-    })
-}
-
-async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError> {
+/// 把命令行参数解析成发给 Server 的命令；参数不合法时返回给模型看的说明。
+pub(super) async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError> {
     match arguments.as_slice() {
         [command] if command == "inbox" => Ok(AgentCommand::Inbox),
         [command] if command == "rooms" => Ok(AgentCommand::Rooms),
@@ -229,12 +119,14 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
             })
         }
         [command, room_id, tail @ ..] if command == "reply" => {
-            let (options, body_arguments) = extract_options(tail, &["--held-token", "--quote"])?;
+            let (tail, continuation) = take_switch(tail, "--continue");
+            let (options, body_arguments) = extract_options(&tail, &["--held-token", "--quote"])?;
             Ok(AgentCommand::Reply {
                 room_id: room_id.clone(),
                 body: parse_body(&body_arguments).await?,
                 held_token: options.get("--held-token").cloned(),
                 quoted_message_id: options.get("--quote").cloned(),
+                continuation,
             })
         }
         [card, action, tail @ ..] if card == "card" && action == "create" => {
@@ -395,143 +287,6 @@ fn missing_body() -> ShimError {
     )
 }
 
-fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
-    let (text, exit_code) = match response.result {
-        AgentCommandResult::Error { code, message } => (format!("{code}: {message}"), 2),
-        AgentCommandResult::Held {
-            room_id,
-            retry_token,
-            messages,
-        } => {
-            let mut text = format!(
-                "HELD — your reply was NOT sent. {} newer message(s) in {room_id} you had not seen:",
-                messages.len()
-            );
-            render_messages(&mut text, &messages);
-            text.push_str(&format!(
-                "\n\nYou have now seen these. Decide again against this state, then simply re-send: `openwork reply {room_id} <revised text>` goes through without any flag. Usually your draft is now wrong (counting: post the next number after the latest; a chain: continue from the latest entry; if a peer already delivered what you were about to say, stand down). Only if your original draft is still correct unchanged, re-send it with `--held-token {retry_token}`."
-            ));
-            (text, 10)
-        }
-        AgentCommandResult::Inbox {
-            carried_over,
-            messages,
-        } => {
-            let mut text = if carried_over {
-                "Inbox (more unread messages remain)".to_string()
-            } else {
-                "Inbox".to_string()
-            };
-            render_messages(&mut text, &messages);
-            (text, 0)
-        }
-        AgentCommandResult::Glance {
-            room_id,
-            compose_anchor,
-            members,
-            messages,
-        } => {
-            let names = members
-                .iter()
-                .map(|member| format!("{} ({})", member.display_name, member.id))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mut text = format!("Room {room_id} at {compose_anchor}\nMembers: {names}");
-            if messages.is_empty() {
-                text.push_str(&format!(
-                    "\nNo new messages since you last read this room (latest sequence {compose_anchor})."
-                ));
-            } else {
-                render_messages(&mut text, &messages);
-            }
-            (text, 0)
-        }
-        AgentCommandResult::Rooms { rooms } => (
-            serde_json::to_string_pretty(&rooms).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::Messages { room_id, messages } => {
-            let mut text = format!("Messages in {room_id}");
-            render_messages(&mut text, &messages);
-            (text, 0)
-        }
-        AgentCommandResult::Members { room_id, members } => (
-            format!(
-                "Members in {room_id}\n{}",
-                serde_json::to_string_pretty(&members).map_err(ShimError::Json)?
-            ),
-            0,
-        ),
-        AgentCommandResult::Participants { participants } => (
-            serde_json::to_string_pretty(&participants).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::Climates { climates } => (
-            serde_json::to_string_pretty(&climates).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::Climate { climate } => (
-            serde_json::to_string_pretty(&climate).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::MessagePublished { message } => (
-            format!(
-                "Published {} in {} at sequence {}",
-                message.id, message.room_id, message.sequence
-            ),
-            0,
-        ),
-        AgentCommandResult::Acknowledged { room_id, up_to_seq } => {
-            (format!("Acknowledged {room_id} through {up_to_seq}"), 0)
-        }
-        AgentCommandResult::DirectMessageSent { room_id, message } => (
-            format!(
-                "Published {} in direct room {room_id} at sequence {}",
-                message.id, message.sequence
-            ),
-            0,
-        ),
-        AgentCommandResult::Boards { boards } => (
-            serde_json::to_string_pretty(&boards).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::Board { board } => (
-            serde_json::to_string_pretty(&board).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::Cards { cards } => (
-            serde_json::to_string_pretty(&cards).map_err(ShimError::Json)?,
-            0,
-        ),
-        AgentCommandResult::Card { card } => (
-            serde_json::to_string_pretty(&card).map_err(ShimError::Json)?,
-            0,
-        ),
-    };
-    Ok(ShimOutput { text, exit_code })
-}
-
-/// 每条消息带上 id，模型才能用 `--quote` 引用它；引用的原文在下一行（collaboration.md §9.3）。
-fn render_messages(output: &mut String, messages: &[crate::protocol::MessageView]) {
-    if messages.is_empty() {
-        output.push_str("\n(no messages)");
-    }
-    for message in messages {
-        output.push_str(&format!(
-            "\n[{}] #{} {} @ {}: {}",
-            message.id, message.sequence, message.author_id, message.room_id, message.body
-        ));
-        if let Some(quoted) = &message.quoted {
-            output.push_str(&format!(
-                "\n    ↩ quoting [{}] {}: {}",
-                quoted.id,
-                quoted.author_name,
-                quoted.body.split_whitespace().collect::<Vec<_>>().join(" ")
-            ));
-        }
-    }
-}
-
 fn read_stdin_body() -> Result<String, ShimError> {
     let mut bytes = Vec::new();
     std::io::stdin()
@@ -567,79 +322,10 @@ async fn read_file_body(path: &str) -> Result<String, ShimError> {
         .map_err(|_| ShimError::Arguments("body must be valid UTF-8".to_string()))
 }
 
-#[derive(Debug, thiserror::Error)]
-enum ShimError {
-    #[error("invalid arguments: {0}")]
-    Arguments(String),
-    #[error("{0}")]
-    Environment(&'static str),
-    #[error("shim I/O failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Runtime request failed: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("Runtime result was invalid: {0}")]
-    Json(serde_json::Error),
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{help_request, parse_command, parse_score, parse_tail, render};
-    use crate::protocol::{
-        AgentCommand, AgentCommandResponse, AgentCommandResult, MessageView, ParticipantView,
-        QuotedMessageView,
-    };
-
-    /// 子命令后面的 `--help` 只显示这个子命令的用法；`--` 之后的 `--help` 是正文。
-    #[test]
-    fn help_after_a_subcommand_shows_only_that_usage() {
-        let help = |values: &[&str]| help_request(&arguments(values));
-        assert_eq!(
-            help(&["reply", "--help"]).as_deref(),
-            Some(
-                "Usage:\n  openwork reply <room-id> [--quote <message-id>] [--held-token <token>] (<body> | --stdin | --file <path>)"
-            )
-        );
-        assert_eq!(
-            help(&["card", "move", "-h"]).as_deref(),
-            Some("Usage:\n  openwork card move <card-id> --column <id> [--before-card <card-id>]")
-        );
-        assert_eq!(
-            help(&["glance", "room-1", "--help"]).as_deref(),
-            Some("Usage:\n  openwork glance <room-id>")
-        );
-        assert_eq!(help(&["reply", "room-1", "--", "--help"]), None);
-        assert_eq!(help(&["reply", "room-1", "Ship it."]), None);
-        assert!(help(&["--help"]).unwrap().contains("  openwork card move"));
-        assert!(
-            help(&["frobnicate", "--help"])
-                .unwrap()
-                .contains("  openwork inbox")
-        );
-    }
-
-    /// glance 没有新消息时说明原因，而不是只写 `(no messages)`。
-    #[test]
-    fn empty_glance_says_nothing_new_since_the_last_read() {
-        let output = render(AgentCommandResponse {
-            result: AgentCommandResult::Glance {
-                room_id: "room-1".to_string(),
-                compose_anchor: 3,
-                members: vec![ParticipantView {
-                    id: "bo".to_string(),
-                    kind: "agent".to_string(),
-                    display_name: "Bo".to_string(),
-                }],
-                messages: Vec::new(),
-            },
-            effects: Vec::new(),
-        })
-        .unwrap();
-
-        assert_eq!(
-            output.text,
-            "Room room-1 at 3\nMembers: Bo (bo)\nNo new messages since you last read this room (latest sequence 3)."
-        );
-    }
+    use super::{output_format, parse_command, parse_score, parse_tail};
+    use crate::{computer::shim::render::Format, protocol::AgentCommand};
 
     #[tokio::test]
     async fn parses_read_and_climate_commands() {
@@ -694,7 +380,69 @@ mod tests {
             body: body.to_string(),
             held_token: held_token.map(str::to_string),
             quoted_message_id: None,
+            continuation: false,
         }
+    }
+
+    /// collaboration.md §9.4、§16 #20：`--continue` 写在正文前后都可以，`--` 之后是正文。
+    #[tokio::test]
+    async fn acc_20_reply_takes_continue_anywhere_outside_the_body() {
+        let continued = |body: &str| AgentCommand::Reply {
+            room_id: "room-1".to_string(),
+            body: body.to_string(),
+            held_token: None,
+            quoted_message_id: None,
+            continuation: true,
+        };
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply",
+                "room-1",
+                "--continue",
+                "One more thing."
+            ]))
+            .await
+            .unwrap(),
+            continued("One more thing.")
+        );
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply",
+                "room-1",
+                "One more thing.",
+                "--continue"
+            ]))
+            .await
+            .unwrap(),
+            continued("One more thing.")
+        );
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1", "--", "use", "--continue"]))
+                .await
+                .unwrap(),
+            reply("use --continue", None)
+        );
+    }
+
+    /// collaboration.md §7.3、§16 #21：只有 `messages` 认 `--json`；其他命令的 `--json` 留给解析报错。
+    #[tokio::test]
+    async fn acc_21_only_messages_takes_json() {
+        let (rest, format) =
+            output_format(arguments(&["messages", "room-1", "--json", "--tail", "5"]));
+        assert_eq!(format, Format::Json);
+        assert_eq!(
+            parse_command(rest).await.unwrap(),
+            AgentCommand::Messages {
+                room_id: "room-1".to_string(),
+                tail: 5,
+            }
+        );
+        let (rest, format) = output_format(arguments(&["reply", "room-1", "--json"]));
+        assert_eq!(format, Format::Text);
+        assert_eq!(
+            parse_command(rest).await.unwrap_err().to_string(),
+            "invalid arguments: unknown option --json; to send text that starts with --, put -- before it"
+        );
     }
 
     /// collaboration.md §9、§16 #12：`--quote` 与 `--held-token` 写在正文前后都可以（Cumora
@@ -718,6 +466,7 @@ mod tests {
                 body: "Agreed.".to_string(),
                 held_token: Some("hold-1".to_string()),
                 quoted_message_id: Some("msg-7".to_string()),
+                continuation: false,
             }
         );
         assert_eq!(
@@ -737,6 +486,7 @@ mod tests {
                 body: "Agreed.".to_string(),
                 held_token: Some("hold-1".to_string()),
                 quoted_message_id: Some("msg-7".to_string()),
+                continuation: false,
             }
         );
         assert_eq!(
@@ -750,6 +500,7 @@ mod tests {
                 body: "Agreed. --quote msg-7".to_string(),
                 held_token: None,
                 quoted_message_id: None,
+                continuation: false,
             }
         );
         assert_eq!(
@@ -767,67 +518,6 @@ mod tests {
             .unwrap_err()
             .to_string(),
             "invalid arguments: option --quote must appear once with a non-empty value"
-        );
-    }
-
-    /// collaboration.md §9.1：HELD 时说明消息没有发出、列出没看过的消息，并告诉模型直接重发新内容
-    /// 即可，只有原话照发才需要 `--held-token`（Cumora `cli.ts` 的 HELD 文案）。
-    #[test]
-    fn held_replies_say_a_plain_resend_goes_through() {
-        let output = render(AgentCommandResponse {
-            result: AgentCommandResult::Held {
-                room_id: "room-1".to_string(),
-                retry_token: "hold-1".to_string(),
-                messages: vec![MessageView {
-                    id: "msg-3".to_string(),
-                    room_id: "room-1".to_string(),
-                    sequence: 3,
-                    author_id: "bo".to_string(),
-                    body: "2".to_string(),
-                    quoted: None,
-                }],
-            },
-            effects: Vec::new(),
-        })
-        .unwrap();
-
-        assert_eq!(output.exit_code, 10);
-        assert_eq!(
-            output.text,
-            "HELD — your reply was NOT sent. 1 newer message(s) in room-1 you had not seen:\n\
-             [msg-3] #3 bo @ room-1: 2\n\
-             \n\
-             You have now seen these. Decide again against this state, then simply re-send: `openwork reply room-1 <revised text>` goes through without any flag. Usually your draft is now wrong (counting: post the next number after the latest; a chain: continue from the latest entry; if a peer already delivered what you were about to say, stand down). Only if your original draft is still correct unchanged, re-send it with `--held-token hold-1`."
-        );
-    }
-
-    /// messages 与 glance 的每行带消息 id，引用的原文在下一行。
-    #[test]
-    fn acc_12_message_listings_show_ids_and_quoted_originals() {
-        let output = render(AgentCommandResponse {
-            result: AgentCommandResult::Messages {
-                room_id: "room-1".to_string(),
-                messages: vec![MessageView {
-                    id: "msg-2".to_string(),
-                    room_id: "room-1".to_string(),
-                    sequence: 2,
-                    author_id: "bo".to_string(),
-                    body: "Use a partial index.".to_string(),
-                    quoted: Some(QuotedMessageView {
-                        id: "msg-1".to_string(),
-                        author_id: "local-user".to_string(),
-                        author_name: "User".to_string(),
-                        body: "Which index\n should we add?".to_string(),
-                    }),
-                }],
-            },
-            effects: Vec::new(),
-        })
-        .unwrap();
-
-        assert_eq!(
-            output.text,
-            "Messages in room-1\n[msg-2] #2 bo @ room-1: Use a partial index.\n    ↩ quoting [msg-1] User: Which index should we add?"
         );
     }
 
