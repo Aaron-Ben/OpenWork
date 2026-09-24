@@ -15,6 +15,9 @@ const HELP: &str = "Usage:
   openwork glance <room-id>
   openwork reply <room-id> [--quote <message-id>] [--held-token <token>] [--continue] (<body> | --stdin | --file <path>)
   openwork ack <room-id>
+  openwork mute <room-id> [--for <N>m|h|d|w | --until <time>]
+  openwork mute list
+  openwork follow <room-id>
   openwork dm <participant-id> (<body> | --stdin | --file <path>)
   openwork climate show [participant-id]
   openwork climate note <participant-id> --affinity <-1..1> --trust <-1..1> (--stdin | --file <path> | -- <note>)

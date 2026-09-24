@@ -348,6 +348,16 @@ pub enum AgentCommand {
     Ack {
         room_id: String,
     },
+    /// 静音一个 Group（collaboration.md §10.1）。`for_minutes` 与 `until`（RFC 3339）都没给时一直静音。
+    Mute {
+        room_id: String,
+        for_minutes: Option<u32>,
+        until: Option<String>,
+    },
+    MuteList,
+    Follow {
+        room_id: String,
+    },
     DirectMessage {
         participant_id: String,
         body: String,
@@ -409,6 +419,7 @@ impl AgentCommand {
                 | Self::Participants
                 | Self::Glance { .. }
                 | Self::ClimateShow { .. }
+                | Self::MuteList
                 | Self::BoardList
                 | Self::BoardShow { .. }
                 | Self::CardList { .. }
@@ -424,12 +435,22 @@ impl AgentCommand {
                 | Self::Members { .. }
                 | Self::Participants
                 | Self::ClimateShow { .. }
+                | Self::MuteList
                 | Self::BoardList
                 | Self::BoardShow { .. }
                 | Self::CardList { .. }
                 | Self::CardShow { .. }
         )
     }
+}
+
+/// 一个仍在静音的 Group；`expires_at` 带 `+08:00`，`None` 表示一直静音到 follow。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MuteView {
+    pub room_id: String,
+    pub title: Option<String>,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -482,6 +503,18 @@ pub enum AgentCommandResult {
     Acknowledged {
         room_id: String,
         up_to_seq: i64,
+    },
+    /// `expires_at` 为 `None` 表示一直静音到 follow；`participant_id` 是静音者自己，回执里要写出它。
+    Muted {
+        participant_id: String,
+        mute: MuteView,
+    },
+    Mutes {
+        mutes: Vec<MuteView>,
+    },
+    Followed {
+        room_id: String,
+        was_muted: bool,
     },
     DirectMessageSent {
         room_id: String,

@@ -57,6 +57,21 @@ pub(super) async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand
         [command, room_id] if command == "ack" => Ok(AgentCommand::Ack {
             room_id: room_id.clone(),
         }),
+        [command, action] if command == "mute" && action == "list" => Ok(AgentCommand::MuteList),
+        [command, room_id, tail @ ..] if command == "mute" => {
+            let flags = parse_flags(tail, &["--for", "--until"])?;
+            Ok(AgentCommand::Mute {
+                room_id: room_id.clone(),
+                for_minutes: flags
+                    .get("--for")
+                    .map(|span| parse_mute_minutes(span))
+                    .transpose()?,
+                until: flags.get("--until").cloned(),
+            })
+        }
+        [command, room_id] if command == "follow" => Ok(AgentCommand::Follow {
+            room_id: room_id.clone(),
+        }),
         [board, action] if board == "board" && action == "list" => Ok(AgentCommand::BoardList),
         [board, action, board_id] if board == "board" && action == "show" => {
             Ok(AgentCommand::BoardShow {
@@ -274,6 +289,34 @@ fn option_value(option: &str, value: Option<&String>) -> Result<String, ShimErro
         .filter(|value| !value.starts_with("--"))
         .cloned()
         .ok_or_else(|| ShimError::Arguments(format!("{option} requires a value")))
+}
+
+/// `--for <N>m|h|d|w` 换成分钟（Cumora `parseMuteUntil`，单位不分大小写）。范围 1 分钟到 90 天由
+/// Server 校验；这里只拒绝格式不对和装不进 `u32` 的数。
+fn parse_mute_minutes(value: &str) -> Result<u32, ShimError> {
+    let invalid =
+        || ShimError::Arguments("invalid --for duration (use e.g. 30m, 2h, 1d, or 1w)".to_string());
+    let value = value.trim();
+    let unit = value.chars().next_back().ok_or_else(invalid)?;
+    let amount = &value[..value.len() - unit.len_utf8()];
+    if amount.is_empty() || !amount.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let per_unit: u64 = match unit.to_ascii_lowercase() {
+        'm' => 1,
+        'h' => 60,
+        'd' => 24 * 60,
+        'w' => 7 * 24 * 60,
+        _ => return Err(invalid()),
+    };
+    amount
+        .parse::<u64>()
+        .ok()
+        .and_then(|amount| amount.checked_mul(per_unit))
+        .and_then(|minutes| u32::try_from(minutes).ok())
+        .ok_or_else(|| {
+            ShimError::Arguments("--for duration must be between 1 minute and 90 days".to_string())
+        })
 }
 
 fn parse_tail(value: &str) -> Result<u32, ShimError> {
@@ -786,6 +829,73 @@ mod tests {
         assert_eq!(
             update_args(&["--bogus", "x"]),
             Err("invalid arguments: unknown option --bogus".to_string())
+        );
+    }
+
+    async fn parsed(arguments: &[&str]) -> Result<AgentCommand, String> {
+        parse_command(
+            arguments
+                .iter()
+                .map(|argument| argument.to_string())
+                .collect(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    /// collaboration.md §10.1：`mute` / `follow` / `mute list` 的写法与期限单位照 Cumora `parseMuteUntil`。
+    #[tokio::test]
+    async fn acc_23_mute_follow_and_list_parse_like_cumora() {
+        let mute = |for_minutes: Option<u32>, until: Option<&str>| AgentCommand::Mute {
+            room_id: "room-1".to_string(),
+            for_minutes,
+            until: until.map(str::to_string),
+        };
+        assert_eq!(parsed(&["mute", "room-1"]).await, Ok(mute(None, None)));
+        for (span, minutes) in [("30m", 30), ("2h", 120), ("1d", 1440), ("1W", 10080)] {
+            assert_eq!(
+                parsed(&["mute", "room-1", "--for", span]).await,
+                Ok(mute(Some(minutes), None))
+            );
+        }
+        assert_eq!(
+            parsed(&["mute", "room-1", "--until", "2026-10-01T09:00:00+08:00"]).await,
+            Ok(mute(None, Some("2026-10-01T09:00:00+08:00")))
+        );
+        assert_eq!(
+            parsed(&[
+                "mute",
+                "room-1",
+                "--for",
+                "2h",
+                "--until",
+                "2026-10-01T09:00:00+08:00"
+            ])
+            .await,
+            Ok(mute(Some(120), Some("2026-10-01T09:00:00+08:00")))
+        );
+        assert_eq!(parsed(&["mute", "list"]).await, Ok(AgentCommand::MuteList));
+        assert_eq!(
+            parsed(&["follow", "room-1"]).await,
+            Ok(AgentCommand::Follow {
+                room_id: "room-1".to_string()
+            })
+        );
+        for span in ["5x", "2", "h", "-1h"] {
+            assert_eq!(
+                parsed(&["mute", "room-1", "--for", span]).await,
+                Err(
+                    "invalid arguments: invalid --for duration (use e.g. 30m, 2h, 1d, or 1w)"
+                        .to_string()
+                )
+            );
+        }
+        assert_eq!(
+            parsed(&["mute", "room-1", "--for", "99999999999w"]).await,
+            Err(
+                "invalid arguments: --for duration must be between 1 minute and 90 days"
+                    .to_string()
+            )
         );
     }
 }

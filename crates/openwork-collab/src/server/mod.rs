@@ -14,6 +14,7 @@ mod messages;
 mod migration;
 mod observability;
 mod redis;
+mod room_mutes;
 mod rooms;
 mod routing;
 mod runs;

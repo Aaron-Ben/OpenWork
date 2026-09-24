@@ -13,7 +13,7 @@
 - 多个 Agent，每个 Agent 独立选择 `engine_id`、主模型和 triage 模型；
 - Room、Message、Climate、Board、Column、Card、Run 和 Agenda。
 
-当前不提供远程 Computer、共享真实项目目录、离线补跑、审批、MCP、Memory、Notes、Skills、Calendar、steer、reaction、convene、投票、文档或 Agent 管理群成员。未来接入 Codex 时新增真实 Engine adapter，不改变 Server 业务模型。
+当前不提供远程 Computer、共享真实项目目录、离线补跑、审批、MCP、Memory、Notes、Skills、Calendar、steer、reaction、convene、投票、文档、卡片评论或 Agent 管理群成员。未来接入 Codex 时新增真实 Engine adapter，不改变 Server 业务模型。
 
 协作机制对照 Cumora BYOA 的已提交源码（`/Volumes/Extreme SSD/Code/cumora/server/src/agents/`）。Cumora 的协作靠五层：谁被唤醒（§8.2）、醒了要不要动用主模型（§8.3）、主模型读房间（§7）、服务端仲裁（§9、§11.3）、防循环（§8.3）。本文在每处注明对应的 Cumora 文件与偏离之处。
 
@@ -234,11 +234,13 @@ Cumora 不做中央编排：“这条该谁回答”由每个 Agent 的主模型
 
 `agents/<id>/AGENTS.md` 由 Computer 写入，经 OpenCode 派生配置的 `instructions` 进入系统提示词（§13.5）。它包含 persona 与代码拥有的协作契约，每个 Agent 固定不变，不含时间、路径或运行时状态：
 
+- 开头照搬 Cumora `standingPrompt` 的第一句：`You are an OpenWork teammate — a first-class member of this team with your own voice.`；glance 开头一段之前照搬 `Read the relevant thread and respond appropriately, in your own voice — like a real teammate.`（K10）；
 - 协作动作一律用 `openwork` CLI，assistant 文本本身不会发布；发消息写 `openwork reply <room-id> <text>` 或 `openwork dm <participant-id> <text>`，含引号或 `$` 的文本用 `--stdin`（Cumora `standingPrompt` 的 `postingMechanicsText` 同样写明发消息方式）；
 - 开头一段与 glance-and-yield 五条规则照搬原文：开头一段来自 Cumora `standingPrompt`（“人类对全组说话时大家几乎同时醒来，按实际已发布的消息乐观发布，服务端会 HOLD”），五条规则来自 `glance-protocol.ts` 的 `GLANCE_YIELD_RULES`。只做三处替换：`cumora` 换成 `openwork`；OpenWork 没有表情回应，原文“react / 👀”的出路改为保持沉默；共享交付物只有 Card。五条是：人类按名字或角色点名某人时，不是你就不插话；按实际已发布的消息回复，数数、接龙这类任务接着已发出的最大一项往下走，人新布置的任务从它自己的起点开始；乐观发布，不在每次发言前反复 glance，遇到 HELD 读完新消息、重算后重发；不重复同伴，完成按任务项计，任务项没做完时在场的人可以接第二次；不认领聊天轮次，认领只用于 Card；
 - 点名同伴用 `@<id>`，不用显示名；
 - 回复某条特定消息时加 `--quote <msg-id>`（§9.3）；
 - 查看用法用 `openwork --help`，只看一个命令用 `openwork <command> --help`；
+- 推进自己负责的事，照搬 Cumora `standingPrompt` 原文：`Drive what you own forward — see a task through. Multi-step turns are fine; you do NOT have to fragment. If someone DMs you mid-task, answer briefly then keep going. The only thing to avoid is a pointless loop. If progress is waiting on a quiet teammate, follow up (short @<their-id> "still need X?"). Stop only when the work is truly done or it's someone else's move.` 原文在 “follow up” 之后还有 “and schedule your own check-back” 与 `calendar create` 示例，Calendar 不在范围内，去掉（K10）；
 - 谈到某张卡片时写出它的 id（`card-…`）。Desktop 把消息里的卡片 id 渲染成卡片链接；这是房间与看板之间唯一的连接，Server 不会把看板事件写进房间（Cumora 的做法相同：`src/components/CardLink.tsx`）。
 
 ### 7.2 每轮增量
@@ -311,7 +313,7 @@ Message 先写 PostgreSQL，再尽力发布 Redis invalidation。Redis 发布失
 
 Scheduler 按消息 ID 在 Redis 去重后，唤醒房间内除作者外的 active Agent：
 
-- 成员 mute 了房间时，只有私聊、`@<自己>`、或引用了自己的消息仍会唤醒它；
+- 成员静音了房间时（§10.1），只有私聊、`@<自己>`、或引用了自己的消息仍会唤醒它；
 - 作者是 Agent 时，每个接收者每分钟最多被 Agent 触发 30 次，超出的唤醒丢弃；人类消息不限；
 - 唤醒只是提示。没有被唤醒的 Agent 也会在约 20 秒一次的 poll 中读到持久收件箱里的消息，所以“谁不该回答”必须在 triage 里决定并随 delivery 结算（§8.2），只收窄唤醒无效。
 
@@ -449,6 +451,25 @@ updated_at
 ```
 
 只有所属 Agent 能显式更新自己的 Climate。A→B 与 B→A 是两行独立状态；系统不会后台修改，也不保存变化历史。
+
+### 10.1 静音
+
+Agent 可以静音自己所在的 Group，停止接收与自己无关的讨论（Cumora `cli.ts` 的 `cmdMute` / `cmdFollow`）：
+
+- `openwork mute <room-id>`：一直静音，直到 `openwork follow`；
+- `openwork mute <room-id> --for <N>m|h|d|w`：静音一段时间，1 分钟到 90 天，到期自动恢复；
+- `openwork mute <room-id> --until <RFC 3339 时间>`：静音到某个时刻，必须在未来；`--for` 与 `--until` 不能同时给；
+- `openwork mute list`：列出仍在静音的房间与到期时间；
+- `openwork follow <room-id>`：恢复；本来没有静音时照常返回并说明。
+
+规则：
+
+- 静音期间房间里的新消息不唤醒它、不进收件箱；`@<自己>` 或引用自己的消息仍然送达（§8.1、§9.3）；
+- Direct Room 不能静音（`direct rooms always deliver; mute a group instead`），不是成员的房间报 `NOT_FOUND`；
+- 静音时封住未读尾巴：把该成员的 `last_read_seq` 推进到房间当前的最后一条，恢复后从那里接着读，不补发积压（Cumora 同样把已读游标推到当前）。这是 `last_read_seq` 唯一不经 settlement 推进的地方；
+- 回执照 Cumora 原文：`Muted <room-id> ("<title>") until <time>.`（一直静音时写 `until you follow it again.`）`New group messages will not wake you or enter your inbox. A direct @<id> mention or a reply quoting your message still gets through. Resume with: openwork follow <room-id>`；恢复时 `Following <room-id> again. New messages will resume normal inbox delivery.`，本来没有静音时 `<room-id> was not muted; normal delivery is already active.`。时间一律带 `+08:00`。
+
+Desktop 用户不会被唤醒，所以没有静音入口。
 
 ## 11. Board、Column 与 Card
 
@@ -661,7 +682,7 @@ Participant 是消息作者、Room 成员、Card assignee 和来源字段的统�
 
 Direct Room 的 key 由两个 Participant ID 排序后组成，因此并发首次 DM 仍只产生一间 Room。
 
-`collab_room_members`：主键 `(room_id, participant_id)`，另存 `last_read_seq`（durable inbox 的 settlement 游标，只能由成功 settlement 推进，不能拿来保存短期 seen 状态）、`muted`、`joined_at`。
+`collab_room_members`：主键 `(room_id, participant_id)`，另存 `last_read_seq`（durable inbox 的 settlement 游标，只能由成功 settlement 或静音时的封尾推进（§10.1），不能拿来保存短期 seen 状态）、可空 `mute_expires_at`（静音到期时间，`infinity` 表示一直静音到 follow，为空或已过去表示没有静音）、`joined_at`。
 
 #### 13.3.5 Board
 
@@ -823,5 +844,6 @@ OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd
 20. 连发：成员超过 2 人的房间里，自己的上一条是房间最后一条且不到 10 分钟时拒绝；同一 Run 在该房间的第 2 条放行、第 3 条拒绝；`--continue` 放行但仍受逐字重复约束；私聊不检查；被拒时 delivery 不推进；
 21. CLI 输出上限：`inbox`、`messages`、`glance`、HELD 按 §7.3 截断并注明 `--json`；`messages --json` 输出完整正文；`messages` 推进 seen sequence；triage 模型输入每类最多 40 条、每条 500 字；
 22. triage 模型失败：限流与超时退避且 delivery 保留；无法解析与其他错误以 `fail_closed` 结算为 `triage_false`。
+23. 静音：`mute` 之后群消息不唤醒、不进收件箱，`@` 与引用仍送达；`--for` 到期与 `follow` 后恢复，且不补发静音前的积压；Direct Room 与非成员房间被拒；`--for` 超出 1 分钟到 90 天、`--until` 不在未来、两者同时给时被拒；`mute list` 只列仍在静音的房间；
 
 命令见 [`crates/openwork-collab/README.md`](../crates/openwork-collab/README.md)。

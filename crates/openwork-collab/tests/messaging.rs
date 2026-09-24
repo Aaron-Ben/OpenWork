@@ -539,7 +539,7 @@ async fn acc_12_quotes_stay_in_the_room_and_reach_a_muted_author() {
     assert_eq!(group_messages, 2);
 
     sqlx::query(
-        "UPDATE collab_room_members SET muted = TRUE WHERE room_id = $1 AND participant_id = $2",
+        "UPDATE collab_room_members SET mute_expires_at = 'infinity' WHERE room_id = $1 AND participant_id = $2",
     )
     .bind(&group.id)
     .bind(&alpha.id)

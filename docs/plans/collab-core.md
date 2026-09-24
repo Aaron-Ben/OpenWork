@@ -22,6 +22,8 @@
 | K8 | 对齐 Cumora 的差距：连发闸（`MONOLOGUE`、`--continue`、`collab_messages.run_id`）；私聊不做逐字重复拦截；CLI 输出与 triage 输入的上限、`messages --json`、`messages` 推进 seen；triage 模型失败的 fail closed；`AGENTS.md` 规则与增量开头照搬原文；Desktop 回到前台补报 `collab_room_viewed` | §7.1–§7.3、§8.3、§9.2、§9.4；collaboration-desktop.md §7.2 | §16 #11、#20–#22；collaboration-desktop.md §12 #10 |
 | K6 | Column `kind` 替换 `is_terminal`；领取即推进；超时接手（含 running Run 条件） | §11.1、§11.3 | §16 #13、#15 |
 | K7 | 卡片唤醒：`collab_card_wakes`、触发条件、合并、Run `card` trigger、结算、限额 | §11.4、§13.3.6 | §16 #14 |
+| K10 | 常驻契约补齐 Cumora `standingPrompt` 的两段：开头的 teammate 一句与 “Read the relevant thread …”，以及 “Drive what you own forward …”（去掉依赖 Calendar 的半句） | §7.1 | §16 #8 |
+| K9 | 静音：Agent 的 `mute` / `follow` / `mute list`，期限、直聊不可静音、静音时封住未读尾巴；`collab_room_members.muted` 换成到期时间 | §10.1、§13.3.4 | §16 #23 |
 | U1 | 删除运行记录：页面、`collab_run_list`/`collab_run_trace`、Server `observability`、`collab_run_events`（新迁移删表）、Runner 事件上报；Runner heartbeat 增加 `paused` 状态 | collaboration-desktop.md §1、§4.4；collaboration.md §5 | collaboration-desktop.md §12 #9 |
 | U2 | Desktop 重设计：房间（未读、说明行、引用、`@` 补全、卡片链接与右侧卡片预览、工作条、房间信息）、Agent（`activity`）、看板（Column 类型、卡片状态）、识别色令牌 | collaboration-desktop.md §4、§7–§10 | collaboration-desktop.md §12 #10–#16 |
 

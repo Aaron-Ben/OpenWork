@@ -405,7 +405,9 @@ impl Messages {
                ON message.id = $1 AND message.room_id = rm.room_id
              WHERE rm.room_id = $2 AND rm.participant_id <> $3 AND a.archived_at IS NULL
                AND (
-                   NOT rm.muted OR r.kind = 'direct' OR (
+                   rm.mute_expires_at IS NULL
+                   OR rm.mute_expires_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                   OR r.kind = 'direct' OR (
                        message.kind = 'normal'
                        AND message.body ~ (
                            '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
@@ -437,7 +439,9 @@ impl Messages {
                 JOIN collab_messages m ON m.room_id = rm.room_id
                 WHERE rm.participant_id = $1
                   AND (
-                      NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                      rm.mute_expires_at IS NULL
+                   OR rm.mute_expires_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                   OR r.kind = 'direct' OR EXISTS (
                           SELECT 1
                           FROM collab_messages mention
                           WHERE mention.room_id = rm.room_id
@@ -519,7 +523,9 @@ impl Messages {
                 JOIN collab_messages m ON m.room_id = rm.room_id
                 WHERE rm.participant_id = $1
                   AND (
-                      NOT rm.muted OR r.kind = 'direct' OR EXISTS (
+                      rm.mute_expires_at IS NULL
+                   OR rm.mute_expires_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')
+                   OR r.kind = 'direct' OR EXISTS (
                           SELECT 1
                           FROM collab_messages mention
                           WHERE mention.room_id = rm.room_id

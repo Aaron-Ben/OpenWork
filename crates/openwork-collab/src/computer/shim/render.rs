@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use super::{ShimError, ShimOutput};
-use crate::protocol::{AgentCommandResponse, AgentCommandResult, MessageView};
+use crate::protocol::{AgentCommandResponse, AgentCommandResult, MessageView, MuteView};
 
 /// Characters of one body in `openwork inbox` (collaboration.md §7.3, Cumora `cmdInbox`).
 const INBOX_BODY_MAX_CHARS: usize = 240;
@@ -150,9 +150,58 @@ fn summary(result: AgentCommandResult) -> Result<String, ShimError> {
         AgentCommandResult::Board { board } => pretty(&board),
         AgentCommandResult::Cards { cards } => pretty(&cards),
         AgentCommandResult::Card { card } => pretty(&card),
+        AgentCommandResult::Muted {
+            participant_id,
+            mute,
+        } => Ok(muted(&participant_id, &mute)),
+        AgentCommandResult::Mutes { mutes } => Ok(mute_list(&mutes)),
+        AgentCommandResult::Followed { room_id, was_muted } => Ok(if was_muted {
+            format!("Following {room_id} again. New messages will resume normal inbox delivery.")
+        } else {
+            format!("{room_id} was not muted; normal delivery is already active.")
+        }),
         // 错误与消息列表由 `render` 处理，不会到这里。
         listing_or_error => pretty(&listing_or_error),
     }
+}
+
+/// 静音回执照 Cumora `cmdMute` 原文（collaboration.md §10.1）。
+fn muted(participant_id: &str, mute: &MuteView) -> String {
+    let room_id = &mute.room_id;
+    let title = mute
+        .title
+        .as_deref()
+        .map(|title| format!(" (\"{title}\")"))
+        .unwrap_or_default();
+    let expiry = match mute.expires_at.as_deref() {
+        Some(time) => format!("until {time}"),
+        None => "until you follow it again".to_string(),
+    };
+    format!(
+        "Muted {room_id}{title} {expiry}. New group messages will not wake you or enter your inbox. A direct @{participant_id} mention or a reply quoting your message still gets through. Resume with: openwork follow {room_id}"
+    )
+}
+
+/// `mute list` 照 Cumora 的列表格式。
+fn mute_list(mutes: &[MuteView]) -> String {
+    if mutes.is_empty() {
+        return "(no muted groups)".to_string();
+    }
+    mutes
+        .iter()
+        .map(|mute| {
+            let expiry = match mute.expires_at.as_deref() {
+                Some(time) => format!("until {time}"),
+                None => "until you follow it".to_string(),
+            };
+            format!(
+                "• {}  \"{}\"  — {expiry}",
+                mute.room_id,
+                mute.title.as_deref().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn pretty(value: &impl Serialize) -> Result<String, ShimError> {
@@ -207,7 +256,8 @@ fn listing(title: &str, messages: &[MessageView], excerpt: Excerpt) -> String {
 mod tests {
     use super::{Format, render};
     use crate::protocol::{
-        AgentCommandResponse, AgentCommandResult, MessageView, ParticipantView, QuotedMessageView,
+        AgentCommandResponse, AgentCommandResult, MessageView, MuteView, ParticipantView,
+        QuotedMessageView,
     };
 
     fn message(sequence: i64, body: &str) -> MessageView {
@@ -378,5 +428,75 @@ mod tests {
 
         let parsed: Vec<MessageView> = serde_json::from_str(&output.text).unwrap();
         assert_eq!(parsed, vec![message(1, &long)]);
+    }
+
+    fn rendered(result: AgentCommandResult) -> String {
+        render(
+            AgentCommandResponse {
+                result,
+                effects: Vec::new(),
+            },
+            Format::Text,
+        )
+        .unwrap()
+        .text
+    }
+
+    fn muted_view(room_id: &str, title: &str, expires_at: Option<&str>) -> MuteView {
+        MuteView {
+            room_id: room_id.to_string(),
+            title: Some(title.to_string()),
+            expires_at: expires_at.map(str::to_string),
+        }
+    }
+
+    /// collaboration.md §10.1：静音、恢复与列表的回执照 Cumora `cmdMute` / `cmdFollow` 原文。
+    #[test]
+    fn acc_23_mute_receipts_follow_cumora() {
+        assert_eq!(
+            rendered(AgentCommandResult::Muted {
+                participant_id: "ada".to_string(),
+                mute: muted_view("room-1", "Release planning", None),
+            }),
+            "Muted room-1 (\"Release planning\") until you follow it again. New group messages will not wake you or enter your inbox. A direct @ada mention or a reply quoting your message still gets through. Resume with: openwork follow room-1"
+        );
+        assert_eq!(
+            rendered(AgentCommandResult::Muted {
+                participant_id: "ada".to_string(),
+                mute: muted_view(
+                    "room-1",
+                    "Release planning",
+                    Some("2026-09-25T20:30:00+08:00")
+                ),
+            }),
+            "Muted room-1 (\"Release planning\") until 2026-09-25T20:30:00+08:00. New group messages will not wake you or enter your inbox. A direct @ada mention or a reply quoting your message still gets through. Resume with: openwork follow room-1"
+        );
+        assert_eq!(
+            rendered(AgentCommandResult::Mutes {
+                mutes: vec![
+                    muted_view("room-1", "Release planning", None),
+                    muted_view("room-2", "Ops", Some("2026-09-25T20:30:00+08:00")),
+                ],
+            }),
+            "• room-1  \"Release planning\"  — until you follow it\n• room-2  \"Ops\"  — until 2026-09-25T20:30:00+08:00"
+        );
+        assert_eq!(
+            rendered(AgentCommandResult::Mutes { mutes: Vec::new() }),
+            "(no muted groups)"
+        );
+        assert_eq!(
+            rendered(AgentCommandResult::Followed {
+                room_id: "room-1".to_string(),
+                was_muted: true,
+            }),
+            "Following room-1 again. New messages will resume normal inbox delivery."
+        );
+        assert_eq!(
+            rendered(AgentCommandResult::Followed {
+                room_id: "room-1".to_string(),
+                was_muted: false,
+            }),
+            "room-1 was not muted; normal delivery is already active."
+        );
     }
 }

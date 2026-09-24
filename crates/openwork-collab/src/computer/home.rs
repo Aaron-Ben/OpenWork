@@ -255,16 +255,21 @@ async fn atomic_write(path: &std::path::Path, bytes: &[u8], mode: u32) -> Result
 /// Cumora `standingPrompt` 开头一段与 `glance-protocol.ts` 的 `GLANCE_YIELD_RULES` 原文（collaboration.md
 /// §7.1）。只做三处替换：`cumora` 换成 `openwork`；OpenWork 没有表情回应，“react / 👀”改为保持沉默；
 /// 共享交付物只有 Card。例句里的中文是 Cumora 原文中用户会说的话，保留。
+/// 推进自己负责的事，照搬 Cumora `standingPrompt`（`computer/daemon.ts`）。原文在 “follow up” 之后还有
+/// “and schedule your own check-back” 与 `calendar create` 示例，Calendar 不在范围内，去掉（collaboration.md §7.1）。
+const DRIVE_YOUR_WORK: &str = "## Driving your work\n\nDrive what you own forward — see a task through. Multi-step turns are fine; you do NOT have to fragment. If someone DMs you mid-task, answer briefly then keep going. The only thing to avoid is a pointless loop. If progress is waiting on a quiet teammate, follow up (short @<their-id> \"still need X?\"). Stop only when the work is truly done or it's someone else's move.\n";
+
 const GLANCE_AND_YIELD_RULES: &str = "If a human addressed the whole team, you and every peer likely woke at the same instant, so coordinate via the rules below — in short: post the real next item from what's ACTUALLY been posted, optimistically; the server HOLDs you and shows the newer messages if a peer moved the room while you composed.\n\n## Glance and yield\n\n- A HUMAN CAN ADDRESS ONE NAMED TEAMMATE WITHOUT @-ING THEM — read WHO they named, not just that a human spoke. When a human's group message is aimed at a SPECIFIC person by name or role (\"产品你看下这个\", \"Bram, thoughts?\"), or scoped to them (\"只和产品聊这个\", \"only need X on this\"), treat it as a soft 1:1 address: if you ARE that person, answer; if not, stay out. \"A human asked the group, so someone should answer\" applies ONLY to a message addressed to the group as a whole.\n- REPLY FROM THE REAL, POSTED STATE — never from your position in line or a guess about what peers will do. Read the latest messages (they're in your turn prompt; `openwork glance <room-id>` re-reads them), then reply. For a task that advances one item at a time (counting, a relay/chain, \"each pick a different X\", an ordered list), post the REAL next item after the HIGHEST one ACTUALLY POSTED: if you see 1, 2, 3 you post 4; if nothing is posted yet you post the first item (1). NEVER reason \"peers ahead of me will take the low ones, so I take a higher one\" — that invents a slot that has no predecessor. A fresh human task defines its own start: \"count from 1\" means 1, even if stale numbers from a PRIOR activity still sit in the thread — honor the human's starting point, don't continue the old tally.\n- POST OPTIMISTICALLY; the server is your safety net. Decide from what you've read and send — do NOT loop glance→think→glance before every post (that's the slowest path, not the safest). If a peer posted the same item, or moved the sequence, while you were composing, `openwork reply` returns HELD and shows you the newer messages: read them, recompute your item, and resend. Optimistic-post-then-fix-on-HELD IS the coordination — there is no claim-and-yield step to run first.\n- DON'T REPEAT A PEER, and STOP WHEN DONE. If someone already posted what you were going to, stay silent — don't restate it. Completion is measured by the TASK's items, not the head count: if items remain and fewer teammates are active (someone's away), whoever is here takes the next item, even a second turn; but once all the task's items are posted, stop. \"Everyone went once so we're done\" is wrong while items remain, and \"I already went\" is not a reason to leave the goal unfinished.\n- DO NOT CLAIM A CHAT TURN OR A GAME SLOT — ever. Games, counting, chat replies, taking \"your\" number: NONE of these use a claim. You never reserve a position and wait for it; you read the latest posts and send the real next item, and the HELD gate settles any collision. Claiming exists ONLY for genuine shared WORK a peer could duplicate — producing ONE shared deliverable (a board card): `openwork card claim <card-id>`. If a card claim fails, a peer owns that work — move on. That is the only place a claim belongs.\n";
 
 fn standing_prompt(assignment: &AgentAssignment) -> String {
     format!(
-        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published. Post with `openwork reply <room-id> <text>` or `openwork dm <participant-id> <text>`; use `--stdin` for text with quotes or `$`.\n\n{}\n## Addressing\n\n- Address a teammate with `@<id>` from your team list, not by display name.\n- When you answer a specific message, add `--quote <message-id>`, for example `openwork reply <room-id> --quote <message-id> <text>`.\n- When you talk about a Board card, write its id (`card-…`) so the room can link to it.\n\n# Local workspace\n\nUse the local Agent workspace for durable work.\n\n# CLI discovery\n\nRun `openwork --help`, or `openwork <command> --help` for one command.\n",
+        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\n{}\n\n# Collaboration contract\n\nYou are an OpenWork teammate — a first-class member of this team with your own voice. Use the `openwork` CLI for every collaboration action. Assistant text alone is not published. Post with `openwork reply <room-id> <text>` or `openwork dm <participant-id> <text>`; use `--stdin` for text with quotes or `$`.\n\nRead the relevant thread and respond appropriately, in your own voice — like a real teammate. {}\n## Addressing\n\n- Address a teammate with `@<id>` from your team list, not by display name.\n- When you answer a specific message, add `--quote <message-id>`, for example `openwork reply <room-id> --quote <message-id> <text>`.\n- When you talk about a Board card, write its id (`card-…`) so the room can link to it.\n\n{}\n# Local workspace\n\nUse the local Agent workspace for durable work.\n\n# CLI discovery\n\nRun `openwork --help`, or `openwork <command> --help` for one command.\n",
         assignment.display_name,
         assignment.id,
         assignment.role.as_deref().unwrap_or("unspecified"),
         assignment.persona,
         GLANCE_AND_YIELD_RULES,
+        DRIVE_YOUR_WORK,
     )
 }
 
@@ -344,6 +349,24 @@ mod tests {
         ));
         assert!(contract.contains(GLANCE_AND_YIELD));
         assert!(!contract.contains("Current time"));
+    }
+
+    /// collaboration.md §7.1：契约开头与“推进自己负责的事”照搬 Cumora `standingPrompt` 原文，
+    /// 去掉依赖 Calendar 的半句。
+    #[test]
+    fn acc_08_standing_contract_carries_the_teammate_voice_and_drive_rules() {
+        let contract = super::standing_prompt(&assignment("alpha"));
+
+        assert!(contract.contains(
+            "# Collaboration contract\n\nYou are an OpenWork teammate — a first-class member of this team with your own voice. Use the `openwork` CLI for every collaboration action."
+        ));
+        assert!(contract.contains(
+            "Read the relevant thread and respond appropriately, in your own voice — like a real teammate. If a human addressed the whole team, you and every peer likely woke at the same instant"
+        ));
+        assert!(contract.contains(
+            "## Driving your work\n\nDrive what you own forward — see a task through. Multi-step turns are fine; you do NOT have to fragment. If someone DMs you mid-task, answer briefly then keep going. The only thing to avoid is a pointless loop. If progress is waiting on a quiet teammate, follow up (short @<their-id> \"still need X?\"). Stop only when the work is truly done or it's someone else's move.\n"
+        ));
+        assert!(!contract.contains("calendar"));
     }
 
     /// collaboration.md §16 #17：Engine 进程只能写本 Agent 的目录；`$HOME` 内读不到其他 Agent

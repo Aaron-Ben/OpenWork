@@ -46,6 +46,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "card wakes",
         include_str!("../../migrations/202609240007_card_wakes.sql"),
     ),
+    (
+        202_609_240_008,
+        "room mutes",
+        include_str!("../../migrations/202609240008_room_mutes.sql"),
+    ),
 ];
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {

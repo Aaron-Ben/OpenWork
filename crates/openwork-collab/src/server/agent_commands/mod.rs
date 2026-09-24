@@ -17,6 +17,7 @@ use super::{
 };
 
 mod cards;
+mod mutes;
 mod reply;
 
 use reply::{ReplyInput, direct_message};
@@ -215,6 +216,11 @@ impl AgentCommands {
                 },
                 Err(error) => climate_failure(error)?,
             },
+            command @ (AgentCommand::Mute { .. }
+            | AgentCommand::MuteList
+            | AgentCommand::Follow { .. }) => {
+                mutes::mute_command(&mut transaction, claims, command).await?
+            }
             command @ (AgentCommand::BoardList
             | AgentCommand::BoardShow { .. }
             | AgentCommand::CardList { .. }
