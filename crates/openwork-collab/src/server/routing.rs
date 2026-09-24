@@ -96,8 +96,9 @@ fn is_id_char(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
 }
 
-/// `@<id>` 前后都不是 `[A-Za-z0-9_-]`，与 `messages.rs` 中 mute 例外的 SQL 正则一致。
-fn mentions(body: &str, id: &str) -> bool {
+/// `@<id>` 前后都不是 `[A-Za-z0-9_-]`，与 `messages.rs` 中 mute 例外的 SQL 正则一致；卡片唤醒的点名
+/// 也用它（collaboration.md §11.4）。
+pub(super) fn mentions(body: &str, id: &str) -> bool {
     let needle = format!("@{id}");
     body.match_indices(&needle).any(|(start, _)| {
         let before = body[..start].chars().next_back();

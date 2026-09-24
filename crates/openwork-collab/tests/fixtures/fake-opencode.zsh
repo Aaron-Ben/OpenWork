@@ -15,6 +15,15 @@ if [[ " $* " == *" --agent openwork-triage "* ]]; then
   exit 0
 fi
 
+# 卡片 Turn（collaboration.md §11.4）：领取列表里的第一张卡片。
+if [[ "$prompt" == *"Someone just put this work on you directly."* ]]; then
+  card_id="$(print -r -- "$prompt" | sed -n 's/^- \(card-[0-9a-f]*\) .*/\1/p' | head -n 1)"
+  openwork card claim "$card_id" >/dev/null || exit $?
+  print -r -- '{"type":"text","sessionID":"ses_helper","part":{"text":"claimed"}}'
+  print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"input":8,"output":3,"cache":{"read":1,"write":0}}}}'
+  exit 0
+fi
+
 room_id="$(print -r -- "$prompt" | sed -n 's/^# \(room-[0-9a-f]*\).*/\1/p' | head -n 1)"
 printf '%s\n%s' 'Agent says `code` $(literal) --as=admin' 'second line' \
   | openwork reply "$room_id" --stdin >/dev/null || exit $?

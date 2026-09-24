@@ -3,6 +3,7 @@ mod agent_commands;
 mod agents;
 mod auth;
 mod board;
+mod card_wakes;
 mod climate;
 mod command_requests;
 mod coordination;
@@ -32,6 +33,7 @@ use agenda::Agenda;
 use agent_commands::AgentCommands;
 use agents::Agents;
 use board::Board;
+use card_wakes::CardWakes;
 use coordination::Coordination;
 use desktop_commands::DesktopCommands;
 use inventory::EngineInventory;
@@ -81,6 +83,7 @@ impl CollaborationServer {
         let rooms = Rooms::new(pool.clone());
         let messages = Messages::new(pool.clone());
         let runs = Runs::new(pool.clone());
+        let card_wakes = CardWakes::new(pool.clone());
         runs.interrupt_stale(session.id()).await?;
         let observability = Observability::new(pool.clone());
         let triage = InboxTriage::new(pool.clone());
@@ -119,6 +122,7 @@ impl CollaborationServer {
         let app = transport::router(TransportState {
             agents,
             messages,
+            card_wakes,
             runs,
             observability,
             scheduler,

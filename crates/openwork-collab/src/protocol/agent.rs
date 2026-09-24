@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{BoardView, CardView, MessageView, ParticipantView, RoomView};
+use super::{BoardView, CardView, ColumnKind, MessageView, ParticipantView, RoomView};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +74,62 @@ pub struct InboxResponse {
     /// 全部 active 参与者加上本批消息的作者，人类在前、其余按显示名排序。
     /// 没有未读消息时也返回，供 Agenda Turn 渲染名册（collaboration.md §7.2）。
     pub team: Vec<TeamMember>,
+    /// 待处理的卡片唤醒（collaboration.md §11.4），按首次写入的时间排列；非空时 trigger 为 `card`。
+    pub cards: Vec<CardWakeView>,
+    /// 仍待处理、但这一轮排不下的卡片唤醒数（一轮最多 10 张，collaboration.md §11.4）。
+    pub more_cards: i64,
+}
+
+/// 一条待处理的卡片唤醒，连同卡片当前所在的 Board 与列。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardWakeView {
+    pub id: String,
+    pub revision: i32,
+    pub reason: CardWakeReason,
+    pub card_id: String,
+    pub card_title: String,
+    pub board_id: String,
+    pub board_title: String,
+    pub column_id: String,
+    pub column_title: String,
+    pub column_kind: Option<ColumnKind>,
+    pub assignee_id: Option<String>,
+}
+
+/// 卡片为什么唤醒这个 Agent（collaboration.md §11.4）。
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CardWakeReason {
+    Assigned,
+    Mentioned,
+}
+
+impl CardWakeReason {
+    /// 数据库 `collab_card_wakes.reason` 中的取值。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Assigned => "assigned",
+            Self::Mentioned => "mentioned",
+        }
+    }
+
+    /// 解析数据库取值；迁移的 CHECK 约束保证只会出现这两种。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "assigned" => Some(Self::Assigned),
+            "mentioned" => Some(Self::Mentioned),
+            _ => None,
+        }
+    }
+}
+
+/// trigger 携带的卡片唤醒：Run 打开时只认领版本号未变的记录（collaboration.md §13.3.6）。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardWakeRef {
+    pub id: String,
+    pub revision: i32,
 }
 
 /// 名册中的一位参与者。`archived` 只会出现在本批消息的作者身上。
@@ -107,6 +163,8 @@ pub struct TriggerEnvelope {
     pub trigger: String,
     pub deliveries: Vec<DeliveryRange>,
     pub agenda_focus: Option<AgendaFocus>,
+    /// 只在 trigger 为 `card` 时非空。
+    pub card_wakes: Vec<CardWakeRef>,
     pub carried_over: bool,
     pub issued_at: i64,
     pub expires_at: i64,
@@ -486,6 +544,11 @@ pub enum AgentCommandEffect {
         card_id: String,
         column_id: String,
         position: i32,
+    },
+    /// 写入了一条卡片唤醒；提交后由 Server 发布 wake（collaboration.md §11.4）。
+    CardWakeQueued {
+        agent_id: String,
+        card_id: String,
     },
     ClimateUpdated {
         about_participant_id: String,

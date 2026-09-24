@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 
 use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
-use crate::protocol::{ClimateView, MessageView, RoomView, TeamMember};
+use crate::protocol::{
+    CardWakeReason, CardWakeView, ClimateView, ColumnKind, MessageView, RoomView, TeamMember,
+};
 
 /// Message lines in one unread digest (collaboration.md §7.2, Cumora `DIGEST_MAX_MESSAGE_LINES`).
 const DIGEST_MAX_MESSAGE_LINES: usize = 40;
@@ -73,6 +75,81 @@ pub(super) fn agenda_turn_prompt(
     ));
     push_roster(&mut prompt, self_id, team);
     prompt
+}
+
+/// 渲染一轮卡片 Turn 所需的全部输入（collaboration.md §11.4）。
+pub(super) struct CardTurn<'a> {
+    pub(super) self_id: &'a str,
+    pub(super) now: OffsetDateTime,
+    pub(super) cards: &'a [CardWakeView],
+    /// 仍待处理、但这一轮排不下的卡片数。
+    pub(super) more_cards: i64,
+    pub(super) messages: &'a [MessageView],
+    pub(super) rooms: &'a [RoomView],
+    pub(super) team: &'a [TeamMember],
+    pub(super) carried_over: bool,
+}
+
+/// 卡片 Turn 开头的一段，照搬 Cumora `manualBriefDelta`：这是有人直接交给你的工作，收件箱为空也要处理。
+const PUT_ON_YOU: &str = "Someone just put this work on you directly. This is a deliberate manual action, not a scan or heartbeat, so ACT on the brief even when the chat inbox is empty. Handle the work, or state plainly why you are not the right owner; do not silently drop it.";
+
+/// 卡片的操作方式与收尾要求，照 Cumora `buildKanbanWakeBrief`，命令换成 OpenWork 已有的 `card` 子命令。
+const DRIVE_THE_BOARD: &str = "Drive them with the board tools rather than only replying in chat:
+  openwork card show <card-id>
+  openwork card claim <card-id>
+  openwork card update <card-id> --title <text> [--description <text>]
+  openwork card move <card-id> --column <column-id>
+
+If the work finishes here, leave the card in a state that says so — a board that still reads Todo while the work is done is worse than no board.";
+
+/// 卡片 Turn 的增量 prompt：时间、说明、卡片列表（排不下的写明张数）与用法、随唤醒到达的未读消息、名册。
+pub(super) fn card_turn_prompt(turn: &CardTurn<'_>) -> String {
+    let mut prompt = format!("{}\n\n{PUT_ON_YOU}\n\nCards:", time_line(turn.now));
+    for card in turn.cards {
+        prompt.push('\n');
+        prompt.push_str(&card_lines(card, turn.self_id));
+    }
+    if turn.more_cards > 0 {
+        prompt.push_str(&format!(
+            "\n{} more card(s) are waiting; they will arrive in a later turn.",
+            turn.more_cards
+        ));
+    }
+    prompt.push_str("\n\n");
+    prompt.push_str(DRIVE_THE_BOARD);
+    if !turn.messages.is_empty() {
+        prompt.push_str(
+            "\n\nUnread messages that arrived with this wake (also handle anything addressed to you):\n",
+        );
+        prompt.push_str(&digest(turn.messages, turn.rooms, turn.team));
+    }
+    if turn.carried_over {
+        prompt.push_str("\n\nMore unread messages are waiting; they will arrive in a later turn.");
+    }
+    push_roster(&mut prompt, turn.self_id, turn.team);
+    prompt
+}
+
+fn card_lines(card: &CardWakeView, self_id: &str) -> String {
+    let why = match card.reason {
+        CardWakeReason::Assigned => "assigned to you",
+        CardWakeReason::Mentioned => "mentions you",
+    };
+    let kind = card.column_kind.map_or("unclassified", ColumnKind::as_str);
+    let assignee = match card.assignee_id.as_deref() {
+        Some(id) if id == self_id => "you",
+        Some(id) => id,
+        None => "nobody",
+    };
+    format!(
+        "- {} \"{}\" — {why}\n  board {} \"{}\"; column {} \"{}\" ({kind}); assignee: {assignee}",
+        card.card_id,
+        card.card_title,
+        card.board_id,
+        card.board_title,
+        card.column_id,
+        card.column_title
+    )
 }
 
 fn time_line(now: OffsetDateTime) -> String {
@@ -449,5 +526,129 @@ mod tests {
              - bo — Bo, Reviewer\n\
              - cy — Cy, unspecified"
         );
+    }
+
+    fn wake(
+        card: &str,
+        title: &str,
+        reason: CardWakeReason,
+        column: (&str, &str, Option<ColumnKind>),
+        assignee: Option<&str>,
+    ) -> CardWakeView {
+        CardWakeView {
+            id: format!("cardwake-{card}"),
+            revision: 1,
+            reason,
+            card_id: card.to_string(),
+            card_title: title.to_string(),
+            board_id: "board-9".to_string(),
+            board_title: "Release".to_string(),
+            column_id: column.0.to_string(),
+            column_title: column.1.to_string(),
+            column_kind: column.2,
+            assignee_id: assignee.map(str::to_string),
+        }
+    }
+
+    /// collaboration.md §11.4、§16 #14：卡片 Turn 的正文逐字符合文档，附带随唤醒到达的未读消息与名册。
+    #[test]
+    fn acc_14_card_turn_prompt_lists_the_cards_and_the_board_commands() {
+        let cards = vec![
+            wake(
+                "card-1",
+                "Fix the login redirect",
+                CardWakeReason::Assigned,
+                ("col-4", "Todo", Some(ColumnKind::Todo)),
+                Some("ada"),
+            ),
+            wake(
+                "card-2",
+                "Review the API",
+                CardWakeReason::Mentioned,
+                ("col-5", "Doing", Some(ColumnKind::Doing)),
+                Some("bo"),
+            ),
+        ];
+        let messages = vec![message(
+            "msg-c3",
+            "room-d",
+            2,
+            "local-user",
+            "The login bug is urgent.",
+        )];
+        let (rooms, team) = (rooms(), team());
+        let turn = CardTurn {
+            self_id: "ada",
+            now: NOW,
+            cards: &cards,
+            more_cards: 0,
+            messages: &messages,
+            rooms: &rooms,
+            team: &team,
+            carried_over: false,
+        };
+        assert_eq!(
+            card_turn_prompt(&turn),
+            "Current time: 2026-09-24T18:30:00+08:00\n\
+             \n\
+             Someone just put this work on you directly. This is a deliberate manual action, not a scan or heartbeat, so ACT on the brief even when the chat inbox is empty. Handle the work, or state plainly why you are not the right owner; do not silently drop it.\n\
+             \n\
+             Cards:\n\
+             - card-1 \"Fix the login redirect\" — assigned to you\n\
+             \x20 board board-9 \"Release\"; column col-4 \"Todo\" (todo); assignee: you\n\
+             - card-2 \"Review the API\" — mentions you\n\
+             \x20 board board-9 \"Release\"; column col-5 \"Doing\" (doing); assignee: bo\n\
+             \n\
+             Drive them with the board tools rather than only replying in chat:\n\
+             \x20 openwork card show <card-id>\n\
+             \x20 openwork card claim <card-id>\n\
+             \x20 openwork card update <card-id> --title <text> [--description <text>]\n\
+             \x20 openwork card move <card-id> --column <column-id>\n\
+             \n\
+             If the work finishes here, leave the card in a state that says so — a board that still reads Todo while the work is done is worse than no board.\n\
+             \n\
+             Unread messages that arrived with this wake (also handle anything addressed to you):\n\
+             # room-d [direct]\n\
+             \x20 [msg-c3] User (user): The login bug is urgent.\n\
+             \n\
+             Your team (use these ids for @mentions and `openwork dm`):\n\
+             People — answer them first:\n\
+             - local-user — User\n\
+             Agents:\n\
+             - bo — Bo, Reviewer\n\
+             - cy — Cy, unspecified"
+        );
+    }
+
+    #[test]
+    fn card_turn_prompt_counts_waiting_cards_and_names_unclassified_columns_and_missing_assignees()
+    {
+        let cards = vec![wake(
+            "card-3",
+            "Draft notes",
+            CardWakeReason::Mentioned,
+            ("col-7", "Backlog", None),
+            None,
+        )];
+        let team = team();
+        let turn = CardTurn {
+            self_id: "ada",
+            now: NOW,
+            cards: &cards,
+            more_cards: 3,
+            messages: &[],
+            rooms: &[],
+            team: &team,
+            carried_over: true,
+        };
+        let prompt = card_turn_prompt(&turn);
+        assert!(prompt.contains(
+            "- card-3 \"Draft notes\" — mentions you\n  board board-9 \"Release\"; column col-7 \"Backlog\" (unclassified); assignee: nobody\n\
+             3 more card(s) are waiting; they will arrive in a later turn.\n\nDrive them"
+        ));
+        assert!(!prompt.contains("Unread messages"));
+        assert!(prompt.contains(
+            "worse than no board.\n\nMore unread messages are waiting; they will arrive in a later turn.\n\nYour team"
+        ));
     }
 }

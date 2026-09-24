@@ -1,4 +1,4 @@
-use crate::protocol::{WakeEvent, entity_id};
+use crate::protocol::{WakeEvent, WakeReason, entity_id};
 use time::OffsetDateTime;
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -72,6 +72,20 @@ impl Scheduler {
         }
     }
 
+    /// 卡片唤醒已经持久写入后叫醒 Agent；发布失败时 Agent 仍会在下一次 poll 读到它（collaboration.md §11.4）。
+    pub async fn card_wake_queued(&self, agent_id: &str, card_id: &str) {
+        let wake = WakeEvent {
+            id: entity_id("event"),
+            agent_id: agent_id.to_string(),
+            subject_id: card_id.to_string(),
+            reason: WakeReason::CardWake,
+            published_at: OffsetDateTime::now_utc().unix_timestamp(),
+        };
+        if let Err(error) = self.redis.publish_wake(&wake).await {
+            tracing::warn!(%error, agent_id, card_id, "card wake persisted but Redis wake publish failed");
+        }
+    }
+
     pub fn subscribe_wakes(&self, agent_id: &str) -> broadcast::Receiver<WakeEvent> {
         self.redis.subscribe_wakes(agent_id)
     }
@@ -109,9 +123,8 @@ impl Scheduler {
             let wake = WakeEvent {
                 id: entity_id("event"),
                 agent_id,
-                message_id: event.message_id.clone(),
-                room_id: event.room_id.clone(),
-                reason: "message.new".to_string(),
+                subject_id: event.message_id.clone(),
+                reason: WakeReason::MessageNew,
                 published_at: OffsetDateTime::now_utc().unix_timestamp(),
             };
             if let Err(error) = self.redis.publish_wake(&wake).await {

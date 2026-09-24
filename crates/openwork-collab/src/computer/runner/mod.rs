@@ -24,6 +24,7 @@ use super::{
     scheduling::{RunnerResources, engine_backoff_after},
 };
 
+mod card;
 mod classify;
 mod routing;
 
@@ -197,6 +198,13 @@ impl AgentRunner {
         }
         self.refresh_token_if_needed().await?;
         let inbox = self.client.inbox().await?;
+        if inbox
+            .trigger
+            .as_ref()
+            .is_some_and(|trigger| trigger.trigger == "card")
+        {
+            return self.run_card_turn(inbox, cancellation).await;
+        }
         let Some(trigger) = inbox.trigger else {
             return self.maybe_agenda(&inbox.team, cancellation).await;
         };

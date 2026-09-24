@@ -1,11 +1,17 @@
 use sqlx::PgPool;
 
-use crate::protocol::{FinishRunRequest, MessageView, RunView, TriggerEnvelope};
+use crate::protocol::{
+    DeliveryRange, FinishRunRequest, MessageView, RunView, TriggerEnvelope, entity_id,
+};
 
 use super::{
     auth::{AgentClaims, authorize_agent_transaction},
+    card_wakes::CardWakes,
     messages::{MessageRow, Messages},
 };
+
+/// 收件箱签发的 trigger 多久内可以用来打开 Run。
+const INBOX_TRIGGER_TTL_SECONDS: i64 = 5 * 60;
 
 #[derive(Clone)]
 pub(crate) struct Runs {
@@ -15,6 +21,28 @@ pub(crate) struct Runs {
 impl Runs {
     pub(crate) fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// 收件箱签发的 `message` trigger，尚未签名；卡片唤醒会把它改成 `card`（`CardWakes::with_pending`）。
+    pub(crate) fn unsigned_trigger(
+        claims: &AgentClaims,
+        deliveries: Vec<DeliveryRange>,
+        carried_over: bool,
+    ) -> TriggerEnvelope {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        TriggerEnvelope {
+            dispatch_id: entity_id("run"),
+            agent_id: claims.sub.clone(),
+            runtime_session_id: claims.runtime_session_id.clone(),
+            trigger: "message".to_string(),
+            deliveries,
+            agenda_focus: None,
+            card_wakes: Vec::new(),
+            carried_over,
+            issued_at: now,
+            expires_at: now + INBOX_TRIGGER_TTL_SECONDS,
+            signature: String::new(),
+        }
     }
 
     pub(crate) async fn interrupt_stale(
@@ -313,6 +341,13 @@ impl Runs {
             .execute(&mut *transaction)
             .await?;
         }
+        CardWakes::attach_in(
+            &mut transaction,
+            &trigger.dispatch_id,
+            &claims.sub,
+            &trigger.card_wakes,
+        )
+        .await?;
         let (status, outcome): (String, Option<String>) = sqlx::query_as(
             "SELECT status, outcome FROM collab_runs
              WHERE id = $1 AND agent_id = $2 AND runtime_session_id = $3",
@@ -449,6 +484,7 @@ impl Runs {
             .fetch_one(&mut *transaction)
             .await?;
             acted |= action_recorded;
+            CardWakes::settle_in(&mut transaction, run_id).await?;
             outcome = Some(if acted {
                 "acted"
             } else if acknowledged

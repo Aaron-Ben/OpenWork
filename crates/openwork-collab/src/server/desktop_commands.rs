@@ -9,7 +9,8 @@ use crate::protocol::{
 
 use super::{
     agents::{AgentFields, Agents},
-    board::{Board, BoardOperationError},
+    board::{Board, BoardOperationError, CardEdit},
+    card_wakes::CardWakes,
     inventory::EngineInventory,
     messages::Messages,
     observability::Observability,
@@ -48,6 +49,10 @@ enum PostCommitEffect {
     },
     BoardChanged {
         board_id: Option<String>,
+    },
+    CardWakeQueued {
+        agent_id: String,
+        card_id: String,
     },
 }
 
@@ -312,10 +317,10 @@ impl DesktopCommands {
                 card_id,
                 assignee_id,
             } => {
-                let card = Board::assign_card_in(transaction, &card_id, assignee_id.as_deref())
+                let edit = Board::assign_card_in(transaction, &card_id, assignee_id.as_deref())
                     .await
                     .map_err(board_error)?;
-                card_result(card)
+                assigned_card_result(transaction, edit).await?
             }
             DesktopCommand::DeleteCard { card_id } => {
                 let board_id = Board::delete_card_in(transaction, &card_id)
@@ -357,6 +362,9 @@ impl DesktopCommands {
                 }
                 PostCommitEffect::BoardChanged { board_id } => {
                     self.session.publish_board(board_id.as_deref());
+                }
+                PostCommitEffect::CardWakeQueued { agent_id, card_id } => {
+                    self.scheduler.card_wake_queued(&agent_id, &card_id).await;
                 }
             }
         }
@@ -463,6 +471,25 @@ fn board_result(
 fn card_result(card: crate::protocol::CardView) -> (DesktopCommandResult, Vec<PostCommitEffect>) {
     let effect = board_effect(Some(card.board_id.clone()));
     (DesktopCommandResult::Card(card), vec![effect])
+}
+
+/// Desktop 改派后写入卡片唤醒；Desktop 用户触发的唤醒不受限额约束（collaboration.md §11.4）。
+async fn assigned_card_result(
+    transaction: &mut Transaction<'_, Postgres>,
+    edit: CardEdit,
+) -> Result<(DesktopCommandResult, Vec<PostCommitEffect>), sqlx::Error> {
+    let CardEdit { before, after } = edit;
+    let (result, mut effects) = card_result(after.clone());
+    for (agent_id, reason) in
+        CardWakes::targets_in(transaction, Some(&before), &after, "local-user").await?
+    {
+        CardWakes::record_in(transaction, &after.id, &agent_id, reason).await?;
+        effects.push(PostCommitEffect::CardWakeQueued {
+            agent_id,
+            card_id: after.id.clone(),
+        });
+    }
+    Ok((result, effects))
 }
 
 fn board_effect(board_id: Option<String>) -> PostCommitEffect {

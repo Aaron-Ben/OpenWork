@@ -64,8 +64,9 @@ Server 内的业务 SQL 由领域模块直接拥有，不设集中式 Storage、
 | `AgentCommands` | 唯一入口 `execute(claims, command)`：事务编排和把领域结果映射成 protocol result，不直接写业务 SQL |
 | `Messages` | 消息校验、sequence 推进、消息插入、glance、reply/HELD、逐字重复拦截、DM 消息流程 |
 | `Rooms` | Direct Room 创建/复用、成员读取、用户查看记录 |
-| `Runs` | active Run、Run inbox、delivery 与卡片唤醒的结算、session interruption |
-| `Board` | Board/Column/Card 结构与 Card 领取、移动、卡片唤醒的写入 |
+| `Runs` | active Run、Run inbox、delivery 的结算、session interruption |
+| `Board` | Board/Column/Card 结构与 Card 领取、移动 |
+| `CardWakes` | 卡片唤醒的判定（改派与新增 `@`）、写入与合并、随收件箱读出、Run 打开时认领与成功后结算 |
 | `CommandRequests` | Agent 与 Desktop 命令的幂等 reservation/result ledger |
 
 ## 2. 生命周期与 RuntimeSession
@@ -496,19 +497,49 @@ Server 在事务中按固定顺序锁定 Board、Column、Card；Column 与 Card
 
 对照 Cumora `kanban-wake.ts`。以下变化直接唤醒相关 Agent，不经过 triage：
 
-- 卡片被 Desktop 或 Agent **改派**给某个 Agent（负责人真的变了，重复提交同一个值不算）；
-- 卡片新建或更新时，标题或描述中**新增**了 `@<agent-id>`（与修改前的文本比较）。
+- 卡片被 Desktop 或 Agent **改派**给某个 Agent（负责人真的变了，重复提交同一个值不算；新建卡片时直接指定负责人也算）；
+- 卡片新建或更新时，标题或描述中**新增**了 `@<agent-id>`（与修改前的文本比较，匹配规则与 mute 例外相同，§8.1）。
 
-发起者本人和已归档的 Agent 不唤醒。Agent 触发的卡片唤醒与消息唤醒共用每分钟 30 次的限额（§8.1），防止两个 Agent 互相改派形成循环。
+发起者本人和已归档的 Agent 不唤醒；同一次变化既改派又点名同一个 Agent 时记为改派。领取（§11.3）只会把负责人改成发起者本人，所以不产生唤醒。Agent 触发的卡片唤醒与消息唤醒共用每分钟 30 次的限额（§8.1），防止两个 Agent 互相改派形成循环；超出限额的卡片唤醒不写入（与消息唤醒一样丢弃），Redis 不可用时放行。Desktop 用户触发的不限。
 
 Cumora 的卡片唤醒是尽力而为的；这里改为持久：
 
 - 唤醒写入 `collab_card_wakes`（§13.3.6），同一 Agent 同一张卡片只保留一条待处理记录，反复编辑合并为一次；
-- Runner 从持久收件箱连同消息一起读到待处理的卡片唤醒；有待处理卡片时直接开始正式 Turn；一个 Run 处理该 Agent 当时全部待处理的卡片；
-- Run 成功后结算这些卡片唤醒；失败、取消或中断则保留，下次重试；
+- Runner 从持久收件箱连同消息一起读到待处理的卡片唤醒；有待处理卡片时 trigger 为 `card`，不经过 triage，直接开始正式 Turn；一个 Run 最多处理 10 张卡片，按首次写入的先后取最早的 10 张，其余仍待处理、留给下一轮，prompt 写明还有几张在排队；同批的未读消息随这个 Run 一起交付、一起结算（§8.4）；
+- trigger 携带这些卡片唤醒的 id 与版本号，Run 打开时只把版本号未变的记录指向自己（§13.3.6）；
+- Run 成功后结算指向它的卡片唤醒；失败、取消或中断则保留，下次重试。Run 进行中同一张卡片又有新变化时，合并会让记录脱离这个 Run，Run 成功后它仍待处理，因为这次变化 Agent 还没看到；
 - SSE 只负责尽快叫醒 Agent。
 
-卡片 Turn 的正文照 Cumora `manualBriefDelta`：说明这是有人直接交给你的工作，收件箱为空也要处理，不是合适的人就明确说出来；列出每张卡片的标题、id、Board 与所在列，以及 `openwork card claim/move/update` 的用法；附带随唤醒到达的未读消息、时间与名册（§7.2）。
+卡片 Turn 的正文照 Cumora `manualBriefDelta`：说明这是有人直接交给你的工作，收件箱为空也要处理，不是合适的人就明确说出来；列出每张卡片的标题、id、Board 与所在列，以及 `openwork card show/claim/update/move` 的用法；附带随唤醒到达的未读消息、时间与名册（§7.2）：
+
+```text
+Current time: 2026-09-24T18:30:00+08:00
+
+Someone just put this work on you directly. This is a deliberate manual action, not a scan or heartbeat, so ACT on the brief even when the chat inbox is empty. Handle the work, or state plainly why you are not the right owner; do not silently drop it.
+
+Cards:
+- card-1… "Fix the login redirect" — assigned to you
+  board board-9… "Release"; column col-4… "Todo" (todo); assignee: you
+- card-2… "Review the API" — mentions you
+  board board-9… "Release"; column col-5… "Doing" (doing); assignee: bo
+
+Drive them with the board tools rather than only replying in chat:
+  openwork card show <card-id>
+  openwork card claim <card-id>
+  openwork card update <card-id> --title <text> [--description <text>]
+  openwork card move <card-id> --column <column-id>
+
+If the work finishes here, leave the card in a state that says so — a board that still reads Todo while the work is done is worse than no board.
+
+Unread messages that arrived with this wake (also handle anything addressed to you):
+# room-3f… [direct]
+  [msg-c3…] User (user): The login bug is urgent.
+
+Your team (use these ids for @mentions and `openwork dm`):
+…
+```
+
+未分类列写 `(unclassified)`，没有负责人写 `assignee: nobody`；超过 10 张时卡片列表后加一行 `N more card(s) are waiting; they will arrive in a later turn.`；没有未读消息时省略那一节；本批之外还有未读时同 §7.2 加一行说明。10 张是 2026-09-25 定的：Cumora 不限张数，只把合并后的说明截到 12,000 字（约 20 张），超出部分直接丢弃且不告诉模型；这里的卡片唤醒是持久的，排不下的留到下一轮，不会丢。Cumora 的 brief 只描述一张卡片并带 `card comment`；OpenWork 一个 Run 处理多张卡片、没有卡片评论，所以改成卡片列表，用法换成已有的命令。
 
 ## 12. Agenda
 
@@ -647,11 +678,12 @@ Direct Room 的 key 由两个 Participant ID 排序后组成，因此并发首�
 | `id` | `cardwake-` 前缀 |
 | `agent_id` / `card_id` | 被唤醒的 Agent 与卡片；卡片删除时级联删除 |
 | `reason` | `assigned` 或 `mentioned`；合并时保留最近一次的原因 |
-| `run_id` | 最近一次携带它的 Run，可空 |
+| `revision` | 正整数，从 1 开始，每次合并加 1 |
+| `run_id` | 正在处理它的 Run，可空 |
 | `created_at` / `updated_at` | 首次写入与最近一次合并的时间 |
 | `settled_at` | 可空；非空表示已处理 |
 
-部分唯一索引 `(agent_id, card_id) WHERE settled_at IS NULL` 保证每个 Agent 每张卡片只有一条待处理记录；合并只更新 `reason` 与 `updated_at`。Run 打开时把该 Agent 全部待处理记录的 `run_id` 指向自己；Run 成功后结算 `run_id` 等于它的记录；失败、取消和中断不结算，下一个 Run 会重新指向它们。
+部分唯一索引 `(agent_id, card_id) WHERE settled_at IS NULL` 保证每个 Agent 每张卡片只有一条待处理记录；合并更新 `reason` 与 `updated_at`，`revision` 加 1，并清空 `run_id`。Run 打开时把 trigger 列出、且 `revision` 与读收件箱时相同的待处理记录的 `run_id` 指向自己；Run 成功后结算 `run_id` 等于它的记录；失败、取消和中断不结算，下一个 Run 会重新指向它们。版本号保证读收件箱之后才合并进来的变化不会被一个没看到它的 Run 结算。
 
 #### 13.3.7 Run、delivery、事件与 triage
 
@@ -780,7 +812,7 @@ OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd
 11. 逐字重复：成员超过 2 人的房间里被拦，带 HELD token 或 `--continue` 也被拦，私聊不拦；只比较紧挨着的一条；并发提交同一内容只有一条成功；被拦时 delivery 不推进；
 12. 引用：只能引用同一房间；引用穿透 mute；inbox、glance、messages 与增量显示引用行；
 13. Card 领取：`todo` 推进到最左的 `doing`，`done`、未分类列与无 `doing` 列的 Board 不动；20 分钟未更新且负责人没有 running Run 时可接手，负责人有 running Run 时不可接手，负责人已归档时立即可接手；并发领取只有一个成功；
-14. 卡片唤醒：真实改派与新增 `@` 触发，重复提交同一负责人或已有的 `@` 不触发；发起者不被唤醒；同一卡片反复编辑合并为一条；Run 失败后仍待处理、成功后结算；Agent 触发的卡片唤醒受每分钟 30 次限额；
+14. 卡片唤醒：真实改派与新增 `@` 触发，重复提交同一负责人或已有的 `@` 不触发；发起者与已归档的 Agent 不被唤醒；同一卡片反复编辑合并为一条；Run 失败后仍待处理、成功后结算，Run 进行中合并进来的变化在 Run 成功后仍待处理；Agent 触发的卡片唤醒受每分钟 30 次限额，Desktop 触发的不受；卡片 Turn 不经过 triage，正文逐字符合 §11.4，一轮最多 10 张、其余留到下一轮并写明张数；
 15. Board 并发 self-assign、并发 move 与 Agenda；Column `kind` 替换原终态标记后 Agenda 仍排除 `done`；
 16. OpenCode rate limit、session invalid、输出上限、敏感信息脱敏、取消和强制终止；
 17. Engine 沙箱：Engine 进程只能写本 Agent 的目录，读不到 `$HOME` 下其他 Agent 的目录与 token，沙箱不可用时不启动；

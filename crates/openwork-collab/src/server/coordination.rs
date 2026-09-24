@@ -42,6 +42,12 @@ impl Coordination {
         Self { redis }
     }
 
+    /// Agent 触发的唤醒是否还在每个接收者每分钟 30 次的限额内（collaboration.md §8.1、§11.4）；
+    /// 消息唤醒与卡片唤醒共用同一个计数。
+    pub async fn allow_agent_authored_wake(&self, agent_id: &str) -> RedisResult<bool> {
+        self.redis.allow_agent_authored_wake(agent_id).await
+    }
+
     pub async fn record_seen(
         &self,
         agent_id: &str,

@@ -244,7 +244,7 @@ mod tests {
     use tokio::sync::broadcast::error::TryRecvError;
 
     use super::AgentWakeHub;
-    use crate::protocol::WakeEvent;
+    use crate::protocol::{WakeEvent, WakeReason};
 
     #[test]
     fn agent_wake_hub_does_not_fan_out_other_agents_events() {
@@ -254,9 +254,8 @@ mod tests {
         hub.publish(WakeEvent {
             id: "event-1".to_string(),
             agent_id: "alpha".to_string(),
-            message_id: "message-1".to_string(),
-            room_id: "room-1".to_string(),
-            reason: "message.new".to_string(),
+            subject_id: "message-1".to_string(),
+            reason: WakeReason::MessageNew,
             published_at: 1,
         });
 

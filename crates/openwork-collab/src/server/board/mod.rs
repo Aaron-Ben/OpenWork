@@ -20,6 +20,12 @@ pub(crate) struct NewCard<'a> {
     pub(crate) actor_id: &'a str,
 }
 
+/// 一次卡片修改前后的内容；卡片唤醒据此判断改派与新增的 `@`（collaboration.md §11.4）。
+pub(crate) struct CardEdit {
+    pub(crate) before: CardView,
+    pub(crate) after: CardView,
+}
+
 #[derive(Clone)]
 pub(crate) struct Board {
     pool: PgPool,
@@ -294,14 +300,16 @@ impl Board {
         card(transaction, &card_id).await.map_err(Into::into)
     }
 
+    /// 改写卡片标题与描述，返回修改前后的卡片；卡片不存在时返回 `NOT_FOUND`。
     pub(crate) async fn update_card_in(
         transaction: &mut Transaction<'_, Postgres>,
         card_id: &str,
         title: &str,
         description: Option<&str>,
-    ) -> Result<CardView, BoardOperationError> {
+    ) -> Result<CardEdit, BoardOperationError> {
         let title = valid_title(title, 500, "card title must be 1..500 bytes")?;
-        let updated = sqlx::query(
+        let before = locked_card(transaction, card_id).await?;
+        sqlx::query(
             "UPDATE collab_cards
              SET title = $2, description = $3,
                  updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
@@ -312,21 +320,21 @@ impl Board {
         .bind(normalize_optional(description))
         .execute(&mut **transaction)
         .await?;
-        if updated.rows_affected() == 0 {
-            return Err(domain("NOT_FOUND", "Card does not exist"));
-        }
-        card(transaction, card_id).await.map_err(Into::into)
+        let after = card(transaction, card_id).await?;
+        Ok(CardEdit { before, after })
     }
 
+    /// 改派卡片，返回修改前后的卡片；负责人不是 active 参与者或卡片不存在时返回 `NOT_FOUND`。
     pub(crate) async fn assign_card_in(
         transaction: &mut Transaction<'_, Postgres>,
         card_id: &str,
         assignee_id: Option<&str>,
-    ) -> Result<CardView, BoardOperationError> {
+    ) -> Result<CardEdit, BoardOperationError> {
         if let Some(assignee_id) = assignee_id {
             ensure_active_participant(transaction, assignee_id).await?;
         }
-        let updated = sqlx::query(
+        let before = locked_card(transaction, card_id).await?;
+        sqlx::query(
             "UPDATE collab_cards
              SET assignee_id = $2,
                  updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
@@ -336,10 +344,8 @@ impl Board {
         .bind(assignee_id)
         .execute(&mut **transaction)
         .await?;
-        if updated.rows_affected() == 0 {
-            return Err(domain("NOT_FOUND", "Card does not exist"));
-        }
-        card(transaction, card_id).await.map_err(Into::into)
+        let after = card(transaction, card_id).await?;
+        Ok(CardEdit { before, after })
     }
 
     pub(crate) async fn delete_card_in(
@@ -468,6 +474,23 @@ async fn card(
     .fetch_one(&mut **transaction)
     .await
     .map(CardView::from)
+}
+
+/// 锁住卡片行并返回当前内容；卡片不存在时返回 `NOT_FOUND`。
+async fn locked_card(
+    transaction: &mut Transaction<'_, Postgres>,
+    card_id: &str,
+) -> Result<CardView, BoardOperationError> {
+    sqlx::query_as::<_, CardRow>(
+        "SELECT id, board_id, column_id, title, description, position,
+                assignee_id, created_by
+         FROM collab_cards WHERE id = $1 FOR UPDATE",
+    )
+    .bind(card_id)
+    .fetch_optional(&mut **transaction)
+    .await?
+    .map(CardView::from)
+    .ok_or_else(|| domain("NOT_FOUND", "Card does not exist"))
 }
 
 async fn lock_board(

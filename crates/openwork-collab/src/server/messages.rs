@@ -1,11 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::protocol::{
-    DeliveryRange, InboxResponse, MessageView, QuotedMessageView, TriggerEnvelope, entity_id,
-};
+use crate::protocol::{DeliveryRange, InboxResponse, MessageView, QuotedMessageView, entity_id};
 use sqlx::{FromRow, PgExecutor, PgPool, Postgres, Transaction};
 
-use super::{agents::Agents, auth::AgentClaims, climate::Climate, rooms::Rooms};
+use super::{agents::Agents, auth::AgentClaims, climate::Climate, rooms::Rooms, runs::Runs};
 
 const INBOX_MESSAGE_LIMIT: usize = 200;
 /// Characters of a quoted message shown under a reply (collaboration.md §9.3, Cumora `cli.ts` inbox).
@@ -486,6 +484,8 @@ impl Messages {
                 carried_over: false,
                 rooms: Vec::new(),
                 team: Agents::team(&self.pool, &[]).await?,
+                cards: Vec::new(),
+                more_cards: 0,
             });
         }
         let allocations = water_fill(
@@ -574,32 +574,23 @@ impl Messages {
         let climates = Climate::for_participants(&self.pool, &claims.sub, &participant_ids).await?;
         let team = Agents::team(&self.pool, &participant_ids).await?;
         let rooms = Rooms::views(&self.pool, &ranges.keys().cloned().collect::<Vec<_>>()).await?;
-        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let deliveries = ranges
+            .into_iter()
+            .map(|(room_id, (from_seq, up_to_seq))| DeliveryRange {
+                room_id,
+                from_seq,
+                up_to_seq,
+            })
+            .collect();
         Ok(InboxResponse {
-            trigger: Some(TriggerEnvelope {
-                dispatch_id: entity_id("run"),
-                agent_id: claims.sub.clone(),
-                runtime_session_id: claims.runtime_session_id.clone(),
-                trigger: "message".to_string(),
-                deliveries: ranges
-                    .into_iter()
-                    .map(|(room_id, (from_seq, up_to_seq))| DeliveryRange {
-                        room_id,
-                        from_seq,
-                        up_to_seq,
-                    })
-                    .collect(),
-                agenda_focus: None,
-                carried_over,
-                issued_at: now,
-                expires_at: now + 5 * 60,
-                signature: String::new(),
-            }),
+            trigger: Some(Runs::unsigned_trigger(claims, deliveries, carried_over)),
             messages,
             climates,
             carried_over,
             rooms,
             team,
+            cards: Vec::new(),
+            more_cards: 0,
         })
     }
 }

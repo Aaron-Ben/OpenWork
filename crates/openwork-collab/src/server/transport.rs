@@ -19,20 +19,21 @@ use crate::protocol::{
     AppendRunEventsRequest, ComputerHeartbeatRequest, DesiredAgents, DesktopCommandRequest,
     DesktopCommandResult, EngineInventoryReport, FinishRunRequest, InboxResponse,
     InvalidationEvent, InvalidationKind, OpenRunRequest, ResponseMode, RunView, TriagePayload,
-    TriageReportRequest, entity_id,
+    TriageReportRequest, WakeReason, entity_id,
 };
 
 use super::{
     agenda::Agenda, agent_commands::AgentCommands, agents::Agents, auth::AgentClaims,
-    coordination::Coordination, desktop_commands::DesktopCommands, inventory::EngineInventory,
-    messages::Messages, observability::Observability, runs::Runs, runtime_session::RuntimeSession,
-    scheduler::Scheduler, triage::InboxTriage,
+    card_wakes::CardWakes, coordination::Coordination, desktop_commands::DesktopCommands,
+    inventory::EngineInventory, messages::Messages, observability::Observability, runs::Runs,
+    runtime_session::RuntimeSession, scheduler::Scheduler, triage::InboxTriage,
 };
 
 #[derive(Clone)]
 pub(crate) struct TransportState {
     pub(crate) agents: Agents,
     pub(crate) messages: Messages,
+    pub(crate) card_wakes: CardWakes,
     pub(crate) runs: Runs,
     pub(crate) observability: Observability,
     pub(crate) scheduler: Scheduler,
@@ -187,8 +188,11 @@ async fn agent_events(
                         Ok(wake) => {
                             let event = InvalidationEvent {
                                 id: wake.id,
-                                kind: InvalidationKind::Message,
-                                subject_id: Some(wake.message_id),
+                                kind: match wake.reason {
+                                    WakeReason::MessageNew => InvalidationKind::Message,
+                                    WakeReason::CardWake => InvalidationKind::Board,
+                                },
+                                subject_id: Some(wake.subject_id),
                                 revision: None,
                                 published_at: wake.published_at,
                             };
@@ -211,7 +215,8 @@ async fn inbox(
     headers: HeaderMap,
 ) -> Result<Json<InboxResponse>, TransportError> {
     let claims = agent_claims(&state, &headers).await?;
-    let mut response = state.messages.inbox(&claims).await?;
+    let messages = state.messages.inbox(&claims).await?;
+    let mut response = state.card_wakes.with_pending(&claims, messages).await?;
     if let Some(trigger) = &mut response.trigger {
         for delivery in &trigger.deliveries {
             if let Err(error) = state
@@ -296,11 +301,15 @@ async fn open_run(
 }
 
 fn valid_trigger_shape(trigger: &crate::protocol::TriggerEnvelope) -> bool {
+    let focused = trigger.agenda_focus.is_some();
+    let carries_cards = !trigger.card_wakes.is_empty();
     match trigger.trigger.as_str() {
         "message" | "rerun" | "reconnect" | "poll" => {
-            !trigger.deliveries.is_empty() && trigger.agenda_focus.is_none()
+            !trigger.deliveries.is_empty() && !focused && !carries_cards
         }
-        "agenda" => trigger.deliveries.is_empty() && trigger.agenda_focus.is_some(),
+        // 卡片 Turn 可以同时交付随唤醒到达的未读消息（collaboration.md §11.4）。
+        "card" => carries_cards && !focused,
+        "agenda" => trigger.deliveries.is_empty() && focused && !carries_cards,
         _ => false,
     }
 }
@@ -335,6 +344,9 @@ async fn agent_command(
             | AgentCommandEffect::CardUpdated { .. }
             | AgentCommandEffect::CardMoved { .. } => {
                 state.session.publish_board(None);
+            }
+            AgentCommandEffect::CardWakeQueued { agent_id, card_id } => {
+                state.scheduler.card_wake_queued(agent_id, card_id).await;
             }
             AgentCommandEffect::InboxAcknowledged { .. }
             | AgentCommandEffect::ClimateUpdated { .. } => {}

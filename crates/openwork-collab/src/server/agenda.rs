@@ -171,6 +171,7 @@ impl Agenda {
                     trigger: "agenda".to_string(),
                     deliveries: Vec::new(),
                     agenda_focus: Some(focus.clone()),
+                    card_wakes: Vec::new(),
                     carried_over: false,
                     issued_at: now,
                     expires_at: now + CANDIDATE_TTL_SECONDS,

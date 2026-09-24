@@ -27,8 +27,17 @@ pub enum InvalidationKind {
 pub struct WakeEvent {
     pub id: String,
     pub agent_id: String,
-    pub message_id: String,
-    pub room_id: String,
-    pub reason: String,
+    /// 触发唤醒的消息或卡片 id。
+    pub subject_id: String,
+    pub reason: WakeReason,
     pub published_at: i64,
+}
+
+/// Agent 被叫醒的原因；Runner 收到任何一种都重新读持久收件箱。
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum WakeReason {
+    #[serde(rename = "message.new")]
+    MessageNew,
+    #[serde(rename = "card.wake")]
+    CardWake,
 }
