@@ -46,7 +46,7 @@ describe('sessionStore', () => {
       session: {
         id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
         status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
-        parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null,
+        parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null, sandboxMode: 'auto',
       },
       messages: [{
         id: 'message-1', turnId: 'turn-1', sequence: 1, role: 'assistant',
@@ -66,7 +66,7 @@ describe('sessionStore', () => {
       session: {
         id: 'child-1', title: null, workingDirectory: '/repo', defaultModelId: null,
         status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
-        parentSessionId: 'parent-1', taskName: 'inspect_auth', agentRole: 'explorer', spawnSpanId: null,
+        parentSessionId: 'parent-1', taskName: 'inspect_auth', agentRole: 'explorer', spawnSpanId: null, sandboxMode: 'auto',
       },
       messages: [],
       plans: [],
@@ -89,7 +89,7 @@ describe('sessionStore', () => {
       id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
       status: 'active' as const, createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
-      parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null,
+      parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null, sandboxMode: 'auto' as const,
     }
     const olderReload = useSessionStore.getState().reload('session-1')
     const newerReload = useSessionStore.getState().reload('session-1')
@@ -175,7 +175,7 @@ describe('sessionStore', () => {
       parentSessionId: null,
       taskName: null,
       agentRole: null,
-      spawnSpanId: null,
+      spawnSpanId: null, sandboxMode: 'auto',
     }))
 
     await useSessionStore.getState().create({
@@ -204,7 +204,7 @@ describe('sessionStore', () => {
       parentSessionId: null,
       taskName: null,
       agentRole: null,
-      spawnSpanId: null,
+      spawnSpanId: null, sandboxMode: 'auto',
     }])
 
     await useSessionStore.getState().fetchAll()
@@ -219,7 +219,7 @@ describe('sessionStore', () => {
         'session-1': {
           id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
           status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
-          parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null,
+          parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null, sandboxMode: 'auto',
         },
       },
       orderedSessionIds: ['session-1'],

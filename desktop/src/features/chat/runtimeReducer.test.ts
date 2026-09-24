@@ -281,8 +281,28 @@ describe('runtimeReducer', () => {
       phase: 'running_tools',
       assistantDraft: { turnId: 'turn-8', text: 'answer', reasoning: 'thought' },
       permissionMode: 'accept_edits',
+      sandbox: { state: 'available' },
       syncState: 'current',
     })
+  })
+
+  it('keeps the sandbox status from the snapshot across later updates', () => {
+    const unavailable = { state: 'unavailable', reason: 'sandbox-exec is missing' } as const
+    const view = runtimeViewFromSnapshot({
+      version: 7,
+      sessionId: 'session-1',
+      lastUpdateSequence: 1,
+      permissionMode: 'auto',
+      sandbox: unavailable,
+      runtime: { state: 'idle' },
+    })
+    const next = reduceSessionUpdate(view, envelope(2, {
+      type: 'turn_started',
+      clientRequestId: 'request-2',
+    }))
+
+    expect(createSessionRuntimeView().sandbox).toBeNull()
+    expect(next.sandbox).toEqual(unavailable)
   })
 })
 

@@ -91,7 +91,6 @@ pub struct SessionRecord {
     pub spawn_span_id: Option<String>,
     /// `auto` 或 `accept_edits`（permissions.md §6.3）。库里的 CHECK 约束保证只有这两个值，
     /// 取用时经 [`SessionRecord::sandbox_mode`] 转成枚举。
-    #[serde(rename = "sandboxMode")]
     pub sandbox_mode: String,
 }
 

@@ -101,8 +101,8 @@ export const TRACE_ATTRIBUTE_KEYS = [
   'requestBuildMs', 'ttftMs', 'streamMs',
   'finishReason', 'responseId', 'actualModel', 'errorPhase', 'deliveryState',
   'httpStatus', 'providerCode',
-  'permissionPolicy', 'permissionMode', 'permissionModeOrigin', 'permissionDecision', 'permissionDecisionSource',
-  'readonlyProofKey', 'permissionRuleId', 'permissionRuleScope', 'executionMs',
+  'permissionDecision', 'permissionDecisionSource', 'sandboxMode', 'sessionMode', 'sessionModeOrigin',
+  'escalationPaths', 'escalationJustification', 'dangerMatch', 'sandboxDenied', 'executionMs',
   'artifactCount', 'errorRetryable', 'resultPersisted',
   'requestMessageCount',
   'requestEstimatedSystemContextTokens',
@@ -138,14 +138,15 @@ export const TRACE_ATTRIBUTE_PLACEMENT = {
   deliveryState: 'details',
   httpStatus: 'details',
   providerCode: 'details',
-  permissionPolicy: 'details',
-  permissionMode: 'details',
-  permissionModeOrigin: 'details',
   permissionDecision: 'tool_call',
-  permissionDecisionSource: 'details',
-  readonlyProofKey: 'details',
-  permissionRuleId: 'details',
-  permissionRuleScope: 'details',
+  permissionDecisionSource: 'tool_call',
+  sandboxMode: 'tool_call',
+  sessionMode: 'details',
+  sessionModeOrigin: 'details',
+  escalationPaths: 'tool_call',
+  escalationJustification: 'tool_call',
+  dangerMatch: 'tool_call',
+  sandboxDenied: 'tool_call',
   executionMs: 'tool_call',
   artifactCount: 'details',
   errorRetryable: 'details',
@@ -192,11 +193,24 @@ const TRACE_DURATION_KEYS = new Set<TraceAttributeKey>([
 ])
 const TRACE_PERCENT_KEYS = new Set<TraceAttributeKey>(['triggerPercent', 'thresholdPercent'])
 
+/** `{path, access, scope}` → `path · access · scope`；形状不对时原样显示，不丢数据。 */
+function formatEscalationPath(entry: unknown): string {
+  if (typeof entry !== 'object' || entry === null) return String(entry)
+  const { path, access, scope } = entry as Record<string, unknown>
+  return typeof path === 'string' && typeof access === 'string' && typeof scope === 'string'
+    ? `${path} · ${access} · ${scope}`
+    : JSON.stringify(entry)
+}
+
 export function buildTraceAttributeRows(span: RuntimeTraceSpan): TraceAttributeRow[] {
   const rows: TraceAttributeRow[] = []
   for (const key of TRACE_ATTRIBUTE_KEYS) {
     const value = span.attributes[key]
     if (value == null) continue
+    if (key === 'escalationPaths' && Array.isArray(value)) {
+      rows.push({ key, value: value.map(formatEscalationPath).join('\n') || '—' })
+      continue
+    }
     if (key === 'artifactTypes' && Array.isArray(value)) {
       rows.push({ key, value: value.filter((item): item is string => typeof item === 'string').join(', ') || '—' })
       continue

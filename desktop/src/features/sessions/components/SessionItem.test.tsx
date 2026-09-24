@@ -17,7 +17,7 @@ function session(overrides: Partial<RuntimeSessionRecord> = {}): RuntimeSessionR
     parentSessionId: null,
     taskName: null,
     agentRole: null,
-    spawnSpanId: null,
+    spawnSpanId: null, sandboxMode: 'auto',
     ...overrides,
   }
 }

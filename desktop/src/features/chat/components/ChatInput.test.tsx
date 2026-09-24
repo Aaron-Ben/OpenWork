@@ -60,7 +60,7 @@ describe('ChatInput toolbar', () => {
     )
 
     expect(markup).toContain('自动')
-    expect(markup).toContain('aria-label="权限模式"')
+    expect(markup).toContain('aria-label="权限模式：自动"')
     expect(markup).toContain('aria-label="选择模型"')
     expect(markup).toContain('DeepSeek Chat · Plus')
     expect(markup).toContain('aria-label="发送"')
@@ -90,7 +90,8 @@ describe('ChatInput toolbar', () => {
     )
 
     expect(markup).toContain('只让编辑工具改文件')
-    expect(markup).toContain('只有编辑工具能改工作区里的文件，改动都可以撤销；bash 写工作区要你批准。')
+    expect(markup).toContain('aria-label="权限模式：只让编辑工具改文件"')
+    expect(markup).toContain('代码改动只经 write / edit 进入工作区，每一处都能撤销。')
   })
 
   it('keeps the context affordance available when usage has not been measured', () => {

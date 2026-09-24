@@ -166,56 +166,35 @@ describe('TraceTimeline', () => {
     expect(markup).toContain('Conversation 压缩')
   })
 
-  it('acc_73a_73b distinguishes four permission outcomes and every automatic source', () => {
-    const automaticSources = [
-      'builtin',
-      'readonly_proof',
-      'mode',
-      'mode_fs_command',
-      'session_grant',
-    ]
+  /** permissions.md §6.4：时间线上一眼分得出七类权限结果。 */
+  it('labels every permission category of permissions.md §6.4 on the timeline', () => {
+    const escalation = [{ path: '/repo/.git', access: 'write', scope: 'subtree' }]
     const spans = [
       model,
-      ...automaticSources.map((source) => permissionTool(`auto-${source}`, 'allow', source)),
-      permissionTool('silent-denial', 'deny', 'builtin'),
-      permissionTool('user-approved', 'allow', 'user'),
-      permissionTool('user-denied', 'deny', 'user'),
+      permissionTool('auto', 'allow', 'sandbox'),
+      permissionTool('kernel-denied', 'allow', 'sandbox', { sandboxDenied: true }),
+      permissionTool('escalated', 'allow', 'user', { escalationPaths: escalation }),
+      permissionTool('danger', 'allow', 'user', { dangerMatch: 'rm_recursive_or_force' }),
+      permissionTool('unavailable', 'deny', 'sandbox_unavailable'),
+      permissionTool('rule', 'deny', 'builtin'),
+      permissionTool('rejected', 'deny', 'user'),
     ]
     const markup = renderToStaticMarkup(
       <TraceTimeline spans={spans} selectedSpanId={null} onSelect={vi.fn()} />,
     )
 
-    expect(markup.match(/data-permission-activity="auto_allowed"/g)).toHaveLength(5)
-    for (const source of automaticSources) {
-      expect(markup).toContain(`data-permission-source="${source}"`)
-    }
-    expect(markup).toContain('data-permission-activity="silently_denied"')
-    expect(markup).toContain('data-permission-activity="user_approved"')
-    expect(markup).toContain('data-permission-activity="user_denied"')
-    for (const label of ['内置规则', '只读证明', 'acceptEdits 模式', '文件系统命令闸门', '会话授权']) {
+    for (const [category, label] of [
+      ['sandbox_auto', '沙箱内自动执行'],
+      ['sandbox_denied', '被沙箱拒绝'],
+      ['user_approved_escalation', '用户批准的越界'],
+      ['user_approved_danger', '用户批准的危险命令'],
+      ['sandbox_unavailable', '沙箱不可用，未执行'],
+      ['rule_denied', '规则拒绝'],
+      ['user_denied', '用户拒绝'],
+    ]) {
+      expect(markup).toContain(`data-permission-category="${category}"`)
       expect(markup).toContain(label)
     }
-    expect(markup).toContain('静默拒绝')
-    expect(markup).toContain('用户批准')
-    expect(markup).toContain('用户拒绝')
-  })
-
-  it('acc_73c_73d surfaces proof, mode, and mode origin on the permission marker', () => {
-    const proved = permissionTool('proved-read', 'allow', 'readonly_proof', {
-      readonlyProofKey: 'git status',
-      permissionMode: 'accept_edits',
-      permissionModeOrigin: 'approval_card',
-    })
-    const granted = permissionTool('granted-command', 'allow', 'session_grant', {
-      permissionRuleId: 'session.approval-call-42.0',
-    })
-    const markup = renderToStaticMarkup(
-      <TraceTimeline spans={[model, proved, granted]} selectedSpanId="proved-read" onSelect={vi.fn()} />,
-    )
-
-    expect(markup).toContain('git status')
-    expect(markup).toContain('session.approval-call-42.0')
-    expect(markup).toContain('接受文件改动')
-    expect(markup).toContain('审批卡片')
+    expect(markup.match(/data-permission-category=/g)).toHaveLength(7)
   })
 })

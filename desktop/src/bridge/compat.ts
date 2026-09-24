@@ -32,6 +32,8 @@ export interface RuntimeSessionRecord {
   taskName: string | null
   agentRole: string | null
   spawnSpanId: string | null
+  /** 会话持久化的沙箱模式（permissions.md §6.3）；运行中的模式以快照为准。 */
+  sandboxMode: RuntimePermissionMode
 }
 
 export type RuntimeSubAgentSessionRecord = RuntimeSessionRecord & {

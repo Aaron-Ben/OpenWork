@@ -9,6 +9,7 @@ import {
   getConversationTurns,
 } from './components/ConversationNavigator'
 import { ApprovalDialog } from './components/ApprovalDialog'
+import { SandboxUnavailableNotice } from './components/SandboxUnavailableNotice'
 import { FileChangeReviewDrawer } from './components/FileChangeReviewDrawer'
 import type { FileChangeView } from './components/FileDiffPanel'
 import { TranscriptMessage } from './components/TranscriptMessage'
@@ -459,10 +460,10 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
         <ChatInput
           key={sessionId ?? 'no-session'}
           topContent={(
-            <ApprovalDialog
-              sessionId={sessionId}
-              workspaceRoot={session?.workingDirectory}
-            />
+            <>
+              <SandboxUnavailableNotice sandbox={runtime.sandbox} />
+              <ApprovalDialog sessionId={sessionId} workspaceRoot={session?.workingDirectory} />
+            </>
           )}
           model={sessionModel?.modelId ?? ''}
           modelOptions={sessionModel ? [sessionModel] : []}

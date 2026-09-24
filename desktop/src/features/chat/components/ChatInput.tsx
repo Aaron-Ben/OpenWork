@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
-import { ArrowUp, LoaderCircle, Minimize2, Puzzle, ShieldCheck, Square } from 'lucide-react'
+import { ArrowUp, LoaderCircle, Minimize2, Puzzle, Square } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
@@ -24,6 +24,7 @@ import {
   type SkillMentionBinding,
 } from '../skillMentions'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
+import { PermissionModeSelect } from './PermissionModeSelect'
 
 interface ChatInputProps {
   model: string
@@ -467,26 +468,11 @@ export function ChatInput({
         </div>
 
         <div className="flex min-h-12 items-center gap-2 px-4 py-1 sm:px-5">
-          <Select
-            value={permissionMode}
-            onValueChange={(mode) => onPermissionModeChange(mode as RuntimePermissionMode)}
-            disabled={disabled || isSending || isCompacting}
-          >
-            <SelectTrigger
-              className="w-[clamp(96px,18vw,180px)] overflow-hidden rounded-full border border-line text-ink-soft"
-              aria-label={t('chat.permissionMode')}
-              title={t(`chat.permissionModes.${permissionMode}Description`)}
-            >
-              <ShieldCheck size={17} strokeWidth={1.8} className="shrink-0 text-ink-faint" />
-              <SelectValue>
-                {t(`chat.permissionModes.${permissionMode}`)}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent side="top" align="start">
-              <SelectItem value="auto">{t('chat.permissionModes.auto')}</SelectItem>
-              <SelectItem value="accept_edits">{t('chat.permissionModes.accept_edits')}</SelectItem>
-            </SelectContent>
-          </Select>
+          <PermissionModeSelect
+            mode={permissionMode}
+            disabled={disabled}
+            onChange={onPermissionModeChange}
+          />
 
           <div className="min-w-0 flex-1" />
 

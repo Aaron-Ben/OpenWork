@@ -794,7 +794,7 @@ impl TurnRunner {
         let invocation = ToolInvocation::new(&call.name, input.clone());
 
         // 一次解析，之后按类型分派。控制工具与普通工具从这里开始走两条路：前者提交 Turn
-        // 状态，后者经 PermissionEngine 访问主机能力。后续步骤不再比较工具名字符串。
+        // 状态，后者经执行前判定与沙箱访问主机能力。后续步骤不再比较工具名字符串。
         let resolved = self.request.tools.resolve(&call.name);
         let is_control_tool = matches!(
             &resolved,
@@ -854,9 +854,8 @@ impl TurnRunner {
         let mode = permission_state.mode();
         tool_trace.record_session_mode(mode, permission_state.mode_origin());
 
-        // 控制工具在这里分流：它不访问主机能力，也不改工作区，所以不进 PermissionEngine。
-        // 免审批由这条类型化分支表达，而不是给它伪造一个 ToolRisk::ReadOnly——后者会让
-        // 权限日志把"Core 控制工具"和"被内置规则放行的只读工具"混为一谈。
+        // 控制工具在这里分流：它不访问主机文件与进程，不经沙箱，也不做执行前判定。
+        // Trace 记来源 `control_tool`（permissions.md §7），与沙箱内执行的调用区分开。
         match resolved.expect("unknown tools returned above") {
             ResolvedTurnTool::UpdatePlan => {
                 return self
@@ -954,8 +953,8 @@ impl TurnRunner {
         input: &serde_json::Value,
         mut tool_trace: ToolCallTraceGuard,
     ) -> Result<(), TurnRunError> {
-        // `control_tool` 是一个独立的来源，不复用 `builtin`：事故复盘要能区分
-        // "它是 Core 控制工具，本来就不过权限"和"它被一条内置规则放行了"。
+        // `control_tool` 是独立的来源，不复用 `sandbox`：它根本没有在沙箱里执行
+        // （permissions.md §6.4）。
         tool_trace.record_permission_decision("allow", "control_tool");
 
         let plan = match parse_update_plan_arguments(input).and_then(|args| {

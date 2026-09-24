@@ -2518,15 +2518,29 @@ async fn acc_09_39_a_protected_write_target_is_refused_and_the_turn_continues() 
 /// permissions.md §9.2 #22：不带来新权限、或没有理由的越界请求直接拒绝，不出卡片。
 #[tokio::test]
 async fn acc_22_an_escalation_that_fails_validation_is_refused_without_a_card() {
-    let already_writable = r#"{"path":"src/a.rs","sandboxPermissions":{"paths":[{"path":"src/a.rs","access":"write","scope":"exact"}]},"justification":"Edit a.rs."}"#;
+    let workspace = TestWorkspace::new();
+    let target = fs::canonicalize(workspace.path())
+        .expect("canonical workspace")
+        .join("src/a.rs");
+    let escalation = |path: &str| {
+        serde_json::json!({
+            "path": "src/a.rs",
+            "sandboxPermissions": { "paths": [{ "path": path, "access": "write", "scope": "exact" }] },
+            "justification": "Edit a.rs.",
+        })
+        .to_string()
+    };
+    let already_writable = escalation(target.to_str().expect("utf-8 path"));
+    let relative = escalation("src/a.rs");
     let no_reason = r#"{"command":"cargo build","sandboxPermissions":{"paths":[{"path":"/Users/openwork-test/.cargo/registry","access":"write","scope":"subtree"}]},"justification":" "}"#;
-    let mut fixture = runtime(
+    let mut fixture = runtime_in_workspace(
         vec![
             response(
                 "",
                 vec![
-                    tool_call("call-1", "write", already_writable),
-                    tool_call("call-2", "bash", no_reason),
+                    tool_call("call-1", "write", &already_writable),
+                    tool_call("call-2", "write", &relative),
+                    tool_call("call-3", "bash", no_reason),
                 ],
             ),
             response("continued", Vec::new()),
@@ -2534,6 +2548,7 @@ async fn acc_22_an_escalation_that_fails_validation_is_refused_without_a_card() 
         Vec::new(),
         SandboxMode::Auto,
         false,
+        workspace,
     );
     start(&fixture).await;
 
@@ -2544,9 +2559,19 @@ async fn acc_22_an_escalation_that_fails_validation_is_refused_without_a_card() 
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
     let requests = fixture.model.requests.lock().unwrap();
     let results = tool_result_texts(&requests[1]);
-    assert!(results["call-1"].starts_with("[sandbox: "), "{results:?}");
+    assert_eq!(
+        results["call-1"],
+        format!(
+            "[sandbox: {} is already writable under the current policy; remove it from sandboxPermissions]",
+            target.display()
+        )
+    );
     assert_eq!(
         results["call-2"],
+        "[sandbox: src/a.rs is not a normalized absolute path]"
+    );
+    assert_eq!(
+        results["call-3"],
         "[sandbox: sandboxPermissions needs a one-sentence justification that the user will read; retry with it]"
     );
     drop(requests);

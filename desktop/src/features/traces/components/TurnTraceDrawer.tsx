@@ -23,6 +23,7 @@ import {
 } from '../traceViewModel'
 import { formatDuration } from './TraceList'
 import { parseTracePayloadMessages, TracePayloadConversation } from './TracePayloadConversation'
+import { PermissionCategoryBadge } from './PermissionCategoryBadge'
 import { spanName, TraceTimeline } from './TraceTimeline'
 import { TraceToolIcon } from './traceToolIcons'
 
@@ -355,15 +356,10 @@ export function SpanDetail({
               : <TraceToolIcon toolName={span.resolvedToolName ?? span.requestedToolName} size={16} />}
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold text-ink">
-            {span.kind === 'model_call'
-              ? span.resolvedModelName ?? t('activity.modelCall')
-              : span.kind === 'compaction'
-                ? t('activity.compaction')
-                : span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')}
-          </h3>
+          <h3 className="truncate text-sm font-semibold text-ink">{spanName(span, t)}</h3>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-faint">
             <SpanStatusChip status={span.status} />
+            <PermissionCategoryBadge span={span} />
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{formatDuration(duration)}</span>
             {callIndex == null ? null : <><span aria-hidden="true">·</span><span>{t('activity.callOrdinal', { count: callIndex })}</span></>}
@@ -879,8 +875,8 @@ function SpanStatusChip({ status }: { status: string }) {
 }
 
 const LOCALIZED_TRACE_ATTRIBUTE_VALUES = new Set([
-  'finishReason', 'errorPhase', 'deliveryState', 'permissionPolicy',
-  'permissionDecision', 'permissionDecisionSource', 'permissionRuleScope', 'thinkingMode', 'toolChoice',
+  'finishReason', 'errorPhase', 'deliveryState', 'sandboxMode', 'sessionMode', 'sessionModeOrigin',
+  'permissionDecision', 'permissionDecisionSource', 'dangerMatch', 'thinkingMode', 'toolChoice',
 ])
 
 function localizeTraceAttributeValue(row: TraceAttributeRow, t: TFunction): string {

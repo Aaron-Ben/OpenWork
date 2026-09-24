@@ -12,7 +12,7 @@
 | WP1 结果有界与落盘 | 完成，已提交 | `f9db450` |
 | WP1b 旧结果修剪 + 先读后改 | 完成，已提交 | `f9db450`（与 WP1 同一提交）；含迁移 `202609240001_add_tool_result_pruning_watermark.sql` |
 | WP2 `openwork-sandbox` crate | 完成，已提交 | `6d9081f`；D4、D6、主目录工作区均已实现并有测试（§2）；`GOCACHE` 由 crate 给出，bash 启动时实际设置在 WP3 |
-| WP3 沙箱切换 | 进行中 | 执行清单见计划 WP3 节。提交一（第 1–14 步）代码完成、未提交，`scripts/check.sh` 全绿（collab 已知不稳定用例重跑通过）；审批卡片已按 D7 原型实现（第 13 步"展示新卡片数据"）。待：提交一的审查与提交；然后提交二（模式指示器、沙箱不可用提示、Trace 分类）与收尾 |
+| WP3 沙箱切换 | 进行中 | 提交一已提交 `4d65def`。提交二代码完成、未提交：模式指示器（Turn 运行中也可切换）、「沙箱不可用」常驻提示、Trace 按 §6.4 分类；`scripts/check.sh` 全绿（collab 已知不稳定用例重跑通过）；完成条件 3、4 的 grep 已为空。待：提交二的审查与提交；然后收尾（sandbox crate 注释中文化、文档待定项、完成报告） |
 | WP4 工具 T1 | 未开始 | |
 | WP5 工具 T2 | 未开始 | |
 | WP6 后台任务 | 未开始 | 开始前先定 D8 |
@@ -47,6 +47,8 @@
 | — | 撤销 / 重新应用文件改动：会话模式 + 这批改动涉及的每个文件的精确写授权，硬保护仍不可写（用户选 A）。permissions.md §2.4（2026-09-24） |
 | — | 沙箱不可用时不做危险命令检测、不出卡片（以 §9.2 #13 为准，§2.1 流程图改为先判断沙箱可用）；`control_tool` 补进 §7 的 `permissionDecisionSource` 取值与 §6.4 分类（review-branch，2026-09-24） |
 | — | 迁移 `202609240002` 给已有子 Agent 会话回填 `accept_edits`（explorer 的上限），根会话取 `auto`；本地测试库已重置该迁移记录（review-branch，2026-09-24） |
+| — | Trace 时间线类别：§6.4 的七类，另加 `control_tool`、`cancelled`（等待审批时 Turn 被取消）、`unknown`（属性缺失或旧版本 Trace，显示"来源未知"）；执行了却被内核拒绝的调用即使经过用户批准也归"被沙箱拒绝"（2026-09-24） |
+| — | 模式指示器在 Turn 运行中不再禁用（permissions.md §6.1 "随时可切，下一次调用生效"）；原先运行中禁用是旧设计遗留（2026-09-24） |
 | — | `runtime/sandbox-policy` 正文为 `<sandbox_policy>` 包裹的四行：mode、workspace、write / edit、bash 能写什么（或不可用说明）；排在 world state 四个 section 的最后，不改变前三个的字节（2026-09-24） |
 
 ## 3. 待定项

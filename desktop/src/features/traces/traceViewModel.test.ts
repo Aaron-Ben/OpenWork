@@ -229,27 +229,29 @@ describe('traceViewModel', () => {
     const toolSections = buildTraceAttributeSections({
       ...tool,
       attributes: {
-        permissionPolicy: 'ask',
-        permissionMode: 'auto',
-        permissionModeOrigin: 'session_default',
+        sandboxMode: 'auto',
+        sessionMode: 'auto',
+        sessionModeOrigin: 'user_toggle',
+        escalationPaths: [{ path: '/repo/.git', access: 'write', scope: 'subtree' }],
+        escalationJustification: 'Commit the fix.',
+        sandboxDenied: false,
         permissionDecision: 'allow',
-        permissionDecisionSource: 'readonly_proof',
-        readonlyProofKey: 'git status',
-        permissionRuleId: 'builtin.allow.workspace_root_read',
-        permissionRuleScope: 'builtin',
+        permissionDecisionSource: 'user',
         executionMs: 12,
       },
     })
-    expect(toolSections.p0.map((row) => row.key)).toEqual(['permissionDecision', 'executionMs'])
-    expect(toolSections.p1.map((row) => row.key)).toEqual([
-      'permissionPolicy',
-      'permissionMode',
-      'permissionModeOrigin',
+    expect(toolSections.p0.map((row) => row.key)).toEqual([
+      'permissionDecision',
       'permissionDecisionSource',
-      'readonlyProofKey',
-      'permissionRuleId',
-      'permissionRuleScope',
+      'sandboxMode',
+      'escalationPaths',
+      'escalationJustification',
+      'sandboxDenied',
+      'executionMs',
     ])
+    expect(toolSections.p1.map((row) => row.key)).toEqual(['sessionMode', 'sessionModeOrigin'])
+    expect(toolSections.p0.find((row) => row.key === 'escalationPaths')?.value)
+      .toBe('/repo/.git · write · subtree')
 
     const compactionSections = buildTraceAttributeSections({
       ...compaction,

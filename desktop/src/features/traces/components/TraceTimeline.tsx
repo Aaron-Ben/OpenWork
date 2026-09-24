@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, Minimize2, ShieldCheck, ShieldX, UserCheck, UserX } from 'lucide-react'
+import { Bot, ChevronRight, Minimize2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -12,6 +12,7 @@ import {
   type WaterfallRange,
   type WaterfallRow,
 } from '../traceViewModel'
+import { PermissionCategoryBadge } from './PermissionCategoryBadge'
 import { formatDuration } from './TraceList'
 import { TraceToolIcon } from './traceToolIcons'
 
@@ -267,7 +268,7 @@ function TimelineRow({
               {spanName(span, t)}
             </span>
           </span>
-          <PermissionActivityMarker span={span} />
+          <PermissionCategoryBadge span={span} className="text-[9px]" />
         </button>
       </div>
       <span className="shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-faint">
@@ -321,101 +322,6 @@ export function spanName(span: RuntimeTraceSpan, t: ReturnType<typeof useTransla
   if (span.kind === 'model_call') return span.resolvedModelName ?? t('activity.modelCall')
   if (span.kind === 'compaction') return t('activity.compaction')
   return span.resolvedToolName ?? span.requestedToolName ?? t('activity.toolCall')
-}
-
-const AUTOMATIC_PERMISSION_SOURCES = new Set([
-  'builtin',
-  'readonly_proof',
-  'mode',
-  'mode_fs_command',
-  'session_grant',
-])
-
-type PermissionActivityKind =
-  | 'auto_allowed'
-  | 'silently_denied'
-  | 'user_approved'
-  | 'user_denied'
-
-function PermissionActivityMarker({ span }: { span: RuntimeTraceSpan }) {
-  const { t } = useTranslation()
-  if (span.kind !== 'tool_call') return null
-
-  const decision = traceStringAttribute(span, 'permissionDecision')
-  const source = traceStringAttribute(span, 'permissionDecisionSource')
-  const kind = permissionActivityKind(decision, source)
-  if (!kind) return null
-
-  const sourceLabel = kind === 'auto_allowed' && source
-    ? t(`activity.permissionActivity.sources.${source}`, { defaultValue: source })
-    : null
-  const categoryLabel = t(`activity.permissionActivity.outcomes.${kind}`)
-  const details = [categoryLabel, sourceLabel]
-  const readonlyProofKey = traceStringAttribute(span, 'readonlyProofKey')
-  if (readonlyProofKey) {
-    details.push(t('activity.permissionActivity.readonlyProof', { key: readonlyProofKey }))
-  }
-  const ruleId = traceStringAttribute(span, 'permissionRuleId')
-  if (source === 'session_grant' && ruleId) {
-    details.push(t('activity.permissionActivity.sessionGrantRule', { ruleId }))
-  }
-  const mode = traceStringAttribute(span, 'permissionMode')
-  const modeOrigin = traceStringAttribute(span, 'permissionModeOrigin')
-  if (mode || modeOrigin) {
-    details.push(t('activity.permissionActivity.modeContext', {
-      mode: localizeTraceValue(mode, t),
-      origin: localizeTraceValue(modeOrigin, t),
-    }))
-  }
-
-  const styles: Record<PermissionActivityKind, string> = {
-    auto_allowed: 'bg-clay-soft text-clay',
-    silently_denied: 'bg-status-danger-soft text-status-danger-ink',
-    user_approved: 'bg-status-success-soft text-status-success-ink',
-    user_denied: 'bg-status-warning-soft text-status-warning-ink',
-  }
-  const icons = {
-    auto_allowed: ShieldCheck,
-    silently_denied: ShieldX,
-    user_approved: UserCheck,
-    user_denied: UserX,
-  }
-  const Icon = icons[kind]
-
-  return (
-    <span
-      data-permission-activity={kind}
-      data-permission-source={source ?? undefined}
-      title={details.filter(Boolean).join(' · ')}
-      className={`inline-flex max-w-full shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${styles[kind]}`}
-    >
-      <Icon size={10} aria-hidden="true" />
-      <span className="truncate">{categoryLabel}{sourceLabel ? ` · ${sourceLabel}` : ''}</span>
-    </span>
-  )
-}
-
-function permissionActivityKind(
-  decision: string | null,
-  source: string | null,
-): PermissionActivityKind | null {
-  if (decision === 'allow' && source && AUTOMATIC_PERMISSION_SOURCES.has(source)) {
-    return 'auto_allowed'
-  }
-  if (decision === 'deny' && source === 'builtin') return 'silently_denied'
-  if (decision === 'allow' && source === 'user') return 'user_approved'
-  if (decision === 'deny' && source === 'user') return 'user_denied'
-  return null
-}
-
-function traceStringAttribute(span: RuntimeTraceSpan, key: string): string | null {
-  const value = span.attributes[key]
-  return typeof value === 'string' ? value : null
-}
-
-function localizeTraceValue(value: string | null, t: ReturnType<typeof useTranslation>['t']): string {
-  if (!value) return t('activity.traceValues.unknown')
-  return t(`activity.traceValues.${value}`, { defaultValue: value })
 }
 
 function spanStatusDot(status: string): string {

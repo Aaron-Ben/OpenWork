@@ -22,7 +22,7 @@ const child: RuntimeSubAgentSessionRecord = {
   parentSessionId: 'parent-1',
   taskName: 'inspect_auth',
   agentRole: 'explorer',
-  spawnSpanId: null,
+  spawnSpanId: null, sandboxMode: 'auto',
 }
 
 const detail: RuntimeLoadedSession = {

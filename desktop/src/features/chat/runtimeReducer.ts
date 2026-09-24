@@ -1,6 +1,7 @@
 import type {
   RuntimeLiveToolCall,
   RuntimePermissionMode,
+  RuntimeSandboxStatus,
   RuntimePermissionRequest,
   RuntimeSessionSnapshot,
   RuntimeSessionUpdateEnvelope,
@@ -46,6 +47,8 @@ export interface SessionRuntimeView {
   orderedToolCallIds: string[]
   pendingPermission: RuntimePermissionRequest | null
   permissionMode: RuntimePermissionMode
+  /** 启动自检的结论，来自快照；进程内不变，所以 Session Update 不携带它。收到快照前为 null。 */
+  sandbox: RuntimeSandboxStatus | null
   /** 当前 Turn 的计划。null 表示这个 Turn 没有计划或计划已被清空。 */
   plan: RuntimeTurnPlanSnapshot | null
   terminal: RuntimeTurnOutcome | null
@@ -67,6 +70,7 @@ export function createSessionRuntimeView(): SessionRuntimeView {
     orderedToolCallIds: [],
     pendingPermission: null,
     permissionMode: 'auto',
+    sandbox: null,
     plan: null,
     terminal: null,
     startedAtMs: null,
@@ -258,6 +262,7 @@ export function runtimeViewFromSnapshot(snapshot: RuntimeSessionSnapshot): Sessi
     ...createSessionRuntimeView(),
     lastSequence: snapshot.lastUpdateSequence,
     permissionMode: snapshot.permissionMode,
+    sandbox: snapshot.sandbox,
     syncState: 'current' as const,
   }
   const { runtime } = snapshot

@@ -72,10 +72,18 @@ describe('i18n', () => {
       }
       for (const value of [
         'started', 'failed', 'succeeded', 'tool_use', 'stream_decode',
-        'semantic_output_emitted', 'allow', 'policy', 'mode_fs_command', 'auto', 'enabled', 'true', 'false',
+        'semantic_output_emitted', 'allow', 'policy', 'sandbox', 'sandbox_unavailable', 'non_interactive',
+        'control_tool', 'inherited', 'rm_recursive_or_force', 'auto', 'accept_edits', 'enabled', 'true', 'false',
         'degenerate', 'deterministic', 'input_overflow', 'transient', 'timeout',
       ] as const) {
         const path = `activity.traceValues.${value}`
+        expect(translate(path)).not.toBe(path)
+      }
+      for (const category of [
+        'sandbox_auto', 'sandbox_denied', 'user_approved_escalation', 'user_approved_danger',
+        'sandbox_unavailable', 'rule_denied', 'user_denied', 'control_tool', 'cancelled', 'unknown',
+      ] as const) {
+        const path = `activity.permissionCategory.${category}`
         expect(translate(path)).not.toBe(path)
       }
       for (const path of [

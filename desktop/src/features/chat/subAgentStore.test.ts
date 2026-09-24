@@ -26,7 +26,7 @@ function child(id: string, overrides: Partial<RuntimeSubAgentSessionRecord> = {}
     parentSessionId: 'parent-1',
     taskName: `task_${id}`,
     agentRole: 'explorer',
-    spawnSpanId: null,
+    spawnSpanId: null, sandboxMode: 'auto',
     ...overrides,
   }
 }

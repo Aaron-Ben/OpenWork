@@ -26,7 +26,7 @@ function child(id: string, role: string, task: string): RuntimeSubAgentSessionRe
     parentSessionId: 'parent-1',
     taskName: task,
     agentRole: role,
-    spawnSpanId: null,
+    spawnSpanId: null, sandboxMode: 'auto',
   }
 }
 
