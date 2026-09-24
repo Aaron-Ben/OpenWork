@@ -14,7 +14,8 @@
 | K1 | 完成 | `computer/prompt.rs` 渲染增量（从 `runner.rs` 移出，runner.rs 879→795 行）；inbox 增加 `rooms` 与 `team`；`AGENTS.md` 契约增加 Addressing 一节；fake OpenCode 改为从 `# room-…` 标题行取房间 |
 | K5 | 完成（后端、CLI、Agent 提示与 Desktop bridge；Desktop 界面在 U2） | 迁移 `202609240002_message_quotes.sql`（`(room_id, id)` 唯一约束 + 同房间复合外键）；`MessageView.quoted`；`reply --quote`；Desktop `collab_message_send` 增加 `quotedMessageId`；引用穿透 mute（inbox 与唤醒）；inbox/glance/messages 与增量显示消息 id 和引用行；`AGENTS.md` 补 `--quote`；`Messages::views` 统一补齐引用摘要，`insert` 改用 `NewMessage` 结构（原 6 个参数） |
 | K2 | 完成 | `server/routing.rs`（点名对象、`@all`、路由题）；triage payload 增加 `routing` 与 `routed` 参数，人类消息那一步拆成 `human_step`；`collab_triages.source` 增加 `routing`（迁移 `202609240003`），最终结论写入 `response_mode`；Computer 端 `runner.rs` 改为 `runner/mod.rs` + `runner/routing.rs`，`parse_route` 只认明确的 `me` |
-| K3–K4、K6–K7 | 未开始 | |
+| K3 | 完成 | lap floor（`n > k`，本批每个房间都越过时以 `lap_floor` 跳过），人类关注 = 人类消息或 `collab_rooms.user_viewed_seq`（迁移 `202609240004`）；判断顺序为硬上限 → 私聊检查点 → lap floor；写入时的 20 条硬上限也按最近一次人类关注计数；Desktop `RoomViewed` 命令（只增不减、不进幂等账本）、Tauri `collab_room_viewed`、`messageStore` 在前台看到新消息时上报 |
+| K4、K6–K7 | 未开始 | |
 
 ## 2. 已定决策
 
@@ -34,6 +35,7 @@
 | E13 | `reply` / `dm` 正文直接跟在 id 后面（多个参数按空格拼接），`--stdin`、`--file`、`--` 仍可用；起因是 K1 实测中模型第一次总写成位置参数、每次多一跳（2026-09-24） |
 | E14 | CLI 三处修正：`--` 之前任何位置的 `--help` / `-h` 显示帮助，子命令后只显示该子命令的用法；glance 没有新消息时写明 `No new messages since you last read this room (latest sequence N).`；`AGENTS.md` 写明发消息的写法与 `openwork <command> --help`。起因是 E13 实测中 Bo 猜 `--body`、子命令 `--help` 只报错、Ada 被 `(no messages)` 误导（2026-09-24） |
 | E15 | 派生的 OpenCode 配置把 Agent 的主模型与判断模型标为 `status: active`，不再因模型目录刷新后标为 deprecated 而失效；Desktop 默认模型改为 `deepseek/deepseek-flash`。缓存目录仍是每次会话的临时目录，持久化另议（2026-09-24） |
+| E16 | lap floor 只在 triage 时判断，不在 `reply` / `dm` 写入时再判断：与 Cumora 一致，多个 Agent 同时基于 n = k 的状态被唤醒时，最多放过一轮并发接话（2026-09-24） |
 | E11 | 协作模式不要运行记录：删除运行记录页与其专用后端（`observability`、`collab_run_events`、事件上报、`collab_run_list`/`collab_run_trace`）；界面只展示当前状态和房间说明行；`collab_runs` 与 `collab_triages` 保留为内部状态（2026-09-24） |
 
 ## 3. 写文档时新定的实现细节（2026-09-24 用户已确认）
@@ -65,6 +67,9 @@
 
 - 2026-09-24 K2：验收 §16 #9 → `server::routing::tests::acc_09_only_messages_naming_other_agents_are_routed`、`mention_boundaries_match_the_mute_exception`、`routing_request_lists_named_and_other_agents`、`computer::triage::tests::acc_09_only_an_explicit_me_narrows_the_route`、`messaging::acc_09_a_message_naming_one_agent_asks_the_others_to_route_it`。纯函数测试与实现同时写成，没有先看到失败；服务端验收测试写完后直接通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
 - 2026-09-24 K2 真实模型实测（`deepseek/deepseek-flash`，三 Agent 群，临时测试跑完已删）：`@bo …` 提问 → Ada、Cy 路由题答 `me`，以 `routing` 跳过、不跑主模型，只有 Bo 回复；`@bo suggested … What does everyone think?` → Ada、Cy 答 `each`，三人都回复。之后 Ada、Cy 各自又接了一轮（Agent 消息经 triage 模型判为 actionable），这是 K3 lap floor 要处理的情况。12 个 Run 全部 completed。
+
+- 2026-09-24 K3：验收 §16 #10 → `server::triage::tests::acc_10_a_lapping_agent_run_is_skipped_without_a_model`（先因字段不存在编译失败）、`messaging::acc_10_a_second_lap_is_skipped_until_the_user_looks_again`、`rooms/roomViewed.test.ts`、`bridge/collab.test.ts` 的 `collab_room_viewed` 用例。现有测试 `direct_room_reads_and_private_directional_climate_form_one_loop` 改了预期：两人私聊第 8 条的检查点现在以 `lap_floor` 跳过（8 条只来自 2 个 Agent），Climate 进入 triage 输入的断言移到群聊场景。文档 §8.3 修正：硬上限先于私聊检查点（恢复原规定）。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
+- 2026-09-24 K3 真实模型实测（`deepseek/deepseek-flash`，同 K2 第二个场景）：第一轮三人各答一句后，三人在 n = k = 3 的同一时刻被唤醒，triage 模型都判为 actionable，同时各接一句（第 7–9 条）；之后 3 次唤醒以 `lap_floor` 跳过，讨论停止。缺口来自唤醒时的快照，Cumora 相同，按 E16 接受。
 
 ## 5. 待定
 

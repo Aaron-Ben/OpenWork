@@ -104,6 +104,11 @@ pub enum DesktopCommand {
     ListMessages {
         room_id: String,
     },
+    /// 用户在 Desktop 中看到了 `room_id` 到 `up_to_seq` 为止的消息（collaboration.md §8.3）。
+    RoomViewed {
+        room_id: String,
+        up_to_seq: i64,
+    },
     ListBoards,
     CreateBoard {
         title: String,
@@ -160,6 +165,8 @@ impl DesktopCommand {
                 | Self::ListRooms
                 | Self::ListRoomMembers { .. }
                 | Self::ListMessages { .. }
+                // 只增不减的写入，天然幂等；Desktop 每次看到新消息都上报，不进幂等账本。
+                | Self::RoomViewed { .. }
                 | Self::ListBoards
                 | Self::ListRuns { .. }
                 | Self::GetRunTrace { .. }
@@ -176,17 +183,35 @@ impl DesktopCommand {
 pub enum DesktopCommandResult {
     Status(RuntimeStatusView),
     Agent(AgentView),
-    Agents { agents: Vec<AgentView> },
+    Agents {
+        agents: Vec<AgentView>,
+    },
     Room(RoomView),
-    Rooms { rooms: Vec<RoomView> },
-    Members { members: Vec<ParticipantView> },
+    Rooms {
+        rooms: Vec<RoomView>,
+    },
+    Members {
+        members: Vec<ParticipantView>,
+    },
     Message(MessageView),
-    Messages { messages: Vec<MessageView> },
+    Messages {
+        messages: Vec<MessageView>,
+    },
+    RoomViewed {
+        room_id: String,
+        user_viewed_seq: i64,
+    },
     Board(BoardView),
-    Boards { boards: Vec<BoardView> },
+    Boards {
+        boards: Vec<BoardView>,
+    },
     Card(CardView),
-    Deleted { entity_id: String },
-    Runs { runs: Vec<RunSummaryView> },
+    Deleted {
+        entity_id: String,
+    },
+    Runs {
+        runs: Vec<RunSummaryView>,
+    },
     RunTrace(Box<RunTraceView>),
 }
 

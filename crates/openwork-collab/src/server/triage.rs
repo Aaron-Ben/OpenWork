@@ -290,7 +290,8 @@ impl InboxTriage {
             "SELECT m.id, m.room_id, room.kind AS room_kind, m.sequence,
                     m.author_id, author.kind AS author_kind,
                     author.display_name AS author_name, m.kind AS message_kind, m.body,
-                    agent_chain.agent_streak, quoted_author.id AS quoted_agent_id
+                    agent_chain.agent_streak, agent_chain.agent_authors,
+                    quoted_author.id AS quoted_agent_id
              FROM collab_runs r
              JOIN collab_run_deliveries d ON d.run_id = r.id
              JOIN collab_messages m ON m.room_id = d.room_id
@@ -302,13 +303,14 @@ impl InboxTriage {
              LEFT JOIN collab_participants quoted_author
                ON quoted_author.id = quoted.author_id AND quoted_author.kind = 'agent'
              JOIN LATERAL (
-                 SELECT COUNT(*) AS agent_streak
+                 SELECT COUNT(*) AS agent_streak,
+                        COUNT(DISTINCT trailing_message.author_id) AS agent_authors
                  FROM collab_messages trailing_message
                  JOIN collab_participants trailing_author
                    ON trailing_author.id = trailing_message.author_id
                  WHERE trailing_message.room_id = d.room_id
                    AND trailing_message.sequence <= d.up_to_seq
-                   AND trailing_message.sequence > COALESCE((
+                   AND trailing_message.sequence > GREATEST(COALESCE((
                        SELECT MAX(previous.sequence)
                        FROM collab_messages previous
                        JOIN collab_participants previous_author
@@ -316,7 +318,7 @@ impl InboxTriage {
                        WHERE previous.room_id = d.room_id
                          AND previous.sequence <= d.up_to_seq
                          AND previous_author.kind <> 'agent'
-                   ), 0)
+                   ), 0), room.user_viewed_seq)
                    AND trailing_author.kind = 'agent'
                    AND trailing_message.kind <> 'system'
              ) agent_chain ON TRUE
@@ -338,7 +340,8 @@ impl InboxTriage {
                     message.sequence, message.author_id,
                     author.kind AS author_kind, author.display_name AS author_name,
                     message.kind AS message_kind, message.body,
-                    0::BIGINT AS agent_streak, NULL::TEXT AS quoted_agent_id
+                    0::BIGINT AS agent_streak, 0::BIGINT AS agent_authors,
+                    NULL::TEXT AS quoted_agent_id
              FROM collab_runs run
              JOIN collab_run_deliveries delivery ON delivery.run_id = run.id
              JOIN collab_room_members member
@@ -382,12 +385,15 @@ impl InboxTriage {
                 | "system_only"
                 | "agent_dm_engage"
                 | "loop_cap"
+                | "lap_floor"
                 | "routing"
         ) {
             return Err(protocol_error("INVALID_ARGUMENT: invalid triage source"));
         }
-        if matches!(request.verdict.source.as_str(), "system_only" | "loop_cap")
-            && request.verdict.actionable
+        if matches!(
+            request.verdict.source.as_str(),
+            "system_only" | "loop_cap" | "lap_floor"
+        ) && request.verdict.actionable
         {
             return Err(protocol_error(
                 "INVALID_ARGUMENT: suppressing triage source cannot be actionable",
@@ -488,16 +494,23 @@ fn agent_loop_verdict(messages: &[&TriageMessage]) -> Option<TriageVerdict> {
     {
         return None;
     }
-    let mut latest_by_room = BTreeMap::<&str, (&str, i64)>::new();
+    let mut latest_by_room = BTreeMap::<&str, (&str, i64, i64)>::new();
     for message in messages {
         latest_by_room
             .entry(&message.room_id)
-            .and_modify(|(_, streak)| *streak = (*streak).max(message.agent_streak))
-            .or_insert((&message.room_kind, message.agent_streak));
+            .and_modify(|(_, streak, authors)| {
+                *streak = (*streak).max(message.agent_streak);
+                *authors = (*authors).max(message.agent_authors);
+            })
+            .or_insert((
+                &message.room_kind,
+                message.agent_streak,
+                message.agent_authors,
+            ));
     }
     if latest_by_room
         .values()
-        .all(|(_, streak)| *streak >= AGENT_LOOP_HARD_CAP)
+        .all(|(_, streak, _)| *streak >= AGENT_LOOP_HARD_CAP)
     {
         return Some(TriageVerdict {
             actionable: false,
@@ -508,7 +521,7 @@ fn agent_loop_verdict(messages: &[&TriageMessage]) -> Option<TriageVerdict> {
             source: "loop_cap".to_string(),
         });
     }
-    if latest_by_room.values().all(|(room_kind, streak)| {
+    if latest_by_room.values().all(|(room_kind, streak, _)| {
         *room_kind == "direct" && *streak % AGENT_LOOP_TRIAGE_INTERVAL != 0
     }) {
         return Some(TriageVerdict {
@@ -519,6 +532,18 @@ fn agent_loop_verdict(messages: &[&TriageMessage]) -> Option<TriageVerdict> {
             prompt_note: "A teammate messaged you directly. Reply in that Direct Room.".to_string(),
             source: "agent_dm_engage".to_string(),
         });
+    }
+    // lap floor（Cumora `triage-core.ts` 的 `pastFloor`）：有人开始第二次发言，说明一整轮已经结束。
+    if latest_by_room
+        .values()
+        .all(|(_, streak, authors)| *streak > *authors)
+    {
+        return Some(verdict(
+            false,
+            "every unread room is repeating a full round of agent replies since the last human attention",
+            "",
+            "lap_floor",
+        ));
     }
     None
 }
@@ -539,7 +564,10 @@ struct TriageMessage {
     author_name: String,
     message_kind: String,
     body: String,
+    /// 自最近一次人类关注（人类消息或用户看到的位置）后的 Agent 消息数。
     agent_streak: i64,
+    /// 这些 Agent 消息来自几个不同的 Agent，即“一轮”的长度（collaboration.md §8.3）。
+    agent_authors: i64,
     /// 被引用消息的作者，只在作者是 Agent 时有值。
     quoted_agent_id: Option<String>,
 }
@@ -569,7 +597,17 @@ fn protocol_error(message: &str) -> sqlx::Error {
 mod tests {
     use super::{TriageMessage, agent_loop_verdict};
 
+    /// 每条 Agent 消息都来自不同的 Agent，lap floor 不会触发，只检验检查点与硬上限。
     fn agent_message(room_id: &str, room_kind: &str, agent_streak: i64) -> TriageMessage {
+        lapping(room_id, room_kind, agent_streak, agent_streak)
+    }
+
+    fn lapping(
+        room_id: &str,
+        room_kind: &str,
+        agent_streak: i64,
+        agent_authors: i64,
+    ) -> TriageMessage {
         TriageMessage {
             id: format!("msg-{agent_streak}"),
             room_id: room_id.to_string(),
@@ -582,7 +620,47 @@ mod tests {
             body: "hello".to_string(),
             quoted_agent_id: None,
             agent_streak,
+            agent_authors,
         }
+    }
+
+    /// collaboration.md §8.3、§16 #10：自最近一次人类关注后 Agent 消息数超过发言的 Agent 数，
+    /// 且本批每个房间都如此时，确定性跳过；私聊在检查点之间照常参与。
+    #[test]
+    fn acc_10_a_lapping_agent_run_is_skipped_without_a_model() {
+        let one_round = lapping("room-group", "group", 3, 3);
+        assert!(agent_loop_verdict(&[&one_round]).is_none());
+
+        let second_lap = lapping("room-group", "group", 4, 3);
+        let verdict = agent_loop_verdict(&[&second_lap]).expect("lap floor suppresses");
+        assert_eq!(
+            (
+                verdict.actionable,
+                verdict.source.as_str(),
+                verdict.reason.as_str()
+            ),
+            (
+                false,
+                "lap_floor",
+                "every unread room is repeating a full round of agent replies since the last human attention"
+            )
+        );
+
+        let quiet_room = lapping("room-other", "group", 1, 1);
+        assert!(agent_loop_verdict(&[&second_lap, &quiet_room]).is_none());
+
+        let direct_between_checks = lapping("room-direct", "direct", 5, 2);
+        assert_eq!(
+            agent_loop_verdict(&[&direct_between_checks])
+                .unwrap()
+                .source,
+            "agent_dm_engage"
+        );
+        let direct_checkpoint = lapping("room-direct", "direct", 8, 2);
+        assert_eq!(
+            agent_loop_verdict(&[&direct_checkpoint]).unwrap().source,
+            "lap_floor"
+        );
     }
 
     #[test]

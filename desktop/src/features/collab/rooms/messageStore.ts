@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import { collabCommands, type CollabMessage, type CollabRun } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
+import { nextViewedSequence } from './roomViewed'
 
 export interface MessageWindow {
   messages: CollabMessage[]
@@ -17,6 +18,19 @@ interface MessageStoreState {
 }
 
 const openVersions = new Map<string, number>()
+/** 每个房间最后一次成功上报的已看到 sequence；上报失败时不更新，下次刷新重试。 */
+const reportedViewed = new Map<string, number>()
+
+function windowInForeground(): boolean {
+  return document.visibilityState === 'visible' && document.hasFocus()
+}
+
+async function reportViewed(roomId: string, messages: CollabMessage[]): Promise<void> {
+  const upToSeq = nextViewedSequence(messages, reportedViewed.get(roomId) ?? 0, windowInForeground())
+  if (upToSeq === null) return
+  const recorded = await collabCommands.markRoomViewed(roomId, upToSeq)
+  reportedViewed.set(roomId, recorded)
+}
 
 export const useMessageStore = create<MessageStoreState>((set, get) => ({
   byRoom: {},
@@ -37,6 +51,7 @@ export const useMessageStore = create<MessageStoreState>((set, get) => ({
       ])
       if (openVersions.get(roomId) !== version) return
       set({ byRoom: { ...get().byRoom, [roomId]: { messages, runs, loading: false, error: null } } })
+      await reportViewed(roomId, messages)
     } catch (error) {
       if (openVersions.get(roomId) !== version) return
       const latest = get().byRoom[roomId] ?? current

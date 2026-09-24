@@ -203,6 +203,8 @@ export const collabCommands = {
     invoke('collab_message_send', { roomId, body, quotedMessageId }),
   listMessages: (roomId: string): Promise<CollabMessage[]> =>
     invoke('collab_message_list', { roomId }),
+  markRoomViewed: (roomId: string, upToSeq: number): Promise<number> =>
+    invoke('collab_room_viewed', { roomId, upToSeq }),
   listBoards: (): Promise<CollabBoard[]> => invoke('collab_board_list'),
   createBoard: (title: string, description: string | null = null): Promise<CollabBoard> =>
     invoke('collab_board_create', { title, description }),

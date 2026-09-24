@@ -241,6 +241,24 @@ pub async fn collab_message_send(
     }
 }
 
+/// 用户看到了 `room_id` 到 `up_to_seq` 为止的消息；返回 Server 记录后的位置（只增不减）。
+#[tauri::command]
+pub async fn collab_room_viewed(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    up_to_seq: i64,
+) -> Result<i64, CommandError> {
+    match client
+        .call(DesktopCommand::RoomViewed { room_id, up_to_seq })
+        .await?
+    {
+        DesktopCommandResult::RoomViewed {
+            user_viewed_seq, ..
+        } => Ok(user_viewed_seq),
+        response => Err(unexpected(response)),
+    }
+}
+
 #[tauri::command]
 pub async fn collab_message_list(
     client: tauri::State<'_, CollabDaemonClient>,

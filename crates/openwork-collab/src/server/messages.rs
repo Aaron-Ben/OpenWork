@@ -232,13 +232,13 @@ impl Messages {
              FROM collab_messages message
              JOIN collab_participants author ON author.id = message.author_id
              WHERE message.room_id = $1
-               AND message.sequence > COALESCE((
+               AND message.sequence > GREATEST(COALESCE((
                    SELECT MAX(previous.sequence)
                    FROM collab_messages previous
                    JOIN collab_participants previous_author
                      ON previous_author.id = previous.author_id
                    WHERE previous.room_id = $1 AND previous_author.kind <> 'agent'
-               ), 0)
+               ), 0), (SELECT user_viewed_seq FROM collab_rooms WHERE id = $1))
                AND author.kind = 'agent' AND message.kind <> 'system'",
         )
         .bind(room_id)

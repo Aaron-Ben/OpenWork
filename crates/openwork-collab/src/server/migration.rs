@@ -26,6 +26,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "routing triage",
         include_str!("../../migrations/202609240003_routing_triage.sql"),
     ),
+    (
+        202_609_240_004,
+        "user viewed sequence",
+        include_str!("../../migrations/202609240004_user_viewed_seq.sql"),
+    ),
 ];
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {

@@ -122,6 +122,31 @@ impl Rooms {
         .map(|rows| rows.into_iter().map(RoomView::from).collect())
     }
 
+    /// 记录用户看到的最大 sequence：只增不减，也不超过房间已分配的最后一个 sequence。
+    /// 返回记录后的值；房间不存在时返回 `NOT_FOUND`。
+    pub(crate) async fn mark_viewed(
+        &self,
+        room_id: &str,
+        up_to_seq: i64,
+    ) -> Result<i64, sqlx::Error> {
+        if up_to_seq < 0 {
+            return Err(protocol_error(
+                "INVALID_ARGUMENT: upToSeq must not be negative",
+            ));
+        }
+        sqlx::query_scalar(
+            "UPDATE collab_rooms
+             SET user_viewed_seq = GREATEST(user_viewed_seq, LEAST($2, next_seq))
+             WHERE id = $1
+             RETURNING user_viewed_seq",
+        )
+        .bind(room_id)
+        .bind(up_to_seq)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| protocol_error("NOT_FOUND: Room does not exist"))
+    }
+
     /// `room_ids` 中每个房间的 active Agent 成员，按 ID 排序（collaboration.md §8.2 的点名候选）。
     pub(crate) async fn agent_members(
         pool: &PgPool,

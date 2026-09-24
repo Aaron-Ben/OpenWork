@@ -61,6 +61,12 @@ describe('R3 collaboration command bridge', () => {
     })
   })
 
+  it('reports how far the user has seen a room', async () => {
+    vi.mocked(invoke).mockResolvedValue(7)
+    await expect(collabCommands.markRoomViewed('room-1', 7)).resolves.toBe(7)
+    expect(invoke).toHaveBeenCalledWith('collab_room_viewed', { roomId: 'room-1', upToSeq: 7 })
+  })
+
   it('sends the quoted message id with a quote reply', async () => {
     vi.mocked(invoke).mockResolvedValue(null)
     await collabCommands.sendMessage('general', 'Why partial?', 'msg-7')

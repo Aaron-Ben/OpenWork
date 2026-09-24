@@ -109,6 +109,12 @@ impl DesktopCommands {
             DesktopCommand::ListMessages { room_id } => Ok(DesktopCommandResult::Messages {
                 messages: self.messages.list(&room_id).await?,
             }),
+            DesktopCommand::RoomViewed { room_id, up_to_seq } => {
+                Ok(DesktopCommandResult::RoomViewed {
+                    user_viewed_seq: self.rooms.mark_viewed(&room_id, up_to_seq).await?,
+                    room_id,
+                })
+            }
             DesktopCommand::ListBoards => Ok(DesktopCommandResult::Boards {
                 boards: self.board.list().await?,
             }),

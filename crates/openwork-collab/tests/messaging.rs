@@ -537,6 +537,111 @@ async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room
     fixture.stop().await;
 }
 
+/// collaboration.md §8.3、§16 #10：人类消息之后 Ada、Bo、Cy 各说一次、Ada 又说第二次，Bo 的
+/// triage 以 `lap_floor` 确定性跳过；用户在 Desktop 看到这些消息后计数重新开始，再来一条
+/// Agent 消息就回到 triage 模型。看到的位置只增不减，也不超过房间最后一条消息。
+#[tokio::test]
+async fn acc_10_a_second_lap_is_skipped_until_the_user_looks_again() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let ada = fixture.create_agent("Ada").await;
+    let bo = fixture.create_agent("Bo").await;
+    let cy = fixture.create_agent("Cy").await;
+    let group = fixture
+        .create_group(vec![ada.id.clone(), bo.id.clone(), cy.id.clone()])
+        .await;
+    fixture.send_user(&group.id, "Discuss the rollout.").await;
+    let insert_agent_message = |sequence: i64, author: String| {
+        let pool = fixture.pool.clone();
+        let room_id = group.id.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+                 VALUES ('msg-' || md5($1 || $2::TEXT), $1, $2, $3, 'normal', 'turn ' || $2::TEXT)",
+            )
+            .bind(&room_id)
+            .bind(sequence)
+            .bind(&author)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query("UPDATE collab_rooms SET next_seq = $2 WHERE id = $1")
+                .bind(&room_id)
+                .bind(sequence)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    for (sequence, author) in [(2, &ada.id), (3, &bo.id), (4, &cy.id), (5, &ada.id)] {
+        insert_agent_message(sequence, author.clone()).await;
+    }
+    let read_up_to = |sequence: i64| {
+        let pool = fixture.pool.clone();
+        let (room_id, agent_id) = (group.id.clone(), bo.id.clone());
+        async move {
+            sqlx::query(
+                "UPDATE collab_room_members SET last_read_seq = $3
+                 WHERE room_id = $1 AND participant_id = $2",
+            )
+            .bind(&room_id)
+            .bind(&agent_id)
+            .bind(sequence)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    read_up_to(4).await;
+    let token = fixture.token(&bo.id).await;
+    let inbox = fixture.inbox(&token).await;
+    let run = fixture.open_run(&token, &inbox).await;
+    let lapping = fixture.triage(&token, &run.id).await.verdict.unwrap();
+    assert_eq!(
+        (lapping.actionable, lapping.source.as_str()),
+        (false, "lap_floor")
+    );
+    fixture.finish(&token, &run.id, "completed").await;
+
+    let viewed = fixture
+        .desktop(DesktopCommand::RoomViewed {
+            room_id: group.id.clone(),
+            up_to_seq: 99,
+        })
+        .await;
+    assert_eq!(
+        viewed,
+        DesktopCommandResult::RoomViewed {
+            room_id: group.id.clone(),
+            user_viewed_seq: 5,
+        }
+    );
+    let rewound = fixture
+        .desktop(DesktopCommand::RoomViewed {
+            room_id: group.id.clone(),
+            up_to_seq: 2,
+        })
+        .await;
+    assert_eq!(
+        rewound,
+        DesktopCommandResult::RoomViewed {
+            room_id: group.id.clone(),
+            user_viewed_seq: 5,
+        }
+    );
+    insert_agent_message(6, cy.id.clone()).await;
+    read_up_to(5).await;
+    let inbox = fixture.inbox(&token).await;
+    let run = fixture.open_run(&token, &inbox).await;
+    let watched = fixture.triage(&token, &run.id).await;
+    assert_eq!(watched.verdict, None);
+    assert!(watched.routing.is_none());
+    assert!(watched.instructions.is_some());
+
+    fixture.stop().await;
+}
+
 /// collaboration.md §8.2、§8.3、§16 #9：人类只点名 Bo 时，Bo 直接参与；Ada 先拿到路由题，
 /// 答 `me` 时以 `routing` 跳过并结算 delivery、记下 response_mode，答 `each` 时参与；
 /// `@all` 永不收窄。
@@ -1239,11 +1344,13 @@ async fn direct_room_reads_and_private_directional_climate_form_one_loop() {
 
     let checkpoint_inbox = fixture.inbox(&alpha_token).await;
     let alpha_agent_run = fixture.open_run(&alpha_token, &checkpoint_inbox).await;
+    // 两人私聊到检查点时，8 条 Agent 消息只来自 2 个 Agent，按 lap floor 确定性跳过
+    // （collaboration.md §8.3，Cumora `pastFloor`），不再调用 triage 模型。
     let triage = fixture.triage(&alpha_token, &alpha_agent_run.id).await;
-    assert!(triage.verdict.is_none());
-    let input = triage.input.expect("Agent-only traffic uses local triage");
-    assert!(input.contains("Private Climate context"));
-    assert!(input.contains("Strong technically; verify estimates."));
+    assert_eq!(
+        triage.verdict.map(|verdict| verdict.source),
+        Some("lap_floor".to_string())
+    );
 
     let self_climate = fixture
         .command(
@@ -1270,6 +1377,36 @@ async fn direct_room_reads_and_private_directional_climate_form_one_loop() {
         .await;
     fixture
         .finish(&alpha_token, &alpha_agent_run.id, "completed")
+        .await;
+
+    // 真正走到 triage 模型的 Agent 消息（群里第一条 Agent 回复）带着私有 Climate。
+    let group = fixture
+        .create_group(vec![alpha.id.clone(), beta.id.clone()])
+        .await;
+    sqlx::query(
+        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
+         VALUES ($1, $2, 1, $3, 'normal', 'Beta shares a plan.')",
+    )
+    .bind(format!("msg-{}", Uuid::new_v4().simple()))
+    .bind(&group.id)
+    .bind(&beta.id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE collab_rooms SET next_seq = 1 WHERE id = $1")
+        .bind(&group.id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let group_inbox = fixture.inbox(&alpha_token).await;
+    let group_run = fixture.open_run(&alpha_token, &group_inbox).await;
+    let triage = fixture.triage(&alpha_token, &group_run.id).await;
+    assert!(triage.verdict.is_none());
+    let input = triage.input.expect("Agent-only traffic uses local triage");
+    assert!(input.contains("Private Climate context"));
+    assert!(input.contains("Strong technically; verify estimates."));
+    fixture
+        .finish(&alpha_token, &group_run.id, "completed")
         .await;
 
     let climate_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collab_agent_climates")
