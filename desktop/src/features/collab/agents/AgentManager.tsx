@@ -1,138 +1,153 @@
-import { Plus } from 'lucide-react'
+import { Lock, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { CollabAgent, CollabAgentInput } from '@/bridge/collab'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
+import { useNow } from '@/features/collab/components/useNow'
+import { useRoomStore } from '@/features/collab/rooms/roomStore'
 import { useCollabRuntimeStore } from '@/features/collab/runtimeStore'
+import { resolveErrorMessage } from '@/lib/commandError'
+import { cn } from '@/lib/utils'
 import { AgentCard } from './AgentCard'
+import { AgentFormDialog } from './AgentFormDialog'
+import { agentsInTab, engineTag, statusCounts, type AgentTab } from './agentPageModel'
 import { useAgentStore } from './agentStore'
 
-const DEFAULT_MODEL = 'deepseek/deepseek-flash'
+/** 卡片上的已用时间每秒刷新。 */
+const TICK_MS = 1_000
 
-function emptyAgent(): CollabAgentInput {
-  return {
-    displayName: '',
-    role: null,
-    persona: '',
-    engineId: 'opencode',
-    mainModelId: DEFAULT_MODEL,
-    triageModelId: DEFAULT_MODEL,
-  }
+const ENGINE_TONES = {
+  success: 'bg-status-success-soft text-status-success-ink',
+  danger: 'bg-status-danger-soft text-status-danger-ink',
+  neutral: 'bg-code-bg text-ink-soft',
+  clay: 'bg-clay-soft text-ink',
+} as const
+
+/** 正在编辑的 Agent；`agent` 为 `null` 表示新建。 */
+interface FormState {
+  agent: CollabAgent | null
 }
 
-function editableAgent(agent: CollabAgent): CollabAgentInput {
-  return {
-    displayName: agent.displayName,
-    role: agent.role,
-    persona: agent.persona,
-    engineId: agent.engineId,
-    mainModelId: agent.mainModelId,
-    triageModelId: agent.triageModelId,
-  }
-}
-
-interface AgentFormState {
-  agentId: string | null
-  input: CollabAgentInput
-}
-
+/** Agent 页（collaboration-desktop.md §8）：标题栏计数与 Engine 标签、活跃/已归档标签页、三列卡片与“新建 Agent”格。 */
 export function AgentManager() {
   const { t } = useTranslation()
   const agents = useAgentStore((state) => state.agents)
   const create = useAgentStore((state) => state.create)
   const update = useAgentStore((state) => state.update)
-  const error = useAgentStore((state) => state.error)
+  const setAgenda = useAgentStore((state) => state.setAgenda)
+  const setArchived = useAgentStore((state) => state.setArchived)
+  const storeError = useAgentStore((state) => state.error)
   const runtime = useCollabRuntimeStore((state) => state.status)
   const runtimeError = useCollabRuntimeStore((state) => state.error)
-  const [form, setForm] = useState<AgentFormState | null>(null)
+  const openDirect = useRoomStore((state) => state.openDirect)
+  const selectRoom = useCollabNavigationStore((state) => state.selectRoom)
+  const now = useNow(TICK_MS)
+  const [tab, setTab] = useState<AgentTab>('active')
+  const [form, setForm] = useState<FormState | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const active = agentsInTab(agents, 'active')
+  const archived = agentsInTab(agents, 'archived')
+  const counts = statusCounts(active)
+  const engine = engineTag(runtime)
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (!form) return
-    if (form.agentId) await update(form.agentId, form.input)
-    else await create(form.input)
-    setForm(null)
+  async function run(action: () => Promise<void>) {
+    setError(null)
+    try {
+      await action()
+    } catch (actionError) {
+      setError(resolveErrorMessage(actionError))
+    }
   }
 
-  function changeForm(patch: Partial<CollabAgentInput>) {
-    setForm((current) => current ? {
-      ...current,
-      input: { ...current.input, ...patch },
-    } : null)
+  async function submit(input: CollabAgentInput) {
+    const agent = form?.agent ?? null
+    await run(async () => {
+      await (agent ? update(agent.id, input) : create(input))
+      setForm(null)
+    })
   }
+
+  const countParts = [
+    { key: 'working', count: counts.working, className: 'text-status-success-ink' },
+    { key: 'queued', count: counts.queued, className: 'text-ink' },
+    { key: 'idle', count: counts.idle, className: 'text-ink' },
+    { key: 'error', count: counts.error, className: 'text-status-danger-ink' },
+  ].filter((part) => part.count > 0 || part.key === 'working')
 
   return (
-    <section className="min-w-0 flex-1 overflow-y-auto bg-paper">
-      <header data-tauri-drag-region="deep" className="flex h-12 items-center justify-between border-b border-line px-6">
-        <h1 className="font-serif text-lg font-semibold">{t('collab.agents.title')}</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-ink-faint" title={runtime?.runtimeSessionId}>
-            {runtime?.lastComputerHeartbeat ? t('collab.agents.runtimeReady') : t('collab.agents.runtimeStarting')}
+    <section className="relative flex min-w-0 flex-1 flex-col bg-paper">
+      <header data-tauri-drag-region="deep" className="flex shrink-0 items-end gap-4 px-10 pb-4 pt-7">
+        <div className="flex flex-1 flex-col gap-1.5">
+          <h1 className="font-serif text-2xl font-semibold">{t('collab.agents.title')}</h1>
+          <span className="flex flex-wrap gap-3.5 text-[13px] text-ink-soft">
+            {countParts.map((part) => (
+              <span key={part.key}><strong className={part.className}>{part.count}</strong> {t(`collab.agents.counts.${part.key}`)}</span>
+            ))}
           </span>
-          <Button type="button" size="sm" onClick={() => setForm({ agentId: null, input: emptyAgent() })}>
-            <Plus size={15} />{t('collab.agents.create')}
-          </Button>
         </div>
+        <span className={cn('flex h-[34px] items-center gap-2 rounded-lg px-3 text-xs font-semibold', ENGINE_TONES[engine.tone])} title={engine.values.reason}>
+          <Lock size={14} />
+          <span className="max-w-72 truncate">{t(engine.key, engine.values)}</span>
+        </span>
+        <button type="button" className="flex h-[34px] items-center gap-1.5 rounded-lg bg-ink px-3.5 text-[13px] font-semibold text-paper" onClick={() => setForm({ agent: null })}>
+          <Plus size={15} />{t('collab.agents.create')}
+        </button>
       </header>
-      <div className="mx-auto grid max-w-6xl gap-5 p-6">
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        {runtimeError ? <p className="text-sm text-red-600">{runtimeError}</p> : null}
-        {agents.length > 0 ? (
-          <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
-            <span className="rounded-full border border-line bg-paper-hover px-3 py-1.5">
-              {t('collab.agents.activeCount', { count: agents.filter((agent) => agent.archivedAt === null).length })}
-            </span>
-            <span className="rounded-full border border-status-success-border bg-status-success-soft px-3 py-1.5 text-status-success-ink">
-              {t('collab.agents.runningCount', { count: runtime?.runners.filter((runner) => runner.state === 'running').length ?? 0 })}
-            </span>
-          </div>
-        ) : null}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {agents.map((agent) => (
+      <div role="tablist" aria-label={t('collab.agents.tabs')} className="flex shrink-0 gap-1 border-b border-line px-10">
+        {(['active', 'archived'] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            role="tab"
+            aria-selected={tab === item}
+            className={cn('h-9 border-b-2 px-3 text-[13px]', tab === item ? 'border-clay font-semibold text-ink' : 'border-transparent text-ink-soft')}
+            onClick={() => setTab(item)}
+          >
+            {t(`collab.agents.tab.${item}`, { count: item === 'active' ? active.length : archived.length })}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 overflow-y-auto px-10 py-6">
+        {[error, storeError, runtimeError].filter(Boolean).map((message) => (
+          <p key={message} className="mb-3 text-sm text-status-danger-ink">{message}</p>
+        ))}
+        <div className="grid grid-cols-1 content-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {(tab === 'active' ? active : archived).map((agent) => (
             <AgentCard
               key={agent.id}
               agent={agent}
-              runtime={runtime}
-              onEdit={() => setForm({ agentId: agent.id, input: editableAgent(agent) })}
+              now={now}
+              actions={{
+                onEdit: () => setForm({ agent }),
+                onArchive: (next) => void run(() => setArchived(agent.id, next)),
+                onAgenda: (enabled) => void run(() => setAgenda(agent.id, enabled)),
+                onMessage: () => run(async () => {
+                  const room = await openDirect(agent.id)
+                  if (room) selectRoom(room.id)
+                }),
+              }}
             />
           ))}
+          {tab === 'active' ? <HireCard onClick={() => setForm({ agent: null })} /> : null}
         </div>
-        {agents.length === 0 ? <p className="py-20 text-center text-sm text-ink-faint">{t('collab.agents.noAgents')}</p> : null}
+        {tab === 'archived' && archived.length === 0 ? <p className="py-20 text-center text-sm text-ink-faint">{t('collab.agents.noArchived')}</p> : null}
       </div>
       {form ? (
-        <div className="absolute inset-0 z-30 grid place-items-center bg-black/30 p-6" role="dialog" aria-modal="true">
-          <form className="grid w-full max-w-xl gap-3 rounded-3xl bg-paper p-6 shadow-xl" onSubmit={submit}>
-            <h2 className="font-serif text-xl font-semibold">{t(form.agentId ? 'collab.agents.edit' : 'collab.agents.create')}</h2>
-            <Field label={t('collab.agents.displayName')}>
-              <Input required value={form.input.displayName} onChange={(event) => changeForm({ displayName: event.target.value })} />
-            </Field>
-            <Field label={t('collab.agents.role')}>
-              <Input value={form.input.role ?? ''} onChange={(event) => changeForm({ role: event.target.value || null })} />
-            </Field>
-            <Field label={t('collab.agents.mainModel')}>
-              <Input required value={form.input.mainModelId} onChange={(event) => changeForm({ mainModelId: event.target.value })} />
-            </Field>
-            <Field label={t('collab.agents.triageModel')}>
-              <Input required value={form.input.triageModelId} onChange={(event) => changeForm({ triageModelId: event.target.value })} />
-            </Field>
-            <Field label={t('collab.agents.persona')}>
-              <Textarea required rows={5} value={form.input.persona} onChange={(event) => changeForm({ persona: event.target.value })} />
-            </Field>
-            <p className="text-xs text-ink-faint">Local Computer · OpenCode CLI · ID generated by Server</p>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" onClick={() => setForm(null)}>{t('common.cancel')}</Button>
-              <Button type="submit" variant="accent" disabled={!form.input.displayName.trim() || !form.input.mainModelId.trim() || !form.input.triageModelId.trim()}>{t('collab.agents.save')}</Button>
-            </div>
-          </form>
-        </div>
+        <AgentFormDialog agent={form.agent} error={error} onSubmit={submit} onClose={() => { setForm(null); setError(null) }} />
       ) : null}
     </section>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="grid gap-1 text-xs font-medium text-ink-muted"><span>{label}</span>{children}</label>
+/** 网格最后一格“新建 Agent”（Cumora `AgentsView.tsx` 的 `HireCard`）。 */
+export function HireCard({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <button type="button" className="flex min-h-64 flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed border-line-strong p-5 text-ink-soft hover:bg-paper-hover" onClick={onClick}>
+      <span className="grid size-[52px] place-items-center rounded-full bg-paper-hover text-clay"><Plus size={22} /></span>
+      <span className="font-serif text-lg font-semibold text-ink">{t('collab.agents.create')}</span>
+      <span className="max-w-60 text-center text-[13px] leading-normal">{t('collab.agents.hireHint')}</span>
+    </button>
+  )
 }

@@ -1,87 +1,125 @@
-import { Archive, Bot, CalendarClock, MessageSquare, Pencil, RotateCcw } from 'lucide-react'
+import { Archive, CircleAlert, ClipboardCheck, Clock, Pencil, RotateCcw, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { CollabAgent, CollabRuntimeStatus } from '@/bridge/collab'
-import { Button } from '@/components/ui/button'
-import { useCollabNavigationStore } from '@/features/collab/collabNavigationStore'
-import { useRoomStore } from '@/features/collab/rooms/roomStore'
-import { useAgentStore } from './agentStore'
-import { agentActualState } from './agentRuntimeState'
+import type { CollabAgent } from '@/bridge/collab'
+import { AgentStatusTag, AgentStatusText } from '@/features/collab/components/AgentStatusBadge'
+import { agentStatusTag, type StatusTone } from '@/features/collab/components/agentStatus'
+import { ParticipantAvatar } from '@/features/collab/components/ParticipantAvatar'
+import { cn } from '@/lib/utils'
 
-export function AgentCard({ agent, runtime, onEdit }: { agent: CollabAgent; runtime: CollabRuntimeStatus | null; onEdit: () => void }) {
+const DOT_CLASSES: Record<StatusTone, string> = {
+  success: 'bg-status-success',
+  clay: 'bg-clay',
+  danger: 'bg-status-danger',
+  neutral: 'bg-line-strong',
+}
+
+/** Agent 卡片的操作；由页面接到 store 与导航。 */
+export interface AgentCardActions {
+  onEdit: () => void
+  onArchive: (archived: boolean) => void
+  onAgenda: (enabled: boolean) => void
+  onMessage: () => Promise<void>
+}
+
+/**
+ * Agent 卡片（collaboration-desktop.md §8）：头像带状态点、名字与 role、状态与 Engine 标签、
+ * 当前状态行（出错时为 danger 提示框）、persona 摘要、模型、Agenda 与私聊；编辑与归档在悬停时出现。
+ */
+export function AgentCard({ agent, now, actions }: { agent: CollabAgent, now: number, actions: AgentCardActions }) {
   const { t } = useTranslation()
-  const setAgenda = useAgentStore((state) => state.setAgenda)
-  const setArchived = useAgentStore((state) => state.setArchived)
-  const openDirect = useRoomStore((state) => state.openDirect)
-  const selectRoom = useCollabNavigationStore((state) => state.selectRoom)
-  const [openingChat, setOpeningChat] = useState(false)
+  const [opening, setOpening] = useState(false)
   const archived = agent.archivedAt !== null
-  const actual = agentActualState(runtime, agent)
-  const actualLabel = archived
-    ? t('collab.agents.archived')
-    : actual.kind === 'running'
-      ? t('collab.agents.running')
-      : actual.kind === 'error'
-        ? `${t('collab.agents.runnerError')}: ${actual.detail ?? t('collab.rooms.unknownFailure')}`
-        : t(`collab.agents.${actual.kind}`)
-  const tone = archived
-    ? 'bg-paper-hover text-ink-faint'
-    : actual.kind === 'running'
-      ? 'bg-status-success-soft text-status-success-ink'
-      : actual.kind === 'error' || actual.kind === 'engineError' || actual.kind === 'engineMissing'
-        ? 'bg-status-danger-soft text-status-danger-ink'
-        : 'bg-status-warning-soft text-status-warning-ink'
+  const tone = agentStatusTag(agent.activity).tone
 
-  async function openChat() {
-    if (openingChat) return
-    setOpeningChat(true)
-    const room = await openDirect(agent.id)
-    setOpeningChat(false)
-    if (room) selectRoom(room.id)
+  async function message() {
+    if (opening) return
+    setOpening(true)
+    try {
+      await actions.onMessage()
+    } finally {
+      setOpening(false)
+    }
   }
 
   return (
-    <article className="flex min-h-64 flex-col rounded-2xl border border-line bg-paper-hover p-4 transition hover:border-line-strong hover:shadow-sm">
-      <div className="flex items-start gap-3">
-        <span className="grid size-11 shrink-0 place-items-center rounded-full bg-clay-soft text-clay"><Bot size={20} /></span>
-        <div className="min-w-0 flex-1">
-          <strong className="block truncate text-base">{agent.displayName}</strong>
-          <span className="block truncate text-xs text-ink-faint">{agent.role || `@${agent.id}`}</span>
-        </div>
-        <Button type="button" size="icon" variant="ghost" className="size-8" aria-label={t('collab.agents.edit')} onClick={onEdit}>
-          <Pencil size={14} />
-        </Button>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
-        <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 ${tone}`} title={actualLabel}>
-          <span className="size-1.5 rounded-full bg-current" />
-          <span className="max-w-48 truncate">{actualLabel}</span>
-        </span>
-        <span className="rounded-full bg-paper px-2 py-1 text-ink-muted">OpenCode</span>
-        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${agent.agendaEnabled ? 'bg-clay-soft text-clay' : 'bg-paper text-ink-faint'}`}>
-          <CalendarClock size={11} />{agent.agendaEnabled ? t('collab.agents.proactiveOn') : t('collab.agents.proactiveOff')}
-        </span>
-      </div>
-
-      <p className="mt-3 line-clamp-3 flex-1 text-sm leading-6 text-ink-muted">{agent.persona}</p>
-      <div className="mt-3 rounded-xl bg-paper px-3 py-2">
-        <span className="block text-[10px] uppercase tracking-wide text-ink-faint">{t('collab.agents.mainModel')}</span>
-        <span className="mt-0.5 block truncate font-mono text-xs text-ink-muted" title={agent.mainModelId}>{agent.mainModelId}</span>
-      </div>
-
-      <div className="mt-4 flex items-center gap-2 border-t border-line pt-3">
-        <Button type="button" size="sm" variant="outline" className="flex-1" disabled={openingChat} onClick={() => void openChat()}>
-          <MessageSquare size={14} />{t('collab.agents.openChat')}
-        </Button>
-        <Button type="button" size="sm" variant={agent.agendaEnabled ? 'accent' : 'ghost'} disabled={archived} onClick={() => void setAgenda(agent.id, !agent.agendaEnabled)}>
-          <CalendarClock size={14} />
-        </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => void setArchived(agent.id, !archived)}>
+    <article className="group relative flex flex-col gap-3.5 rounded-2xl border border-line bg-surface p-5 transition hover:shadow-md">
+      <div className="absolute right-3.5 top-3.5 hidden gap-1 group-hover:flex group-focus-within:flex">
+        {archived ? null : (
+          <RoundButton label={t('collab.agents.editNamed', { name: agent.displayName })} onClick={actions.onEdit}><Pencil size={14} /></RoundButton>
+        )}
+        <RoundButton
+          label={t(archived ? 'collab.agents.restoreNamed' : 'collab.agents.archiveNamed', { name: agent.displayName })}
+          onClick={() => actions.onArchive(!archived)}
+        >
           {archived ? <RotateCcw size={14} /> : <Archive size={14} />}
-        </Button>
+        </RoundButton>
+      </div>
+      <div className="flex items-center gap-3.5">
+        <span className="relative inline-block shrink-0">
+          <ParticipantAvatar name={agent.displayName} isUser={false} size={52} ring={agent.activity.kind === 'working'} />
+          <span aria-hidden="true" className={cn('absolute bottom-0 right-0 size-[13px] rounded-full border-[3px] border-surface', DOT_CLASSES[tone])} />
+        </span>
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="truncate font-serif text-lg font-semibold">
+            {agent.displayName} <span className="font-sans text-[13px] font-normal text-ink-faint">@{agent.id}</span>
+          </span>
+          {agent.role ? <span className="truncate font-serif text-[13px] italic text-ink-soft">{agent.role}</span> : null}
+          <span className="flex gap-1.5">
+            <AgentStatusTag activity={agent.activity} />
+            <span className="rounded-full bg-code-bg px-2 py-0.5 text-[11px] text-ink-soft">OpenCode</span>
+          </span>
+        </div>
+      </div>
+      <StateLine agent={agent} now={now} />
+      <p className="line-clamp-3 whitespace-pre-line text-[13px] leading-relaxed text-ink-soft">{agent.persona}</p>
+      <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+        <span className="text-ink-faint">{t('collab.agents.mainModel')}</span><code className="truncate font-mono text-ink-soft" title={agent.mainModelId}>{agent.mainModelId}</code>
+        <span className="text-ink-faint">{t('collab.agents.triageModel')}</span><code className="truncate font-mono text-ink-soft" title={agent.triageModelId}>{agent.triageModelId}</code>
+      </div>
+      <div className="mt-auto flex items-center gap-2 border-t border-line pt-3">
+        <label className="flex flex-1 items-center gap-2 text-[13px] text-ink-soft">
+          <input type="checkbox" className="size-4 accent-clay" checked={agent.agendaEnabled} disabled={archived} onChange={(event) => actions.onAgenda(event.target.checked)} />
+          {t('collab.agents.agenda')}
+        </label>
+        <button type="button" disabled={archived || opening} className="h-8 rounded-lg bg-ink px-4 text-[13px] font-semibold text-paper disabled:opacity-40" onClick={() => void message()}>
+          {t('collab.agents.openChat')}
+        </button>
       </div>
     </article>
+  )
+}
+
+/** 当前状态行：出错时是 danger 提示框，其余是带图标的一行。 */
+function StateLine({ agent, now }: { agent: CollabAgent, now: number }) {
+  const { activity } = agent
+  if (activity.kind === 'archived') return null
+  if (activity.kind === 'error') {
+    return (
+      <div role="alert" className="flex items-start gap-2.5 rounded-xl bg-status-danger-soft px-3 py-2.5 text-[13px] leading-normal text-status-danger-ink">
+        <CircleAlert size={15} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words"><AgentStatusText activity={activity} now={now} /></span>
+      </div>
+    )
+  }
+  const icon = activity.kind === 'working'
+    ? <ClipboardCheck size={15} className="text-status-success-ink" />
+    : activity.kind === 'queued'
+      ? <Zap size={15} className="text-clay" />
+      : <Clock size={15} className="text-ink-soft" />
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl bg-paper-hover px-3 py-2.5 text-[13px]">
+      <span className="grid shrink-0">{icon}</span>
+      <span className="min-w-0 flex-1 truncate"><AgentStatusText activity={activity} now={now} /></span>
+    </div>
+  )
+}
+
+function RoundButton({ label, onClick, children }: { label: string, onClick: () => void, children: React.ReactNode }) {
+  return (
+    <button type="button" aria-label={label} title={label} className="grid size-[30px] place-items-center rounded-full border border-line bg-surface text-ink-soft hover:text-ink" onClick={onClick}>
+      {children}
+    </button>
   )
 }
