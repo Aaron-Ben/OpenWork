@@ -14,6 +14,7 @@ mod migration;
 mod observability;
 mod redis;
 mod rooms;
+mod routing;
 mod runs;
 mod runtime_session;
 mod scheduler;

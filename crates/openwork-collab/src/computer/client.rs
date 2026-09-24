@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 use crate::protocol::{
     AgendaDecisionRequest, AgendaDecisionResponse, AgendaPayload, AgentTokenResponse,
     AppendRunEventsRequest, ComputerHeartbeatRequest, DesiredAgents, EngineInventoryReport,
-    FinishRunRequest, InboxResponse, OpenRunRequest, RunView, TriagePayload, TriageReportRequest,
-    sse::reconnecting_invalidation_loop,
+    FinishRunRequest, InboxResponse, OpenRunRequest, ResponseMode, RunView, TriagePayload,
+    TriageReportRequest, sse::reconnecting_invalidation_loop,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -164,9 +164,17 @@ impl AgentClient {
         self.post_json("/agent/runs", request).await
     }
 
-    pub async fn triage_payload(&self, run_id: &str) -> Result<TriagePayload, RuntimeClientError> {
-        self.get_json(&format!("/agent/inbox-triage/payload?run_id={run_id}"))
-            .await
+    /// 本 Run 的 triage payload；`routed` 是路由题的答案（collaboration.md §8.2）。
+    pub async fn triage_payload(
+        &self,
+        run_id: &str,
+        routed: Option<ResponseMode>,
+    ) -> Result<TriagePayload, RuntimeClientError> {
+        let routed = routed.map_or(String::new(), |mode| format!("&routed={}", mode.as_str()));
+        self.get_json(&format!(
+            "/agent/inbox-triage/payload?run_id={run_id}{routed}"
+        ))
+        .await
     }
 
     pub async fn report_triage(

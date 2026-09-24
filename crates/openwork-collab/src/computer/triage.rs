@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::protocol::TriageVerdict;
+use crate::protocol::{ResponseMode, TriageVerdict};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,4 +114,52 @@ pub enum TriageParseError {
     Json(#[from] serde_json::Error),
     #[error("triage response reason was empty")]
     MissingReason,
+}
+
+/// 路由题的答案。只有明确写出 `"responseMode": "me"` 才算“给被点名的人”；其余任何输出
+/// 都按“给全员”处理（collaboration.md §8.2 fail-open，Cumora `parseRoute`）。
+pub fn parse_route(text: &str) -> ResponseMode {
+    let Some(start) = text.find("\"responseMode\"") else {
+        return ResponseMode::Each;
+    };
+    let rest = text[start + "\"responseMode\"".len()..].trim_start();
+    let Some(value) = rest.strip_prefix(':') else {
+        return ResponseMode::Each;
+    };
+    if value
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("\"me\"")
+    {
+        ResponseMode::Me
+    } else {
+        ResponseMode::Each
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_route;
+    use crate::protocol::ResponseMode;
+
+    /// collaboration.md §8.2、§16 #9：只有明确的 `me` 收窄，出错、截断、未知值都按参与处理。
+    #[test]
+    fn acc_09_only_an_explicit_me_narrows_the_route() {
+        assert_eq!(parse_route(r#"{"responseMode": "me"}"#), ResponseMode::Me);
+        assert_eq!(
+            parse_route("```json\n{\"responseMode\":\"ME\"}\n```"),
+            ResponseMode::Me
+        );
+        assert_eq!(
+            parse_route(r#"{"responseMode": "each"}"#),
+            ResponseMode::Each
+        );
+        assert_eq!(
+            parse_route(r#"{"responseMode": "one-of-us"}"#),
+            ResponseMode::Each
+        );
+        assert_eq!(parse_route(r#"{"responseMode": "#), ResponseMode::Each);
+        assert_eq!(parse_route("me"), ResponseMode::Each);
+        assert_eq!(parse_route(""), ResponseMode::Each);
+    }
 }

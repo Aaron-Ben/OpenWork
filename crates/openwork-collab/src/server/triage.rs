@@ -3,13 +3,46 @@ use std::{
     fmt::Write as _,
 };
 
-use crate::protocol::{TriagePayload, TriageReportRequest, TriageVerdict, entity_id};
+use crate::protocol::{
+    ResponseMode, RoutingRequest, TriagePayload, TriageReportRequest, TriageVerdict, entity_id,
+};
 use sqlx::{FromRow, PgPool};
 
 use super::{
     auth::{AgentClaims, authorize_agent_transaction},
     climate::Climate,
+    rooms::Rooms,
+    routing::{Addressing, HumanMessage, addressing, routing_request},
 };
+
+/// 人类消息进入正式 Turn 时给主模型的提示。
+const HUMAN_PROMPT_NOTE: &str = "A human is waiting. Read whom they addressed and respond only if this Agent is the intended teammate or the whole group was addressed.";
+
+/// 人类消息那一步的结果。
+enum HumanStep {
+    Decided(TriageVerdict),
+    Route(RoutingRequest),
+    RoutedAway,
+}
+
+fn verdict(actionable: bool, reason: &str, prompt_note: &str, source: &str) -> TriageVerdict {
+    TriageVerdict {
+        actionable,
+        reason: reason.to_string(),
+        prompt_note: prompt_note.to_string(),
+        source: source.to_string(),
+    }
+}
+
+fn decided(verdict: TriageVerdict, model: String) -> TriagePayload {
+    TriagePayload {
+        verdict: Some(verdict),
+        instructions: None,
+        input: None,
+        model,
+        routing: None,
+    }
+}
 
 const AGENT_LOOP_TRIAGE_INTERVAL: i64 = 8;
 pub(super) const AGENT_LOOP_HARD_CAP: i64 = 20;
@@ -24,10 +57,13 @@ impl InboxTriage {
         Self { pool }
     }
 
+    /// 为本 Run 的 delivery 构造 triage：能确定时直接给结论，需要模型时给 triage 题；本批人类消息
+    /// 全部点名了别人时先给路由题，`routed` 是 Computer 回答后的答案（collaboration.md §8.3）。
     pub async fn payload(
         &self,
         claims: &AgentClaims,
         run_id: &str,
+        routed: Option<ResponseMode>,
     ) -> Result<TriagePayload, sqlx::Error> {
         let (persona, role, model) = self.agent_profile(claims).await?;
         let context = self.context(claims, run_id).await?;
@@ -36,57 +72,160 @@ impl InboxTriage {
             .iter()
             .all(|message| message.message_kind == "system")
         {
-            return Ok(TriagePayload {
-                verdict: Some(TriageVerdict {
-                    actionable: false,
-                    reason: "unread delivery contains only system messages".to_string(),
-                    prompt_note: String::new(),
-                    source: "system_only".to_string(),
-                }),
-                instructions: None,
-                input: None,
+            return Ok(decided(
+                verdict(
+                    false,
+                    "unread delivery contains only system messages",
+                    "",
+                    "system_only",
+                ),
                 model,
-            });
+            ));
         }
-        if context
-            .unread
+        let mut unread = context.unread.iter().collect::<Vec<_>>();
+        let humans = unread
             .iter()
-            .any(|message| message.author_kind == "user")
-        {
-            return Ok(TriagePayload {
-                verdict: Some(TriageVerdict {
-                    actionable: true,
-                    reason: "unread delivery contains a human message".to_string(),
-                    prompt_note: "A human is waiting. Read whom they addressed and respond only if this Agent is the intended teammate or the whole group was addressed.".to_string(),
-                    source: "deterministic".to_string(),
-                }),
-                instructions: None,
-                input: None,
-                model,
-            });
+            .copied()
+            .filter(|message| message.author_kind == "user" && message.message_kind != "system")
+            .collect::<Vec<_>>();
+        if !humans.is_empty() {
+            match self.human_step(claims, &humans, routed).await? {
+                HumanStep::Decided(verdict) => return Ok(decided(verdict, model)),
+                HumanStep::Route(request) => {
+                    return Ok(TriagePayload {
+                        verdict: None,
+                        instructions: None,
+                        input: None,
+                        model,
+                        routing: Some(request),
+                    });
+                }
+                HumanStep::RoutedAway => {
+                    unread.retain(|message| message.author_kind != "user");
+                    if unread
+                        .iter()
+                        .all(|message| message.message_kind == "system")
+                    {
+                        return Ok(decided(
+                            verdict(
+                                false,
+                                "every human message was addressed to other teammates",
+                                "",
+                                "routing",
+                            ),
+                            model,
+                        ));
+                    }
+                }
+            }
         }
-        let real_unread = context
-            .unread
+        let real_unread = unread
             .iter()
+            .copied()
             .filter(|message| message.message_kind != "system")
             .collect::<Vec<_>>();
         if let Some(verdict) = agent_loop_verdict(&real_unread) {
-            return Ok(TriagePayload {
-                verdict: Some(verdict),
-                instructions: None,
-                input: None,
-                model,
-            });
+            return Ok(decided(verdict, model));
         }
+        let input = self
+            .model_input(claims, &persona, role.as_deref(), &unread, &context.recent)
+            .await?;
+        Ok(TriagePayload {
+            verdict: None,
+            instructions: Some(
+                "This unread delivery is agent-only. Decide whether it needs a full Agent turn. A specific request for this Agent's decision or action is actionable. If recent context shows a human is still waiting and the unread agent message advances that work, it is actionable. Pure acknowledgements, agreement, repetition, and open-ended agent chatter without concrete work are not actionable. A Room with agent_streak 20 or higher is hard capped: acknowledge it instead of replying. When unsure, prefer actionable. Return only JSON with: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string}. Do not answer the message and do not call tools."
+                    .to_string(),
+            ),
+            input: Some(input),
+            model,
+            routing: None,
+        })
+    }
+
+    /// 人类消息那一步：有任何一条需要本 Agent 参与时直接参与；全部点名了别人时，
+    /// 没有答案就出路由题，答 `each` 就参与，答 `me` 就把这些消息交还给后续步骤。
+    async fn human_step(
+        &self,
+        claims: &AgentClaims,
+        humans: &[&TriageMessage],
+        routed: Option<ResponseMode>,
+    ) -> Result<HumanStep, sqlx::Error> {
+        let room_ids = humans
+            .iter()
+            .map(|message| message.room_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let candidates = Rooms::agent_members(&self.pool, &room_ids).await?;
+        let empty = Vec::new();
+        let mut named = Vec::with_capacity(humans.len());
+        for message in humans {
+            let room_candidates = candidates.get(&message.room_id).unwrap_or(&empty);
+            let address = addressing(
+                &HumanMessage {
+                    body: &message.body,
+                    room_kind: &message.room_kind,
+                    quoted_agent_id: message.quoted_agent_id.as_deref(),
+                    candidates: room_candidates,
+                },
+                &claims.sub,
+            );
+            match address {
+                Addressing::Engage => {
+                    return Ok(HumanStep::Decided(verdict(
+                        true,
+                        "unread delivery contains a human message",
+                        HUMAN_PROMPT_NOTE,
+                        "deterministic",
+                    )));
+                }
+                Addressing::NamesOthers { targets } => {
+                    named.push((message.body.as_str(), targets, room_candidates));
+                }
+            }
+        }
+        Ok(match routed {
+            None => {
+                let questions = named
+                    .iter()
+                    .map(|(body, targets, candidates)| {
+                        (*body, targets.as_slice(), candidates.as_slice())
+                    })
+                    .collect::<Vec<_>>();
+                let (instructions, input) = routing_request(&questions);
+                HumanStep::Route(RoutingRequest {
+                    instructions,
+                    input,
+                })
+            }
+            Some(ResponseMode::Each) => HumanStep::Decided(verdict(
+                true,
+                "the named message is for the whole room",
+                HUMAN_PROMPT_NOTE,
+                "routing",
+            )),
+            Some(ResponseMode::Me) => HumanStep::RoutedAway,
+        })
+    }
+
+    /// triage 模型的输入：persona、私有 Climate、近期上下文与本批未读。
+    async fn model_input(
+        &self,
+        claims: &AgentClaims,
+        persona: &str,
+        role: Option<&str>,
+        unread: &[&TriageMessage],
+        recent: &[TriageMessage],
+    ) -> Result<String, sqlx::Error> {
         let mut input = format!(
             "Agent persona:\nrole: {}\npersona: {}\n",
-            role.as_deref().unwrap_or("unspecified"),
+            role.unwrap_or("unspecified"),
             persona,
         );
-        let participant_ids = context
-            .unread
+        let participant_ids = unread
             .iter()
-            .chain(&context.recent)
+            .copied()
+            .chain(recent)
             .map(|message| message.author_id.clone())
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -97,35 +236,26 @@ impl InboxTriage {
                 "\nPrivate Climate context (this Agent's subjective current impressions):\n",
             );
             for climate in climates {
-                let _ = writeln!(
-                    input,
-                    "about_participant_id: {}\naffinity: {}\ntrust: {}\nnote: {}\n",
+                input.push_str(&format!(
+                    "about_participant_id: {}\naffinity: {}\ntrust: {}\nnote: {}\n\n",
                     climate.about_participant_id,
                     climate.affinity,
                     climate.trust,
                     climate.last_note.as_deref().unwrap_or("none"),
-                );
+                ));
             }
         }
-        if !context.recent.is_empty() {
+        if !recent.is_empty() {
             input.push_str("\nRecent posted context:\n");
-            for message in &context.recent {
+            for message in recent {
                 append_message(&mut input, message);
             }
         }
         input.push_str("\nUnread durable inbox:\n");
-        for message in &context.unread {
+        for message in unread {
             append_message(&mut input, message);
         }
-        Ok(TriagePayload {
-            verdict: None,
-            instructions: Some(
-                "This unread delivery is agent-only. Decide whether it needs a full Agent turn. A specific request for this Agent's decision or action is actionable. If recent context shows a human is still waiting and the unread agent message advances that work, it is actionable. Pure acknowledgements, agreement, repetition, and open-ended agent chatter without concrete work are not actionable. A Room with agent_streak 20 or higher is hard capped: acknowledge it instead of replying. When unsure, prefer actionable. Return only JSON with: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string}. Do not answer the message and do not call tools."
-                    .to_string(),
-            ),
-            input: Some(input),
-            model,
-        })
+        Ok(input)
     }
 
     pub async fn report(
@@ -160,13 +290,17 @@ impl InboxTriage {
             "SELECT m.id, m.room_id, room.kind AS room_kind, m.sequence,
                     m.author_id, author.kind AS author_kind,
                     author.display_name AS author_name, m.kind AS message_kind, m.body,
-                    agent_chain.agent_streak
+                    agent_chain.agent_streak, quoted_author.id AS quoted_agent_id
              FROM collab_runs r
              JOIN collab_run_deliveries d ON d.run_id = r.id
              JOIN collab_messages m ON m.room_id = d.room_id
                 AND m.sequence BETWEEN d.from_seq AND d.up_to_seq
              JOIN collab_rooms room ON room.id = m.room_id
              JOIN collab_participants author ON author.id = m.author_id
+             LEFT JOIN collab_messages quoted
+               ON quoted.room_id = m.room_id AND quoted.id = m.quoted_message_id
+             LEFT JOIN collab_participants quoted_author
+               ON quoted_author.id = quoted.author_id AND quoted_author.kind = 'agent'
              JOIN LATERAL (
                  SELECT COUNT(*) AS agent_streak
                  FROM collab_messages trailing_message
@@ -204,7 +338,7 @@ impl InboxTriage {
                     message.sequence, message.author_id,
                     author.kind AS author_kind, author.display_name AS author_name,
                     message.kind AS message_kind, message.body,
-                    0::BIGINT AS agent_streak
+                    0::BIGINT AS agent_streak, NULL::TEXT AS quoted_agent_id
              FROM collab_runs run
              JOIN collab_run_deliveries delivery ON delivery.run_id = run.id
              JOIN collab_room_members member
@@ -243,7 +377,12 @@ impl InboxTriage {
         authorize_agent_transaction(&mut transaction, claims).await?;
         if !matches!(
             request.verdict.source.as_str(),
-            "local_model" | "deterministic" | "system_only" | "agent_dm_engage" | "loop_cap"
+            "local_model"
+                | "deterministic"
+                | "system_only"
+                | "agent_dm_engage"
+                | "loop_cap"
+                | "routing"
         ) {
             return Err(protocol_error("INVALID_ARGUMENT: invalid triage source"));
         }
@@ -293,10 +432,10 @@ impl InboxTriage {
                 "INSERT INTO collab_triages (
                     id, run_id, agent_id, runtime_session_id, room_id, up_to_seq,
                     actionable, source, reason, prompt_note, engine_id, model_id,
-                    input_tokens, output_tokens, latency_ms
+                    input_tokens, output_tokens, latency_ms, response_mode
                  )
                  SELECT $1, $2, $3, $4, $5, $6, $7, $8,
-                        $9, $10, $11, $12, $13, $14, $15
+                        $9, $10, $11, $12, $13, $14, $15, $16
                  WHERE NOT EXISTS (
                     SELECT 1 FROM collab_triages
                     WHERE run_id = $2 AND room_id = $5
@@ -321,6 +460,7 @@ impl InboxTriage {
             .bind(request.input_tokens)
             .bind(request.output_tokens)
             .bind(request.latency_ms)
+            .bind(request.response_mode.map(ResponseMode::as_str))
             .execute(&mut *transaction)
             .await?;
             if !request.verdict.actionable {
@@ -400,6 +540,8 @@ struct TriageMessage {
     message_kind: String,
     body: String,
     agent_streak: i64,
+    /// 被引用消息的作者，只在作者是 Agent 时有值。
+    quoted_agent_id: Option<String>,
 }
 
 fn append_message(input: &mut String, message: &TriageMessage) {
@@ -438,6 +580,7 @@ mod tests {
             author_name: "Peer".to_string(),
             message_kind: "normal".to_string(),
             body: "hello".to_string(),
+            quoted_agent_id: None,
             agent_streak,
         }
     }

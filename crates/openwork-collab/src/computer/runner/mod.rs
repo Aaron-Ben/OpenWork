@@ -25,6 +25,8 @@ use super::{
     triage::parse_triage,
 };
 
+mod routing;
+
 const AGENDA_QUIET_WINDOW: Duration = Duration::from_secs(90);
 const AGENDA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -205,8 +207,9 @@ impl AgentRunner {
             serde_json::json!({"configuredModelId": self.assignment.triage_model_id}),
         )
         .await;
-        let payload = match self.client.triage_payload(&run.id).await {
-            Ok(payload) => payload,
+        let triage_started = Instant::now();
+        let routed = match self.routed_triage_payload(&run.id, &cancellation).await {
+            Ok(routed) => routed,
             Err(error) => {
                 let message = error.to_string();
                 self.finish_or_queue(
@@ -225,7 +228,7 @@ impl AgentRunner {
                 return Ok(());
             }
         };
-        let triage_started = Instant::now();
+        let payload = routed.payload;
         let (verdict, triage_usage, triage_model) = if let Some(verdict) = payload.verdict {
             (verdict, EngineUsage::default(), payload.model)
         } else {
@@ -285,9 +288,10 @@ impl AgentRunner {
             run_id: run.id.clone(),
             verdict: verdict.clone(),
             model: triage_model,
-            input_tokens: Some(triage_usage.input_tokens as i64),
-            output_tokens: Some(triage_usage.output_tokens as i64),
+            input_tokens: Some((triage_usage.input_tokens + routed.usage.input_tokens) as i64),
+            output_tokens: Some((triage_usage.output_tokens + routed.usage.output_tokens) as i64),
             latency_ms: Some(triage_started.elapsed().as_millis() as i64),
+            response_mode: routed.mode,
         };
         if let Err(error) = self.client.report_triage(&report).await {
             self.finish_or_queue(

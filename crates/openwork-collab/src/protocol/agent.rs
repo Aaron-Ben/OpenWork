@@ -9,6 +9,35 @@ pub struct TriagePayload {
     pub instructions: Option<String>,
     pub input: Option<String>,
     pub model: String,
+    /// 本批人类消息全部点名了别人时的路由题；答案经 `routed` 参数再请求一次 payload
+    /// 得到最终结论（collaboration.md §8.2）。
+    pub routing: Option<RoutingRequest>,
+}
+
+/// 交给本 Agent triage 模型的路由题，答案是 [`ResponseMode`]。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingRequest {
+    pub instructions: String,
+    pub input: String,
+}
+
+/// 路由题的答案：`Me` 表示消息是给被点名的人的，`Each` 表示给全员。
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseMode {
+    Me,
+    Each,
+}
+
+impl ResponseMode {
+    /// 存进 `collab_triages.response_mode` 的值。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Me => "me",
+            Self::Each => "each",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -29,6 +58,8 @@ pub struct TriageReportRequest {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub latency_ms: Option<i64>,
+    /// 本次判定前回答过路由题时的答案。
+    pub response_mode: Option<ResponseMode>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

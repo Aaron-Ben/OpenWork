@@ -306,14 +306,20 @@ Scheduler 按消息 ID 在 Redis 去重后，唤醒房间内除作者外的 acti
 
 以下情况**不收窄**：消息含 `@all`；Direct Room；没有点名对象；点名对象已覆盖全部接收者。
 
-**判断**在每个接收者自己的 triage 中进行（§8.3 第 2 步）。Server 不调用模型（§1 第 3 条），所以不能像 Cumora 那样每条消息只调一次；每个未被点名的 Agent 各用自己的 triage 模型回答同一道题：
+**判断**在每个接收者自己的 triage 中进行（§8.3 第 2′ 步）。Server 不调用模型（§1 第 3 条），所以不能像 Cumora 那样每条消息只调一次；每个未被点名的 Agent 各用自己的 triage 模型回答同一道题。题目照 Cumora `routing.ts`，改为可以一次判断本批的多条消息：
 
 ```text
-The message explicitly names one or more agents. Decide whether it is aimed at THEM, or at the room.
-Answer "me" when the named agents are the ones expected to act or reply.
-Answer "each" when the whole room is still expected to engage.
-When you are unsure, answer "each".
+You route messages in a team chat where some teammates are AI agents.
+Each message below explicitly names one or more agents. Decide whether the messages are aimed at THEM, or at the room.
+Answer "me" when the named agents are the ones expected to act or reply — a direct request, an assignment, a question put to them.
+Answer "each" when the whole room is still expected to engage — an open question that merely cites someone, a broadcast, a roll call, a request for several independent opinions. If any message is aimed at the room, answer "each".
+When you are unsure, answer "each". Waking an extra agent costs tokens; failing to wake the right one loses the message.
+Respond ONLY with a single JSON object: {"responseMode": "me"|"each"}.
 ```
+
+每条消息的输入是 `Named agents: …`、`Other agents in the room: …` 与正文（前 2000 字），多条之间用 `---` 分隔。
+
+流程：Server 在 triage payload 里给出路由题（`routing`），不给结论；Computer 回答后带着答案（`routed=me|each`）再取一次 payload，Server 据此给出最终结论。每个 Run 只记录一次 triage 结论，路由题的答案随最终结论写入 `collab_triages.response_mode`。
 
 - 答 `me`：本 Agent 不参与，triage 记 `actionable = false`、`source = routing`，delivery 以 `triage_false` 结算，之后的 poll 不会再为这条消息唤醒它；下次醒来时它仍能在房间里读到这条消息；
 - 答 `each`、模型出错、超时或答案无法解析：按参与处理（fail-open）。漏掉该回答的人不会留下任何痕迹，多跑一次只多花 token。

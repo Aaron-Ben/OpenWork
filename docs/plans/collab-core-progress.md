@@ -13,7 +13,8 @@
 | U1、U2 | 未开始 | |
 | K1 | 完成 | `computer/prompt.rs` 渲染增量（从 `runner.rs` 移出，runner.rs 879→795 行）；inbox 增加 `rooms` 与 `team`；`AGENTS.md` 契约增加 Addressing 一节；fake OpenCode 改为从 `# room-…` 标题行取房间 |
 | K5 | 完成（后端、CLI、Agent 提示与 Desktop bridge；Desktop 界面在 U2） | 迁移 `202609240002_message_quotes.sql`（`(room_id, id)` 唯一约束 + 同房间复合外键）；`MessageView.quoted`；`reply --quote`；Desktop `collab_message_send` 增加 `quotedMessageId`；引用穿透 mute（inbox 与唤醒）；inbox/glance/messages 与增量显示消息 id 和引用行；`AGENTS.md` 补 `--quote`；`Messages::views` 统一补齐引用摘要，`insert` 改用 `NewMessage` 结构（原 6 个参数） |
-| K2–K4、K6–K7 | 未开始 | |
+| K2 | 完成 | `server/routing.rs`（点名对象、`@all`、路由题）；triage payload 增加 `routing` 与 `routed` 参数，人类消息那一步拆成 `human_step`；`collab_triages.source` 增加 `routing`（迁移 `202609240003`），最终结论写入 `response_mode`；Computer 端 `runner.rs` 改为 `runner/mod.rs` + `runner/routing.rs`，`parse_route` 只认明确的 `me` |
+| K3–K4、K6–K7 | 未开始 | |
 
 ## 2. 已定决策
 
@@ -61,6 +62,9 @@
 
 - 2026-09-24 K5：验收 §16 #12 → `messaging::acc_12_quotes_stay_in_the_room_and_reach_a_muted_author`（先因字段不存在编译失败，实现后通过）、`computer::shim::tests::acc_12_reply_takes_a_quote_before_the_body`、`acc_12_message_listings_show_ids_and_quoted_originals`、`computer::prompt::tests::acc_12_quoted_messages_show_the_original_under_the_reply`、`bridge/collab.test.ts` 的 quoted send 用例。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。唤醒路径（`wake_recipients`）的引用例外没有独立测试，由 inbox 路径覆盖投递正确性。
 - 2026-09-24 K5 真实模型实测（`deepseek/deepseek-flash`，不预置目录，临时测试跑完已删）：点名结果不变（只有 Bo、只有 Ada，回答正确，10 个 Run 全部 completed）；Bo 与 Ada 都主动用 `openwork reply <room> --quote <被回答的用户消息 id> <text>` 一次发布成功，没有多余命令。
+
+- 2026-09-24 K2：验收 §16 #9 → `server::routing::tests::acc_09_only_messages_naming_other_agents_are_routed`、`mention_boundaries_match_the_mute_exception`、`routing_request_lists_named_and_other_agents`、`computer::triage::tests::acc_09_only_an_explicit_me_narrows_the_route`、`messaging::acc_09_a_message_naming_one_agent_asks_the_others_to_route_it`。纯函数测试与实现同时写成，没有先看到失败；服务端验收测试写完后直接通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
+- 2026-09-24 K2 真实模型实测（`deepseek/deepseek-flash`，三 Agent 群，临时测试跑完已删）：`@bo …` 提问 → Ada、Cy 路由题答 `me`，以 `routing` 跳过、不跑主模型，只有 Bo 回复；`@bo suggested … What does everyone think?` → Ada、Cy 答 `each`，三人都回复。之后 Ada、Cy 各自又接了一轮（Agent 消息经 triage 模型判为 actionable），这是 K3 lap floor 要处理的情况。12 个 Run 全部 completed。
 
 ## 5. 待定
 

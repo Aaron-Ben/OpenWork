@@ -4,8 +4,8 @@ use openwork_collab::{
     protocol::{
         AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
         AgentTokenResponse, AgentView, DesktopCommand, DesktopCommandRequest, DesktopCommandResult,
-        FinishRunRequest, InboxResponse, OpenRunRequest, QuotedMessageView, RoomView, RunView,
-        TeamMember, TriagePayload, request_id,
+        FinishRunRequest, InboxResponse, OpenRunRequest, QuotedMessageView, ResponseMode, RoomView,
+        RunView, TeamMember, TriagePayload, TriageReportRequest, request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -202,6 +202,35 @@ impl Fixture {
             .json()
             .await
             .unwrap()
+    }
+
+    async fn triage_routed(&self, token: &str, run_id: &str, routed: &str) -> TriagePayload {
+        self.http
+            .get(format!(
+                "{}/agent/inbox-triage/payload?run_id={run_id}&routed={routed}",
+                self.base_url
+            ))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    async fn report_triage(&self, token: &str, request: &TriageReportRequest) {
+        self.http
+            .post(format!("{}/agent/triage", self.base_url))
+            .bearer_auth(token)
+            .json(request)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
     }
 
     async fn triage(&self, token: &str, run_id: &str) -> TriagePayload {
@@ -504,6 +533,115 @@ async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room
     assert!(inbox.messages.iter().any(|message| {
         message.room_id == quiet.id && message.body == "quiet room must keep its own inbox window"
     }));
+
+    fixture.stop().await;
+}
+
+/// collaboration.md §8.2、§8.3、§16 #9：人类只点名 Bo 时，Bo 直接参与；Ada 先拿到路由题，
+/// 答 `me` 时以 `routing` 跳过并结算 delivery、记下 response_mode，答 `each` 时参与；
+/// `@all` 永不收窄。
+#[tokio::test]
+async fn acc_09_a_message_naming_one_agent_asks_the_others_to_route_it() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let ada = fixture.create_agent("Ada").await;
+    let bo = fixture.create_agent("Bo").await;
+    let cy = fixture.create_agent("Cy").await;
+    let group = fixture
+        .create_group(vec![ada.id.clone(), bo.id.clone(), cy.id.clone()])
+        .await;
+    fixture
+        .send_user(&group.id, &format!("@{} check the migration", bo.id))
+        .await;
+
+    let bo_token = fixture.token(&bo.id).await;
+    let bo_inbox = fixture.inbox(&bo_token).await;
+    let bo_run = fixture.open_run(&bo_token, &bo_inbox).await;
+    let bo_verdict = fixture.triage(&bo_token, &bo_run.id).await.verdict.unwrap();
+    assert_eq!(
+        (bo_verdict.actionable, bo_verdict.source.as_str()),
+        (true, "deterministic")
+    );
+
+    let ada_token = fixture.token(&ada.id).await;
+    let ada_inbox = fixture.inbox(&ada_token).await;
+    let ada_run = fixture.open_run(&ada_token, &ada_inbox).await;
+    let question = fixture.triage(&ada_token, &ada_run.id).await;
+    assert_eq!(question.verdict, None);
+    let routing = question
+        .routing
+        .expect("Ada must be asked to route the message");
+    assert_eq!(
+        routing.input,
+        format!(
+            "Named agents: {}\nOther agents in the room: {}, {}\n\nMessage:\n@{} check the migration",
+            bo.id, ada.id, cy.id, bo.id
+        )
+    );
+    let narrowed = fixture
+        .triage_routed(&ada_token, &ada_run.id, "me")
+        .await
+        .verdict
+        .unwrap();
+    assert_eq!(
+        (
+            narrowed.actionable,
+            narrowed.source.as_str(),
+            narrowed.reason.as_str()
+        ),
+        (
+            false,
+            "routing",
+            "every human message was addressed to other teammates"
+        )
+    );
+    fixture
+        .report_triage(
+            &ada_token,
+            &TriageReportRequest {
+                run_id: ada_run.id.clone(),
+                verdict: narrowed,
+                model: "local/triage".to_string(),
+                input_tokens: Some(40),
+                output_tokens: Some(5),
+                latency_ms: Some(10),
+                response_mode: Some(ResponseMode::Me),
+            },
+        )
+        .await;
+    fixture.finish(&ada_token, &ada_run.id, "completed").await;
+    let recorded: (String, Option<String>) =
+        sqlx::query_as("SELECT source, response_mode FROM collab_triages WHERE run_id = $1")
+            .bind(&ada_run.id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded, ("routing".to_string(), Some("me".to_string())));
+    assert!(fixture.inbox(&ada_token).await.trigger.is_none());
+
+    let cy_token = fixture.token(&cy.id).await;
+    let cy_inbox = fixture.inbox(&cy_token).await;
+    let cy_run = fixture.open_run(&cy_token, &cy_inbox).await;
+    let engaged = fixture
+        .triage_routed(&cy_token, &cy_run.id, "each")
+        .await
+        .verdict
+        .unwrap();
+    assert_eq!(
+        (engaged.actionable, engaged.source.as_str()),
+        (true, "routing")
+    );
+    fixture.finish(&cy_token, &cy_run.id, "completed").await;
+
+    fixture
+        .send_user(&group.id, &format!("@all and @{} please weigh in", bo.id))
+        .await;
+    let ada_inbox = fixture.inbox(&ada_token).await;
+    let ada_run = fixture.open_run(&ada_token, &ada_inbox).await;
+    let broadcast = fixture.triage(&ada_token, &ada_run.id).await;
+    assert!(broadcast.routing.is_none());
+    assert_eq!(broadcast.verdict.unwrap().source, "deterministic");
 
     fixture.stop().await;
 }

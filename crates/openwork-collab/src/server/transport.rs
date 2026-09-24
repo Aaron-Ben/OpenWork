@@ -18,7 +18,7 @@ use crate::protocol::{
     AgentCommandRequest, AgentCommandResponse, AgentTokenResponse, ApiError,
     AppendRunEventsRequest, ComputerHeartbeatRequest, DesiredAgents, DesktopCommandRequest,
     DesktopCommandResult, EngineInventoryReport, FinishRunRequest, InboxResponse,
-    InvalidationEvent, InvalidationKind, OpenRunRequest, RunView, TriagePayload,
+    InvalidationEvent, InvalidationKind, OpenRunRequest, ResponseMode, RunView, TriagePayload,
     TriageReportRequest, entity_id,
 };
 
@@ -228,17 +228,23 @@ async fn inbox(
 }
 
 #[derive(Deserialize)]
-struct RunIdQuery {
+struct TriagePayloadQuery {
     run_id: String,
+    routed: Option<ResponseMode>,
 }
 
 async fn triage_payload(
     State(state): State<TransportState>,
     headers: HeaderMap,
-    Query(query): Query<RunIdQuery>,
+    Query(query): Query<TriagePayloadQuery>,
 ) -> Result<Json<TriagePayload>, TransportError> {
     let claims = agent_claims(&state, &headers).await?;
-    Ok(Json(state.triage.payload(&claims, &query.run_id).await?))
+    Ok(Json(
+        state
+            .triage
+            .payload(&claims, &query.run_id, query.routed)
+            .await?,
+    ))
 }
 
 async fn report_triage(

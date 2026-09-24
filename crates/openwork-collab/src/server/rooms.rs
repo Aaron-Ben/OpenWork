@@ -122,6 +122,28 @@ impl Rooms {
         .map(|rows| rows.into_iter().map(RoomView::from).collect())
     }
 
+    /// `room_ids` 中每个房间的 active Agent 成员，按 ID 排序（collaboration.md §8.2 的点名候选）。
+    pub(crate) async fn agent_members(
+        pool: &PgPool,
+        room_ids: &[String],
+    ) -> Result<std::collections::BTreeMap<String, Vec<String>>, sqlx::Error> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT member.room_id, member.participant_id
+             FROM collab_room_members member
+             JOIN collab_agent_profiles profile ON profile.agent_id = member.participant_id
+             WHERE member.room_id = ANY($1) AND profile.archived_at IS NULL
+             ORDER BY member.room_id, member.participant_id",
+        )
+        .bind(room_ids)
+        .fetch_all(pool)
+        .await?;
+        let mut members = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for (room_id, agent_id) in rows {
+            members.entry(room_id).or_default().push(agent_id);
+        }
+        Ok(members)
+    }
+
     /// `room_ids` 对应的房间，按 ID 排序；标题是存储的原值，Direct Room 为空。
     pub(crate) async fn views(
         pool: &PgPool,
