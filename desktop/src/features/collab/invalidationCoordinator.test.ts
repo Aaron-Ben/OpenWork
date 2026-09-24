@@ -70,12 +70,27 @@ describe('collaboration invalidation coordinator', () => {
     expect(visible.boards).toHaveBeenCalledOnce()
   })
 
-  it('refreshes runtime and the active run projection after runner changes', async () => {
+  it('refreshes runtime and Agent activity after runner changes', async () => {
     const actions = refreshers()
 
     await refreshForInvalidation(invalidation('runner_status'), context, actions)
 
     expect(actions.runtime).toHaveBeenCalledOnce()
-    expect(actions.messages).toHaveBeenCalledWith('room-a')
+    expect(actions.agents).toHaveBeenCalledOnce()
+    expect(actions.messages).not.toHaveBeenCalled()
+    expect(actions.boards).not.toHaveBeenCalled()
+  })
+
+  it('refreshes Agents, and boards while visible, when an Agent activity changes', async () => {
+    const rooms = refreshers()
+    await refreshForInvalidation(invalidation('agent_activity', 'ada'), context, rooms)
+    expect(rooms.agents).toHaveBeenCalledOnce()
+    expect(rooms.boards).not.toHaveBeenCalled()
+    expect(rooms.messages).not.toHaveBeenCalled()
+
+    const boards = refreshers()
+    await refreshForInvalidation(invalidation('agent_activity', 'ada'), { ...context, view: 'boards' }, boards)
+    expect(boards.agents).toHaveBeenCalledOnce()
+    expect(boards.boards).toHaveBeenCalledOnce()
   })
 })

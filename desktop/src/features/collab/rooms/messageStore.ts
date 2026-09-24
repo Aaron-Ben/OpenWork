@@ -1,12 +1,11 @@
 import { create } from 'zustand'
 
-import { collabCommands, type CollabMessage, type CollabRun } from '@/bridge/collab'
+import { collabCommands, type CollabMessage } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
 import { nextViewedSequence } from './roomViewed'
 
 export interface MessageWindow {
   messages: CollabMessage[]
-  runs: CollabRun[]
   loading: boolean
   error: string | null
 }
@@ -39,7 +38,7 @@ export const useMessageStore = create<MessageStoreState>((set, get) => ({
   open: async (roomId) => {
     const version = (openVersions.get(roomId) ?? 0) + 1
     openVersions.set(roomId, version)
-    const current = get().byRoom[roomId] ?? { messages: [], runs: [], loading: false, error: null }
+    const current = get().byRoom[roomId] ?? { messages: [], loading: false, error: null }
     set({
       byRoom: {
         ...get().byRoom,
@@ -47,12 +46,9 @@ export const useMessageStore = create<MessageStoreState>((set, get) => ({
       },
     })
     try {
-      const [messages, runs] = await Promise.all([
-        collabCommands.listMessages(roomId),
-        collabCommands.listRuns(),
-      ])
+      const messages = await collabCommands.listMessages(roomId)
       if (openVersions.get(roomId) !== version) return
-      set({ byRoom: { ...get().byRoom, [roomId]: { messages, runs, loading: false, error: null } } })
+      set({ byRoom: { ...get().byRoom, [roomId]: { messages, loading: false, error: null } } })
       await reportViewed(roomId, messages)
     } catch (error) {
       if (openVersions.get(roomId) !== version) return

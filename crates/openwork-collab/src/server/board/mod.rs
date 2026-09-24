@@ -650,6 +650,7 @@ impl From<CardRow> for CardView {
             position: row.position,
             assignee_id: row.assignee_id,
             created_by: row.created_by,
+            agent_state: None,
         }
     }
 }
@@ -703,6 +704,7 @@ fn assemble(rows: Vec<BoardRow>) -> Vec<BoardView> {
                     position,
                     assignee_id: row.assignee_id,
                     created_by,
+                    agent_state: None,
                 });
         }
     }

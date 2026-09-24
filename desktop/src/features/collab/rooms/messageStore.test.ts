@@ -2,14 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CollabMessage } from '@/bridge/collab'
 
-const { markRoomViewed, listMessages, listRuns } = vi.hoisted(() => ({
+const { markRoomViewed, listMessages } = vi.hoisted(() => ({
   markRoomViewed: vi.fn(async (_roomId: string, upToSeq: number) => upToSeq),
   listMessages: vi.fn(async (): Promise<CollabMessage[]> => []),
-  listRuns: vi.fn(async () => []),
 }))
 
 vi.mock('@/bridge/collab', () => ({
-  collabCommands: { markRoomViewed, listMessages, listRuns },
+  collabCommands: { markRoomViewed, listMessages },
 }))
 
 import { useMessageStore } from './messageStore'
@@ -65,5 +64,23 @@ describe('useMessageStore.markViewed', () => {
     setForeground(true)
     await useMessageStore.getState().markViewed('room-unknown')
     expect(markRoomViewed).not.toHaveBeenCalled()
+  })
+})
+
+describe('useMessageStore.open', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // collaboration-desktop.md §4.1：“正在处理”来自 Agent 的 activity，房间窗口不再读取 Run 列表。
+  it('loads only the room messages', async () => {
+    setForeground(false)
+    listMessages.mockResolvedValue([message(2)])
+    await useMessageStore.getState().open('room-3')
+    expect(useMessageStore.getState().byRoom['room-3']).toEqual({
+      messages: [message(2)],
+      loading: false,
+      error: null,
+    })
   })
 })

@@ -41,7 +41,23 @@ export interface CollabAgent {
   configRevision: number
   agendaEnabled: boolean
   archivedAt: string | null
+  activity: CollabAgentActivity
 }
+
+/** Agent 现在在做什么（collaboration-desktop.md §4.1）；时间是带 `+08:00` 的 RFC 3339。 */
+export type CollabAgentActivity =
+  | {
+    kind: 'working'
+    roomId: string | null
+    roomTitle: string | null
+    cardId: string | null
+    cardTitle: string | null
+    startedAt: string
+  }
+  | { kind: 'queued', cardCount: number, firstCardTitle: string }
+  | { kind: 'error', message: string }
+  | { kind: 'idle', roomId: string | null, roomTitle: string | null, lastSpokeAt: string | null }
+  | { kind: 'archived' }
 
 export interface CollabAgentInput {
   displayName: string
@@ -90,7 +106,11 @@ export interface CollabCard {
   position: number
   assigneeId: string | null
   createdBy: string
+  /** 负责人对这张卡片的当前状态（collaboration-desktop.md §4.3）；没有时 Rust 不发这个字段。 */
+  agentState?: CollabCardAgentState
 }
+
+export type CollabCardAgentState = 'working' | 'queued'
 
 /** Column 的语义（collaboration.md §11.1）；`null` 表示未分类。 */
 export type CollabColumnKind = 'todo' | 'doing' | 'done'

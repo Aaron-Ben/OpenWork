@@ -14,6 +14,7 @@ const agent: CollabAgent = {
   configRevision: 3,
   agendaEnabled: true,
   archivedAt: null,
+  activity: { kind: 'idle', roomId: null, roomTitle: null, lastSpokeAt: null },
 }
 
 function runtime(

@@ -2,7 +2,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 use uuid::Uuid;
 
-use crate::protocol::{AgentAssignment, AgentView, EngineId, ParticipantView, TeamMember};
+use crate::protocol::{AgentAssignment, EngineId, ParticipantView, TeamMember};
 
 /// 创建与更新 Agent 时由用户填写的字段。
 pub(crate) struct AgentFields<'a> {
@@ -27,7 +27,7 @@ impl Agents {
     pub(crate) async fn create_in(
         transaction: &mut Transaction<'_, Postgres>,
         fields: AgentFields<'_>,
-    ) -> Result<AgentView, sqlx::Error> {
+    ) -> Result<AgentRecord, sqlx::Error> {
         let AgentFields {
             display_name,
             role,
@@ -93,7 +93,7 @@ impl Agents {
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,
         enabled: bool,
-    ) -> Result<AgentView, sqlx::Error> {
+    ) -> Result<AgentRecord, sqlx::Error> {
         let result = sqlx::query(
             "UPDATE collab_agent_runtime_configs config
              SET agenda_enabled = $2,
@@ -117,7 +117,7 @@ impl Agents {
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,
         fields: AgentFields<'_>,
-    ) -> Result<AgentView, sqlx::Error> {
+    ) -> Result<AgentRecord, sqlx::Error> {
         let AgentFields {
             display_name,
             role,
@@ -179,7 +179,7 @@ impl Agents {
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,
         archived: bool,
-    ) -> Result<AgentView, sqlx::Error> {
+    ) -> Result<AgentRecord, sqlx::Error> {
         let result = sqlx::query(
             "UPDATE collab_agent_profiles
              SET archived_at = CASE WHEN $2
@@ -211,19 +211,19 @@ impl Agents {
     pub(crate) async fn get_in(
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,
-    ) -> Result<AgentView, sqlx::Error> {
+    ) -> Result<AgentRecord, sqlx::Error> {
         sqlx::query_as::<_, AgentViewRow>(&agent_view_query("WHERE participant.id = $1"))
             .bind(agent_id)
             .fetch_one(&mut **transaction)
             .await
-            .map(AgentView::from)
+            .map(AgentRecord::from)
     }
 
-    pub(crate) async fn list(&self) -> Result<Vec<AgentView>, sqlx::Error> {
+    pub(crate) async fn list(&self) -> Result<Vec<AgentRecord>, sqlx::Error> {
         sqlx::query_as::<_, AgentViewRow>(&agent_view_query("ORDER BY participant.id"))
             .fetch_all(&self.pool)
             .await
-            .map(|rows| rows.into_iter().map(AgentView::from).collect())
+            .map(|rows| rows.into_iter().map(AgentRecord::from).collect())
     }
 
     pub(crate) async fn assignments(&self) -> Result<Vec<AgentAssignment>, sqlx::Error> {
@@ -383,7 +383,21 @@ struct AgentViewRow {
     archived_at: Option<String>,
 }
 
-impl From<AgentViewRow> for AgentView {
+/// 一个 Agent 的 profile 与运行配置；Desktop 看到的 `AgentView` 由 `Activities` 补上当前状态后组装。
+pub(crate) struct AgentRecord {
+    pub(crate) id: String,
+    pub(crate) display_name: String,
+    pub(crate) role: Option<String>,
+    pub(crate) persona: String,
+    pub(crate) engine_id: String,
+    pub(crate) main_model_id: String,
+    pub(crate) triage_model_id: String,
+    pub(crate) config_revision: i64,
+    pub(crate) agenda_enabled: bool,
+    pub(crate) archived_at: Option<String>,
+}
+
+impl From<AgentViewRow> for AgentRecord {
     fn from(row: AgentViewRow) -> Self {
         Self {
             id: row.id,

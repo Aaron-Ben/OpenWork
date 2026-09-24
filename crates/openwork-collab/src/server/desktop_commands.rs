@@ -8,7 +8,8 @@ use crate::protocol::{
 };
 
 use super::{
-    agents::{AgentFields, Agents},
+    activity::Activities,
+    agents::{AgentFields, AgentRecord, Agents},
     board::{Board, BoardOperationError, CardEdit},
     card_wakes::CardWakes,
     inventory::EngineInventory,
@@ -102,9 +103,14 @@ impl DesktopCommands {
                 engine_readiness: self.session.engine_readiness(),
                 runners: self.session.runner_statuses(),
             })),
-            DesktopCommand::ListAgents => Ok(DesktopCommandResult::Agents {
-                agents: self.agents.list().await?,
-            }),
+            DesktopCommand::ListAgents => {
+                let records = self.agents.list().await?;
+                let mut connection = self.pool.acquire().await?;
+                let runners = self.session.runner_statuses();
+                Ok(DesktopCommandResult::Agents {
+                    agents: Activities::views_in(&mut connection, records, &runners).await?,
+                })
+            }
             DesktopCommand::ListRooms => Ok(DesktopCommandResult::Rooms {
                 rooms: self.rooms.list().await?,
             }),
@@ -120,9 +126,13 @@ impl DesktopCommands {
                     room_id,
                 })
             }
-            DesktopCommand::ListBoards => Ok(DesktopCommandResult::Boards {
-                boards: self.board.list().await?,
-            }),
+            DesktopCommand::ListBoards => {
+                let boards = self.board.list().await?;
+                let mut connection = self.pool.acquire().await?;
+                Ok(DesktopCommandResult::Boards {
+                    boards: Activities::boards_in(&mut connection, boards).await?,
+                })
+            }
             DesktopCommand::ListRuns {
                 agent_id,
                 status,
@@ -168,13 +178,11 @@ impl DesktopCommands {
                     },
                 )
                 .await?;
-                let effect = agent_effect(&agent);
-                (DesktopCommandResult::Agent(agent), vec![effect])
+                self.agent_result(transaction, agent).await?
             }
             DesktopCommand::SetAgentAgenda { agent_id, enabled } => {
                 let agent = Agents::set_agenda_in(transaction, &agent_id, enabled).await?;
-                let effect = agent_effect(&agent);
-                (DesktopCommandResult::Agent(agent), vec![effect])
+                self.agent_result(transaction, agent).await?
             }
             DesktopCommand::UpdateAgent {
                 agent_id,
@@ -198,18 +206,15 @@ impl DesktopCommands {
                     },
                 )
                 .await?;
-                let effect = agent_effect(&agent);
-                (DesktopCommandResult::Agent(agent), vec![effect])
+                self.agent_result(transaction, agent).await?
             }
             DesktopCommand::ArchiveAgent { agent_id } => {
                 let agent = Agents::set_archived_in(transaction, &agent_id, true).await?;
-                let effect = agent_effect(&agent);
-                (DesktopCommandResult::Agent(agent), vec![effect])
+                self.agent_result(transaction, agent).await?
             }
             DesktopCommand::RestoreAgent { agent_id } => {
                 let agent = Agents::set_archived_in(transaction, &agent_id, false).await?;
-                let effect = agent_effect(&agent);
-                (DesktopCommandResult::Agent(agent), vec![effect])
+                self.agent_result(transaction, agent).await?
             }
             DesktopCommand::CreateDirectRoom { agent_id } => {
                 let room = Rooms::create_direct_in(transaction, &agent_id).await?;
@@ -364,6 +369,7 @@ impl DesktopCommands {
                     self.session.publish_board(board_id.as_deref());
                 }
                 PostCommitEffect::CardWakeQueued { agent_id, card_id } => {
+                    self.session.publish_agent_activity(&agent_id);
                     self.scheduler.card_wake_queued(&agent_id, &card_id).await;
                 }
             }
@@ -433,6 +439,20 @@ impl DesktopCommands {
         .execute(&mut **transaction)
         .await?;
         Ok(())
+    }
+}
+
+impl DesktopCommands {
+    /// Agent 命令的结果带上当前状态（collaboration-desktop.md §4.1）。
+    async fn agent_result(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        record: AgentRecord,
+    ) -> Result<(DesktopCommandResult, Vec<PostCommitEffect>), sqlx::Error> {
+        let runners = self.session.runner_statuses();
+        let agent = Activities::view_in(transaction, record, &runners).await?;
+        let effect = agent_effect(&agent);
+        Ok((DesktopCommandResult::Agent(agent), vec![effect]))
     }
 }
 

@@ -20,6 +20,8 @@ pub enum InvalidationKind {
     Board,
     EngineInventory,
     RunnerStatus,
+    /// Run 打开或结束、卡片唤醒写入：Agent 的当前状态与卡片的 `agentState` 可能变了。
+    AgentActivity,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

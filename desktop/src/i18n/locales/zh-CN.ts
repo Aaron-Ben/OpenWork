@@ -348,9 +348,9 @@ export const zhCN = {
       messagePlaceholder: '给 OpenCode 同事发消息', send: '发送', noMessages: '还没有消息', user: '你',
       createGroup: '创建群聊', groupName: '群聊名称', selectMembers: '选择同事',
       minimumMembers: '至少选择两位同事', manageMembers: '成员管理', removeMember: '移除 {{name}}',
-      selectAgent: '选择同事', addMember: '添加', thinking: '{{agents}} 正在思考…',
-      retrying: '{{agents}} 正在重试…', rateLimited: '{{agents}} 触发模型限流，稍后重试',
-      runFailed: '{{agents}} 运行失败：{{message}}', unknownFailure: '未知 OpenCode 错误',
+      selectAgent: '选择同事', addMember: '添加', workingOne: '{{name}} 正在处理…',
+      workingTwo: '{{first}} 和 {{second}} 正在处理…', workingMany: '{{first}} 等 {{count}} 人正在处理…',
+      unknownFailure: '未知 OpenCode 错误',
       resizeSidebar: '调整房间列表宽度', scrollToLatest: '回到最新消息',
     },
     agents: {

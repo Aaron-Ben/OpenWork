@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, LoaderCircle, Send, UserMinus, UserPlus, UserRound, Users } from 'lucide-react'
+import { Bot, LoaderCircle, Send, UserMinus, UserPlus, UserRound, Users } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,8 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollToLatestButton } from '@/features/collab/components/ScrollToLatestButton'
 import { useMessageStore } from './messageStore'
-import { roomRunState } from './roomRunState'
 import { membersForRoom, useRoomStore } from './roomStore'
+import { roomWorkingLabel } from './roomWorking'
 
 export function MessagePane({ room, agents }: { room: CollabRoom; agents: CollabAgent[] }) {
   const { t } = useTranslation()
@@ -28,8 +28,7 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
   const [agentToAdd, setAgentToAdd] = useState('')
   const [atBottom, setAtBottom] = useState(true)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const runState = roomRunState(messages?.runs ?? [], room.id)
-  const runAgents = runState?.agentIds.map((id) => `@${id}`).join(', ') ?? ''
+  const working = roomWorkingLabel(agents, room.id)
   const availableAgents = agents.filter((agent) => agent.archivedAt === null && !members.some((member) => member.id === agent.id))
 
   useEffect(() => {
@@ -89,15 +88,7 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
     await open(room.id)
   }
 
-  function runLabel(): string | null {
-    if (!runState) return null
-    if (runState.kind === 'thinking') return t('collab.rooms.thinking', { agents: runAgents })
-    if (runState.kind === 'retrying') return t('collab.rooms.retrying', { agents: runAgents })
-    if (runState.kind === 'rate_limited') return t('collab.rooms.rateLimited', { agents: runAgents })
-    return t('collab.rooms.runFailed', { agents: runAgents, message: runState.message ?? t('collab.rooms.unknownFailure') })
-  }
-
-  const statusLabel = runLabel()
+  const statusLabel = working ? t(working.key, working.values) : null
 
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-paper">
@@ -110,10 +101,8 @@ export function MessagePane({ room, agents }: { room: CollabRoom; agents: Collab
         ) : null}
       </header>
       {statusLabel ? (
-        <div className={`flex items-center gap-2 border-b border-line px-5 py-2 text-xs ${runState?.kind === 'failed' || runState?.kind === 'rate_limited' ? 'bg-red-50 text-red-700' : 'bg-clay/5 text-ink-muted'}`}>
-          {runState?.kind === 'failed' || runState?.kind === 'rate_limited'
-            ? <AlertTriangle size={14} />
-            : <LoaderCircle size={14} className="animate-spin" />}
+        <div className="flex items-center gap-2 border-b border-line bg-clay/5 px-5 py-2 text-xs text-ink-muted">
+          <LoaderCircle size={14} className="animate-spin" />
           <span>{statusLabel}</span>
         </div>
       ) : null}

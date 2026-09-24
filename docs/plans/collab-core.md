@@ -24,8 +24,12 @@
 | K7 | 卡片唤醒：`collab_card_wakes`、触发条件、合并、Run `card` trigger、结算、限额 | §11.4、§13.3.6 | §16 #14 |
 | K10 | 常驻契约补齐 Cumora `standingPrompt` 的两段：开头的 teammate 一句与 “Read the relevant thread …”，以及 “Drive what you own forward …”（去掉依赖 Calendar 的半句） | §7.1 | §16 #8 |
 | K9 | 静音：Agent 的 `mute` / `follow` / `mute list`，期限、直聊不可静音、静音时封住未读尾巴；`collab_room_members.muted` 换成到期时间 | §10.1、§13.3.4 | §16 #23 |
-| U1 | 删除运行记录：页面、`collab_run_list`/`collab_run_trace`、Server `observability`、`collab_run_events`（新迁移删表）、Runner 事件上报；Runner heartbeat 增加 `paused` 状态 | collaboration-desktop.md §1、§4.4；collaboration.md §5 | collaboration-desktop.md §12 #9 |
-| U2 | Desktop 重设计：房间（未读、说明行、引用、`@` 补全、卡片链接与右侧卡片预览、工作条、房间信息）、Agent（`activity`）、看板（Column 类型、卡片状态）、识别色令牌 | collaboration-desktop.md §4、§7–§10 | collaboration-desktop.md §12 #10–#16 |
+| U1 | 取消：运行记录保留在普通导航（E29、E30）；原 U1 中 Runner heartbeat 的 `paused` 不做（E31） | — | — |
+| U2a | Agent 当前状态：`AgentView.activity`、`CardView.agentState`；`agent_activity` invalidation；房间里“正在处理”的提示改由 activity 给出，不再读 Run 列表（`RoomView.workingAgentIds` 随房间列表放在 U2b） | collaboration-desktop.md §4.1、§4.3、§5 | collaboration-desktop.md §13 #13 |
+| U2b | 房间页：`RoomView` 的未读与“正在处理”（`workingAgentIds`）、平铺列表、筛选、置顶、群组头像拼图、未读、`collab_room_open`、说明行、引用（可跳回原消息）、`@` 补全、卡片链接与摘要卡、右侧卡片预览与 Agent 资料、固定高度工作条；Agent 私聊页 | collaboration-desktop.md §4.2、§4.5、§7 | collaboration-desktop.md §13 #10–12、#15 |
+| U2c | Agent 页 | collaboration-desktop.md §8 | collaboration-desktop.md §13 #13 |
+| U2d | 看板页：Desktop 创建、编辑、拖动卡片（新 Desktop 命令，产生卡片唤醒）、列类型标记、卡片状态、卡片详情 | collaboration.md §11.2；collaboration-desktop.md §4.3、§9 | collaboration-desktop.md §13 #14 |
+| U2e | 识别色令牌与视觉收尾、三种语言文案 | collaboration-desktop.md §11 | collaboration-desktop.md §13 #16 |
 
 ## 3. 每个工作包的顺序
 

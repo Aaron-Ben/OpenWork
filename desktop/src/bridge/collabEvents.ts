@@ -10,6 +10,7 @@ export type CollabInvalidationKind =
   | 'board'
   | 'engine_inventory'
   | 'runner_status'
+  | 'agent_activity'
 
 export interface CollabInvalidation {
   id: string

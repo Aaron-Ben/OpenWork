@@ -252,6 +252,7 @@ mod tests {
             position: 0,
             assignee_id: assignee.map(str::to_string),
             created_by: "ada".to_string(),
+            agent_state: None,
         }
     }
 

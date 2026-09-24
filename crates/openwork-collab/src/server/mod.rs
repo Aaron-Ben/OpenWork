@@ -1,3 +1,4 @@
+mod activity;
 mod agenda;
 mod agent_commands;
 mod agents;

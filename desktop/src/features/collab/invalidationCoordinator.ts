@@ -69,8 +69,12 @@ export async function refreshForInvalidation(
       tasks.push(refreshers.runtime())
       break
     case 'runner_status':
-      tasks.push(refreshers.runtime())
-      refreshActiveMessages()
+      // Agent 的“出错”来自 Runner 状态（collaboration-desktop.md §5）。
+      tasks.push(refreshers.runtime(), refreshers.agents())
+      break
+    case 'agent_activity':
+      tasks.push(refreshers.agents())
+      if (context.view === 'boards') tasks.push(refreshers.boards())
       break
   }
 

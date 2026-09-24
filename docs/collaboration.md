@@ -187,7 +187,7 @@ desired agents + current Engine readiness
   → heartbeat observed Runner state to Server
 ```
 
-heartbeat 上报每个 Runner 的当前状态：`running`、`paused`（附原因与恢复时间，来自 §6 的退避）或 `error`（附最后一次错误）。Server 只在内存中保存当前 session 的这份状态，供 Desktop 显示。
+heartbeat 上报每个 Runner 的当前状态：`running` 或 `error`（附最后一次错误）。§6 与 §8.3 的退避只在 Computer 本地生效，不上报，Desktop 不显示暂停；导致退避的那次 Run 照常以失败结算（与 Cumora 相同：`server/src/agents/computer/daemon.ts` 的 `engineBackoffWhy` 只用于本地日志）。Server 只在内存中保存当前 session 的这份状态，供 Desktop 显示。
 
 Engine、主模型、triage 模型、persona 或 config revision 变化都会重建对应 Runner。一个 Agent 的 home 或 Engine 初始化失败只把该 Runner 标记为 error，不阻塞其他 Agent。归档停止 Runner 并保留历史、home 与 Engine continuity；恢复后用新的 config revision 重建。
 
@@ -481,11 +481,13 @@ Board 是 workspace 级共享事实，与 Room 平级。一个 Board 原子创�
 
 ### 11.2 权限
 
-Desktop 用户拥有结构：
+Desktop 用户拥有结构，也可以直接处理卡片（Cumora 的看板同样允许人建卡、编辑、拖动，`src/desktop/BoardsView.tsx`）：
 
 - 创建、重命名和删除空 Board；
 - 创建、重命名、设置 `kind`、重排和删除空 Column；
-- 分配或物理删除 Card。
+- 创建、编辑（标题与描述）、移动（换列或同列重排）、分配或物理删除 Card。
+
+Desktop 创建或编辑卡片时，改派与新增的 `@<agent-id>` 同样产生卡片唤醒（§11.4），发起者是 `local-user`，不受每分钟 30 次的限额。
 
 Agent 的 typed command 只允许：
 
@@ -677,6 +679,7 @@ Participant 是消息作者、Room 成员、Card assignee 和来源字段的统�
 | `direct_key` | Direct 必填且全局唯一；Group 必须为空 |
 | `next_seq` | 非负，事务内分配下一条 Message sequence |
 | `last_message_at` | 最近消息时间，可空 |
+| `user_pinned_at` | 可空；用户置顶房间的时间，房间列表把置顶的房间排在最前（Cumora 会话列表的 pinned） |
 | `user_viewed_seq` | 非负，默认 0；用户在 Desktop 中看到的最大 sequence，只增不减。它是 lap floor 的“人类关注”（§8.3），也是 Desktop 计算未读的依据。放在 Room 而不是成员表上，因为用户可以查看自己不是成员的 Agent 之间的房间 |
 | `created_by` | 创建者 Participant，不可空 |
 
@@ -727,7 +730,7 @@ Direct Room 的 key 由两个 Participant ID 排序后组成，因此并发首�
 
 `collab_triages`：classifier 或确定性短路的输入范围、决定、`response_mode`（路由判断的 `me` / `each`）、来源、Engine/model、usage 和 latency。`source` 取值：`empty_inbox`、`system_only`、`rate_limited`、`deterministic`、`routing`、`agent_dm_engage`、`lap_floor`、`loop_cap`、`local_model`、`fail_closed`、`engine_error`、`human_dm`。`run_id` 可空以保留已结束 Run 之外的决策；`runtime_session_id` 防止跨 session 混用。
 
-Run 与 triage 只供运行时内部使用：结算、当前状态、路由与一轮上限的判定。协作模式不提供运行记录，也不保存 Runner 或 Engine 的过程事件；Desktop 只投影当前状态和房间里的说明行，见 [collaboration-desktop.md](collaboration-desktop.md)。
+`collab_run_events`：Run 的过程事件（triage、Engine 开始、完成、失败、限流等），按 Run 与时间排序，供 Desktop 的运行记录页展示（[collaboration-desktop.md](collaboration-desktop.md) §10，对照 Cumora `src/desktop/ObservabilityView.tsx` 的运行记录面板）。它只用于观察，结算、路由与一轮上限的判定都不读它。
 
 #### 13.3.8 命令幂等与 Engine inventory
 

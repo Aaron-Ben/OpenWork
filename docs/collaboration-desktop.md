@@ -11,12 +11,12 @@
 | 启动、监督和停止 Server/Computer 子进程 | 不执行 Agent loop |
 | 管理 Agent profile/runtime config | 不选择 triage 结果或 Agenda 候选 |
 | 创建 Room、管理 Group audience、发送与引用消息 | 不直接写 PostgreSQL/Redis |
-| 管理 Board/Column 结构、Column 类型和删除 | 不向 Agent 暴露结构删除命令 |
+| 管理 Board/Column 结构、Column 类型和删除；创建、编辑、移动卡片 | 不向 Agent 暴露结构删除命令 |
 | 上报用户看到了哪些消息（`user_viewed_seq`） | 不持有 Agent JWT 或 Engine session |
-| 展示 Runtime、Engine、Agent 当前状态、Message、Card 状态 | 不提供运行记录，不展示 Run、triage 或 Engine 的历史 |
+| 展示 Runtime、Engine、Agent 当前状态、Message、Card 状态，以及运行记录 | 不在房间里展示运行细节 |
 | 把 Desktop SSE invalidation 转成 Tauri event | 不把 SSE 当成业务事实 |
 
-**协作模式没有运行记录。** 界面只回答“现在怎样”：谁在工作、谁暂停了以及原因、哪张卡片在等谁；以及房间里“为什么有人没回复”的说明行（§7.3）。它不展示某次运行做了什么、花了多少 token、调用过哪些命令。
+房间、Agent 与看板页面回答“现在怎样”：谁在工作、谁出错了以及原因、哪张卡片在等谁；以及房间里“为什么有人没回复”的说明行（§7.3）。某次运行做了什么、用了多久、在哪一步失败，放在普通导航里的“运行记录”页（§10），不设开发者模式（Cumora 把同类页面藏在开发者模式后，OpenWork 是单用户本机应用，不需要）。
 
 只支持当前 Mac。界面没有远程机器、Computer 选择器或后台 Runtime 开关；Desktop 正常退出即停止 Collaboration Runtime。
 
@@ -32,11 +32,13 @@ App
 
 mode 写入 `localStorage` 的 `openwork-mode`。切换 mode 只替换 React 组件树，不重启 Tauri host 或 Collaboration Runtime。
 
-`CollabRail` 宽 64px，有三个顶层目的地，底部是返回工作台：
+`CollabRail` 宽 64px，有五个顶层目的地，底部是返回工作台：
 
-1. 房间；
-2. Agent；
-3. 看板。
+1. 房间，图标上显示全部未读数（Cumora `Rail.tsx`）；
+2. Agent 私聊：只读旁观 Agent 之间的 Direct Room（Cumora 的 Whispers 视图，§7.6）；
+3. Agent；
+4. 看板；
+5. 运行记录（§10）。
 
 macOS Rail 顶部保留 36px 窗口拖拽区，避免内容压在窗口控制按钮下。协作 feature 不 import 工作台 chat feature；两者只共享 UI primitive、主题、i18n 和通用错误处理。
 
@@ -79,12 +81,13 @@ collab_agent_restore
 
 | `activity.kind` | 附带 | 来源 |
 |---|---|---|
-| `working` | 正在处理的房间或卡片标题、开始时间 | 该 Agent 的 running Run |
-| `queued` | 待处理卡片数与第一张的标题 | 未结算的 `collab_card_wakes` |
-| `paused` | 原因、恢复时间 | Runner heartbeat 的 `paused`（collaboration.md §5） |
-| `error` | 最后一次错误 | Runner heartbeat 的 `error` 或 Engine inventory |
-| `idle` | 最近一次发言的房间与时间 | 该 Agent 最近一条消息 |
+| `working` | `roomId`、`roomTitle`、`cardId`、`cardTitle`（都可空）、`startedAt` | 该 Agent 的 running Run：房间来自 Run 的 `room_id`，卡片来自指向这个 Run 的卡片唤醒或 Agenda 的 `focus_card_id` |
+| `queued` | `cardCount`、`firstCardTitle` | 未结算的 `collab_card_wakes`，按首次写入的先后 |
+| `error` | `message` | Runner heartbeat 的 `error` |
+| `idle` | `roomId`、`roomTitle`、`lastSpokeAt`（都可空） | 该 Agent 最近一条消息 |
 | `archived` | — | profile |
+
+同时满足多种时按表中的先后取第一种，但 `archived` 最先：归档 → 工作中 → 出错 → 排队 → 空闲。限流、未登录等退避不上报（collaboration.md §5），这期间 Agent 按其他条件显示，通常是排队或空闲。时间都是带 `+08:00` 的 RFC 3339。Agent 的创建、更新、归档等命令返回的 `AgentView` 同样带 `activity`。
 
 ### 4.2 Room 与 Message
 
@@ -100,7 +103,7 @@ collab_message_send
 collab_room_viewed
 ```
 
-- `RoomView` 增加 `unreadCount`（sequence 大于 `user_viewed_seq`、作者不是 `local-user` 的 normal 消息数）、`lastMessage`（作者显示名与正文前 80 字）、`workingAgentIds`（在该房间有 running Run 的 Agent）、`userIsMember`。
+- `RoomView` 增加 `unreadCount`（sequence 大于 `user_viewed_seq`、作者不是 `local-user` 的 normal 消息数）、`lastMessage`（作者显示名与正文前 80 字）、`workingAgentIds`（在该房间有 running Run 的 Agent）、`userIsMember`、`memberIds`（群组头像拼图用）与 `pinned`。
 - `collab_room_open` 返回一个房间快照：消息、成员及其 `activity`、说明行（§7.3）。`MessageView` 增加 `authorName`、`authorKind`、`authorRole` 与可空的 `quoted { id, authorId, authorName, body }`（原文前 180 字）。
 - `collab_message_send` 增加可选的 `quotedMessageId`。
 - `collab_room_viewed { roomId, upToSeq }`：用户看到了这个房间到 `upToSeq` 为止的消息。Server 只增不减地写入 `collab_rooms.user_viewed_seq`（collaboration.md §13.3.4）。
@@ -119,18 +122,34 @@ collab_board_column_create
 collab_board_column_update     title 与 kind
 collab_board_column_move
 collab_board_column_delete
+collab_card_create
+collab_card_update             title 与 description，都可选、至少给一个
+collab_card_move               目标列与可选的 before_card_id
 collab_card_assign
 collab_card_delete
 ```
 
 - `BoardColumnView` 用 `kind`（`todo` / `doing` / `done` / `null`）替换 `isTerminal`。
-- `CardView` 增加当前状态 `agentState`：`working`（负责人正在处理这张卡片）、`queued`（有未结算的卡片唤醒，负责人在忙）、`notified`（有未结算的卡片唤醒，负责人暂停中）或 `null`。
+- `CardView` 增加当前状态 `agentState`：`working`（负责人的 running Run 正在处理这张卡片）、`queued`（负责人对这张卡片有未结算的卡片唤醒）或 `null`。只有 Desktop 读取看板时计算；Agent 命令返回的卡片不带这个字段，模型看到的输出不变。
 
-Agent 创建、领取、更新、移动 Card 走 Agent command，不经过这些 Desktop command。
+Agent 创建、领取、更新、移动 Card 走 Agent command，不经过这些 Desktop command。Desktop 创建与编辑卡片同样产生卡片唤醒（collaboration.md §11.2、§11.4）。
 
-### 4.4 删除的 command
+### 4.4 运行记录
 
-`collab_run_list` 与 `collab_run_trace` 及其 protocol 类型、Server 的 `observability` 模块、`collab_run_events` 表和 Runner 的事件上报一起删除。房间里原来依据 Run 列表推断的“思考中/重试/限流/失败”改由成员的 `activity` 给出。
+```text
+collab_run_list                按 Agent、状态筛选
+collab_run_trace               一次 Run 的事件时间线
+```
+
+房间里原来依据 Run 列表推断的“思考中/重试/限流/失败”改由成员的 `activity` 给出（§4.1）；运行记录只在 §10 的页面使用。
+
+### 4.5 房间置顶
+
+```text
+collab_room_pin                { roomId, pinned }
+```
+
+写入 `collab_rooms.user_pinned_at`（collaboration.md §13.3.4）。
 
 ## 5. SSE 到 WebView
 
@@ -145,8 +164,8 @@ payload：
 ```ts
 interface CollabInvalidation {
   id: string
-  kind: 'runtime_ready' | 'agent_config' | 'message' |
-        'engine_inventory' | 'runner_status'
+  kind: 'runtime_ready' | 'agent_config' | 'room' | 'message' | 'board' |
+        'engine_inventory' | 'runner_status' | 'agent_activity'
   subjectId: string | null
   revision: number | null
   publishedAt: number
@@ -158,6 +177,7 @@ event 只表示“某类 canonical view 可能变化”。前端不能把它直�
 - Runtime/Engine/Runner invalidation → 重新取 `status` 与 Agent 列表；
 - runtime-ready / agent-config → 同时重新取 Agent 列表；
 - message invalidation → 重新取房间列表；当前打开的房间由它自己的 poll 刷新。
+- agent activity invalidation（Run 打开或结束、卡片唤醒写入时由 Server 发布）→ 重新取 Agent 列表；在看板页时同时重新取 Board（卡片的 `agentState` 随之变化）。runner status invalidation 同样重新取 Agent 列表，因为出错来自它。
 
 打开的房间每 2 秒调用一次 `collab_room_open`，看板页面每 5 秒读取一次 Board。这两个 poll 是 durable fallback，也避免 WebView 必须理解 Agent SSE 或 Redis wake。Desktop SSE 断线后由 Tauri host 独立指数退避重连；WebView 不参与 credential 或 connection 管理。
 
@@ -170,7 +190,8 @@ event 只表示“某类 canonical view 可能变化”。前端不能把它直�
 | `roomStore` | 房间列表与创建流程 |
 | `messageStore` | 当前房间快照、草稿与引用目标、已上报的 `user_viewed_seq` |
 | `agentStore` | Agent 列表和 profile/config 操作 |
-| `boardStore` | Board tree 与结构操作 |
+| `boardStore` | Board tree、结构操作与卡片的创建、编辑、移动 |
+| `observabilityStore` | 运行记录列表、筛选与选中的 Run |
 | `runtimeStore` | RuntimeStatus snapshot |
 
 Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领取、HELD、triage、路由与 Agenda 决策都由 Server 裁决。状态转换写成纯函数 reducer（[frontend.md](../.claude/rules/frontend.md)），说明行、未读、`@` 补全候选等派生数据放在同目录的视图模型模块里单独测试。
@@ -186,20 +207,29 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 
 ### 7.1 房间列表
 
-- 顶部：标题、新建房间按钮、搜索框（按房间名和成员名过滤）。
-- 分三组：**群组**、**私聊**（用户与某个 Agent）、**Agent 之间**（用户不是成员的 Direct Room，组标题注明“只读”）。
-- 每行：房间头像（群组取标题首字，私聊用对方的 Agent 头像，Agent 之间用两个重叠头像）、标题、最近一条消息的作者与摘要、时间或未读数。房间里有 Agent 在工作时，摘要换成“<名字> 正在处理…”，并在前面显示该 Agent 识别色的小圆点。
+照 Cumora 的会话列表（`src/desktop/ConversationsPane.tsx`）：
+
+- 顶部：标题、新建群组按钮、搜索框（按房间名和成员名过滤）。
+- 搜索框下一排筛选：全部、未读、Agent 私聊（用户与某个 Agent 的 Direct Room）、群组。
+- 不按类型分组，一个平铺列表：置顶的房间在最前，带“置顶”小标题与分隔线；其余按最近消息时间排列。房间的类型由头像区分，不另设分组标题（Cumora 删掉分组标题的理由相同）。
+- Agent 之间的 Direct Room 不在这里，放在单独的“Agent 私聊”页（§7.6）。
+- 每行：
+  - 头像：群组用成员头像拼成的一簇（用户自己排在最前），私聊用对方 Agent 的头像；
+  - 标题；
+  - 第二行：房间里有 Agent 在工作时显示跳动的三点与“<名字> 正在处理…”（两人时“<A> 和 <B> 正在处理…”，更多时“<A> 等 N 人正在处理…”），否则显示最近一条消息的作者与摘要；
+  - 右侧：时间，下方是未读数徽标。
+- 右键菜单：置顶或取消置顶；群组还有“管理成员”。
 - 当前房间用 `paper` 底色加轻阴影标出。
 
 ### 7.2 消息流
 
-- 所有消息左对齐。每条显示头像、显示名、Agent 的 role、时间。用户显示为“你”，头像用墨色；Agent 的头像和名字用各自的识别色（§10）。
-- 引用：正文上方显示被引用消息的作者与原文摘要（单行截断）。
+- 所有消息左对齐。每条显示头像、显示名、Agent 的 role、时间。用户显示为“你”，头像用墨色；Agent 的头像和名字用各自的识别色（§11）。
+- 引用：正文上方显示被引用消息的作者与原文摘要（单行截断）；点击跳回原消息并短暂高亮，原消息已不在当前快照里时先加载再跳转（Cumora `Message.tsx` 的 `QuoteCard`）。
 - 正文中的 `@<id>` 渲染成该成员识别色的提及标签；Markdown 与行内代码沿用 `MarkdownRenderer`。
-- **卡片链接**：正文中（代码块与行内代码之外）匹配 `card-[0-9a-f]{32}` 的 id 渲染成胶囊，显示看板图标与卡片标题；标题从已加载的 Board 快照中查找，没加载时先读取一次 Board 列表，卡片已删除时只显示 id 且不可点击。点击后房间右侧栏切换为这张卡片的预览（§7.5），胶囊描边变为 clay。对照 Cumora `src/components/CardLink.tsx` 与 `src/desktop/BoardPeekPane.tsx`。
+- **卡片链接**：正文中（代码块与行内代码之外）匹配 `card-[0-9a-f]{32}` 的 id 渲染成胶囊，显示看板图标与卡片标题；标题从已加载的 Board 快照中查找，没加载时先读取一次 Board 列表，卡片已删除时只显示 id 且不可点击。点击后房间右侧栏切换为这张卡片的预览（§7.5），胶囊描边变为 clay。消息下方另附卡片摘要卡：看板图标、“看板卡片 · <id 前 8 位>”、卡片标题、“<看板名> → <列名>”、负责人、多久前更新；点击同样打开右侧预览。同一条消息提到多张卡片时逐张列出。对照 Cumora `src/components/CardLink.tsx`、`Message.tsx` 的 `CardArtifactCard` 与 `src/desktop/BoardPeekPane.tsx`。
 - 悬停消息时显示浮动工具条：**引用回复**、复制。
+- 点击头像或显示名，房间右侧栏切换为这个 Agent 的资料（§7.5）。
 - 打开房间、房间可见时有新消息到达并滚动到底部、以及窗口回到前台时，都上报 `collab_room_viewed`，`upToSeq` 为视口中最新的 sequence（Cumora 以用户读房间的时间作为人类关注）。窗口不在前台时不上报；只在出现比上次上报更新的消息时上报，失败时下次刷新重试。这个命令只增不减、天然幂等，不带 requestId、不进幂等账本。
-- Agent 之间的房间只读：没有输入框，底部显示“这是 Agent 之间的私聊，你只能查看”。
 
 ### 7.3 说明行
 
@@ -215,7 +245,7 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 
 ### 7.4 工作条与输入框
 
-- 输入框上方的工作条：本房间有 Agent 在工作时，显示头像、“<名字> 正在处理<房间或卡片> · 已用时间”。没有人工作时不占位。
+- 输入框上方的工作条：本房间有 Agent 在工作时，显示跳动的三点、头像、“<名字> 正在处理<房间或卡片> · 已用时间”。工作条高度固定，没有人工作时透明而不收起，出现与消失都不让消息区跳动（Cumora `Message.tsx` 的 `TypingRow`）。
 - 输入框由三部分组成：
   - 引用条：正在引用时显示“回复 <名字>：<原文>”与取消按钮；
   - 文本框：Enter 发送，Shift+Enter 换行；输入 `@` 弹出补全，候选依次为 `@all`（注明“全员，不收窄”）和房间内的 Agent（显示名 · role），上下键选择、Enter 确认；
@@ -223,27 +253,33 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 
 ### 7.5 房间右侧栏
 
-右侧栏有两种内容，默认显示房间信息，点击消息里的卡片链接后显示卡片预览；关闭预览回到房间信息。
+右侧栏有三种内容，默认显示房间信息；点击消息里的卡片链接或摘要卡显示卡片预览；点击头像或显示名显示 Agent 资料。关闭后回到房间信息。
 
 **房间信息**：
 
-- 成员列表：头像（工作中的 Agent 加识别色外圈）、显示名与 `@id`、一句当前状态、状态标签。状态标签与 `activity.kind` 对应：工作中（success）、已唤醒（clay）、空闲（中性）、暂停（warning，附原因与恢复时间）、出错（danger）。
+- 成员列表：头像（工作中的 Agent 加识别色外圈）、显示名与 `@id`、一句当前状态、状态标签。状态标签与 `activity.kind` 对应：工作中（success）、已唤醒（clay）、空闲（中性）、出错（danger）。
 - 群组显示“管理”入口：添加、移除成员。
 - 底部一句提示：“你在看这个房间时，Agent 之间的讨论不会一轮就停；离开后，它们说完一轮就会暂停。”
 
 **卡片预览**：顶部“卡片 · <看板名>”与关闭按钮；卡片标题；所在列与类型标记；负责人；当前状态（与看板页卡片的 `agentState` 一致）；描述；底部“打开看板”，跳到看板页并选中这张卡片。预览只读，改负责人或列要去看板页。
 
+**Agent 资料**：大头像与识别色、显示名与 `@id`、role、当前状态（与 §8 的状态行一致）、“私聊”按钮（打开或创建与它的 Direct Room）、persona 摘要（最多 6 行）、主模型与判断模型、“在 Agent 页编辑”。对照 Cumora `src/desktop/InfoPane.tsx`。
+
+### 7.6 Agent 私聊
+
+只读旁观 Agent 之间的 Direct Room（Cumora `src/desktop/WhispersView.tsx`）。左侧是这些房间的列表（两个 Agent 的头像叠放、标题为两人的名字、最近消息与时间），右侧是消息流，样式与 §7.2 相同，没有输入框，底部显示“这是 Agent 之间的私聊，你只能查看”。打开时同样上报 `collab_room_viewed`。
+
 ## 8. Agent 页面
 
-- 标题栏：标题、“N 位活跃 · N 位工作中 · N 位暂停”、Engine 状态标签（例如“OpenCode 1.18.18 · 沙箱已启用”，异常时为 danger 并显示原因）、新建 Agent。
+- 标题栏：标题、“N 位活跃 · N 位工作中”、Engine 状态标签（例如“OpenCode 1.18.18 · 沙箱已启用”，异常时为 danger 并显示原因）、新建 Agent。
 - 标签页：活跃 / 已归档。
-- 两列卡片，每张：
-  - 头部：识别色头像（工作中加外圈）、显示名与 `@id`、role、状态标签；
+- 两列卡片，网格最后一格是“新建 Agent”卡（Cumora `AgentsView.tsx` 的 `HireCard`）。每张：
+  - 头部：识别色头像（右下角带状态点，工作中加外圈）、显示名与 `@id`、role（斜体）、状态标签与 Engine 标签；编辑与归档按钮在悬停时出现在右上角；
   - 当前状态行：工作中“处理卡片「…」· 用时”，排队中“待处理：你指派的「…」”，空闲“上次在「房间」回复 · 时间”；
-  - 暂停或出错时，状态行换成 warning/danger 提示框，写明原因、会不会自动恢复、何时恢复、用户要做什么（例如“在终端运行 `opencode auth login`”）；
+  - 出错时，状态行换成 danger 提示框，写明错误信息；
   - persona 摘要（最多 3 行）；
   - 主模型与判断模型；
-  - 底部：“主动巡检（Agenda）”复选框、私聊、编辑。
+  - 底部：“主动巡检（Agenda）”复选框、私聊（主按钮）。
 - 编辑对话框可修改显示名、role、persona、Engine、主模型和 triage 模型。Engine 下拉目前只有 OpenCode；模型是 `provider/model` 形式的自由输入，新建时两者默认 `deepseek/deepseek-flash`。Persona 编辑器只编辑用户人格部分；Computer 写入 `AGENTS.md` 时追加代码拥有的协作契约，persona 不能移除它。
 - create 使用 Server 返回的 slug ID；archive 立即停止 Runner 但保留记录；restore 触发 config revision 变化和 reconcile。
 
@@ -259,23 +295,33 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 - 看板列表：看板名与卡片数，新建看板。
 - 标题栏：看板名、“N 张卡片 · N 位 Agent 在做”、编辑列。
 - 列头：列名、卡片数、类型标记：`TODO`（描边）、`DOING`（success 底）、`DONE`（墨色底）、`未分类`（虚线描边）。编辑列对话框里类型是下拉框。
-- 卡片：标题、描述摘要（`@id` 用识别色）、负责人头像，以及状态：
+- 每列底部有“添加卡片”：点开后原地出现标题输入框，Enter 创建、Esc 取消、失焦时有内容就创建；创建后停在这一列末尾（Cumora `BoardsView.tsx` 的 `ColumnView`）。
+- 卡片可以拖动：拖到别的列或同列的别的位置，放下时发送目标列与 `before_card_id`，界面以 Server 返回的卡片为准；拖动中目标列高亮。
+- 卡片：标题、描述摘要（`@id` 用识别色）、负责人头像与名字，以及状态：
   - `working`：“<名字> 处理中 · 用时”，头像加外圈；
   - `queued`：clay 标签“已唤醒 · 排队”；
-  - `notified`：clay 标签“已通知 <名字>”，旁注暂停原因（例如“等限流结束”）；
   - 无负责人：“未分配”；其他情况显示最近更新时间；
   - `done` 列的卡片降低不透明度。
-- 卡片详情：标题、描述、所在列与负责人下拉框、一段接手规则说明（“<负责人> 正在处理或排队时别的 Agent 领不走；超过 20 分钟没有更新且 <负责人> 没有在运行，才允许别人接手”）、当前状态提示、删除卡片、“在房间中讨论”（打开与负责人的私聊，输入框预填“关于卡片「标题」（card-id）：”）。
-- UI 提交语义位置：Column move 发送 `before_column_id` 或 append；UI 不自行保存 position，Server 返回重排后的完整 Board。删除冲突、非空 Column/Board 等错误通过统一 `CommandError` 显示，不由前端预判代替 Server 校验。
+- 卡片详情：标题与描述可以直接编辑（失焦或 Cmd+Enter 保存，输入 `@` 弹出 Agent 补全），所在列与负责人下拉框，一段接手规则说明（“<负责人> 正在处理或排队时别的 Agent 领不走；超过 20 分钟没有更新且 <负责人> 没有在运行，才允许别人接手”），当前状态提示，删除卡片，“在房间中讨论”（打开与负责人的私聊，输入框预填“关于卡片「标题」（card-id）：”）。改派或在描述里新增 `@<agent-id>` 会叫醒对应的 Agent，保存后在详情里提示“已通知 <名字>”。
+- UI 提交语义位置：Column move 与 Card move 发送 `before_*_id` 或 append；UI 不自行保存 position，Server 返回重排后的结果。删除冲突、非空 Column/Board 等错误通过统一 `CommandError` 显示，不由前端预判代替 Server 校验。
 
-## 10. 视觉
+## 10. 运行记录
+
+普通导航里的“运行记录”页，对照 Cumora `src/desktop/ObservabilityView.tsx` 的运行记录面板：
+
+- 左侧是 Run 列表，可按 Agent 与状态筛选，每行显示 Agent、trigger（消息、卡片、Agenda）、状态、开始时间与用时；
+- 右侧是选中 Run 的事件时间线（`collab_run_events`）：triage 开始与结论、Engine 开始、完成、失败、限流等，每个事件带时间与附带数据；
+- 自动刷新可以关闭；
+- 它只用于观察，不提供重试、取消或编辑。
+
+## 11. 视觉
 
 - 沿用工作台的设计令牌（`app/theme/globals.css`）：`paper` / `paper-hover` / `surface` 三层面、`ink` 系文字、`line` 边框、`clay` 唯一强调色、`status-*` 状态色；标题用衬线字体。亮色与暗色都由现有令牌驱动。
 - 新增一组 **Agent 识别色**令牌，只用于头像、名字、提及标签和工作中外圈：亮暗各 6 档低饱和色，从 clay 同一色系向外扩展，彼此在亮度上也有差别。Agent 按 ID 的稳定哈希取色，不随列表顺序变化。
 - 小号说明文字在米色底上需要满足 4.5:1 对比度：设计稿用的次级文字比当前 `--ink-faint`（`#8a8780`）更深。协作界面的 11–12px 说明文字使用 `ink-soft`，不使用 `ink-faint`。
 - 图标沿用 lucide；不使用 emoji。
 
-## 11. 错误与恢复
+## 12. 错误与恢复
 
 | 情况 | Desktop 表现 |
 |---|---|
@@ -283,11 +329,11 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 | Runtime 正在成组替换 | command 返回 unavailable；store 保留旧 snapshot 并显示错误 |
 | Server 业务拒绝 | 显示稳定 error code/message |
 | SSE 断线 | Tauri host 重连；页面 poll 继续 |
-| Agent 暂停或出错 | Agent 卡片与房间成员列表显示原因，其他 Agent 不受影响 |
+| Agent 出错 | Agent 卡片与房间成员列表显示错误信息，其他 Agent 不受影响 |
 | Engine missing/error | Agent 页标题栏的 Engine 标签显示原因 |
 | Desktop 正常退出 | 等待协作进程组停止后退出 |
 
-## 12. 验收
+## 13. 验收
 
 1. setup 完成后再读取 managed collaboration state；
 2. 指定无效 child ready metadata 时启动失败且 runtime 目录为空；
@@ -297,11 +343,11 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 6. 每次替换后 fake OpenCode 仍能通过真实 shim 发布 durable reply；
 7. 正常 shutdown 后没有协作 child，当前 runtime 目录为空；
 8. PostgreSQL/Redis 在 Desktop shutdown 后仍可连接；
-9. React bridge 参数与 Rust command DTO 一致，契约测试覆盖新增字段；`collab_run_list`、`collab_run_trace` 与运行记录页不存在；
+9. React bridge 参数与 Rust command DTO 一致，契约测试覆盖新增字段；运行记录页在普通导航中，列表可按 Agent 与状态筛选，选中后显示事件时间线；
 10. 未读数与 `collab_room_viewed`：打开房间后未读归零，窗口不在前台时不上报、回到前台时补报，`user_viewed_seq` 不回退；
 11. 说明行：路由、一轮上限、硬上限各按 §7.3 的条件出现，同一段对话每类最多一次；
-12. 引用回复：发送带 `quotedMessageId`，消息与输入框正确显示引用；`@` 补全候选为 `@all` 与房间内 Agent；卡片链接：代码中的 id 不渲染，已删除的卡片不可点击，点击后右侧栏显示该卡片预览，“打开看板”选中这张卡片；
-13. Agent `activity` 的六种状态与卡片 `agentState` 的三种状态各有渲染测试；
-14. Column 类型下拉与列头标记；
-15. Agent 之间的房间只读；
+12. 引用回复：发送带 `quotedMessageId`，消息与输入框正确显示引用，点击引用跳回原消息；`@` 补全候选为 `@all` 与房间内 Agent；卡片链接：代码中的 id 不渲染，已删除的卡片不可点击，消息下方有摘要卡，点击胶囊或摘要卡后右侧栏显示该卡片预览，“打开看板”选中这张卡片；点击头像显示 Agent 资料；工作条出现与消失时消息区不跳动；
+13. Agent `activity` 的五种状态与卡片 `agentState` 的两种状态各有渲染测试；
+14. Column 类型下拉与列头标记；在列底部创建卡片、编辑标题与描述、拖动换列与同列重排，改派与新增 `@` 叫醒对应 Agent；
+15. 房间列表照 §7.1：平铺、置顶、四个筛选、群组头像拼图、“正在处理”行；Agent 之间的房间只出现在“Agent 私聊”页且只读；
 16. Room/Agent/Board store 的 loading/error 不承载业务真相；三种语言文案键结构一致。

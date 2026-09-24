@@ -213,6 +213,15 @@ impl RuntimeSession {
         ));
     }
 
+    /// Agent 的当前状态可能变了：Run 打开或结束、卡片唤醒写入（collaboration-desktop.md §5）。
+    pub(crate) fn publish_agent_activity(&self, agent_id: &str) {
+        let _ = self.inner.desktop_events.send(event(
+            InvalidationKind::AgentActivity,
+            Some(agent_id.to_string()),
+            None,
+        ));
+    }
+
     pub(crate) fn publish_board(&self, board_id: Option<&str>) {
         let _ = self.inner.desktop_events.send(event(
             InvalidationKind::Board,

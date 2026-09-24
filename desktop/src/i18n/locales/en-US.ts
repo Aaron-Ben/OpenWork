@@ -280,9 +280,9 @@ export const enUS = {
       messagePlaceholder: 'Message your OpenCode teammate', send: 'Send', noMessages: 'No messages yet', user: 'You',
       createGroup: 'Create group', groupName: 'Group name', selectMembers: 'Choose teammates',
       minimumMembers: 'Select at least two teammates', manageMembers: 'Members', removeMember: 'Remove {{name}}',
-      selectAgent: 'Choose a teammate', addMember: 'Add', thinking: '{{agents}} thinking…',
-      retrying: '{{agents}} retrying…', rateLimited: '{{agents}} rate limited; retrying shortly',
-      runFailed: '{{agents}} failed: {{message}}', unknownFailure: 'Unknown OpenCode failure',
+      selectAgent: 'Choose a teammate', addMember: 'Add', workingOne: '{{name}} is working…',
+      workingTwo: '{{first}} and {{second}} are working…', workingMany: '{{first}} and {{others}} others are working…',
+      unknownFailure: 'Unknown OpenCode failure',
       resizeSidebar: 'Resize room list', scrollToLatest: 'Scroll to latest message',
     },
     agents: {

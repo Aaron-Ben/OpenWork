@@ -276,9 +276,9 @@ export const zhTW = {
       messagePlaceholder: '給 OpenCode 同事發訊息', send: '發送', noMessages: '還沒有訊息', user: '你',
       createGroup: '建立群聊', groupName: '群聊名稱', selectMembers: '選擇同事',
       minimumMembers: '至少選擇兩位同事', manageMembers: '成員管理', removeMember: '移除 {{name}}',
-      selectAgent: '選擇同事', addMember: '加入', thinking: '{{agents}} 正在思考…',
-      retrying: '{{agents}} 正在重試…', rateLimited: '{{agents}} 觸發模型限流，稍後重試',
-      runFailed: '{{agents}} 執行失敗：{{message}}', unknownFailure: '未知 OpenCode 錯誤',
+      selectAgent: '選擇同事', addMember: '加入', workingOne: '{{name}} 正在處理…',
+      workingTwo: '{{first}} 和 {{second}} 正在處理…', workingMany: '{{first}} 等 {{count}} 人正在處理…',
+      unknownFailure: '未知 OpenCode 錯誤',
       resizeSidebar: '調整房間列表寬度', scrollToLatest: '回到最新訊息',
     },
     agents: {

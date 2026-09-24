@@ -239,6 +239,37 @@ pub struct AgentView {
     pub config_revision: i64,
     pub agenda_enabled: bool,
     pub archived_at: Option<String>,
+    pub activity: AgentActivity,
+}
+
+/// Agent 现在在做什么（collaboration-desktop.md §4.1）。时间都是带 `+08:00` 的 RFC 3339。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentActivity {
+    Working {
+        room_id: Option<String>,
+        room_title: Option<String>,
+        card_id: Option<String>,
+        card_title: Option<String>,
+        started_at: String,
+    },
+    Queued {
+        card_count: i64,
+        first_card_title: String,
+    },
+    Error {
+        message: String,
+    },
+    Idle {
+        room_id: Option<String>,
+        room_title: Option<String>,
+        last_spoke_at: Option<String>,
+    },
+    Archived,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -341,6 +372,17 @@ pub struct CardView {
     pub position: i32,
     pub assignee_id: Option<String>,
     pub created_by: String,
+    /// 负责人对这张卡片的当前状态，只在 Desktop 读取看板时计算；Agent 命令的输出不带它
+    /// （collaboration-desktop.md §4.3）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_state: Option<CardAgentState>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CardAgentState {
+    Working,
+    Queued,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -391,4 +433,87 @@ pub struct RunEventView {
     pub level: String,
     pub data: serde_json::Value,
     pub created_at: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// collaboration-desktop.md §4.1：`activity` 以 `kind` 区分，枚举值 snake_case、字段 camelCase；
+    /// 与 `desktop/src/bridge/collab.ts` 的 `CollabAgentActivity` 同形。
+    #[test]
+    fn agent_activity_serializes_as_a_kind_tagged_camel_case_object() {
+        let working = AgentActivity::Working {
+            room_id: Some("room-1".to_string()),
+            room_title: Some("Release".to_string()),
+            card_id: None,
+            card_title: None,
+            started_at: "2026-09-25T10:07:14+08:00".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(working).unwrap(),
+            json!({
+                "kind": "working",
+                "roomId": "room-1",
+                "roomTitle": "Release",
+                "cardId": null,
+                "cardTitle": null,
+                "startedAt": "2026-09-25T10:07:14+08:00",
+            })
+        );
+        let queued = AgentActivity::Queued {
+            card_count: 2,
+            first_card_title: "Fix login".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(queued).unwrap(),
+            json!({ "kind": "queued", "cardCount": 2, "firstCardTitle": "Fix login" })
+        );
+        let idle = AgentActivity::Idle {
+            room_id: None,
+            room_title: None,
+            last_spoke_at: None,
+        };
+        assert_eq!(
+            serde_json::to_value(idle).unwrap(),
+            json!({ "kind": "idle", "roomId": null, "roomTitle": null, "lastSpokeAt": null })
+        );
+        assert_eq!(
+            serde_json::to_value(AgentActivity::Error {
+                message: "Engine missing".to_string()
+            })
+            .unwrap(),
+            json!({ "kind": "error", "message": "Engine missing" })
+        );
+        assert_eq!(
+            serde_json::to_value(AgentActivity::Archived).unwrap(),
+            json!({ "kind": "archived" })
+        );
+    }
+
+    /// collaboration-desktop.md §4.3：没有状态的卡片不带 `agentState` 字段，有状态时为 snake_case。
+    #[test]
+    fn card_agent_state_is_omitted_unless_the_desktop_computed_it() {
+        let card = CardView {
+            id: "card-1".to_string(),
+            board_id: "board-1".to_string(),
+            column_id: "column-1".to_string(),
+            title: "Fix login".to_string(),
+            description: None,
+            position: 0,
+            assignee_id: Some("bo".to_string()),
+            created_by: "local-user".to_string(),
+            agent_state: None,
+        };
+        let plain = serde_json::to_value(&card).unwrap();
+        assert!(plain.get("agentState").is_none(), "{plain}");
+        let queued = serde_json::to_value(CardView {
+            agent_state: Some(CardAgentState::Queued),
+            ..card
+        })
+        .unwrap();
+        assert_eq!(queued["agentState"], json!("queued"));
+    }
 }

@@ -297,7 +297,9 @@ async fn open_run(
     {
         return Err(TransportError::unauthorized("invalid trigger envelope"));
     }
-    Ok(Json(state.runs.open(&claims, &request.trigger).await?))
+    let run = state.runs.open(&claims, &request.trigger).await?;
+    state.session.publish_agent_activity(&claims.sub);
+    Ok(Json(run))
 }
 
 fn valid_trigger_shape(trigger: &crate::protocol::TriggerEnvelope) -> bool {
@@ -346,6 +348,7 @@ async fn agent_command(
                 state.session.publish_board(None);
             }
             AgentCommandEffect::CardWakeQueued { agent_id, card_id } => {
+                state.session.publish_agent_activity(agent_id);
                 state.scheduler.card_wake_queued(agent_id, card_id).await;
             }
             AgentCommandEffect::InboxAcknowledged { .. }
@@ -362,7 +365,9 @@ async fn finish_run(
     Json(request): Json<FinishRunRequest>,
 ) -> Result<Json<RunView>, TransportError> {
     let claims = agent_claims(&state, &headers).await?;
-    Ok(Json(state.runs.finish(&claims, &run_id, request).await?))
+    let run = state.runs.finish(&claims, &run_id, request).await?;
+    state.session.publish_agent_activity(&claims.sub);
+    Ok(Json(run))
 }
 
 async fn append_run_events(
