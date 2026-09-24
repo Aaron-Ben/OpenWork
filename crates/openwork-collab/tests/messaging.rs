@@ -537,6 +537,103 @@ async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room
     fixture.stop().await;
 }
 
+/// collaboration.md §9.2、§16 #11：与房间里上一条别人的消息逐字相同（去掉首尾空白）时拒绝，
+/// 带 HELD token 重试也拒绝，被拒的消息不写入、delivery 不推进；两个 Agent 同时私聊对方
+/// 同一句话时只有一条成功。
+#[tokio::test]
+async fn acc_11_a_verbatim_repeat_of_the_last_peer_message_is_rejected() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha = fixture.create_agent("Alpha").await;
+    let beta = fixture.create_agent("Beta").await;
+    let group = fixture
+        .create_group(vec![alpha.id.clone(), beta.id.clone()])
+        .await;
+    fixture
+        .send_user(&group.id, "Count to 5, one number each.")
+        .await;
+    let alpha_token = fixture.token(&alpha.id).await;
+    let beta_token = fixture.token(&beta.id).await;
+    let alpha_inbox = fixture.inbox(&alpha_token).await;
+    let beta_inbox = fixture.inbox(&beta_token).await;
+    fixture.open_run(&alpha_token, &alpha_inbox).await;
+    let beta_run = fixture.open_run(&beta_token, &beta_inbox).await;
+    let reply = |body: &str, held_token: Option<String>| AgentCommand::Reply {
+        room_id: group.id.clone(),
+        body: body.to_string(),
+        held_token,
+        quoted_message_id: None,
+    };
+
+    let first = fixture.command(&alpha_token, reply("1", None)).await;
+    assert!(matches!(
+        first.result,
+        AgentCommandResult::MessagePublished { .. }
+    ));
+    let held = fixture.command(&beta_token, reply("1", None)).await;
+    let AgentCommandResult::Held { retry_token, .. } = held.result else {
+        panic!("Beta must be held first: {:?}", held.result)
+    };
+    let duplicate = fixture
+        .command(&beta_token, reply(" 1\n", Some(retry_token)))
+        .await;
+    assert_eq!(
+        duplicate.result,
+        AgentCommandResult::Error {
+            code: "DUPLICATE".to_string(),
+            message: format!(
+                "your message is identical to the latest message from Alpha in {}: \"1\". Alpha already said it; pick a different angle, the next item in a sequence, or stay silent.",
+                group.id
+            ),
+        }
+    );
+    let (messages, eligible): (i64, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM collab_messages WHERE room_id = $1),
+                (SELECT eligible_reason FROM collab_run_deliveries WHERE run_id = $2)",
+    )
+    .bind(&group.id)
+    .bind(&beta_run.id)
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!((messages, eligible), (2, None));
+    let next = fixture.command(&beta_token, reply("2", None)).await;
+    assert!(matches!(
+        next.result,
+        AgentCommandResult::MessagePublished { .. }
+    ));
+
+    let dm = |participant_id: &str| AgentCommand::DirectMessage {
+        participant_id: participant_id.to_string(),
+        body: "Agreed.".to_string(),
+    };
+    let (from_alpha, from_beta) = tokio::join!(
+        fixture.command(&alpha_token, dm(&beta.id)),
+        fixture.command(&beta_token, dm(&alpha.id)),
+    );
+    let outcomes = [&from_alpha.result, &from_beta.result];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| matches!(result, AgentCommandResult::DirectMessageSent { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| matches!(
+                result,
+                AgentCommandResult::Error { code, .. } if code == "DUPLICATE"
+            ))
+            .count(),
+        1
+    );
+
+    fixture.stop().await;
+}
+
 /// collaboration.md §8.3、§16 #10：人类消息之后 Ada、Bo、Cy 各说一次、Ada 又说第二次，Bo 的
 /// triage 以 `lap_floor` 确定性跳过；用户在 Desktop 看到这些消息后计数重新开始，再来一条
 /// Agent 消息就回到 triage 模型。看到的位置只增不减，也不超过房间最后一条消息。

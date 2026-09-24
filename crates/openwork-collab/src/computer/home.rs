@@ -254,7 +254,7 @@ async fn atomic_write(path: &std::path::Path, bytes: &[u8], mode: u32) -> Result
 
 fn standing_prompt(assignment: &AgentAssignment) -> String {
     format!(
-        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published. Post with `openwork reply <room-id> <text>` or `openwork dm <participant-id> <text>`; use `--stdin` for text with quotes or `$`.\n\n## Glance and yield\n\n- A human may address one named teammate by name or role without @-mentioning them. If you are that teammate, answer; otherwise stay out. A message to the whole group may be answered by the group.\n- Reply from the actual posted messages, never from an imagined queue position. Use `openwork glance <room-id>` when you need to reread the room.\n- Post optimistically. If `openwork reply` returns HELD, read the newer messages, reconsider, and retry with the provided token only if your revised reply is still needed.\n- Do not repeat a peer. If another Agent already covered your point, stay silent. Stop when the task is complete.\n- Do not claim a chat turn or reserve a conversational slot. Claims are only for genuine shared work that another teammate could duplicate.\n\n## Addressing\n\n- Address a teammate with `@<id>` from your team list, not by display name.\n- When you answer a specific message, add `--quote <message-id>`, for example `openwork reply <room-id> --quote <message-id> <text>`.\n- When you talk about a Board card, write its id (`card-…`) so the room can link to it.\n\n# Local workspace\n\nUse the local Agent workspace for durable work.\n\n# CLI discovery\n\nRun `openwork --help`, or `openwork <command> --help` for one command.\n",
+        "# Identity\n\n{} (`{}`)\n\nRole: {}\n\n{}\n\n# Collaboration contract\n\nUse the `openwork` CLI for every collaboration action. Assistant text alone is not published. Post with `openwork reply <room-id> <text>` or `openwork dm <participant-id> <text>`; use `--stdin` for text with quotes or `$`.\n\n## Glance and yield\n\n- A human may address one named teammate by name or role without @-mentioning them. If you are that teammate, answer; otherwise stay out. A message to the whole group may be answered by the group.\n- Reply from the actual posted messages, never from an imagined queue position. Use `openwork glance <room-id>` when you need to reread the room.\n- Post optimistically. If `openwork reply` returns HELD, your reply was not sent: read the newer messages it shows, recompute your reply, and simply resend it. Add the provided `--held-token` only when resending your original text unchanged.\n- Do not repeat a peer. If another Agent already covered your point, stay silent. Stop when the task is complete.\n- Do not claim a chat turn or reserve a conversational slot. Claims are only for genuine shared work that another teammate could duplicate.\n\n## Addressing\n\n- Address a teammate with `@<id>` from your team list, not by display name.\n- When you answer a specific message, add `--quote <message-id>`, for example `openwork reply <room-id> --quote <message-id> <text>`.\n- When you talk about a Board card, write its id (`card-…`) so the room can link to it.\n\n# Local workspace\n\nUse the local Agent workspace for durable work.\n\n# CLI discovery\n\nRun `openwork --help`, or `openwork <command> --help` for one command.\n",
         assignment.display_name,
         assignment.id,
         assignment.role.as_deref().unwrap_or("unspecified"),
@@ -317,8 +317,8 @@ mod tests {
         }
     }
 
-    /// collaboration.md §7.1、§16 #8：协作契约写明发消息的写法、`<command> --help`、用 `@<id>` 点名、
-    /// 谈到卡片时写出 id，且不含运行时状态。
+    /// collaboration.md §7.1、§9.1、§16 #8：协作契约写明发消息的写法、`<command> --help`、用 `@<id>` 点名、
+    /// 谈到卡片时写出 id、HELD 后直接重发，且不含运行时状态。
     #[test]
     fn acc_08_standing_contract_names_the_addressing_rules() {
         let contract = super::standing_prompt(&assignment("alpha"));
@@ -331,6 +331,9 @@ mod tests {
         ));
         assert!(contract.contains(
             "## Addressing\n\n- Address a teammate with `@<id>` from your team list, not by display name.\n- When you answer a specific message, add `--quote <message-id>`, for example `openwork reply <room-id> --quote <message-id> <text>`.\n- When you talk about a Board card, write its id (`card-…`) so the room can link to it.\n"
+        ));
+        assert!(contract.contains(
+            "- Post optimistically. If `openwork reply` returns HELD, your reply was not sent: read the newer messages it shows, recompute your reply, and simply resend it. Add the provided `--held-token` only when resending your original text unchanged.\n"
         ));
         assert!(!contract.contains("Current time"));
     }

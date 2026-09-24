@@ -555,6 +555,11 @@ impl AgentCommands {
                 }
             }
         }
+        if let Some(reason) =
+            Messages::duplicate_of_last_peer_in(transaction, room_id, &claims.sub, body).await?
+        {
+            return Ok((error("DUPLICATE", &reason), held_reserved));
+        }
         let message = Messages::insert_in(transaction, room_id, &claims.sub, body, quoted).await?;
         Runs::mark_delivery_action_in(transaction, run_id, room_id).await?;
         Ok((
@@ -643,6 +648,11 @@ async fn direct_message(
             "LOOP_CAP",
             "Agent conversation reached its deterministic loop cap",
         ));
+    }
+    if let Some(reason) =
+        Messages::duplicate_of_last_peer_in(transaction, &room_id, &claims.sub, body).await?
+    {
+        return Ok(error("DUPLICATE", &reason));
     }
     let message = Messages::insert_in(transaction, &room_id, &claims.sub, body, None).await?;
     Runs::mark_delivery_action_in(transaction, run_id, &room_id).await?;

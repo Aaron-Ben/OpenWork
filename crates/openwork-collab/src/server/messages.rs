@@ -10,6 +10,8 @@ use super::{agents::Agents, auth::AgentClaims, climate::Climate, rooms::Rooms};
 const INBOX_MESSAGE_LIMIT: usize = 200;
 /// Characters of a quoted message shown under a reply (collaboration.md §9.3, Cumora `cli.ts` inbox).
 const QUOTE_BODY_MAX_CHARS: i32 = 180;
+/// Characters of the peer message shown back in a DUPLICATE rejection (collaboration.md §9.2, Cumora `cli.ts`).
+const DUPLICATE_PEER_MAX_CHARS: i32 = 200;
 
 #[derive(Clone)]
 pub(crate) struct Messages {
@@ -68,6 +70,42 @@ impl Messages {
         .fetch_optional(&mut **transaction)
         .await
         .map(|row| row.map(QuotedMessageView::from))
+    }
+
+    /// 逐字重复拦截（collaboration.md §9.2，Cumora `cli.ts` 的 VERBATIM-DUP）：先锁住房间行，
+    /// 再比较 `body` 与本房间最近一条别人发的 normal 消息（两边都去掉首尾空白）。相同时返回
+    /// 给模型的拒绝说明。锁保持到事务结束，所以随后的插入不会被并发的同一内容抢先。
+    pub(crate) async fn duplicate_of_last_peer_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        author_id: &str,
+        body: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query("SELECT id FROM collab_rooms WHERE id = $1 FOR UPDATE")
+            .bind(room_id)
+            .execute(&mut **transaction)
+            .await?;
+        let last_peer: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT message.body, LEFT(message.body, $3), author.display_name
+             FROM collab_messages message
+             JOIN collab_participants author ON author.id = message.author_id
+             WHERE message.room_id = $1 AND message.author_id <> $2 AND message.kind = 'normal'
+             ORDER BY message.sequence DESC
+             LIMIT 1",
+        )
+        .bind(room_id)
+        .bind(author_id)
+        .bind(DUPLICATE_PEER_MAX_CHARS)
+        .fetch_optional(&mut **transaction)
+        .await?;
+        Ok(last_peer
+            .filter(|(peer_body, _, _)| peer_body.trim() == body.trim())
+            .map(|(_, shown, name)| {
+                let shown = shown.split_whitespace().collect::<Vec<_>>().join(" ");
+                format!(
+                    "your message is identical to the latest message from {name} in {room_id}: \"{shown}\". {name} already said it; pick a different angle, the next item in a sequence, or stay silent."
+                )
+            }))
     }
 
     /// 引用目标不在本房间时给模型与用户的说明。

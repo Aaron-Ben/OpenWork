@@ -15,7 +15,8 @@
 | K5 | 完成（后端、CLI、Agent 提示与 Desktop bridge；Desktop 界面在 U2） | 迁移 `202609240002_message_quotes.sql`（`(room_id, id)` 唯一约束 + 同房间复合外键）；`MessageView.quoted`；`reply --quote`；Desktop `collab_message_send` 增加 `quotedMessageId`；引用穿透 mute（inbox 与唤醒）；inbox/glance/messages 与增量显示消息 id 和引用行；`AGENTS.md` 补 `--quote`；`Messages::views` 统一补齐引用摘要，`insert` 改用 `NewMessage` 结构（原 6 个参数） |
 | K2 | 完成 | `server/routing.rs`（点名对象、`@all`、路由题）；triage payload 增加 `routing` 与 `routed` 参数，人类消息那一步拆成 `human_step`；`collab_triages.source` 增加 `routing`（迁移 `202609240003`），最终结论写入 `response_mode`；Computer 端 `runner.rs` 改为 `runner/mod.rs` + `runner/routing.rs`，`parse_route` 只认明确的 `me` |
 | K3 | 完成 | lap floor（`n > k`，本批每个房间都越过时以 `lap_floor` 跳过），人类关注 = 人类消息或 `collab_rooms.user_viewed_seq`（迁移 `202609240004`）；判断顺序为硬上限 → 私聊检查点 → lap floor；写入时的 20 条硬上限也按最近一次人类关注计数；Desktop `RoomViewed` 命令（只增不减、不进幂等账本）、Tauri `collab_room_viewed`、`messageStore` 在前台看到新消息时上报 |
-| K4、K6–K7 | 未开始 | |
+| K4 | 完成（含 E17） | `Messages::duplicate_of_last_peer_in`：锁住房间行后与最近一条别人发的 normal 消息比较（去首尾空白），`reply`（含带 HELD token 的重试）与 `dm` 在写入前调用，拒绝码 `DUPLICATE`，文本附对方原话前 200 字 |
+| K6–K7 | 未开始 | |
 
 ## 2. 已定决策
 
@@ -36,6 +37,7 @@
 | E14 | CLI 三处修正：`--` 之前任何位置的 `--help` / `-h` 显示帮助，子命令后只显示该子命令的用法；glance 没有新消息时写明 `No new messages since you last read this room (latest sequence N).`；`AGENTS.md` 写明发消息的写法与 `openwork <command> --help`。起因是 E13 实测中 Bo 猜 `--body`、子命令 `--help` 只报错、Ada 被 `(no messages)` 误导（2026-09-24） |
 | E15 | 派生的 OpenCode 配置把 Agent 的主模型与判断模型标为 `status: active`，不再因模型目录刷新后标为 deprecated 而失效；Desktop 默认模型改为 `deepseek/deepseek-flash`。缓存目录仍是每次会话的临时目录，持久化另议（2026-09-24） |
 | E16 | lap floor 只在 triage 时判断，不在 `reply` / `dm` 写入时再判断：与 Cumora 一致，多个 Agent 同时基于 n = k 的状态被唤醒时，最多放过一轮并发接话（2026-09-24） |
+| E17 | HELD 按 Cumora 的方式重写：文案写明消息没有发出，直接重发改过的内容即可通过（HELD 时已推进 seen），`--held-token` 只用于原稿照发；`reply` 的 `--quote` / `--held-token` 写在正文前后都可以，`--` 之后一律当正文。`AGENTS.md` 契约的 HELD 一条同步改为直接重发（Cumora `glance-protocol.ts` 的 "recompute your item, and resend"）。起因是 K4 实测中模型把 `--held-token` 写在正文之后被拒（2026-09-24） |
 | E11 | 协作模式不要运行记录：删除运行记录页与其专用后端（`observability`、`collab_run_events`、事件上报、`collab_run_list`/`collab_run_trace`）；界面只展示当前状态和房间说明行；`collab_runs` 与 `collab_triages` 保留为内部状态（2026-09-24） |
 
 ## 3. 写文档时新定的实现细节（2026-09-24 用户已确认）
@@ -62,7 +64,7 @@
 
 - 2026-09-24 E15：`derived_configs_keep_the_chosen_models_active_even_when_the_catalog_deprecates_them` 与更新后的 `main_turn_config_loads_the_managed_agents_file_as_instructions` 先失败后通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。真实模型实测（不预置模型目录，OpenCode 1.18.18；`brew upgrade` 后 tap 的稳定版仍是 1.18.18）：`deepseek/deepseek-v4-flash` 两轮都成功（此前第二轮全部失败），运行后缓存里的 `models.json` 确实把它标为 deprecated，派生配置里是 `status: active`；`deepseek/deepseek-flash` 首次运行也成功（自带快照里没有它）。两次点名结果都正确，10 个 Run 全部 completed。
 
-- 2026-09-24 K5：验收 §16 #12 → `messaging::acc_12_quotes_stay_in_the_room_and_reach_a_muted_author`（先因字段不存在编译失败，实现后通过）、`computer::shim::tests::acc_12_reply_takes_a_quote_before_the_body`、`acc_12_message_listings_show_ids_and_quoted_originals`、`computer::prompt::tests::acc_12_quoted_messages_show_the_original_under_the_reply`、`bridge/collab.test.ts` 的 quoted send 用例。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。唤醒路径（`wake_recipients`）的引用例外没有独立测试，由 inbox 路径覆盖投递正确性。
+- 2026-09-24 K5：验收 §16 #12 → `messaging::acc_12_quotes_stay_in_the_room_and_reach_a_muted_author`（先因字段不存在编译失败，实现后通过）、`computer::shim::tests::acc_12_reply_takes_a_quote_anywhere_outside_the_body`、`acc_12_message_listings_show_ids_and_quoted_originals`、`computer::prompt::tests::acc_12_quoted_messages_show_the_original_under_the_reply`、`bridge/collab.test.ts` 的 quoted send 用例。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。唤醒路径（`wake_recipients`）的引用例外没有独立测试，由 inbox 路径覆盖投递正确性。
 - 2026-09-24 K5 真实模型实测（`deepseek/deepseek-flash`，不预置目录，临时测试跑完已删）：点名结果不变（只有 Bo、只有 Ada，回答正确，10 个 Run 全部 completed）；Bo 与 Ada 都主动用 `openwork reply <room> --quote <被回答的用户消息 id> <text>` 一次发布成功，没有多余命令。
 
 - 2026-09-24 K2：验收 §16 #9 → `server::routing::tests::acc_09_only_messages_naming_other_agents_are_routed`、`mention_boundaries_match_the_mute_exception`、`routing_request_lists_named_and_other_agents`、`computer::triage::tests::acc_09_only_an_explicit_me_narrows_the_route`、`messaging::acc_09_a_message_naming_one_agent_asks_the_others_to_route_it`。纯函数测试与实现同时写成，没有先看到失败；服务端验收测试写完后直接通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
@@ -70,6 +72,12 @@
 
 - 2026-09-24 K3：验收 §16 #10 → `server::triage::tests::acc_10_a_lapping_agent_run_is_skipped_without_a_model`（先因字段不存在编译失败）、`messaging::acc_10_a_second_lap_is_skipped_until_the_user_looks_again`、`rooms/roomViewed.test.ts`、`bridge/collab.test.ts` 的 `collab_room_viewed` 用例。现有测试 `direct_room_reads_and_private_directional_climate_form_one_loop` 改了预期：两人私聊第 8 条的检查点现在以 `lap_floor` 跳过（8 条只来自 2 个 Agent），Climate 进入 triage 输入的断言移到群聊场景。文档 §8.3 修正：硬上限先于私聊检查点（恢复原规定）。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
 - 2026-09-24 K3 真实模型实测（`deepseek/deepseek-flash`，同 K2 第二个场景）：第一轮三人各答一句后，三人在 n = k = 3 的同一时刻被唤醒，triage 模型都判为 actionable，同时各接一句（第 7–9 条）；之后 3 次唤醒以 `lap_floor` 跳过，讨论停止。缺口来自唤醒时的快照，Cumora 相同，按 E16 接受。
+
+- 2026-09-24 K4：验收 §16 #11 → `messaging::acc_11_a_verbatim_repeat_of_the_last_peer_message_is_rejected`（先失败：带 HELD token 的重复被发布；实现后通过），覆盖去首尾空白比较、HELD token 不能绕过、被拒时消息与 delivery 不变、两个 Agent 同时私聊同一句只有一条成功。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
+- 2026-09-24 K4 真实模型实测（`deepseek/deepseek-flash`，三 Agent 数 1 到 6）：结果 1–6 各一条、顺序正确，没有重复发布；撞车都先被 HELD 拦下后改发下一个数，本次没有触发 `DUPLICATE`。Ada、Bo 各有一次把 `--held-token` 写在正文之后被拒（`put --held-token before the message body`），重发后成功。
+- 2026-09-24 E17：`computer::shim::tests::held_replies_say_a_plain_resend_goes_through`（先失败）、`acc_12_reply_takes_a_quote_anywhere_outside_the_body`（原 `acc_12_reply_takes_a_quote_before_the_body`，改为断言正文后的选项被接受、`--` 之后照原文、重复选项报错，先失败后通过）；HELD 后不带 token 直接重发由 `messaging::acc_11_a_verbatim_repeat_of_the_last_peer_message_is_rejected` 里 Beta 发 `2` 那一步覆盖。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
+- 2026-09-24 E17 真实模型实测（`deepseek/deepseek-flash`，同 K4 数数场景）：1–6 各一条、顺序正确；3 次 HELD 后模型都直接 `openwork reply <room> <下一个数>` 重发成功，没有用 `--held-token`、没有参数被拒；最后一次 Ada 看到 6 已发出后停手（Run 结果 `unpublished`），之后 4 次唤醒以 `lap_floor` 跳过。
+- 2026-09-24 提交前审查（/review-branch）一条阻塞已修：`home.rs` 契约仍写着 HELD 后带 token 重试改稿，与 §9.1 相反；已改为直接重发，`acc_08_standing_contract_names_the_addressing_rules` 增加逐字断言（先失败后通过），collaboration.md §7.1 同步。
 
 ## 5. 待定
 

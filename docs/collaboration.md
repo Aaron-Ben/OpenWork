@@ -234,7 +234,7 @@ Cumora 不做中央编排：“这条该谁回答”由每个 Agent 的主模型
 `agents/<id>/AGENTS.md` 由 Computer 写入，经 OpenCode 派生配置的 `instructions` 进入系统提示词（§13.5）。它包含 persona 与代码拥有的协作契约，每个 Agent 固定不变，不含时间、路径或运行时状态：
 
 - 协作动作一律用 `openwork` CLI，assistant 文本本身不会发布；发消息写 `openwork reply <room-id> <text>` 或 `openwork dm <participant-id> <text>`，含引号或 `$` 的文本用 `--stdin`（Cumora `standingPrompt` 的 `postingMechanicsText` 同样写明发消息方式）；
-- glance-and-yield 五条规则（Cumora `glance-protocol.ts` 的 `GLANCE_YIELD_RULES`）：人类按名字或角色点名某人时，不是你就不插话；按实际已发布的消息回复，不按想象中的排队位置；乐观发布，遇到 HELD 重看后再决定；不重复同伴已经说过的，任务完成就停；不认领聊天轮次，认领只用于共享交付物（Card）；
+- glance-and-yield 五条规则（Cumora `glance-protocol.ts` 的 `GLANCE_YIELD_RULES`）：人类按名字或角色点名某人时，不是你就不插话；按实际已发布的消息回复，不按想象中的排队位置；乐观发布，遇到 HELD 读完新消息、重新决定后直接重发，原稿照发才带 `--held-token`（§9.1）；不重复同伴已经说过的，任务完成就停；不认领聊天轮次，认领只用于共享交付物（Card）；
 - 点名同伴用 `@<id>`，不用显示名；
 - 回复某条特定消息时加 `--quote <msg-id>`（§9.3）；
 - 查看用法用 `openwork --help`，只看一个命令用 `openwork <command> --help`；
@@ -354,7 +354,7 @@ Runner 从 durable inbox 打开一个 Run，并把每个 Room 的 sequence 范�
 
 ## 9. 发布：HELD、逐字重复与引用
 
-`openwork reply` 与 `openwork dm` 的正文直接写在 id 之后，多个参数按空格拼接（与 Cumora `reply <convo_id> "<body>"` 相同）；含引号或 `$` 的文本用 `--stdin` / `--file <path>`，以 `--` 开头的文本前面加 `--`。`--held-token` 必须写在正文之前。两者共用 `Messages` 的同一段写入事务。事务锁定 Room 行后，按顺序检查 HELD（§9.1，仅群聊）与逐字重复（§9.2），都通过才分配 sequence 并插入。
+`openwork reply` 与 `openwork dm` 的正文直接写在 id 之后，多个参数按空格拼接（与 Cumora `reply <convo_id> "<body>"` 相同）；含引号或 `$` 的文本用 `--stdin` / `--file <path>`，以 `--` 开头的文本前面加 `--`。`--held-token`、`--quote` 写在正文前后都可以，`--` 之后的内容一律当正文（Cumora `cli-parse.ts` 的 `parseArgs`）。两者共用 `Messages` 的同一段写入事务。事务锁定 Room 行后，按顺序检查 HELD（§9.1，仅群聊）与逐字重复（§9.2），都通过才分配 sequence 并插入。
 
 ### 9.1 HELD
 
@@ -362,10 +362,10 @@ HELD 解决并行回复的新鲜度问题：
 
 1. inbox 读取时记录该 Agent 对 Room 的 seen sequence；
 2. 发布前 Server 比较当前 sequence；
-3. Room 已变化时拒绝发布并签发短期 HELD token；
-4. Agent `glance` 最新消息；
-5. 使用绑定 Agent、Run、Room、session 和 sequence 的一次性 token 重试；
-6. Server 先按 `request_id` 原子预留 HELD，再提交 PostgreSQL 命令与幂等结果，提交成功后才最终消费 token。同一 `request_id` 可在 SQL 失败后继续恢复，其他请求不能抢占预留。
+3. Room 已变化时拒绝发布，返回 Agent 没看过的消息，把 seen sequence 推进到当前，并签发短期 HELD token；
+4. HELD 文本说明消息没有发出，并告诉模型：对照新消息重新决定，改过的内容直接重发即可，不需要任何选项；只有原稿不改照发时才带 `--held-token`（照 Cumora `cli.ts` 的 HELD 文案与 `--send-anyway`）；
+5. token 绑定 Agent、Run、Room、session 和 sequence，只能用一次；
+6. 带 token 重试时，Server 先按 `request_id` 原子预留 HELD，再提交 PostgreSQL 命令与幂等结果，提交成功后才最终消费 token。同一 `request_id` 可在 SQL 失败后继续恢复，其他请求不能抢占预留。
 
 HELD 不是全局锁，也不选举唯一回答者。Direct Room 不做 HELD：两个人同时打字是正常的。
 

@@ -229,25 +229,10 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
             })
         }
         [command, room_id, tail @ ..] if command == "reply" => {
-            let (options, body_arguments) = leading_options(tail, &["--held-token", "--quote"]);
-            if let [flag] = body_arguments
-                && matches!(flag.as_str(), "--held-token" | "--quote")
-            {
-                return Err(ShimError::Arguments(format!("{flag} requires a value")));
-            }
-            let positional = body_arguments.first().is_none_or(|first| first != "--");
-            if let Some(misplaced) = body_arguments
-                .iter()
-                .find(|argument| matches!(argument.as_str(), "--held-token" | "--quote"))
-                .filter(|_| positional)
-            {
-                return Err(ShimError::Arguments(format!(
-                    "put {misplaced} before the message body"
-                )));
-            }
+            let (options, body_arguments) = extract_options(tail, &["--held-token", "--quote"])?;
             Ok(AgentCommand::Reply {
                 room_id: room_id.clone(),
-                body: parse_body(body_arguments).await?,
+                body: parse_body(&body_arguments).await?,
                 held_token: options.get("--held-token").cloned(),
                 quoted_message_id: options.get("--quote").cloned(),
             })
@@ -297,21 +282,36 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
     }
 }
 
-/// 取出正文之前成对出现的 `allowed` 选项，返回选项与剩余参数。
-fn leading_options<'a>(
-    arguments: &'a [String],
+/// 取出 `--` 之前任意位置成对出现的 `allowed` 选项，返回选项与其余参数（原顺序）。模型常把
+/// 选项写在正文之后，所以不要求选项在前（Cumora `cli-parse.ts` 的 `parseArgs`）。
+fn extract_options(
+    arguments: &[String],
     allowed: &[&str],
-) -> (std::collections::BTreeMap<String, String>, &'a [String]) {
+) -> Result<(std::collections::BTreeMap<String, String>, Vec<String>), ShimError> {
     let mut options = std::collections::BTreeMap::new();
-    let mut rest = arguments;
-    while let [flag, value, remaining @ ..] = rest {
-        if !allowed.contains(&flag.as_str()) {
+    let mut rest = Vec::new();
+    let mut remaining = arguments.iter();
+    while let Some(argument) = remaining.next() {
+        if argument == "--" {
+            rest.push(argument.clone());
+            rest.extend(remaining.cloned());
             break;
         }
-        options.insert(flag.clone(), value.clone());
-        rest = remaining;
+        if !allowed.contains(&argument.as_str()) {
+            rest.push(argument.clone());
+            continue;
+        }
+        let value = remaining
+            .next()
+            .filter(|value| !value.is_empty() && value.as_str() != "--")
+            .ok_or_else(|| ShimError::Arguments(format!("{argument} requires a value")))?;
+        if options.insert(argument.clone(), value.clone()).is_some() {
+            return Err(ShimError::Arguments(format!(
+                "option {argument} must appear once with a non-empty value"
+            )));
+        }
     }
-    (options, rest)
+    Ok((options, rest))
 }
 
 fn parse_tail(value: &str) -> Result<u32, ShimError> {
@@ -404,9 +404,13 @@ fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
             messages,
         } => {
             let mut text = format!(
-                "HELD: room {room_id} changed; reconsider, then retry with --held-token {retry_token}"
+                "HELD — your reply was NOT sent. {} newer message(s) in {room_id} you had not seen:",
+                messages.len()
             );
             render_messages(&mut text, &messages);
+            text.push_str(&format!(
+                "\n\nYou have now seen these. Decide again against this state, then simply re-send: `openwork reply {room_id} <revised text>` goes through without any flag. Usually your draft is now wrong (counting: post the next number after the latest; a chain: continue from the latest entry; if a peer already delivered what you were about to say, stand down). Only if your original draft is still correct unchanged, re-send it with `--held-token {retry_token}`."
+            ));
             (text, 10)
         }
         AgentCommandResult::Inbox {
@@ -693,10 +697,10 @@ mod tests {
         }
     }
 
-    /// collaboration.md §9.3、§16 #12：`--quote` 与 `--held-token` 写在正文之前、顺序任意；
-    /// 写在正文之后或缺少值时拒绝并说明（模型可见文本逐字断言）。
+    /// collaboration.md §9、§16 #12：`--quote` 与 `--held-token` 写在正文前后都可以（Cumora
+    /// `cli-parse.ts`），`--` 之后都是正文；缺少值时拒绝并说明（模型可见文本逐字断言）。
     #[tokio::test]
-    async fn acc_12_reply_takes_a_quote_before_the_body() {
+    async fn acc_12_reply_takes_a_quote_anywhere_outside_the_body() {
         assert_eq!(
             parse_command(arguments(&[
                 "reply",
@@ -718,12 +722,35 @@ mod tests {
         );
         assert_eq!(
             parse_command(arguments(&[
-                "reply", "room-1", "Agreed.", "--quote", "msg-7"
+                "reply",
+                "room-1",
+                "Agreed.",
+                "--quote",
+                "msg-7",
+                "--held-token",
+                "hold-1"
             ]))
             .await
-            .unwrap_err()
-            .to_string(),
-            "invalid arguments: put --quote before the message body"
+            .unwrap(),
+            AgentCommand::Reply {
+                room_id: "room-1".to_string(),
+                body: "Agreed.".to_string(),
+                held_token: Some("hold-1".to_string()),
+                quoted_message_id: Some("msg-7".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply", "room-1", "--", "Agreed.", "--quote", "msg-7"
+            ]))
+            .await
+            .unwrap(),
+            AgentCommand::Reply {
+                room_id: "room-1".to_string(),
+                body: "Agreed. --quote msg-7".to_string(),
+                held_token: None,
+                quoted_message_id: None,
+            }
         );
         assert_eq!(
             parse_command(arguments(&["reply", "room-1", "--quote"]))
@@ -731,6 +758,46 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "invalid arguments: --quote requires a value"
+        );
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply", "room-1", "--quote", "msg-7", "Agreed.", "--quote", "msg-8"
+            ]))
+            .await
+            .unwrap_err()
+            .to_string(),
+            "invalid arguments: option --quote must appear once with a non-empty value"
+        );
+    }
+
+    /// collaboration.md §9.1：HELD 时说明消息没有发出、列出没看过的消息，并告诉模型直接重发新内容
+    /// 即可，只有原话照发才需要 `--held-token`（Cumora `cli.ts` 的 HELD 文案）。
+    #[test]
+    fn held_replies_say_a_plain_resend_goes_through() {
+        let output = render(AgentCommandResponse {
+            result: AgentCommandResult::Held {
+                room_id: "room-1".to_string(),
+                retry_token: "hold-1".to_string(),
+                messages: vec![MessageView {
+                    id: "msg-3".to_string(),
+                    room_id: "room-1".to_string(),
+                    sequence: 3,
+                    author_id: "bo".to_string(),
+                    body: "2".to_string(),
+                    quoted: None,
+                }],
+            },
+            effects: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(output.exit_code, 10);
+        assert_eq!(
+            output.text,
+            "HELD — your reply was NOT sent. 1 newer message(s) in room-1 you had not seen:\n\
+             [msg-3] #3 bo @ room-1: 2\n\
+             \n\
+             You have now seen these. Decide again against this state, then simply re-send: `openwork reply room-1 <revised text>` goes through without any flag. Usually your draft is now wrong (counting: post the next number after the latest; a chain: continue from the latest entry; if a peer already delivered what you were about to say, stand down). Only if your original draft is still correct unchanged, re-send it with `--held-token hold-1`."
         );
     }
 
@@ -809,28 +876,15 @@ mod tests {
         );
     }
 
-    /// 缺正文或把选项写在正文之后时，拒绝并告诉模型正确写法（模型可见文本逐字断言）。
+    /// 缺正文或出现未知选项时，拒绝并告诉模型正确写法（模型可见文本逐字断言）。
     #[tokio::test]
-    async fn misplaced_options_and_missing_bodies_are_rejected_with_the_usage() {
+    async fn unknown_options_and_missing_bodies_are_rejected_with_the_usage() {
         assert_eq!(
             parse_command(arguments(&["reply", "room-1"]))
                 .await
                 .unwrap_err()
                 .to_string(),
             "invalid arguments: missing message body; write it after the id, or use --stdin or --file <path> for text with quotes or $"
-        );
-        assert_eq!(
-            parse_command(arguments(&[
-                "reply",
-                "room-1",
-                "Still needed.",
-                "--held-token",
-                "hold-1"
-            ]))
-            .await
-            .unwrap_err()
-            .to_string(),
-            "invalid arguments: put --held-token before the message body"
         );
         assert_eq!(
             parse_command(arguments(&["reply", "room-1", "--tail", "5"]))
