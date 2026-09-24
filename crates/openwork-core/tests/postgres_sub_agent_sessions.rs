@@ -5,8 +5,8 @@
 //! cascade delete.
 
 use openwork_core::{
-    ClientRequestId, ModelCapabilities, PostgresStorage, ResolvedModel, SessionId, SessionInput,
-    SessionStorage, SubAgentSessionInput, TurnOutcome, session::TurnId,
+    ClientRequestId, ModelCapabilities, PostgresStorage, ResolvedModel, SandboxMode, SessionId,
+    SessionInput, SessionStorage, SubAgentSessionInput, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{Message, Role};
 use uuid::Uuid;
@@ -58,6 +58,7 @@ fn sub_agent(parent: &SessionId, task_name: &str) -> SubAgentSessionInput {
         working_directory: "/tmp/openwork-sub-agent".to_string(),
         default_model_id: None,
         spawn_span_id: Some("span-spawn-1".to_string()),
+        sandbox_mode: SandboxMode::AcceptEdits,
     }
 }
 

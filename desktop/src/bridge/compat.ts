@@ -2,14 +2,13 @@
 // Keep all compatibility DTOs in this bridge boundary until generated.ts lands.
 import type { ContentBlock, ToolResultArtifact } from '@/types/parts'
 
-export const RUNTIME_SESSION_UPDATE_VERSION = 6
+export const RUNTIME_SESSION_UPDATE_VERSION = 7
 
 export function supportsRuntimeSessionUpdateVersion(version: number): boolean {
   // V2 added tool progress, V3 added terminal tool artifacts, V4 added the
-  // compacting phase, V5 added structured permission cards, and V6 added
-  // session-scoped approval actions plus the resulting permission mode. Older
-  // versions remain readable during an
-  // in-process rolling transition.
+  // compacting phase, V5 added structured permission cards, V6 added
+  // session-scoped approval actions, and V7 replaced them with sandbox modes,
+  // escalation / dangerous-command cards and the sandbox status in snapshots.
   return version >= 1 && version <= RUNTIME_SESSION_UPDATE_VERSION
 }
 
@@ -230,59 +229,50 @@ export interface RuntimeTurnAccepted {
   clientRequestId: string
 }
 
-export type RuntimePermissionMode = 'default' | 'accept_edits'
-export type RuntimePermissionDecision = 'allow_once' | 'allow_session' | 'accept_edits' | 'deny'
+/** permissions.md §2.2：只有两个模式。 */
+export type RuntimePermissionMode = 'auto' | 'accept_edits'
+/** 卡片上只有两个按钮（permissions.md §5.2）。 */
+export type RuntimePermissionDecision = 'allow_once' | 'deny'
 
-export type RuntimePermissionEffect =
-  | { kind: 'read'; path: string }
-  | { kind: 'write'; path: string }
-  | { kind: 'exec'; program: string; args: string[] }
+/** 启动自检的结论（permissions.md §3.2）。 */
+export type RuntimeSandboxStatus =
+  | { state: 'available' }
+  | { state: 'unavailable'; reason: string }
 
-export type RuntimeEffectDisplay =
-  | { certainty: 'inferred'; effect: RuntimePermissionEffect }
-  | { certainty: 'readonly_proof'; key: string }
-  | { certainty: 'trusted_program'; program: string }
+export type RuntimeGrantAccess = 'read' | 'write'
+export type RuntimeGrantScope = 'exact' | 'subtree'
+export type RuntimePathTier = 'hard_protected' | 'sensitive' | 'credential' | 'normal'
+export type RuntimeDangerKey =
+  | 'rm_recursive_or_force'
+  | 'find_delete'
+  | 'git_clean_force'
+  | 'nesting_too_deep'
 
-export type RuntimeUnitVerdict =
-  | {
-      decision: 'allow'
-      source: 'builtin' | 'rule' | 'session_grant' | 'mode' | 'mode_fs_command' | 'readonly_proof'
-      ruleId: string | null
-    }
-  | {
-      decision: 'ask'
-      source: 'builtin_sensitive' | 'no_rule_covers' | 'unparsed'
-      ruleId: string | null
-    }
-  | { decision: 'deny'; ruleId: string; silent: boolean }
-
-export interface RuntimePermissionCardUnit {
-  display: string
-  effects: RuntimeEffectDisplay[]
-  verdict: RuntimeUnitVerdict
-  outsideWorkspace: boolean
+/** 越界请求的一条路径。 */
+export interface RuntimeApprovalPath {
+  path: string
+  access: RuntimeGrantAccess
+  scope: RuntimeGrantScope
+  tier: RuntimePathTier
+  inWorkspace: boolean
 }
 
+/** 命中的危险命令；`start` / `end` 是 `command` 里的 UTF-16 偏移。 */
+export interface RuntimeApprovalDanger {
+  key: RuntimeDangerKey
+  start: number
+  end: number
+}
+
+/** 越界与危险命令可以出现在同一张卡片上（permissions.md §5.1）。 */
 export interface RuntimeApprovalCard {
-  units: RuntimePermissionCardUnit[]
-  raw: string
-  unparsed: boolean
-  sessionAction?: RuntimeApprovalSessionAction
+  mode: RuntimePermissionMode
+  command: string | null
+  justification: string | null
+  paths: RuntimeApprovalPath[]
+  danger: RuntimeApprovalDanger | null
+  previousDenial: string | null
 }
-
-export type RuntimeExecPattern =
-  | { kind: 'token_prefix'; tokens: string[] }
-  | { kind: 'literal'; tokens: string[] }
-
-export interface RuntimeExecGrantSuggestion {
-  pattern: RuntimeExecPattern
-  label: string
-  exact: boolean
-}
-
-export type RuntimeApprovalSessionAction =
-  | { kind: 'allow_exec'; grants: RuntimeExecGrantSuggestion[] }
-  | { kind: 'enable_accept_edits' }
 
 export interface RuntimePermissionRequest {
   sessionId: string
@@ -337,7 +327,6 @@ export type RuntimeSessionUpdate =
       type: 'permission_resolved'
       toolCallId: string
       decision: RuntimePermissionDecision
-      permissionMode?: RuntimePermissionMode
     }
   | {
       /**
@@ -395,6 +384,7 @@ export interface RuntimeSessionSnapshot {
   sessionId: string
   lastUpdateSequence: number
   permissionMode: RuntimePermissionMode
+  sandbox: RuntimeSandboxStatus
   runtime: RuntimeSnapshotState
 }
 

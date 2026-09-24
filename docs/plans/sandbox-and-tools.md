@@ -102,11 +102,36 @@ WP0 基线
 
 | 步骤 | 内容 | 位置 |
 |---|---|---|
-| A2 tools | bash 经 `openwork-sandbox` 以 `bash -c` 启动；拒绝标记与越界提示；`sandbox_unavailable`；`sandbox_permissions` / `justification` 仅在沙箱可用时进 schema；文件工具围栏改用同一组推导函数（读取除凭据目录外处处允许）；硬保护规则拒绝；`ToolCallContext.sandbox_policy` 取代 `ExecutionPermit`；危险命令检测（tree-sitter，只看程序名与标志，包装器剥壳，`bash -c` 递归） | `openwork-tools` |
+| A2 tools | bash 经 `openwork-sandbox` 以 `bash -c` 启动；拒绝标记与越界提示；`sandbox_unavailable`；`sandboxPermissions` / `justification` 仅在沙箱可用时进 schema；文件工具围栏改用同一组推导函数（读取除凭据目录外处处允许）；硬保护规则拒绝；`ToolCallContext.sandbox_policy` 取代 `ExecutionPermit`；危险命令检测（tree-sitter，只看程序名与标志，包装器剥壳，`bash -c` 递归） | `openwork-tools` |
 | A2 删除 | permissions.md §10 列出的全部旧判定代码与 `tests/permissions_p1–p4.rs` | `openwork-tools/src/permission/` |
 | A3 core | 会话模式落库（迁移，遵守 `.claude/rules/database.md`）；每次调用盖章策略；越界校验（permissions.md §4.2）；两种卡片的 `PermissionRequest`；危险命令只在 `auto` 单独出卡；非交互 Session 的拒绝文本；子 Agent 模式 = min(父会话, 角色上限)，派生时快照；`runtime/sandbox-policy` world state section（含 bash 是否可用）；Trace 新属性；删除会话规则与会话授权 | `openwork-core` |
 | A4 agent | `AgentDefinition.sandbox_ceiling`；explorer 为 `AcceptEdits`；更新 explorer 系统提示词的 bash 边界说明 | `openwork-agent` |
 | A5 desktop | 模式指示器（`auto` / `accept-edits`，一键切换）；越界卡片（逐条列路径与档位）；危险命令卡片（高亮命中段）；"沙箱不可用，bash 已停用"常驻提示；Trace 时间线的新类别 | `desktop/` |
+
+**执行顺序与提交**（2026-09-24 确认）。tools 与 core 共用 `authorize` / `ExecutionPermit` / `PermissionMode` 这些接口，Rust 端只能一次切换；每次提交后 `scripts/check.sh` 必须全绿。
+
+提交一：Rust 端切换（tools + core + agent + Tauri 命令层）
+
+1. 依赖：tools、core、agent 依赖 `openwork-sandbox`（architecture.md §1）。
+2. tools 文件工具围栏：`ToolSessionContext` 的 `PermissionProfile` 换成 `SandboxPolicy`，`ToolCallContext` 的 `ExecutionPermit` 换成 `sandbox_policy`；`resolve_path` 规范化后调用 `SandboxPolicy::check(.., Actor::FileTool)`；硬保护返回规则拒绝文本，其余拒绝返回与 bash 相同的标记与越界提示；删除 core 中"落盘目录登记为只读根"的过渡代码。
+3. tools bash：经 `SandboxBackend::wrap` 以 `bash -c` 启动，环境叠加 `bash_environment()`；用 `classify` 标记 `denied` 并追加标记；沙箱不可用返回 `sandbox_unavailable`；更新工具描述（§4.6）。
+4. tools 越界参数：write / edit / bash 的 schema 在沙箱可用时增加 `sandboxPermissions` / `justification`。
+5. tools 危险命令检测：`permission/danger.rs`，tree-sitter 拆命令、剥包装器、`bash -c` 递归，命中给出清单键。
+6. tools 删除：`permission/` 下除 `danger.rs` 外全部、`policy/profile.rs`、`tests/permissions_p1–p4.rs`；`read_before_edit` / `file_changes` / `skill_paths` 测试迁到新接口。
+7. core 判定流程（permissions.md §2.1）：硬保护与越界校验失败为规则拒绝；`validate_grants` + `justification` 非空；危险命令只在 `auto` 单独出卡；`PermissionRequest` 改为卡片类型 + 命令 + 理由 + 逐条路径与档位 + 危险命中；`PermissionDecision` 只剩 `AllowOnce` / `Deny`；用户拒绝停止 Turn；审批串行。
+8. core 会话状态：`SessionPermissionState` 只剩模式与来源；迁移为 `sessions` 加 `sandbox_mode`（非空，默认 `auto`，CHECK 两个取值）；`set_permission_mode` 落库。
+9. core 子 Agent：生效模式 = min(父会话模式, 角色上限)，派生时快照；越界与危险命令直接拒绝，改写 `NON_INTERACTIVE_DENIAL`。
+10. core 沙箱状态与上下文：启动自检一次并缓存，快照带沙箱可用性；world state 新增 `runtime/sandbox-policy` section。
+11. core Trace：删除旧属性，加 §7 的属性。
+12. agent：`AgentDefinition.sandbox_ceiling`，explorer 为 `AcceptEdits`，改写 explorer 系统提示词。
+13. Tauri 与前端契约：`runtime_permission_mode_set` 接收 `auto` / `accept_edits`；`compat.ts` 同步并提升 `RUNTIME_SESSION_UPDATE_VERSION`；前端只做能编译、能展示新卡片数据的最小改动。
+14. 改写 `session_runtime.rs`、`postgres_core_host_flow.rs` 中依赖旧审批流程的用例。
+
+提交二：Desktop 界面（D7：先用静态 HTML 确认设计，再写组件）
+
+- 常驻模式指示器；越界卡片与危险命令卡片（只有"允许一次"/"拒绝"）；"沙箱不可用"常驻提示；Trace 时间线按 permissions.md §6.4 分类；三种语言文案。
+
+收尾：完成条件 3、4 的 grep；`openwork-sandbox` 注释改为中文；完成报告逐条对照验收。§4.2 的手动场景由用户在真实 Desktop 中执行，能用 core 端到端测试（假模型）覆盖的尽量覆盖。
 
 **完成条件：**
 

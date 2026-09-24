@@ -1,8 +1,9 @@
 use openwork_models::model::ModelCapabilities;
-use openwork_tools::{ApprovalCard, ToolResultStatus};
+use openwork_tools::ToolResultStatus;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::approval::ApprovalCard;
 use super::{ClientRequestId, SessionId, ToolCallId, TurnId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,12 +31,11 @@ impl ResolvedModel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// 卡片上只有两个按钮（permissions.md §5.2）：没有"本会话允许"，卡片也不切换模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     AllowOnce,
-    AllowSession,
-    AcceptEdits,
     Deny,
 }
 
@@ -89,8 +89,6 @@ pub enum SessionError {
     TurnNotActive(TurnId),
     #[error("permission request is not pending for tool call: {0}")]
     PermissionNotPending(ToolCallId),
-    #[error("permission decision is not available for tool call: {0}")]
-    PermissionDecisionUnavailable(ToolCallId),
     #[error("turn input must not be empty")]
     EmptyInput,
     #[error(

@@ -69,14 +69,7 @@ pub(super) fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
 
 /// The path shown to the model: relative to the working directory when
 /// inside it, so it can be passed straight to `read` or `edit`.
-pub(super) fn display_path(workspace: &Path, path: &Path) -> String {
-    path.strip_prefix(workspace)
-        .ok()
-        .filter(|relative| !relative.as_os_str().is_empty())
-        .unwrap_or(path)
-        .display()
-        .to_string()
-}
+pub(super) use crate::path::display_path;
 
 #[cfg(test)]
 mod tests {

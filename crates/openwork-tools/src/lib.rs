@@ -2,17 +2,23 @@
 
 mod backend;
 mod builtins;
+mod checked_path;
 mod context;
 mod definition;
+mod escalation;
 mod file_change;
 mod invocation;
+mod notice;
 mod observation;
+mod path;
 mod permission;
-pub mod policy;
+mod prepare;
 mod progress;
 mod registry;
 mod result;
 mod spill;
+#[cfg(test)]
+mod test_support;
 mod tool;
 
 pub use backend::{
@@ -23,6 +29,10 @@ pub use backend::{
 pub use builtins::builtin_registry;
 pub use context::{ToolCallContext, ToolCallId, ToolSessionContext};
 pub use definition::{ToolDefinition, ToolId, ToolRisk};
+pub use escalation::{
+    Escalation, EscalationInput, GrantAccessInput, GrantScopeInput, PathGrantInput,
+    SandboxPermissionsInput,
+};
 pub use file_change::{
     FileChangeArtifact, FileChangeKind, FileChangeReapplyError, FileChangeUndoError, FileDiffHunk,
     FileDiffLine, FileDiffLineKind, ReapplyFileChangesResult, UndoFileChangesResult,
@@ -30,14 +40,8 @@ pub use file_change::{
 };
 pub use invocation::ToolInvocation;
 pub use observation::FileObservations;
-pub use permission::{
-    AnalysisUnit, ApprovalCard, ApprovalSessionAction, AskSource, Authorization,
-    AuthorizationEvidence, CardUnit, DecisionSource, Effect, EffectDisplay, ExecGrantSuggestion,
-    ExecPattern, ExecutionPermit, InvocationAnalysis, PathPattern, PermissionEngine,
-    PermissionMode, ReadonlyProof, Rule, RuleBehavior, RuleId, RulePattern, RuleScope, UnitVerdict,
-    reduce_exec_grant,
-};
-pub use policy::{AccessKind, PermissionProfile};
+pub use permission::{DangerKey, DangerMatch, detect_danger};
+pub use prepare::{CallInspection, PreparedCall};
 pub use progress::ToolProgress;
 pub use registry::{
     FinalizedToolset, ToolRegistryBuilder, ToolRegistryError, ToolValidationError, ToolsetConfig,

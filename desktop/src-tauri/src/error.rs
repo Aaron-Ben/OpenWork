@@ -80,6 +80,18 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::InternalError,
                 "Skill files could not be processed",
             ),
+            OpenWorkCoreError::SandboxEnvironment(_) => Self::new(
+                CommandErrorCode::ConfigurationInvalid,
+                "The sandbox could not locate the home or temporary directory; check that HOME is set",
+            ),
+            OpenWorkCoreError::SandboxStartupTask(_) => Self::new(
+                CommandErrorCode::InternalError,
+                "The sandbox self-check could not run",
+            ),
+            OpenWorkCoreError::SubAgentModeFixed(id) => Self::new(
+                CommandErrorCode::InvalidRequest,
+                format!("A sub-agent keeps the sandbox mode it was started with: {id}"),
+            ),
             OpenWorkCoreError::FileChangeUndo(error) => {
                 Self::new(CommandErrorCode::OperationConflict, error.to_string())
             }
@@ -98,12 +110,6 @@ impl From<OpenWorkCoreError> for CommandError {
                 Self::new(
                     CommandErrorCode::ApprovalNotFound,
                     format!("Permission request is not pending: {tool_call_id}"),
-                )
-            }
-            OpenWorkCoreError::Session(SessionError::PermissionDecisionUnavailable(tool_call_id)) => {
-                Self::new(
-                    CommandErrorCode::InvalidRequest,
-                    format!("Permission decision is not available: {tool_call_id}"),
                 )
             }
             OpenWorkCoreError::Session(SessionError::EmptyInput) => Self::new(

@@ -21,7 +21,11 @@ pub fn builtin_registry() -> ToolRegistryBuilder {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{PermissionProfile, ToolSessionContext, ToolsetConfig};
+    use std::sync::Arc;
+
+    use openwork_sandbox::{SandboxBackend, Seatbelt};
+
+    use crate::{ToolSessionContext, ToolsetConfig};
 
     use super::*;
 
@@ -31,10 +35,7 @@ mod tests {
         let toolset = builtin_registry()
             .finalize(
                 &ToolsetConfig::from_names(names),
-                ToolSessionContext::local(
-                    std::env::temp_dir(),
-                    PermissionProfile::from_builtin_rules(std::env::temp_dir()),
-                ),
+                crate::test_support::unconfined_session(&std::env::temp_dir()),
             )
             .expect("builtin toolset");
 
@@ -49,15 +50,33 @@ mod tests {
 
         let expected_properties = [
             ("read", &["path", "offset", "limit"][..]),
-            ("write", &["path", "content"][..]),
+            (
+                "write",
+                &["path", "content", "sandboxPermissions", "justification"][..],
+            ),
             (
                 "edit",
-                &["filePath", "oldString", "newString", "replaceAll"][..],
+                &[
+                    "filePath",
+                    "oldString",
+                    "newString",
+                    "replaceAll",
+                    "sandboxPermissions",
+                    "justification",
+                ][..],
             ),
             ("grep", &["pattern", "path", "glob", "outputMode"][..]),
             ("glob", &["pattern", "path"][..]),
             ("list", &["path", "offset", "limit"][..]),
-            ("bash", &["command", "timeoutMs"][..]),
+            (
+                "bash",
+                &[
+                    "command",
+                    "timeoutMs",
+                    "sandboxPermissions",
+                    "justification",
+                ][..],
+            ),
         ];
         for (name, properties) in expected_properties {
             let definition = toolset.resolve(name).expect("builtin definition");
@@ -69,6 +88,26 @@ mod tests {
                 .map(String::as_str)
                 .collect::<HashSet<_>>();
             assert_eq!(actual, properties.iter().copied().collect());
+        }
+    }
+
+    /// permissions.md §4.2、tools.md §12 #10f：沙箱不可用时 schema 里没有越界参数。
+    #[test]
+    fn escalation_parameters_disappear_when_the_sandbox_is_unavailable() {
+        let unavailable: Arc<dyn SandboxBackend> =
+            Arc::new(Seatbelt::probe("/nonexistent/sandbox-exec"));
+        let toolset = builtin_registry()
+            .finalize(
+                &ToolsetConfig::from_names(["write", "edit", "bash"]),
+                ToolSessionContext::local(std::env::temp_dir(), unavailable),
+            )
+            .expect("builtin toolset");
+        for name in ["write", "edit", "bash"] {
+            let schema = &toolset.resolve(name).expect("definition").input_schema;
+            let text = schema.to_string();
+            assert!(!text.contains("sandboxPermissions"), "{name}: {text}");
+            assert!(!text.contains("justification"), "{name}: {text}");
+            assert!(schema.get("$defs").is_none(), "{name}: {text}");
         }
     }
 }

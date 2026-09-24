@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use openwork_agent::Agent;
 use openwork_chat_state::ChatStateHandle;
 use openwork_models::model::{ModelCapabilities, ModelPort};
-use openwork_tools::{ApprovalSessionAction, PermissionMode};
+use openwork_sandbox::SandboxMode;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -24,9 +24,10 @@ use super::compaction::{
     CompactionTrigger, ConversationCompactionRequest, ConversationRewindRequest, new_trace_id,
     rewind_conversation, run_compaction,
 };
-use super::permission_state::{PermissionModeOrigin, SessionPermissionState};
+use super::permission_state::{SessionModeOrigin, SessionPermissionState, SessionSandbox};
 use super::run_loop::{RunnerEvent, TurnRunRequest, run_turn};
 use super::toolset::TurnToolset;
+use super::updates::SESSION_UPDATE_VERSION;
 use super::{
     ClientRequestId, CompactionError, CompactionStateCollector, ConversationCompaction,
     PermissionDecision, PreparedTurnInput, ResolvedModel, SessionApproval, SessionError, SessionId,
@@ -52,7 +53,11 @@ pub struct SessionRuntimeConfig {
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
     pub trace: Arc<dyn TraceRecorder>,
-    pub permission_mode: PermissionMode,
+    /// 会话的沙箱模式：持久化的值，子 Agent 是派生时的快照（permissions.md §6）。
+    pub sandbox_mode: SandboxMode,
+    pub mode_origin: SessionModeOrigin,
+    /// 生成每次调用的沙箱策略所需的工作区与主机事实。
+    pub sandbox: SessionSandbox,
     /// Whether anyone can answer an approval prompt. Sub-agent Sessions are
     /// `NonInteractive`, which turns every `Ask` into an immediate denial.
     pub approval: SessionApproval,
@@ -227,8 +232,8 @@ impl SessionHandle {
 
     pub async fn set_permission_mode(
         &self,
-        mode: PermissionMode,
-    ) -> Result<PermissionMode, SessionError> {
+        mode: SandboxMode,
+    ) -> Result<SandboxMode, SessionError> {
         let (respond_to, response) = oneshot::channel();
         self.send(SessionCommand::SetPermissionMode { mode, respond_to })
             .await?;
@@ -334,8 +339,8 @@ enum SessionCommand {
         message: AgentMessage,
     },
     SetPermissionMode {
-        mode: PermissionMode,
-        respond_to: oneshot::Sender<PermissionMode>,
+        mode: SandboxMode,
+        respond_to: oneshot::Sender<SandboxMode>,
     },
     CompactConversation {
         disabled_skill_names: BTreeSet<String>,
@@ -372,7 +377,6 @@ struct ActiveTurn {
 
 struct PendingPermission {
     tool_call_id: ToolCallId,
-    session_action: Option<ApprovalSessionAction>,
     respond_to: oneshot::Sender<PermissionDecision>,
 }
 
@@ -391,6 +395,7 @@ struct SessionActor {
     reload_required: Arc<AtomicBool>,
     trace: Arc<dyn TraceRecorder>,
     approval: SessionApproval,
+    sandbox: SessionSandbox,
     parent_link: Option<super::ParentLink>,
     agent_control: Option<AgentControl>,
     mailbox: AgentMailbox,
@@ -417,15 +422,17 @@ impl SessionActor {
         update_tx: broadcast::Sender<SessionUpdateEnvelope>,
         global_update_tx: Option<broadcast::Sender<SessionUpdateEnvelope>>,
     ) -> Self {
-        let (permission_state_tx, _) =
-            watch::channel(SessionPermissionState::new(config.permission_mode));
+        let (permission_state_tx, _) = watch::channel(SessionPermissionState::new(
+            config.sandbox_mode,
+            config.mode_origin,
+        ));
         Self {
             snapshot: SessionSnapshot {
-                // Snapshot V5 adds session-scoped approval actions.
-                version: 5,
+                version: SESSION_UPDATE_VERSION,
                 session_id: config.session_id.clone(),
                 last_update_sequence: 0,
-                permission_mode: config.permission_mode,
+                permission_mode: config.sandbox_mode,
+                sandbox: config.tools.registered().sandbox_status().clone(),
                 runtime: SessionRuntimeSnapshot::Idle,
             },
             session_id: config.session_id,
@@ -442,6 +449,7 @@ impl SessionActor {
             reload_required,
             trace: config.trace,
             approval: config.approval,
+            sandbox: config.sandbox,
             parent_link: config.parent_link,
             agent_control: config.agent_control,
             mailbox: AgentMailbox::default(),
@@ -523,7 +531,7 @@ impl SessionActor {
                 self.mailbox.push(message).await;
             }
             SessionCommand::SetPermissionMode { mode, respond_to } => {
-                self.set_permission_mode(mode, PermissionModeOrigin::UserToggle);
+                self.set_permission_mode(mode, SessionModeOrigin::UserToggle);
                 let _ = respond_to.send(mode);
             }
             SessionCommand::CompactConversation {
@@ -647,6 +655,7 @@ impl SessionActor {
             events: self.runner_tx.clone(),
             permission_state: self.permission_state_tx.subscribe(),
             approval: self.approval,
+            sandbox: self.sandbox.clone(),
             mailbox: self.mailbox.clone(),
             agent_control: self.agent_control.clone(),
         };
@@ -736,42 +745,6 @@ impl SessionActor {
             return Err(SessionError::PermissionNotPending(tool_call_id));
         }
 
-        let selected_action = match decision {
-            PermissionDecision::AllowSession => match pending.session_action.as_ref() {
-                Some(action @ ApprovalSessionAction::AllowExec { .. }) => Some(action),
-                _ => {
-                    if let Some(active) = self.active_turn.as_mut() {
-                        active.permission = Some(pending);
-                    }
-                    return Err(SessionError::PermissionDecisionUnavailable(tool_call_id));
-                }
-            },
-            PermissionDecision::AcceptEdits => match pending.session_action.as_ref() {
-                Some(action @ ApprovalSessionAction::EnableAcceptEdits) => Some(action),
-                _ => {
-                    if let Some(active) = self.active_turn.as_mut() {
-                        active.permission = Some(pending);
-                    }
-                    return Err(SessionError::PermissionDecisionUnavailable(tool_call_id));
-                }
-            },
-            PermissionDecision::AllowOnce | PermissionDecision::Deny => None,
-        };
-        match selected_action {
-            Some(ApprovalSessionAction::AllowExec { grants }) => {
-                self.permission_state_tx.send_modify(|state| {
-                    state.apply_exec_grants(&tool_call_id, grants);
-                });
-            }
-            Some(ApprovalSessionAction::EnableAcceptEdits) => {
-                self.set_permission_mode(
-                    PermissionMode::AcceptEdits,
-                    PermissionModeOrigin::ApprovalCard,
-                );
-            }
-            None => {}
-        }
-
         if let SessionRuntimeSnapshot::Running {
             phase,
             pending_permission,
@@ -781,13 +754,12 @@ impl SessionActor {
             *phase = SessionPhase::RunningTools;
             *pending_permission = None;
         }
-        let _ = pending.respond_to.send(decision.clone());
+        let _ = pending.respond_to.send(decision); // 接收方已结束时 Turn 已经不在等这个决定
         self.emit(
             turn_id,
             SessionUpdate::PermissionResolved {
                 tool_call_id,
                 decision,
-                permission_mode: self.snapshot.permission_mode,
             },
         );
         Ok(())
@@ -812,7 +784,6 @@ impl SessionActor {
                 if let Some(active) = self.active_turn.as_mut() {
                     active.permission = Some(PendingPermission {
                         tool_call_id: request.tool_call_id.clone(),
-                        session_action: request.card.session_action.clone(),
                         respond_to,
                     });
                 }
@@ -908,7 +879,7 @@ impl SessionActor {
         }
     }
 
-    fn set_permission_mode(&mut self, mode: PermissionMode, origin: PermissionModeOrigin) {
+    fn set_permission_mode(&mut self, mode: SandboxMode, origin: SessionModeOrigin) {
         self.snapshot.permission_mode = mode;
         self.permission_state_tx
             .send_modify(|state| state.set_mode(mode, origin));
@@ -990,13 +961,7 @@ impl SessionActor {
 
     fn emit(&mut self, turn_id: TurnId, update: SessionUpdate) {
         let envelope = SessionUpdateEnvelope {
-            // Version 6 adds session-scoped approval actions. Version 5 adds
-            // the structured permission card. Version 4 adds
-            // the `compacting` phase. Version 3 adds structured
-            // terminal tool artifacts. Version 2 introduced
-            // `tool_call_progress`; snapshot version 2 carries the same
-            // artifacts on running tool calls.
-            version: 6,
+            version: SESSION_UPDATE_VERSION,
             session_id: self.session_id.clone(),
             turn_id,
             sequence: self.next_update_sequence,

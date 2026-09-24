@@ -8,14 +8,13 @@ use tokio_util::sync::CancellationToken;
 use sha2::{Digest, Sha256};
 
 use crate::observation::ContentHash;
-use crate::policy::AccessKind;
 use crate::spill::{FOOTER_RESERVE_BYTES, MAX_RESULT_BYTES};
 use crate::{
-    AnalysisUnit, Effect, InvocationAnalysis, TextToolOutput, Tool, ToolCallContext,
-    ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
+use openwork_sandbox::Access;
 
-use crate::context::PathIntent;
+use crate::checked_path::PathIntent;
 
 /// Lines returned when the model does not ask for fewer (tools.md §9 read).
 const MAX_LINES: usize = 2000;
@@ -63,21 +62,6 @@ impl Tool for ReadTool {
         ToolRisk::ReadOnly
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let display = format!("read {}", input.path);
-        InvocationAnalysis::new(
-            display.clone(),
-            vec![AnalysisUnit::new(
-                display,
-                vec![Effect::read(session.normalize_effect_path(&input.path))],
-            )],
-        )
-    }
-
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -93,7 +77,12 @@ impl Tool for ReadTool {
         // line 1 rather than spend a round trip on an error.
         let offset = input.offset.max(1);
         let resolved = session
-            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
+            .resolve_path(
+                &input.path,
+                Access::Read,
+                PathIntent::MustExist,
+                &call.sandbox_policy,
+            )
             .await?;
         let display = resolved.as_path().display().to_string();
         let filesystem = session.filesystem.clone();
@@ -328,13 +317,10 @@ mod tests {
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{PermissionProfile, ToolCallId, ToolErrorCode, ToolOutput};
+    use crate::{ToolErrorCode, ToolOutput};
 
     fn session(workspace: &std::path::Path) -> ToolSessionContext {
-        ToolSessionContext::local(
-            workspace.to_path_buf(),
-            PermissionProfile::from_builtin_rules(workspace.to_path_buf()),
-        )
+        crate::test_support::unconfined_session(workspace)
     }
 
     fn input(path: &str) -> ReadInput {
@@ -352,28 +338,52 @@ mod tests {
         ReadTool
             .execute(
                 &session(workspace),
-                ToolCallContext::new(ToolCallId::new("read"), CancellationToken::new()),
+                crate::test_support::call_context("read", CancellationToken::new()),
                 input,
             )
             .await
             .map(|output| output.into_tool_result().text_content())
     }
 
+    /// 读取除凭据目录外处处允许（permissions.md §2.3）；经符号链接进入凭据目录照样被拒。
     #[tokio::test]
-    async fn rejects_read_through_symlink_outside_workspace() {
+    async fn rejects_read_through_symlink_into_a_credential_directory() {
         let sandbox = TestDirectory::new("read-symlink");
         let workspace = sandbox.path().join("workspace");
-        let outside = sandbox.path().join("outside");
+        let home = sandbox.path().join("home");
         std::fs::create_dir_all(&workspace).expect("create workspace");
-        std::fs::create_dir_all(&outside).expect("create outside directory");
-        std::fs::write(outside.join("secret.txt"), "secret").expect("write outside file");
-        symlink(&outside, workspace.join("escape")).expect("create symlink");
+        std::fs::create_dir_all(home.join(".ssh")).expect("create credential directory");
+        std::fs::write(home.join(".ssh/id_rsa"), "secret").expect("write key");
+        std::fs::create_dir_all(sandbox.path().join("elsewhere")).expect("create directory");
+        std::fs::write(sandbox.path().join("elsewhere/notes.txt"), "public").expect("write notes");
+        symlink(home.join(".ssh"), workspace.join("keys")).expect("create symlink");
+        symlink(sandbox.path().join("elsewhere"), workspace.join("other")).expect("create symlink");
+        let session = session(&workspace);
+        let read_at = |path: &str| {
+            ReadTool.execute(
+                &session,
+                crate::test_support::fenced_call("read", &workspace, &home),
+                input(path),
+            )
+        };
 
-        let error = read(&workspace, input("escape/secret.txt"))
+        let error = read_at("keys/id_rsa")
             .await
-            .expect_err("symlink escape must be denied");
-
+            .expect_err("credential read must be denied");
         assert_eq!(error.code, ToolErrorCode::PermissionDenied);
+        assert!(error.sandbox_denied);
+        assert!(
+            error.message.starts_with("[sandbox: read access to "),
+            "{}",
+            error.message
+        );
+
+        let text = read_at("other/notes.txt")
+            .await
+            .expect("reading outside the workspace is allowed")
+            .into_tool_result()
+            .text_content();
+        assert!(text.contains("public"), "{text}");
     }
 
     #[tokio::test]

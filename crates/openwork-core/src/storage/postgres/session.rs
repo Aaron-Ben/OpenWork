@@ -4,7 +4,7 @@ const SESSION_COLUMNS: &str = "SELECT id, title, working_directory, default_mode
             to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at,
             to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS updated_at,
             to_char(last_turn_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS last_turn_at,
-            parent_session_id, task_name, agent_role, spawn_span_id
+            parent_session_id, task_name, agent_role, spawn_span_id, sandbox_mode
      FROM sessions";
 
 impl PostgresStorage {
@@ -54,8 +54,8 @@ impl PostgresStorage {
         sqlx::query(
             "INSERT INTO sessions
                  (id, working_directory, default_model_id,
-                  parent_session_id, task_name, agent_role, spawn_span_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                  parent_session_id, task_name, agent_role, spawn_span_id, sandbox_mode)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(input.id.as_str())
         .bind(&input.working_directory)
@@ -64,12 +64,30 @@ impl PostgresStorage {
         .bind(&input.task_name)
         .bind(&input.agent_role)
         .bind(&input.spawn_span_id)
+        .bind(input.sandbox_mode.as_str())
         .execute(&self.pool)
         .await?;
 
         self.load_session(&input.id)
             .await?
             .ok_or_else(|| StorageError::SessionNotFound(input.id.to_string()))
+    }
+
+    /// 写入会话的沙箱模式（permissions.md §6.3）。会话不存在时报错。
+    pub async fn set_session_sandbox_mode(
+        &self,
+        session_id: &SessionId,
+        mode: SandboxMode,
+    ) -> Result<(), StorageError> {
+        let updated = sqlx::query("UPDATE sessions SET sandbox_mode = $2 WHERE id = $1")
+            .bind(session_id.as_str())
+            .bind(mode.as_str())
+            .execute(&self.pool)
+            .await?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::SessionNotFound(session_id.to_string()));
+        }
+        Ok(())
     }
 
     /// Lists top-level Sessions only. Sub-agents are reachable through their

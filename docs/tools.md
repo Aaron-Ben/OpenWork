@@ -337,7 +337,7 @@ canonical path → 上一次被读到或写入时的内容 SHA-256
 
 | 参数 | 取值 | 含义 |
 |---|---|---|
-| `sandbox_permissions.paths` | `[{path, access: read\|write, scope: exact\|subtree}]`，1–16 条 | 这一次调用额外需要的具体路径 |
+| `sandboxPermissions.paths` | `[{path, access: read\|write, scope: exact\|subtree}]`，1–16 条 | 这一次调用额外需要的具体路径 |
 | `justification` | 字符串，必填 | 直接展示给用户的一句话理由 |
 
 越界只有路径这一种形态，没有"更宽的模式"。越界只作用于这一次调用：Core 把批准的路径放进本次 `sandbox_policy.path_grants`，下一次调用回到会话模式。
@@ -558,7 +558,7 @@ T3 排在 [permissions.md](permissions.md) P1 之后：后台进程必须在沙�
 10c. bash 的进程树在 Seatbelt 沙箱内执行，profile 来自本次调用的 `sandbox_policy`；
 10d. 沙箱自检失败时 bash 不执行，返回 `sandbox_unavailable`；代码中不存在不经 Seatbelt 启动 bash 的路径；
 10e. 被内核拒绝的调用在结果上标记 `denied` 并附拒绝标记；`sandbox-exec` 启动失败不标 `denied`；
-10f. 沙箱不可用时 schema 中不出现 `sandbox_permissions` / `justification`。
+10f. 沙箱不可用时 schema 中不出现 `sandboxPermissions` / `justification`。
 
 ### 取消与进程
 

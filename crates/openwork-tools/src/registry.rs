@@ -4,10 +4,13 @@ use std::sync::Arc;
 use openwork_models::model::ToolDefinition as ModelToolDefinition;
 use thiserror::Error;
 
+use openwork_sandbox::{SandboxPolicy, SandboxStatus};
+
+use crate::prepare::{PreparedCall, prepare};
 use crate::tool::{DynTool, ToolAdapter};
 use crate::{
-    Authorization, PermissionEngine, PermissionMode, Tool, ToolCallContext, ToolDefinition,
-    ToolErrorCode, ToolId, ToolInvocation, ToolResult, ToolSessionContext,
+    Tool, ToolCallContext, ToolDefinition, ToolErrorCode, ToolId, ToolInvocation, ToolResult,
+    ToolSessionContext,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,14 +62,15 @@ impl ToolRegistryBuilder {
         config: &ToolsetConfig,
         session: ToolSessionContext,
     ) -> Result<FinalizedToolset, ToolRegistryError> {
+        let escalation_available = session.escalation_available();
         let mut registered = HashMap::new();
         for tool in self.tools {
-            let definition =
-                tool.definition()
-                    .map_err(|message| ToolRegistryError::InvalidDefinition {
-                        tool: tool.id().to_string(),
-                        message,
-                    })?;
+            let definition = tool.definition(escalation_available).map_err(|message| {
+                ToolRegistryError::InvalidDefinition {
+                    tool: tool.id().to_string(),
+                    message,
+                }
+            })?;
             validate_definition(&definition)?;
             let id = definition.id.clone();
             if registered.insert(id.clone(), (definition, tool)).is_some() {
@@ -91,12 +95,9 @@ impl ToolRegistryBuilder {
             tools.insert(id.clone(), FinalizedEntry { definition, tool });
         }
 
-        let permission =
-            PermissionEngine::from_builtin_rules(session.permissions.builtin_rules().clone());
         Ok(FinalizedToolset {
             definitions,
             tools,
-            permission,
             session: Arc::new(session),
         })
     }
@@ -110,7 +111,6 @@ struct FinalizedEntry {
 pub struct FinalizedToolset {
     definitions: Vec<ModelToolDefinition>,
     tools: HashMap<ToolId, FinalizedEntry>,
-    permission: PermissionEngine,
     session: Arc<ToolSessionContext>,
 }
 
@@ -138,53 +138,35 @@ impl FinalizedToolset {
         Ok(&entry.definition)
     }
 
-    /// Judges a call against the permission rules.
-    ///
-    /// Anything that prevents a judgement from being made at all — unknown
-    /// tool, malformed input, failure to extract effects — comes back as
-    /// [`Authorization::Unavailable`], never as a `Deny`. Only a rule may
-    /// produce a `Deny`, because the two carry different instructions to the
-    /// model: a rule denial means "this path is closed, try another approach"
-    /// while a malformed call means "fix the call" (permissions.md §5.4).
-    pub fn authorize(
+    /// 执行前的事实：越界请求、危险命令、写目标是否硬保护（permissions.md §2.1）。
+    /// 要不要问、问什么由 Core 决定；工具在这里不做任何放行判断。
+    pub async fn prepare(
         &self,
         invocation: &ToolInvocation,
-        mode: PermissionMode,
-        session_rules: &[crate::Rule],
-    ) -> Authorization {
-        let entry = match self.tools.get(invocation.name.as_str()) {
-            Some(entry) => entry,
-            None => {
-                return Authorization::Unavailable {
-                    code: ToolErrorCode::ToolNotFound,
-                    message: ToolValidationError::UnknownTool(invocation.name.clone()).to_string(),
-                };
-            }
-        };
-        if let Err(error) = entry.tool.validate(&invocation.input) {
-            return Authorization::Unavailable {
-                code: ToolErrorCode::InvalidArguments,
-                message: ToolValidationError::InvalidInput(error).to_string(),
-            };
-        }
-        match entry
+        policy: &SandboxPolicy,
+    ) -> Result<PreparedCall, ToolValidationError> {
+        let entry = self
+            .tools
+            .get(invocation.name.as_str())
+            .ok_or_else(|| ToolValidationError::UnknownTool(invocation.name.clone()))?;
+        let inspection = entry
             .tool
-            .permission_analysis(&self.session, &invocation.input)
-        {
-            Ok(analysis) => self.permission.authorize(mode, &analysis, session_rules),
-            Err(error) => Authorization::Unavailable {
-                code: ToolErrorCode::ExecutionFailed,
-                message: error.to_string(),
-            },
-        }
+            .inspect(&invocation.input)
+            .map_err(ToolValidationError::InvalidInput)?;
+        Ok(prepare(&self.session, inspection, policy).await)
     }
 
-    pub async fn call(
-        &self,
-        call: ToolCallContext,
-        invocation: ToolInvocation,
-        permit: crate::ExecutionPermit,
-    ) -> ToolResult {
+    /// 工具解析相对路径所用的工作目录。
+    pub fn working_directory(&self) -> &std::path::Path {
+        &self.session.working_directory
+    }
+
+    /// 启动自检的结论；不可用时 bash 不执行，越界参数不在 schema 里（permissions.md §3.2）。
+    pub fn sandbox_status(&self) -> &SandboxStatus {
+        self.session.sandbox.status()
+    }
+
+    pub async fn call(&self, call: ToolCallContext, invocation: ToolInvocation) -> ToolResult {
         let Some(entry) = self.tools.get(invocation.name.as_str()) else {
             return ToolResult::failed(
                 ToolErrorCode::ToolNotFound,
@@ -193,14 +175,7 @@ impl FinalizedToolset {
             );
         };
         let call_id = call.call_id.clone();
-        let result = entry
-            .tool
-            .call(
-                &self.session,
-                call.with_execution_permit(permit),
-                invocation.input,
-            )
-            .await;
+        let result = entry.tool.call(&self.session, call, invocation.input).await;
         crate::spill::bound_result(result, self.session.spill.as_ref(), &call_id).await
     }
 }
@@ -250,7 +225,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{PermissionProfile, TextToolOutput, ToolCallId, ToolExecutionError, ToolRisk};
+    use crate::test_support::{policy_for, unconfined_session};
+    use crate::{TextToolOutput, ToolCallId, ToolExecutionError, ToolRisk};
 
     #[derive(Debug, Deserialize, JsonSchema)]
     struct EchoInput {
@@ -288,9 +264,14 @@ mod tests {
     }
 
     fn session() -> ToolSessionContext {
-        ToolSessionContext::local(
-            std::env::temp_dir(),
-            PermissionProfile::from_builtin_rules(std::env::temp_dir()),
+        unconfined_session(&std::env::temp_dir())
+    }
+
+    fn call_context(id: &str) -> ToolCallContext {
+        ToolCallContext::new(
+            ToolCallId::new(id),
+            CancellationToken::new(),
+            policy_for(&std::env::temp_dir()),
         )
     }
 
@@ -304,26 +285,18 @@ mod tests {
         assert_eq!(toolset.definitions().len(), 1);
         assert_eq!(toolset.definitions()[0].name, "echo");
         let invocation = ToolInvocation::new("echo", json!({"text": "hello"}));
-        let permit = match toolset.authorize(&invocation, PermissionMode::Default, &[]) {
-            Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
-            Authorization::Deny { reason, .. } => panic!("echo denied: {reason}"),
-            Authorization::Unavailable { message, .. } => {
-                panic!("echo could not be judged: {message}")
-            }
-        };
-        let result = toolset
-            .call(
-                ToolCallContext::new(ToolCallId::new("call-1"), CancellationToken::new()),
-                invocation,
-                permit.clone(),
-            )
-            .await;
+        let prepared = toolset
+            .prepare(&invocation, &policy_for(&std::env::temp_dir()))
+            .await
+            .expect("prepared");
+        assert_eq!(prepared.escalation, None);
+        assert_eq!(prepared.protected_target, None);
+        let result = toolset.call(call_context("call-1"), invocation).await;
         assert_eq!(result.text_content(), "hello");
         let missing = toolset
             .call(
-                ToolCallContext::new(ToolCallId::new("call-2"), CancellationToken::new()),
+                call_context("call-2"),
                 ToolInvocation::new("missing", json!({})),
-                permit,
             )
             .await;
         assert_eq!(

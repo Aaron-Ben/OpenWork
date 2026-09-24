@@ -230,7 +230,7 @@ describe('traceViewModel', () => {
       ...tool,
       attributes: {
         permissionPolicy: 'ask',
-        permissionMode: 'default',
+        permissionMode: 'auto',
         permissionModeOrigin: 'session_default',
         permissionDecision: 'allow',
         permissionDecisionSource: 'readonly_proof',

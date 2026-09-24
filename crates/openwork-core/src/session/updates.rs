@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use openwork_models::model::ToolResultArtifact;
-use openwork_tools::PermissionMode;
+use openwork_sandbox::{SandboxMode, SandboxStatus};
 
 use crate::plan::{PlanStep, TurnPlanSnapshot};
 
@@ -78,13 +78,22 @@ pub enum SessionRuntimeSnapshot {
     },
 }
 
+/// Session Update 与快照的形状版本；形状变化时提升，并同步 `desktop/src/bridge/compat.ts`。
+///
+/// 7：模式换成沙箱模式，审批卡片换成越界 / 危险命令两种，快照带沙箱可用性
+/// （permissions.md §3.2、§5）。6：会话级审批动作。5：结构化权限卡片。4：`compacting`
+/// 阶段。3：结构化的终态工具 artifact。2：`tool_call_progress`。
+pub const SESSION_UPDATE_VERSION: u16 = 7;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
     pub version: u16,
     pub session_id: SessionId,
     pub last_update_sequence: u64,
-    pub permission_mode: PermissionMode,
+    pub permission_mode: SandboxMode,
+    /// 启动自检的结论；不可用时界面常驻提示并显示原因（permissions.md §3.2）。
+    pub sandbox: SandboxStatus,
     pub runtime: SessionRuntimeSnapshot,
 }
 
@@ -131,7 +140,6 @@ pub enum SessionUpdate {
     PermissionResolved {
         tool_call_id: ToolCallId,
         decision: PermissionDecision,
-        permission_mode: PermissionMode,
     },
     /// 当前 Turn 的计划已经变成这个完整快照。
     ///
@@ -159,4 +167,47 @@ pub struct SessionUpdateEnvelope {
     pub sequence: u64,
     pub occurred_at_ms: u64,
     pub update: SessionUpdate,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// contracts.md §3：快照里的模式与沙箱可用性，与 `compat.ts` 的 `RuntimeSessionSnapshot` 一致。
+    #[test]
+    fn the_snapshot_serializes_the_mode_and_sandbox_status_for_the_desktop() {
+        let snapshot = SessionSnapshot {
+            version: SESSION_UPDATE_VERSION,
+            session_id: SessionId::new("session-1"),
+            last_update_sequence: 3,
+            permission_mode: SandboxMode::Auto,
+            sandbox: SandboxStatus::Unavailable {
+                reason: "sandbox-exec is missing".to_string(),
+            },
+            runtime: SessionRuntimeSnapshot::Idle,
+        };
+        let json = serde_json::to_value(&snapshot).expect("snapshot json");
+        assert_eq!(json["version"], 7);
+        assert_eq!(json["permissionMode"], "auto");
+        assert_eq!(
+            json["sandbox"],
+            serde_json::json!({ "state": "unavailable", "reason": "sandbox-exec is missing" })
+        );
+    }
+
+    #[test]
+    fn a_resolved_permission_carries_only_the_decision() {
+        let update = SessionUpdate::PermissionResolved {
+            tool_call_id: ToolCallId::new("tool-1"),
+            decision: PermissionDecision::AllowOnce,
+        };
+        assert_eq!(
+            serde_json::to_value(&update).expect("update json"),
+            serde_json::json!({
+                "type": "permission_resolved",
+                "toolCallId": "tool-1",
+                "decision": "allow_once"
+            })
+        );
+    }
 }

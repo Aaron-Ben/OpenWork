@@ -225,6 +225,11 @@ impl SandboxPolicy {
         }
     }
 
+    /// bash 能否不经越界写工作区：只有 `auto`，且工作区不包含主目录（permissions.md §2.2）。
+    pub fn bash_writes_workspace(&self) -> bool {
+        self.mode == SandboxMode::Auto && !self.workspace_contains_home()
+    }
+
     pub fn tier(&self, path: &Path) -> PathTier {
         if self.is_hard_protected(path) {
             PathTier::HardProtected
@@ -293,10 +298,9 @@ impl SandboxPolicy {
 
     /// Temp roots, plus the workspace when this mode lets `actor` write it.
     pub(crate) fn base_writable_roots(&self, actor: Actor) -> Vec<&Path> {
-        let workspace_writable = match (actor, self.mode) {
-            (Actor::FileTool, _) => true,
-            (Actor::Bash, SandboxMode::AcceptEdits) => false,
-            (Actor::Bash, SandboxMode::Auto) => !self.workspace_contains_home(),
+        let workspace_writable = match actor {
+            Actor::FileTool => true,
+            Actor::Bash => self.bash_writes_workspace(),
         };
         let mut roots = self
             .environment
@@ -400,11 +404,11 @@ impl std::fmt::Display for GrantError {
         match self {
             Self::Empty => write!(
                 formatter,
-                "sandbox_permissions.paths is empty; list the paths the command needs"
+                "sandboxPermissions.paths is empty; list the paths the command needs"
             ),
             Self::TooMany { count } => write!(
                 formatter,
-                "sandbox_permissions.paths has {count} entries; at most {MAX_GRANTS} are allowed"
+                "sandboxPermissions.paths has {count} entries; at most {MAX_GRANTS} are allowed"
             ),
             Self::NotAbsolute(path) => write!(
                 formatter,
@@ -423,7 +427,7 @@ impl std::fmt::Display for GrantError {
             ),
             Self::NoNewPermission { path, access } => write!(
                 formatter,
-                "{} is already {} under the current policy; remove it from sandbox_permissions",
+                "{} is already {} under the current policy; remove it from sandboxPermissions",
                 path.display(),
                 match access {
                     Access::Read => "readable",

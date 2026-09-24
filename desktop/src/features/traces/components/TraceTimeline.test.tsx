@@ -48,7 +48,7 @@ function permissionTool(
     attributes: {
       permissionDecision: decision,
       permissionDecisionSource: source,
-      permissionMode: 'default',
+      permissionMode: 'auto',
       permissionModeOrigin: 'session_default',
       ...attributes,
     },

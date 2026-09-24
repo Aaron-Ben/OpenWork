@@ -1,16 +1,16 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
+use openwork_sandbox::{SandboxBackend, SandboxPolicy};
 use tokio::sync::{Mutex, OwnedMutexGuard, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::{AsyncFileSystem, LocalFileSystem, ProcessBackend, TokioProcessBackend};
-use crate::policy::{AccessKind, PermissionProfile, lexical_normalize, path_is_within};
-use crate::{ExecutionPermit, FileObservations, SpillDirectory, ToolExecutionError, ToolProgress};
+use crate::checked_path::CheckedPath;
+use crate::path::lexical_normalize;
+use crate::{FileObservations, SpillDirectory, ToolProgress};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolCallId(String);
@@ -25,23 +25,30 @@ impl ToolCallId {
     }
 }
 
+/// 一次调用的上下文（tools.md §5）。
 #[derive(Clone)]
 pub struct ToolCallContext {
     pub call_id: ToolCallId,
     pub cancel: CancellationToken,
     pub deadline: Option<Instant>,
+    /// 这一次调用生效的沙箱策略，由 Core 在调用前盖章：会话模式，加上用户为这一次批准的
+    /// 越界路径。bash 的 Seatbelt profile 与文件工具的围栏读的是同一个值。
+    pub sandbox_policy: SandboxPolicy,
     progress: Option<mpsc::Sender<ToolProgress>>,
-    execution_permit: Option<ExecutionPermit>,
 }
 
 impl ToolCallContext {
-    pub fn new(call_id: ToolCallId, cancel: CancellationToken) -> Self {
+    pub fn new(
+        call_id: ToolCallId,
+        cancel: CancellationToken,
+        sandbox_policy: SandboxPolicy,
+    ) -> Self {
         Self {
             call_id,
             cancel,
             deadline: None,
+            sandbox_policy,
             progress: None,
-            execution_permit: None,
         }
     }
 
@@ -55,30 +62,23 @@ impl ToolCallContext {
         self
     }
 
-    pub fn with_execution_permit(mut self, permit: ExecutionPermit) -> Self {
-        self.execution_permit = Some(permit);
-        self
-    }
-
-    pub(crate) fn execution_permit(&self) -> Option<&ExecutionPermit> {
-        self.execution_permit.as_ref()
-    }
-
     /// Reports live progress without applying backpressure to tool execution.
     ///
     /// Full or disconnected channels intentionally drop the progress item. The
     /// terminal tool result remains the source of truth.
     pub fn report_progress(&self, progress: ToolProgress) {
         if let Some(sender) = &self.progress {
-            let _ = sender.try_send(progress);
+            let _ = sender.try_send(progress); // 进度是尽力而为的，丢一条不影响最终结果
         }
     }
 }
 
+/// 与 Session 同寿的上下文（tools.md §4）。不保存沙箱模式：模式在会话内会变，随调用走。
 #[derive(Clone)]
 pub struct ToolSessionContext {
     pub working_directory: PathBuf,
-    pub permissions: PermissionProfile,
+    /// 进程级的沙箱后端：持有启动自检的结论，把 bash 的 argv 包进 `sandbox-exec`。
+    pub sandbox: Arc<dyn SandboxBackend>,
     pub environment: Arc<HashMap<String, String>>,
     pub filesystem: Arc<dyn AsyncFileSystem>,
     pub process_backend: Arc<dyn ProcessBackend>,
@@ -91,38 +91,11 @@ pub struct ToolSessionContext {
     write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PathIntent {
-    MustExist,
-    MayCreate,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CheckedPath {
-    actual: PathBuf,
-}
-
-impl CheckedPath {
-    pub(crate) fn as_path(&self) -> &Path {
-        &self.actual
-    }
-}
-
 impl ToolSessionContext {
-    pub fn normalize_effect_path(&self, input: &str) -> PathBuf {
-        let requested = Path::new(input);
-        let unresolved = if requested.is_absolute() {
-            requested.to_path_buf()
-        } else {
-            self.working_directory.join(requested)
-        };
-        lexical_normalize(&unresolved)
-    }
-
-    pub fn local(working_directory: PathBuf, permissions: PermissionProfile) -> Self {
+    pub fn local(working_directory: PathBuf, sandbox: Arc<dyn SandboxBackend>) -> Self {
         Self::new(
             working_directory,
-            permissions,
+            sandbox,
             Arc::new(session_environment()),
             Arc::new(LocalFileSystem),
             Arc::new(TokioProcessBackend),
@@ -131,14 +104,14 @@ impl ToolSessionContext {
 
     pub fn new(
         working_directory: PathBuf,
-        permissions: PermissionProfile,
+        sandbox: Arc<dyn SandboxBackend>,
         environment: Arc<HashMap<String, String>>,
         filesystem: Arc<dyn AsyncFileSystem>,
         process_backend: Arc<dyn ProcessBackend>,
     ) -> Self {
         Self {
             working_directory,
-            permissions,
+            sandbox,
             environment,
             filesystem,
             process_backend,
@@ -158,80 +131,20 @@ impl ToolSessionContext {
         self
     }
 
-    pub(crate) fn check_path(&self, path: &Path, kind: AccessKind) -> Result<(), String> {
-        self.permissions.allows_baseline(path, kind)
+    /// 沙箱可用时模型才能请求越界（permissions.md §4.2）。
+    pub fn escalation_available(&self) -> bool {
+        self.sandbox.status().is_available()
     }
 
-    pub(crate) async fn resolve_path(
-        &self,
-        input: &str,
-        kind: AccessKind,
-        intent: PathIntent,
-    ) -> Result<CheckedPath, ToolExecutionError> {
-        self.resolve_path_inner(input, kind, intent, None).await
-    }
-
-    pub(crate) async fn resolve_tool_path(
-        &self,
-        input: &str,
-        kind: AccessKind,
-        intent: PathIntent,
-        call: &ToolCallContext,
-    ) -> Result<CheckedPath, ToolExecutionError> {
-        self.resolve_path_inner(input, kind, intent, call.execution_permit())
-            .await
-    }
-
-    async fn resolve_path_inner(
-        &self,
-        input: &str,
-        kind: AccessKind,
-        intent: PathIntent,
-        permit: Option<&ExecutionPermit>,
-    ) -> Result<CheckedPath, ToolExecutionError> {
+    /// 模型给的路径按工作目录变成绝对路径，只做字面规范化。
+    pub(crate) fn absolute(&self, input: &str) -> PathBuf {
         let requested = Path::new(input);
         let unresolved = if requested.is_absolute() {
             requested.to_path_buf()
         } else {
             self.working_directory.join(requested)
         };
-        let lexical = lexical_normalize(&unresolved);
-        let baseline_allowed = self.check_path(&lexical, kind).is_ok();
-        if self.permissions.hard_denies(&lexical, kind) {
-            return Err(ToolExecutionError::denied(format!(
-                "write access denied for protected metadata path: {}",
-                lexical.display()
-            )));
-        }
-        if !baseline_allowed && !permit.is_some_and(|permit| permit.permits_path(&lexical, kind)) {
-            return Err(ToolExecutionError::denied(format!(
-                "{} access denied without an execution permit: {}",
-                match kind {
-                    AccessKind::Read => "read",
-                    AccessKind::Write => "write",
-                },
-                lexical.display()
-            )));
-        }
-
-        let actual = match intent {
-            PathIntent::MustExist => {
-                self.filesystem
-                    .canonicalize(&lexical)
-                    .await
-                    .map_err(|error| {
-                        ToolExecutionError::execution(format!(
-                            "failed to resolve {}: {error}",
-                            lexical.display()
-                        ))
-                    })?
-            }
-            PathIntent::MayCreate => self.resolve_creatable_path(&lexical).await?,
-        };
-
-        self.check_canonical_path(&lexical, &actual, kind, baseline_allowed)
-            .await?;
-        Ok(CheckedPath { actual })
+        lexical_normalize(&unresolved)
     }
 
     pub(crate) async fn lock_for_write(&self, path: &CheckedPath) -> OwnedMutexGuard<()> {
@@ -241,139 +154,11 @@ impl ToolSessionContext {
                 lock
             } else {
                 let lock = Arc::new(Mutex::new(()));
-                locks.insert(path.actual.clone(), Arc::downgrade(&lock));
+                locks.insert(path.as_path().to_path_buf(), Arc::downgrade(&lock));
                 lock
             }
         };
         path_lock.lock_owned().await
-    }
-
-    async fn resolve_creatable_path(&self, lexical: &Path) -> Result<PathBuf, ToolExecutionError> {
-        let mut anchor = lexical.to_path_buf();
-        let mut suffix = Vec::<OsString>::new();
-
-        loop {
-            match self.filesystem.canonicalize(&anchor).await {
-                Ok(canonical) => {
-                    suffix.reverse();
-                    return Ok(suffix
-                        .into_iter()
-                        .fold(canonical, |path, component| path.join(component)));
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    match self.filesystem.is_symlink(&anchor).await {
-                        Ok(true) => {
-                            return Err(ToolExecutionError::denied(format!(
-                                "access denied through dangling symlink: {}",
-                                anchor.display()
-                            )));
-                        }
-                        Ok(false) => {
-                            return Err(ToolExecutionError::execution(format!(
-                                "failed to resolve existing path component: {}",
-                                anchor.display()
-                            )));
-                        }
-                        Err(metadata_error) if metadata_error.kind() == io::ErrorKind::NotFound => {
-                        }
-                        Err(metadata_error) => {
-                            return Err(ToolExecutionError::execution(format!(
-                                "failed to inspect {}: {metadata_error}",
-                                anchor.display()
-                            )));
-                        }
-                    }
-                    let component = anchor.file_name().map(ToOwned::to_owned).ok_or_else(|| {
-                        ToolExecutionError::execution(format!(
-                            "failed to find an existing parent for {}",
-                            lexical.display()
-                        ))
-                    })?;
-                    suffix.push(component);
-                    if !anchor.pop() {
-                        return Err(ToolExecutionError::execution(format!(
-                            "failed to find an existing parent for {}",
-                            lexical.display()
-                        )));
-                    }
-                }
-                Err(error) => {
-                    return Err(ToolExecutionError::execution(format!(
-                        "failed to resolve {}: {error}",
-                        anchor.display()
-                    )));
-                }
-            }
-        }
-    }
-
-    async fn check_canonical_path(
-        &self,
-        requested: &Path,
-        actual: &Path,
-        kind: AccessKind,
-        baseline_allowed: bool,
-    ) -> Result<(), ToolExecutionError> {
-        let workspace = self.permissions.workspace();
-        let canonical_workspace =
-            self.filesystem
-                .canonicalize(workspace)
-                .await
-                .map_err(|error| {
-                    ToolExecutionError::denied(format!(
-                        "failed to resolve permitted root {}: {error}",
-                        workspace.display()
-                    ))
-                })?;
-        let mut canonical_skill_roots = Vec::new();
-        for root in self.permissions.skill_roots() {
-            match self.filesystem.canonicalize(root).await {
-                Ok(canonical) => canonical_skill_roots.push(canonical),
-                Err(error) if path_is_within(requested, root) => {
-                    return Err(ToolExecutionError::denied(format!(
-                        "failed to resolve permitted root {}: {error}",
-                        root.display()
-                    )));
-                }
-                Err(_) => {}
-            }
-        }
-        if self.permissions.hard_denies(actual, kind)
-            || self
-                .permissions
-                .hard_denies_resolved(actual, &canonical_workspace, kind)
-            || (kind == AccessKind::Write
-                && canonical_skill_roots
-                    .iter()
-                    .any(|root| path_is_within(actual, root)))
-        {
-            return Err(ToolExecutionError::denied(format!(
-                "write access denied for protected metadata path: {}",
-                actual.display()
-            )));
-        }
-
-        if !baseline_allowed && !path_is_within(requested, workspace) {
-            return Ok(());
-        }
-
-        if path_is_within(actual, &canonical_workspace)
-            || (kind == AccessKind::Read
-                && canonical_skill_roots
-                    .iter()
-                    .any(|root| path_is_within(actual, root)))
-        {
-            return Ok(());
-        }
-
-        Err(ToolExecutionError::denied(format!(
-            "{} access denied outside permitted roots after resolving symlinks: {}",
-            match kind {
-                AccessKind::Read => "read",
-                AccessKind::Write => "write",
-            },
-            actual.display()
-        )))
     }
 }
 
@@ -395,14 +180,21 @@ mod tests {
 
     use super::*;
     use crate::ToolProgress;
+    use crate::test_support::policy_for;
+
+    fn call(progress: mpsc::Sender<ToolProgress>) -> ToolCallContext {
+        ToolCallContext::new(
+            ToolCallId::new("progress"),
+            CancellationToken::new(),
+            policy_for(&std::env::temp_dir()),
+        )
+        .with_progress_sender(progress)
+    }
 
     #[tokio::test]
     async fn tool_call_context_reports_best_effort_progress() {
         let (progress_tx, mut progress_rx) = mpsc::channel(1);
-        let call = ToolCallContext::new(ToolCallId::new("progress"), CancellationToken::new())
-            .with_progress_sender(progress_tx);
-
-        call.report_progress(ToolProgress::Message {
+        call(progress_tx).report_progress(ToolProgress::Message {
             message: "working".to_string(),
         });
 
@@ -418,10 +210,7 @@ mod tests {
     fn disconnected_progress_consumer_does_not_fail_the_tool_call() {
         let (progress_tx, progress_rx) = mpsc::channel(1);
         drop(progress_rx);
-        let call = ToolCallContext::new(ToolCallId::new("disconnected"), CancellationToken::new())
-            .with_progress_sender(progress_tx);
-
-        call.report_progress(ToolProgress::Message {
+        call(progress_tx).report_progress(ToolProgress::Message {
             message: "ignored".to_string(),
         });
     }

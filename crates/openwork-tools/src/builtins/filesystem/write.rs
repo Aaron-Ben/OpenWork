@@ -5,15 +5,14 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::policy::AccessKind;
 use crate::{
-    AnalysisUnit, AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, Effect,
-    InvocationAnalysis, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolResult, ToolRisk,
-    ToolSessionContext,
+    AtomicWriteCondition, AtomicWriteError, AtomicWriteOutcome, CallInspection, EscalationInput,
+    Tool, ToolCallContext, ToolExecutionError, ToolId, ToolResult, ToolRisk, ToolSessionContext,
 };
+use openwork_sandbox::Access;
 
 use super::workspace_display;
-use crate::context::PathIntent;
+use crate::checked_path::PathIntent;
 use crate::file_change::build_file_change;
 use crate::observation::content_hash;
 
@@ -25,6 +24,8 @@ pub struct WriteInput {
     pub path: String,
     /// Full file content to write.
     pub content: String,
+    #[serde(flatten)]
+    pub escalation: EscalationInput,
 }
 
 #[derive(Debug, Default)]
@@ -47,19 +48,8 @@ impl Tool for WriteTool {
         ToolRisk::WorkspaceMutation
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let display = format!("write {}", input.path);
-        InvocationAnalysis::new(
-            display.clone(),
-            vec![AnalysisUnit::new(
-                display,
-                vec![Effect::write(session.normalize_effect_path(&input.path))],
-            )],
-        )
+    fn inspect(&self, input: &WriteInput) -> CallInspection {
+        CallInspection::writes(input.path.clone(), input.escalation.clone())
     }
 
     async fn execute(
@@ -76,7 +66,12 @@ impl Tool for WriteTool {
             )));
         }
         let resolved = session
-            .resolve_tool_path(&input.path, AccessKind::Write, PathIntent::MayCreate, &call)
+            .resolve_path(
+                &input.path,
+                Access::Write,
+                PathIntent::MayCreate,
+                &call.sandbox_policy,
+            )
             .await?;
         if let Some(parent) = resolved.as_path().parent() {
             session
@@ -88,7 +83,12 @@ impl Tool for WriteTool {
                 })?;
         }
         let resolved = session
-            .resolve_tool_path(&input.path, AccessKind::Write, PathIntent::MayCreate, &call)
+            .resolve_path(
+                &input.path,
+                Access::Write,
+                PathIntent::MayCreate,
+                &call.sandbox_policy,
+            )
             .await?;
         let _write_guard = session.lock_for_write(&resolved).await;
         let before = match session
@@ -167,7 +167,7 @@ mod tests {
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{PermissionProfile, ToolCallId, ToolErrorCode};
+    use crate::ToolErrorCode;
 
     #[tokio::test]
     async fn rejects_new_file_through_symlink_outside_workspace() {
@@ -178,23 +178,23 @@ mod tests {
         std::fs::create_dir_all(&outside).expect("create outside directory");
         symlink(&outside, workspace.join("escape")).expect("create symlink");
 
-        let session = ToolSessionContext::local(
-            workspace.clone(),
-            PermissionProfile::from_builtin_rules(workspace),
-        );
+        let session = crate::test_support::unconfined_session(&workspace);
+        let home = sandbox.path().join("home");
         let error = WriteTool
             .execute(
                 &session,
-                ToolCallContext::new(ToolCallId::new("write-symlink"), CancellationToken::new()),
+                crate::test_support::fenced_call("write-symlink", &workspace, &home),
                 WriteInput {
                     path: "escape/created.txt".to_string(),
                     content: "outside".to_string(),
+                    escalation: Default::default(),
                 },
             )
             .await
             .expect_err("symlink escape must be denied");
 
         assert_eq!(error.code, ToolErrorCode::PermissionDenied);
+        assert!(error.sandbox_denied);
         assert!(!outside.join("created.txt").exists());
     }
 
@@ -205,20 +205,18 @@ mod tests {
         std::fs::create_dir_all(workspace.join(".git")).expect("create protected directory");
         symlink(workspace.join(".git"), workspace.join("metadata")).expect("create symlink");
 
-        let session = ToolSessionContext::local(
-            workspace.clone(),
-            PermissionProfile::from_builtin_rules(workspace.clone()),
-        );
+        let session = crate::test_support::unconfined_session(&workspace);
         let error = WriteTool
             .execute(
                 &session,
-                ToolCallContext::new(
-                    ToolCallId::new("write-protected-symlink"),
+                crate::test_support::call_context(
+                    "write-protected-symlink",
                     CancellationToken::new(),
                 ),
                 WriteInput {
                     path: "metadata/config".to_string(),
                     content: "unsafe".to_string(),
+                    escalation: Default::default(),
                 },
             )
             .await
@@ -236,20 +234,18 @@ mod tests {
         std::fs::create_dir_all(&workspace).expect("create workspace");
         symlink(&outside_target, workspace.join("escape")).expect("create dangling symlink");
 
-        let session = ToolSessionContext::local(
-            workspace.clone(),
-            PermissionProfile::from_builtin_rules(workspace),
-        );
+        let session = crate::test_support::unconfined_session(&workspace);
         let error = WriteTool
             .execute(
                 &session,
-                ToolCallContext::new(
-                    ToolCallId::new("write-dangling-symlink"),
+                crate::test_support::call_context(
+                    "write-dangling-symlink",
                     CancellationToken::new(),
                 ),
                 WriteInput {
                     path: "escape/created.txt".to_string(),
                     content: "outside".to_string(),
+                    escalation: Default::default(),
                 },
             )
             .await
@@ -266,15 +262,13 @@ mod tests {
         use crate::ToolOutput;
 
         let workspace = TestDirectory::new("write-summary");
-        let session = ToolSessionContext::local(
-            workspace.path().to_path_buf(),
-            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
-        );
+        let session = crate::test_support::unconfined_session(workspace.path());
         let write = |content: &str| WriteInput {
             path: "src/new.rs".to_string(),
             content: content.to_string(),
+            escalation: Default::default(),
         };
-        let call = |id: &str| ToolCallContext::new(ToolCallId::new(id), CancellationToken::new());
+        let call = |id: &str| crate::test_support::call_context(id, CancellationToken::new());
 
         let created = WriteTool
             .execute(&session, call("create"), write("a\nb\nc\n"))

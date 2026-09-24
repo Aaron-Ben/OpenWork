@@ -1,42 +1,51 @@
 //! tools.md §9 "先读后改" and §12 #31–34.
 
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
+use openwork_sandbox::{
+    SANDBOX_EXEC, SandboxBackend, SandboxEnvironment, SandboxMode, SandboxPolicy, Seatbelt,
+};
 use openwork_tools::{
-    Authorization, FileObservations, FinalizedToolset, PermissionMode, PermissionProfile,
-    ToolCallContext, ToolCallId, ToolInvocation, ToolResult, ToolSessionContext, ToolsetConfig,
-    builtin_registry,
+    FileObservations, FinalizedToolset, ToolCallContext, ToolCallId, ToolInvocation, ToolResult,
+    ToolSessionContext, ToolsetConfig, builtin_registry,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+/// 真实的 Seatbelt，整个测试进程只自检一次。
+fn sandbox() -> Arc<dyn SandboxBackend> {
+    static SANDBOX: OnceLock<Arc<Seatbelt>> = OnceLock::new();
+    SANDBOX
+        .get_or_init(|| Arc::new(Seatbelt::probe(SANDBOX_EXEC)))
+        .clone()
+}
+
 fn toolset(workspace: &Path, observations: FileObservations) -> FinalizedToolset {
     builtin_registry()
         .finalize(
             &ToolsetConfig::from_names(["read", "write", "edit", "bash"]),
-            ToolSessionContext::local(
-                workspace.to_path_buf(),
-                PermissionProfile::from_builtin_rules(workspace.to_path_buf()),
-            )
-            .with_file_observations(observations),
+            ToolSessionContext::local(workspace.to_path_buf(), sandbox())
+                .with_file_observations(observations),
         )
         .expect("toolset")
 }
 
 async fn call(tools: &FinalizedToolset, name: &str, input: Value) -> ToolResult {
-    let invocation = ToolInvocation::new(name, input);
-    let permit = match tools.authorize(&invocation, PermissionMode::AcceptEdits, &[]) {
-        Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
-        other => panic!("{name} must be runnable: {other:?}"),
-    };
     tools
         .call(
-            ToolCallContext::new(ToolCallId::new(name), CancellationToken::new()),
-            invocation,
-            permit,
+            ToolCallContext::new(ToolCallId::new(name), CancellationToken::new(), policy()),
+            ToolInvocation::new(name, input),
         )
         .await
+}
+
+/// 测试工作区在系统临时目录下，`auto` 下可写。
+fn policy() -> SandboxPolicy {
+    let environment = SandboxEnvironment::detect([]).expect("environment");
+    let workspace = std::fs::canonicalize(std::env::temp_dir()).expect("temp dir");
+    SandboxPolicy::new(SandboxMode::Auto, workspace, Arc::new(environment))
 }
 
 fn edit(old: &str, new: &str) -> Value {

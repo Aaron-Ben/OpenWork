@@ -68,6 +68,8 @@ pub struct SubAgentSessionInput {
     pub default_model_id: Option<String>,
     /// Tool Call Span that spawned it. `None` when the Trace write was dropped.
     pub spawn_span_id: Option<String>,
+    /// 父会话模式与角色上限中较窄者，派生时取快照（permissions.md §6.6）。
+    pub sandbox_mode: SandboxMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::FromRow)]
@@ -87,6 +89,10 @@ pub struct SessionRecord {
     pub task_name: Option<String>,
     pub agent_role: Option<String>,
     pub spawn_span_id: Option<String>,
+    /// `auto` 或 `accept_edits`（permissions.md §6.3）。库里的 CHECK 约束保证只有这两个值，
+    /// 取用时经 [`SessionRecord::sandbox_mode`] 转成枚举。
+    #[serde(rename = "sandboxMode")]
+    pub sandbox_mode: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +132,18 @@ pub(super) struct UndeliveredSubAgentResultRow {
 impl SessionRecord {
     pub fn is_sub_agent(&self) -> bool {
         self.parent_session_id.is_some()
+    }
+
+    /// 会话持久化的沙箱模式。
+    pub fn sandbox_mode(&self) -> Result<SandboxMode, StorageError> {
+        match self.sandbox_mode.as_str() {
+            "auto" => Ok(SandboxMode::Auto),
+            "accept_edits" => Ok(SandboxMode::AcceptEdits),
+            other => Err(StorageError::InvalidInput(format!(
+                "session {} has an unknown sandbox mode: {other}",
+                self.id
+            ))),
+        }
     }
 }
 

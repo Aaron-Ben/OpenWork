@@ -5,6 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+openwork-sandbox = { workspace = true }
 openwork-models = { workspace = true }
 async-trait.workspace = true
 globset.workspace = true

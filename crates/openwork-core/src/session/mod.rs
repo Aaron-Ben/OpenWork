@@ -1,5 +1,6 @@
 mod actor;
 mod agent_message;
+mod approval;
 mod commands;
 mod compaction;
 mod ids;
@@ -7,12 +8,14 @@ mod input;
 mod permission_state;
 mod run_loop;
 mod storage;
+mod tool_trace_attributes;
 mod toolset;
 mod trace;
 mod updates;
 
 pub use actor::{SessionHandle, SessionRuntimeConfig};
 pub use agent_message::{AgentMessageKind, ParentLink};
+pub use approval::{ApprovalCard, ApprovalDanger, ApprovalPath};
 pub use commands::{
     PermissionDecision, PermissionRequest, ResolvedModel, SessionError, TurnAccepted, TurnOutcome,
 };
@@ -29,7 +32,9 @@ pub use compaction::{
 };
 pub use ids::{ClientRequestId, SessionId, ToolCallId, TurnId};
 pub use input::PreparedTurnInput;
-pub use permission_state::{NON_INTERACTIVE_DENIAL, PermissionModeOrigin, SessionApproval};
+pub use permission_state::{
+    SessionApproval, SessionModeOrigin, SessionSandbox, non_interactive_denial,
+};
 pub use storage::{NoopSessionStorage, SessionStorage};
 pub use toolset::{ControlToolSurface, TurnToolset, TurnToolsetError};
 pub use trace::{
@@ -41,6 +46,6 @@ pub use trace::{
     TraceFlushResult, TracePayloadSlot, TracePayloads, TraceRecorder, TraceSignal, TraceStatus,
 };
 pub use updates::{
-    LiveToolCall, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot, SessionUpdate,
-    SessionUpdateEnvelope, ToolProgressUpdate,
+    LiveToolCall, SESSION_UPDATE_VERSION, SessionPhase, SessionRuntimeSnapshot, SessionSnapshot,
+    SessionUpdate, SessionUpdateEnvelope, ToolProgressUpdate,
 };

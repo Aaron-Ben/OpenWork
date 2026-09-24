@@ -1,4 +1,4 @@
-//! 从权威来源读取三个 section 的当前值。
+//! 从权威来源读取 world state 各 section 的当前值。
 //!
 //! 这是 world state 唯一的 IO 入口。`world_state/` 其余部分是纯逻辑，只处理
 //! 比较与渲染。
@@ -21,7 +21,9 @@ use crate::skills::SkillRoots;
 use super::super::project_instructions::{ProjectInstructionError, ProjectInstructionLoader};
 use super::super::skill_catalog::SkillCatalogLoader;
 use super::super::user_project::{UserProjectContextError, UserProjectContextLoader};
-use super::{AgentsMdState, ProjectContextState, SkillsCatalogState, WorldState};
+use super::{
+    AgentsMdState, ProjectContextState, SandboxPolicyState, SkillsCatalogState, WorldState,
+};
 
 pub(crate) struct WorldStateCapture {
     user_project: UserProjectContextLoader,
@@ -44,11 +46,14 @@ impl WorldStateCapture {
         self
     }
 
-    /// 读一次三个来源，组成本次采样的 `WorldState`。
+    /// 读一次三个来源，与 Session 给出的沙箱策略一起组成本次采样的 `WorldState`。
     ///
     /// Skill 扫描是阻塞 IO，与 `SystemContextBuilder::build` 一样放到
     /// `spawn_blocking`；skill 告警照旧记进日志，不进模型上下文。
-    pub(crate) async fn capture(&self) -> Result<WorldState, WorldStateCaptureError> {
+    pub(crate) async fn capture(
+        &self,
+        sandbox_policy: SandboxPolicyState,
+    ) -> Result<WorldState, WorldStateCaptureError> {
         let project_context = self.user_project.load_body().await?;
         let agents_md = self.project_instructions.load_body().await?;
         let skill_catalog = self.skill_catalog.clone();
@@ -68,6 +73,7 @@ impl WorldStateCapture {
             project_context: ProjectContextState::new(project_context),
             agents_md: AgentsMdState::new(agents_md),
             skills_catalog: SkillsCatalogState::new(skills_catalog),
+            sandbox_policy,
         })
     }
 }
@@ -158,7 +164,11 @@ mod tests {
             "---\nname: commit\ndescription: Create a commit.\n---\nBody\n",
         );
 
-        let world = workspace.capture().capture().await.expect("capture");
+        let world = workspace
+            .capture()
+            .capture(SandboxPolicyState::auto_for_test())
+            .await
+            .expect("capture");
 
         assert!(
             world
@@ -189,7 +199,11 @@ mod tests {
     async fn missing_sources_capture_as_absent_rather_than_empty() {
         let workspace = TestWorkspace::new();
 
-        let world = workspace.capture().capture().await.expect("capture");
+        let world = workspace
+            .capture()
+            .capture(SandboxPolicyState::auto_for_test())
+            .await
+            .expect("capture");
 
         assert_eq!(world.agents_md.body_for_test(), None);
         assert_eq!(world.skills_catalog.body_for_test(), None);
@@ -213,8 +227,16 @@ mod tests {
             "---\nname: alpha\ndescription: Use alpha.\n---\nBody\n",
         );
 
-        let first = workspace.capture().capture().await.expect("first");
-        let second = workspace.capture().capture().await.expect("second");
+        let first = workspace
+            .capture()
+            .capture(SandboxPolicyState::auto_for_test())
+            .await
+            .expect("first");
+        let second = workspace
+            .capture()
+            .capture(SandboxPolicyState::auto_for_test())
+            .await
+            .expect("second");
 
         assert_eq!(first, second);
     }
@@ -231,7 +253,7 @@ mod tests {
         let world = workspace
             .capture()
             .with_disabled_skills(BTreeSet::from(["commit".to_string()]))
-            .capture()
+            .capture(SandboxPolicyState::auto_for_test())
             .await
             .expect("capture");
 

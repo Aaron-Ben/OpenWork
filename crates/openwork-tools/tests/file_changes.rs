@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use openwork_sandbox::{SANDBOX_EXEC, SandboxEnvironment, SandboxMode, SandboxPolicy, Seatbelt};
 use openwork_tools::{
-    Authorization, FileChangeArtifact, FileChangeKind, FileChangeUndoError, PermissionMode,
-    PermissionProfile, ToolCallContext, ToolCallId, ToolInvocation, ToolResult, ToolSessionContext,
-    ToolsetConfig, builtin_registry, reapply_file_changes, undo_file_changes,
+    FileChangeArtifact, FileChangeKind, FileChangeUndoError, ToolCallContext, ToolCallId,
+    ToolInvocation, ToolResult, ToolSessionContext, ToolsetConfig, builtin_registry,
+    reapply_file_changes, undo_file_changes,
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -37,10 +39,14 @@ impl Drop for TestDirectory {
 }
 
 fn session(root: &Path) -> ToolSessionContext {
-    ToolSessionContext::local(
-        root.to_path_buf(),
-        PermissionProfile::from_builtin_rules(root.to_path_buf()),
-    )
+    ToolSessionContext::local(root.to_path_buf(), Arc::new(Seatbelt::probe(SANDBOX_EXEC)))
+}
+
+/// 文件工具在两个模式下都能写工作区；撤销与重新应用用同一个策略。
+fn policy(root: &Path) -> SandboxPolicy {
+    let environment = SandboxEnvironment::detect([]).expect("environment");
+    let workspace = std::fs::canonicalize(root).expect("workspace");
+    SandboxPolicy::new(SandboxMode::AcceptEdits, workspace, Arc::new(environment))
 }
 
 async fn call(
@@ -49,19 +55,11 @@ async fn call(
     name: &str,
     input: Value,
 ) -> ToolResult {
-    let invocation = ToolInvocation::new(name, input);
-    let permit = match toolset.authorize(&invocation, PermissionMode::AcceptEdits, &[]) {
-        Authorization::Allow { permit, .. } | Authorization::Ask { permit, .. } => permit,
-        Authorization::Deny { reason, .. } => panic!("test invocation denied: {reason}"),
-        Authorization::Unavailable { message, .. } => {
-            panic!("test invocation could not be judged: {message}")
-        }
-    };
+    let root = toolset.working_directory().to_path_buf();
     toolset
         .call(
-            ToolCallContext::new(ToolCallId::new(id), CancellationToken::new()),
-            invocation,
-            permit,
+            ToolCallContext::new(ToolCallId::new(id), CancellationToken::new(), policy(&root)),
+            ToolInvocation::new(name, input),
         )
         .await
 }
@@ -156,7 +154,7 @@ async fn undo_reverses_multiple_changes_to_the_same_file_in_reverse_order() {
     .await;
     let changes = vec![file_change(&created), file_change(&edited)];
 
-    let result = undo_file_changes(&context, &changes)
+    let result = undo_file_changes(&context, &policy(root.path()), &changes)
         .await
         .expect("undo chained file changes");
 
@@ -188,7 +186,7 @@ async fn undo_refuses_to_overwrite_an_external_change() {
     let change = file_change(&changed);
     std::fs::write(&path, "external\n").expect("simulate external edit");
 
-    let error = undo_file_changes(&context, &[change])
+    let error = undo_file_changes(&context, &policy(root.path()), &[change])
         .await
         .expect_err("external edit must conflict");
 
@@ -232,14 +230,14 @@ async fn reapply_restores_chained_changes_in_forward_order() {
     .await;
     let mut changes = vec![file_change(&created), file_change(&edited)];
 
-    undo_file_changes(&context, &changes)
+    undo_file_changes(&context, &policy(root.path()), &changes)
         .await
         .expect("undo chained file changes");
     for change in &mut changes {
         change.undone = true;
     }
 
-    let result = reapply_file_changes(&context, &changes)
+    let result = reapply_file_changes(&context, &policy(root.path()), &changes)
         .await
         .expect("reapply chained file changes");
 
@@ -272,13 +270,13 @@ async fn reapply_refuses_to_overwrite_a_change_made_after_undo() {
     )
     .await;
     let mut change = file_change(&changed);
-    undo_file_changes(&context, &[change.clone()])
+    undo_file_changes(&context, &policy(root.path()), &[change.clone()])
         .await
         .expect("undo file change");
     change.undone = true;
     std::fs::write(&path, "external\n").expect("simulate external edit after undo");
 
-    let error = reapply_file_changes(&context, &[change])
+    let error = reapply_file_changes(&context, &policy(root.path()), &[change])
         .await
         .expect_err("external edit must conflict");
 

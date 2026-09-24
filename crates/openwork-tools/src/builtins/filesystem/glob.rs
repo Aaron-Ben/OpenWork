@@ -12,13 +12,13 @@ use serde::Deserialize;
 use super::scan::{
     Interrupt, SCAN_TIMEOUT, ScanBudget, compile_glob, display_path, relative_to_root,
 };
-use crate::context::PathIntent;
-use crate::policy::AccessKind;
+use crate::checked_path::PathIntent;
 use crate::spill::{SpillFile, SpillWriter};
 use crate::{
-    AnalysisUnit, AsyncFileSystem, Effect, InvocationAnalysis, TextToolOutput, Tool,
-    ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AsyncFileSystem, TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk,
+    ToolSessionContext,
 };
+use openwork_sandbox::Access;
 
 /// Paths returned (tools.md §9 glob).
 const MAX_RESULTS: usize = 100;
@@ -53,21 +53,6 @@ impl Tool for GlobTool {
         ToolRisk::ReadOnly
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let display = format!("glob {} in {}", input.pattern, input.path);
-        InvocationAnalysis::new(
-            display.clone(),
-            vec![AnalysisUnit::new(
-                display,
-                vec![Effect::read(session.normalize_effect_path(&input.path))],
-            )],
-        )
-    }
-
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -76,7 +61,12 @@ impl Tool for GlobTool {
     ) -> Result<TextToolOutput, ToolExecutionError> {
         let matcher = compile_glob(&input.pattern)?;
         let root = session
-            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
+            .resolve_path(
+                &input.path,
+                Access::Read,
+                PathIntent::MustExist,
+                &call.sandbox_policy,
+            )
             .await?;
         let workspace = session
             .filesystem
@@ -219,20 +209,17 @@ mod tests {
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{PermissionProfile, SpillDirectory, ToolCallId, ToolErrorCode, ToolOutput};
+    use crate::{SpillDirectory, ToolErrorCode, ToolOutput};
 
     fn session(workspace: &TestDirectory) -> ToolSessionContext {
-        ToolSessionContext::local(
-            workspace.path().to_path_buf(),
-            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
-        )
+        crate::test_support::unconfined_session(workspace.path())
     }
 
     async fn glob(session: &ToolSessionContext, pattern: &str, path: &str) -> String {
         GlobTool
             .execute(
                 session,
-                ToolCallContext::new(ToolCallId::new("glob"), CancellationToken::new()),
+                crate::test_support::call_context("glob", CancellationToken::new()),
                 GlobInput {
                     pattern: pattern.to_string(),
                     path: path.to_string(),
@@ -321,7 +308,7 @@ mod tests {
         let error = GlobTool
             .execute(
                 &session(&workspace),
-                ToolCallContext::new(ToolCallId::new("glob-cancel"), cancel),
+                crate::test_support::call_context("glob-cancel", cancel),
                 GlobInput {
                     pattern: "*.rs".to_string(),
                     path: ".".to_string(),

@@ -31,7 +31,9 @@ pub(crate) use normalize::{NormalizationPolicy, ProjectedMessageOrigin, normaliz
 pub(crate) use projection::{ProjectionSummary, project_items};
 pub(crate) use prune::{prunable_text, prune_tool_results, spill_file};
 pub(crate) use skill_catalog::list_skills;
-pub(crate) use world_state::{RetainedSections, WorldStateBaseline, WorldStateCapture};
+pub(crate) use world_state::{
+    RetainedSections, SandboxPolicyState, WorldStateBaseline, WorldStateCapture,
+};
 
 /// One independently assembled system-context contribution.
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -423,7 +423,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::ToolCallId;
 
     fn request(command: &str, timeout: Duration, spill_path: Option<PathBuf>) -> ProcessRequest {
         ProcessRequest {
@@ -446,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn process_backend_terminates_a_cancelled_process_group() {
         let cancel = CancellationToken::new();
-        let call = ToolCallContext::new(ToolCallId::new("cancel-test"), cancel.clone());
+        let call = crate::test_support::call_context("cancel-test", cancel.clone());
         let request = request("sleep 30 & wait", Duration::from_secs(60), None);
         let started = Instant::now();
         let task = tokio::spawn(async move { TokioProcessBackend.run(request, &call).await });
@@ -463,7 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_backend_enforces_timeout() {
-        let call = ToolCallContext::new(ToolCallId::new("timeout-test"), CancellationToken::new());
+        let call = crate::test_support::call_context("timeout-test", CancellationToken::new());
         let output = TokioProcessBackend
             .run(request("sleep 30", Duration::from_millis(50), None), &call)
             .await
@@ -474,7 +473,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn keeps_a_short_head_and_a_long_tail() {
-        let call = ToolCallContext::new(ToolCallId::new("output-test"), CancellationToken::new());
+        let call = crate::test_support::call_context("output-test", CancellationToken::new());
         let output = TokioProcessBackend
             .run(
                 request(
@@ -498,7 +497,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn merges_stdout_and_stderr() {
-        let call = ToolCallContext::new(ToolCallId::new("merge-test"), CancellationToken::new());
+        let call = crate::test_support::call_context("merge-test", CancellationToken::new());
         let output = TokioProcessBackend
             .run(
                 request(
@@ -517,7 +516,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn spills_the_complete_output_only_when_it_overflows() {
-        let call = ToolCallContext::new(ToolCallId::new("spill-test"), CancellationToken::new());
+        let call = crate::test_support::call_context("spill-test", CancellationToken::new());
         let small_path = spill_path("small");
         let small = TokioProcessBackend
             .run(
@@ -558,7 +557,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn unbounded_output_stays_bounded_in_memory_and_on_disk() {
-        let call = ToolCallContext::new(ToolCallId::new("yes-test"), CancellationToken::new());
+        let call = crate::test_support::call_context("yes-test", CancellationToken::new());
         let path = spill_path("yes");
         let output = TokioProcessBackend
             .run(

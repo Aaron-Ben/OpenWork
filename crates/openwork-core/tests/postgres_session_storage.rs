@@ -752,6 +752,11 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
                 "add tool result pruning watermark".to_string(),
                 true,
             ),
+            (
+                202_609_240_002,
+                "add session sandbox mode".to_string(),
+                true,
+            ),
         ]
     );
 

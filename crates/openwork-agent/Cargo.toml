@@ -5,6 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+openwork-sandbox = { workspace = true }
 openwork-tools = { workspace = true }
 serde.workspace = true
 thiserror.workspace = true

@@ -1,3 +1,4 @@
+use openwork_sandbox::SandboxMode;
 use serde::{Deserialize, Serialize};
 
 use crate::AgentPolicy;
@@ -9,6 +10,9 @@ pub struct AgentDefinition {
     pub system_prompt: String,
     pub tool_names: Vec<String>,
     pub policy: AgentPolicy,
+    /// 这个角色能用的最宽沙箱模式（multi-agent.md §4）。作为子 Agent 派生时，生效模式取
+    /// 父会话模式与它中较窄者，委派不能变成放宽权限的途径（permissions.md §6.6）。
+    pub sandbox_ceiling: SandboxMode,
 }
 
 impl Default for AgentDefinition {
@@ -27,6 +31,7 @@ impl Default for AgentDefinition {
                 "bash".to_string(),
             ],
             policy: AgentPolicy::default(),
+            sandbox_ceiling: SandboxMode::Auto,
         }
     }
 }

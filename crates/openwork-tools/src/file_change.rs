@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::context::PathIntent;
-use crate::policy::AccessKind;
+use openwork_sandbox::{Access, SandboxPolicy};
+
+use crate::checked_path::PathIntent;
 use crate::{AtomicWriteCondition, AtomicWriteError, ToolSessionContext};
 
 pub(crate) const FILE_CHANGE_ARTIFACT_KIND: &str = "file_change";
@@ -167,8 +168,10 @@ pub(crate) fn build_file_change(
     })
 }
 
+/// 撤销文件改动。这是用户在界面上的操作，写入按调用方给的 `policy` 过围栏。
 pub async fn undo_file_changes(
     session: &ToolSessionContext,
+    policy: &SandboxPolicy,
     changes: &[FileChangeArtifact],
 ) -> Result<UndoFileChangesResult, FileChangeUndoError> {
     if changes.is_empty() {
@@ -183,7 +186,7 @@ pub async fn undo_file_changes(
     let mut checked_paths = Vec::with_capacity(changes.len());
     for change in changes {
         let checked = session
-            .resolve_path(&change.path, AccessKind::Write, PathIntent::MustExist)
+            .resolve_path(&change.path, Access::Write, PathIntent::MustExist, policy)
             .await
             .map_err(|error| FileChangeUndoError::Io {
                 path: change.path.clone(),
@@ -275,8 +278,10 @@ pub async fn undo_file_changes(
     Ok(UndoFileChangesResult { undone_change_ids })
 }
 
+/// 重新应用已撤销的改动，写入规则同 [`undo_file_changes`]。
 pub async fn reapply_file_changes(
     session: &ToolSessionContext,
+    policy: &SandboxPolicy,
     changes: &[FileChangeArtifact],
 ) -> Result<ReapplyFileChangesResult, FileChangeReapplyError> {
     if changes.is_empty() {
@@ -291,7 +296,7 @@ pub async fn reapply_file_changes(
     let mut checked_paths = Vec::with_capacity(changes.len());
     for change in changes {
         let checked = session
-            .resolve_path(&change.path, AccessKind::Write, PathIntent::MayCreate)
+            .resolve_path(&change.path, Access::Write, PathIntent::MayCreate, policy)
             .await
             .map_err(|error| FileChangeReapplyError::Io {
                 path: change.path.clone(),

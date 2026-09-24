@@ -81,7 +81,8 @@ describe('coreEventController', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 4,
-      permissionMode: 'default',
+      permissionMode: 'auto',
+      sandbox: { state: 'available' },
       runtime: {
         state: 'running',
         turnId: 'turn-1',
@@ -110,7 +111,8 @@ describe('coreEventController', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 0,
-      permissionMode: 'default',
+      permissionMode: 'auto',
+      sandbox: { state: 'available' },
       runtime: { state: 'idle' },
     }
     vi.mocked(deps.loadSnapshot).mockResolvedValue(snapshot)

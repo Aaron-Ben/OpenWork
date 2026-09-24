@@ -12,13 +12,13 @@ use serde::Deserialize;
 use super::scan::{
     Interrupt, SCAN_TIMEOUT, ScanBudget, compile_glob, display_path, relative_to_root,
 };
-use crate::context::PathIntent;
-use crate::policy::AccessKind;
+use crate::checked_path::PathIntent;
 use crate::spill::{SpillFile, SpillWriter};
 use crate::{
-    AnalysisUnit, AsyncFileSystem, Effect, InvocationAnalysis, TextToolOutput, Tool,
-    ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    AsyncFileSystem, TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk,
+    ToolSessionContext,
 };
+use openwork_sandbox::Access;
 
 /// Matching lines returned in `content` mode (tools.md §9 grep).
 const MAX_LINES: usize = 250;
@@ -77,21 +77,6 @@ impl Tool for GrepTool {
         ToolRisk::ReadOnly
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let display = format!("grep {} in {}", input.pattern, input.path);
-        InvocationAnalysis::new(
-            display.clone(),
-            vec![AnalysisUnit::new(
-                display,
-                vec![Effect::read(session.normalize_effect_path(&input.path))],
-            )],
-        )
-    }
-
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -108,7 +93,12 @@ impl Tool for GrepTool {
             })?;
         let glob = input.glob.as_deref().map(compile_glob).transpose()?;
         let root = session
-            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
+            .resolve_path(
+                &input.path,
+                Access::Read,
+                PathIntent::MustExist,
+                &call.sandbox_policy,
+            )
             .await?;
         let workspace = session
             .filesystem
@@ -414,13 +404,10 @@ mod tests {
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{PermissionProfile, SpillDirectory, ToolCallId, ToolErrorCode, ToolOutput};
+    use crate::{SpillDirectory, ToolErrorCode, ToolOutput};
 
     fn session(workspace: &TestDirectory) -> ToolSessionContext {
-        ToolSessionContext::local(
-            workspace.path().to_path_buf(),
-            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
-        )
+        crate::test_support::unconfined_session(workspace.path())
     }
 
     fn input(pattern: &str, mode: GrepOutputMode) -> GrepInput {
@@ -436,7 +423,7 @@ mod tests {
         GrepTool
             .execute(
                 session,
-                ToolCallContext::new(ToolCallId::new("grep"), CancellationToken::new()),
+                crate::test_support::call_context("grep", CancellationToken::new()),
                 input,
             )
             .await
@@ -451,7 +438,7 @@ mod tests {
         let error = GrepTool
             .execute(
                 &session(&workspace),
-                ToolCallContext::new(ToolCallId::new("grep"), CancellationToken::new()),
+                crate::test_support::call_context("grep", CancellationToken::new()),
                 input("fn(", GrepOutputMode::Content),
             )
             .await
@@ -616,7 +603,7 @@ mod tests {
         let error = GrepTool
             .execute(
                 &session(&workspace),
-                ToolCallContext::new(ToolCallId::new("grep"), cancel),
+                crate::test_support::call_context("grep", cancel),
                 input("needle", GrepOutputMode::Content),
             )
             .await

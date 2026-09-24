@@ -4,15 +4,15 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::policy::AccessKind;
 use crate::{
-    AnalysisUnit, AsyncFileSystem, AtomicWriteCondition, AtomicWriteError, Effect,
-    FileObservations, InvocationAnalysis, Tool, ToolCallContext, ToolExecutionError, ToolId,
-    ToolResult, ToolRisk, ToolSessionContext,
+    AsyncFileSystem, AtomicWriteCondition, AtomicWriteError, CallInspection, EscalationInput,
+    FileObservations, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolResult, ToolRisk,
+    ToolSessionContext,
 };
+use openwork_sandbox::Access;
 
 use super::workspace_display;
-use crate::context::PathIntent;
+use crate::checked_path::PathIntent;
 use crate::file_change::{FileChangeArtifact, build_file_change};
 use crate::observation::content_hash;
 
@@ -30,6 +30,8 @@ pub struct EditInput {
     /// Replace every occurrence. Defaults to false.
     #[serde(default)]
     pub replace_all: bool,
+    #[serde(flatten)]
+    pub escalation: EscalationInput,
 }
 
 #[derive(Debug, Default)]
@@ -52,21 +54,8 @@ impl Tool for EditTool {
         ToolRisk::WorkspaceMutation
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let display = format!("edit {}", input.file_path);
-        InvocationAnalysis::new(
-            display.clone(),
-            vec![AnalysisUnit::new(
-                display,
-                vec![Effect::write(
-                    session.normalize_effect_path(&input.file_path),
-                )],
-            )],
-        )
+    fn inspect(&self, input: &EditInput) -> CallInspection {
+        CallInspection::writes(input.file_path.clone(), input.escalation.clone())
     }
 
     async fn execute(
@@ -81,7 +70,12 @@ impl Tool for EditTool {
             PathIntent::MustExist
         };
         let resolved = session
-            .resolve_tool_path(&input.file_path, AccessKind::Write, intent, &call)
+            .resolve_path(
+                &input.file_path,
+                Access::Write,
+                intent,
+                &call.sandbox_policy,
+            )
             .await?;
         if let Some(parent) = resolved.as_path().parent() {
             session
@@ -93,7 +87,12 @@ impl Tool for EditTool {
                 })?;
         }
         let resolved = session
-            .resolve_tool_path(&input.file_path, AccessKind::Write, intent, &call)
+            .resolve_path(
+                &input.file_path,
+                Access::Write,
+                intent,
+                &call.sandbox_policy,
+            )
             .await?;
         let _write_guard = session.lock_for_write(&resolved).await;
         let display = workspace_display(session, resolved.as_path()).await;

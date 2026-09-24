@@ -66,7 +66,7 @@ export function createSessionRuntimeView(): SessionRuntimeView {
     toolCalls: {},
     orderedToolCallIds: [],
     pendingPermission: null,
-    permissionMode: 'default',
+    permissionMode: 'auto',
     plan: null,
     terminal: null,
     startedAtMs: null,
@@ -223,7 +223,6 @@ export function reduceSessionUpdate(
       return {
         ...next,
         phase: 'running_tools',
-        permissionMode: update.permissionMode ?? state.permissionMode,
         pendingPermission:
           state.pendingPermission?.toolCallId === update.toolCallId
             ? null

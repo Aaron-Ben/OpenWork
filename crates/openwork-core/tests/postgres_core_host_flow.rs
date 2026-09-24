@@ -5,9 +5,10 @@ use async_trait::async_trait;
 
 use openwork_core::{
     API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, CredentialResolver, ModelCapabilities, ModelInput,
-    OpenWorkCore, OpenWorkCoreConfig, PermissionDecision, ProviderInput, ResolvedModel,
-    RuntimeTurnId, SessionId, SessionInput, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
-    SubAgentHost, SubAgentSessionInput, SubAgentSpec, ToolCallId, TurnOutcome,
+    OpenWorkCore, OpenWorkCoreConfig, OpenWorkCoreError, PermissionDecision, ProviderInput,
+    ResolvedModel, RuntimeTurnId, SandboxMode, SessionId, SessionInput, SessionStorage,
+    SessionUpdate, SessionUpdateEnvelope, SubAgentHost, SubAgentSessionInput, SubAgentSpec,
+    ToolCallId, TurnOutcome,
 };
 use openwork_models::model::{Message, Role};
 use openwork_models::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel};
@@ -159,6 +160,119 @@ async fn production_host_persists_and_starts_an_idle_explorer_session() {
     );
 }
 
+/// permissions.md §9.2 #1、#35、#42：新会话从 `auto` 开始；模式先落库再生效，重启后恢复；
+/// 子 Agent 在派生时取父会话与角色上限中较窄者，之后父会话切换不影响它，它自己也不能切换。
+#[tokio::test]
+async fn acc_01_35_42_session_modes_persist_and_sub_agents_keep_their_snapshot() {
+    let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
+        return;
+    };
+    let storage = Arc::new(
+        openwork_core::PostgresStorage::connect(Some(&database_url))
+            .await
+            .expect("storage"),
+    );
+    let model_id = unique("model-sandbox-mode");
+    let model_name = unique("sandbox-mode-model");
+    storage
+        .upsert_model(&ModelInput {
+            id: model_id.clone(),
+            display_name: "Sandbox mode test".to_string(),
+            provider_kind: "deepseek".to_string(),
+            model_name: model_name.clone(),
+            base_url: format!("https://example.invalid/{model_name}"),
+            credential_ref: Some("test:credential".to_string()),
+            enabled: true,
+            capabilities: test_capabilities(),
+            config: serde_json::json!({}),
+        })
+        .await
+        .expect("model");
+    let core = OpenWorkCore::from_storage_with_credentials(
+        Arc::clone(&storage),
+        Arc::new(FixedCredential),
+    )
+    .await
+    .expect("core");
+    let parent = SessionId::new(unique("session-sandbox-mode-parent"));
+    core.create_session(&SessionInput {
+        id: parent.clone(),
+        title: Some("Sandbox mode parent".to_string()),
+        working_directory: std::env::current_dir()
+            .expect("cwd")
+            .to_string_lossy()
+            .into_owned(),
+        default_model_id: Some(model_id),
+    })
+    .await
+    .expect("parent session");
+    let mode_of = |record: openwork_core::SessionRecord| record.sandbox_mode().expect("known mode");
+    assert_eq!(
+        mode_of(
+            storage
+                .load_session(&parent)
+                .await
+                .unwrap()
+                .expect("parent")
+        ),
+        SandboxMode::Auto
+    );
+
+    let child = SessionId::new(unique("session-sandbox-mode-child"));
+    SubAgentHost::start_sub_agent(
+        core.as_ref(),
+        SubAgentSpec {
+            session_id: child.clone(),
+            parent_session_id: parent.clone(),
+            task_name: "inspect_modes".to_string(),
+            agent_role: "explorer".to_string(),
+            spawn_span_id: None,
+        },
+    )
+    .await
+    .expect("start child");
+    assert_eq!(
+        mode_of(storage.load_session(&child).await.unwrap().expect("child")),
+        SandboxMode::AcceptEdits,
+        "explorer's ceiling is narrower than the parent's auto"
+    );
+
+    assert_eq!(
+        core.set_permission_mode(&parent, SandboxMode::AcceptEdits)
+            .await
+            .expect("switch parent"),
+        SandboxMode::AcceptEdits
+    );
+    assert!(matches!(
+        core.set_permission_mode(&child, SandboxMode::Auto).await,
+        Err(OpenWorkCoreError::SubAgentModeFixed(id)) if id == child.as_str()
+    ));
+    assert_eq!(
+        mode_of(storage.load_session(&child).await.unwrap().expect("child")),
+        SandboxMode::AcceptEdits
+    );
+
+    let restarted = OpenWorkCore::from_storage_with_credentials(
+        Arc::clone(&storage),
+        Arc::new(FixedCredential),
+    )
+    .await
+    .expect("restarted core");
+    assert_eq!(
+        restarted
+            .get_session_snapshot(&parent)
+            .await
+            .expect("restored snapshot")
+            .permission_mode,
+        SandboxMode::AcceptEdits
+    );
+
+    restarted
+        .delete_session(&parent)
+        .await
+        .expect("cleanup parent and child");
+}
+
 #[tokio::test]
 async fn parent_next_turn_reconciles_restart_results_exactly_once() {
     let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
@@ -212,6 +326,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
                 .into_owned(),
             default_model_id: None,
             spawn_span_id: None,
+            sandbox_mode: SandboxMode::AcceptEdits,
         })
         .await
         .expect("completed child");
@@ -259,6 +374,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
                 .into_owned(),
             default_model_id: None,
             spawn_span_id: None,
+            sandbox_mode: SandboxMode::AcceptEdits,
         })
         .await
         .expect("interrupted child");

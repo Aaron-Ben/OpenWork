@@ -483,7 +483,7 @@ export function ChatInput({
               </SelectValue>
             </SelectTrigger>
             <SelectContent side="top" align="start">
-              <SelectItem value="default">{t('chat.permissionModes.default')}</SelectItem>
+              <SelectItem value="auto">{t('chat.permissionModes.auto')}</SelectItem>
               <SelectItem value="accept_edits">{t('chat.permissionModes.accept_edits')}</SelectItem>
             </SelectContent>
           </Select>

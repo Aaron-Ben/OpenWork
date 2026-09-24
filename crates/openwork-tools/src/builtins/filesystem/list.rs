@@ -2,13 +2,12 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::policy::AccessKind;
 use crate::{
-    AnalysisUnit, Effect, InvocationAnalysis, TextToolOutput, Tool, ToolCallContext,
-    ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
+    TextToolOutput, Tool, ToolCallContext, ToolExecutionError, ToolId, ToolRisk, ToolSessionContext,
 };
+use openwork_sandbox::Access;
 
-use crate::context::PathIntent;
+use crate::checked_path::PathIntent;
 
 const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 2000;
@@ -47,21 +46,6 @@ impl Tool for ListTool {
         ToolRisk::ReadOnly
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let display = format!("list {}", input.path);
-        InvocationAnalysis::new(
-            display.clone(),
-            vec![AnalysisUnit::new(
-                display,
-                vec![Effect::read(session.normalize_effect_path(&input.path))],
-            )],
-        )
-    }
-
     async fn execute(
         &self,
         session: &ToolSessionContext,
@@ -74,7 +58,12 @@ impl Tool for ListTool {
             )));
         }
         let resolved = session
-            .resolve_tool_path(&input.path, AccessKind::Read, PathIntent::MustExist, &call)
+            .resolve_path(
+                &input.path,
+                Access::Read,
+                PathIntent::MustExist,
+                &call.sandbox_policy,
+            )
             .await?;
         let mut names = session
             .filesystem
@@ -135,7 +124,7 @@ mod tests {
 
     use super::super::test_support::TestDirectory;
     use super::*;
-    use crate::{PermissionProfile, ToolCallId, ToolOutput};
+    use crate::ToolOutput;
 
     #[tokio::test]
     async fn lists_a_zero_based_sorted_page() {
@@ -143,15 +132,12 @@ mod tests {
         for name in ["c.txt", "a.txt", "b.txt"] {
             std::fs::write(workspace.path().join(name), name).expect("write fixture");
         }
-        let session = ToolSessionContext::local(
-            workspace.path().to_path_buf(),
-            PermissionProfile::from_builtin_rules(workspace.path().to_path_buf()),
-        );
+        let session = crate::test_support::unconfined_session(workspace.path());
 
         let result = ListTool
             .execute(
                 &session,
-                ToolCallContext::new(ToolCallId::new("list-page"), CancellationToken::new()),
+                crate::test_support::call_context("list-page", CancellationToken::new()),
                 ListInput {
                     path: ".".to_string(),
                     offset: 1,

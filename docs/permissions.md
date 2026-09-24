@@ -55,16 +55,16 @@
 flowchart TD
   A["Tool Call"] --> B{"硬保护路径?<br/>（文件工具）"}
   B -- 是 --> X["规则拒绝<br/>不出卡片，Turn 继续"]
-  B -- 否 --> C{"带越界请求?<br/>sandbox_permissions"}
+  B -- 否 --> C{"带越界请求?<br/>sandboxPermissions"}
   C -- 是 --> D{"越界请求<br/>通过校验?（§4.2）"}
   D -- 否 --> X2["拒绝，不出卡片<br/>返回说明文本"]
   D -- 是 --> E["越界卡片<br/>允许一次 / 拒绝"]
-  C -- 否 --> F{"危险命令检测命中?<br/>（bash）"}
+  C -- 否 --> H{"沙箱可用?<br/>（bash）"}
+  H -- 否 --> I["bash 返回 sandbox_unavailable<br/>不执行，不出卡片，Turn 继续"]
+  H -- 是 --> F{"危险命令检测命中?<br/>（bash）"}
   F -- 是 --> G["危险命令卡片<br/>允许一次 / 拒绝"]
-  F -- 否 --> H{"沙箱可用?"}
-  G -- 允许 --> H
-  H -- 否 --> I["bash 返回 sandbox_unavailable<br/>不执行，Turn 继续"]
-  H -- 是 --> J["在生效模式下执行"]
+  F -- 否 --> J["在生效模式下执行"]
+  G -- 允许 --> J
   E -- 允许 --> J2["带着越界执行这一次<br/>（额外获得所列路径）"]
   J --> K{"被沙箱拒绝?"}
   K -- 是 --> L["结果追加拒绝标记<br/>+ 越界提示"]
@@ -149,6 +149,8 @@ pub struct PathGrant {
 ```
 
 `path_grants` 只存在于**单次调用**的策略里（[tools.md §5](tools.md)）。会话状态里没有它。
+
+**撤销与重新应用文件改动**（[tools.md §10](tools.md)）是用户在界面上的操作，不是模型的调用：策略取会话模式，再为这批改动涉及的每个文件加一条 `Write` + `Exact` 授权。经越界批准改过的敏感档文件（如 `.env`）因此也能撤销；硬保护路径不受授权影响，照样不可写。
 
 `SandboxPolicy`、四档路径的推导函数、Seatbelt profile 生成、自检与拒绝识别都在 **`openwork-sandbox`** crate 里（[architecture.md §2](architecture.md)）。它不依赖任何其他 OpenWork crate，不启动进程，也不做审批决定。
 
@@ -256,7 +258,7 @@ bash 的失败文本要可操作：`bash is unavailable because the macOS sandbo
 
 1. 命令在当前模式下执行，某个文件操作被内核拒绝；
 2. 结果末尾追加拒绝标记与越界提示（§4.6）；
-3. 模型用**同一条命令**重试，带上 `sandbox_permissions`（刚好够用的越界）与 `justification`（直接给用户看的一句话）；
+3. 模型用**同一条命令**重试，带上 `sandboxPermissions`（刚好够用的越界）与 `justification`（直接给用户看的一句话）；
 4. 卡片展示命令、理由、越界内容。用户选择**允许一次**或**拒绝**；
 5. 允许：这一次调用带着越界执行。下一次调用回到会话的生效模式。
 
@@ -266,7 +268,7 @@ bash 的失败文本要可操作：`bash is unavailable because the macOS sandbo
 
 ```json
 {
-  "sandbox_permissions": {
+  "sandboxPermissions": {
     "paths": [
       { "path": "/Users/me/.cargo/registry", "access": "write", "scope": "subtree" }
     ]
@@ -325,6 +327,8 @@ bash、`write`、`edit` 三个工具都带这两个参数。文件工具在敏�
 
 检测命中时出危险命令卡片；批准后在**当前生效模式**下执行（§2.1 第 2 点）。
 
+**沙箱不可用时不检测。** bash 本来就不执行（§3.2），为一条不会执行的命令出卡片只会让用户白白决定一次。
+
 **只在 `auto` 下单独出卡。** `accept-edits` 下 bash 本来就写不了工作区，`rm -rf src` 会被内核拒绝后走越界卡片——再单独问一次只是重复。此时检测结果只作为**越界卡片上的额外标注**：如果越界请求要写工作区、而命令又命中清单，卡片同时写明"这条命令会删除文件"。
 
 **清单是封闭的：**
@@ -373,7 +377,7 @@ bash、`write`、`edit` 三个工具都带这两个参数。文件工具在敏�
 
 ```
 [sandbox: file access denied under auto mode]
-[sandbox: to proceed, retry this exact command once with sandbox_permissions listing only the paths it needs, and a one-sentence justification; the user will be asked. If the paths cannot be listed, ask the user to run the command instead]
+[sandbox: to proceed, retry this exact command once with sandboxPermissions listing only the paths it needs, and a one-sentence justification; the user will be asked. If the paths cannot be listed, ask the user to run the command instead]
 ```
 
 文件工具碰到硬保护路径：
@@ -394,7 +398,7 @@ bash、`write`、`edit` 三个工具都带这两个参数。文件工具在敏�
 
 | 卡片 | 触发 | 必须显示 |
 |---|---|---|
-| **越界** | 模型带 `sandbox_permissions` 请求 | 命令原文、模型的理由；**逐条列出申请的路径**（读 / 写、单个文件 / 整个目录、属于哪一档：敏感 / 凭据 / 工作区外）；若此前同一 Turn 有被拒结果，显示被拒的路径 |
+| **越界** | 模型带 `sandboxPermissions` 请求 | 命令原文、模型的理由；**逐条列出申请的路径**（读 / 写、单个文件 / 整个目录、属于哪一档：敏感 / 凭据 / 工作区外）；若此前同一 Turn 有被拒结果，显示被拒的路径 |
 | **危险命令** | §4.3 命中 | 命令原文；**命中的是哪一个子命令、哪一条（键）**；说明"批准后仍在当前模式的沙箱内执行" |
 
 一张卡片可以同时是越界与危险命令（`auto` 下 `rm -rf ~/old-build` 带对 `~/old-build` 的写越界，或 `accept-edits` 下 `rm -rf build` 带对工作区的写越界）：两种原因都显示，一次批准覆盖两者。
@@ -454,8 +458,9 @@ bash、`write`、`edit` 三个工具都带这两个参数。文件工具在敏�
 | 沙箱不可用而未执行 | `permissionDecisionSource = sandbox_unavailable` |
 | 规则拒绝 | 来源 `builtin` / `non_interactive` |
 | 用户拒绝 | `deny` + `user` |
+| Core 控制工具（`update_plan`、子 Agent 工具） | 来源 `control_tool` |
 
-**所有被执行的调用都在沙箱内**：`sandboxMode` 只有 `accept_edits`、`auto` 两个取值，时间线上不存在"无沙箱执行"这一类。
+**所有被执行的调用都在沙箱内**：`sandboxMode` 只有 `accept_edits`、`auto` 两个取值，时间线上不存在"无沙箱执行"这一类。控制工具不访问主机文件与进程，不经沙箱，也不记 `sandboxMode`。
 
 ### 6.5 缺口必须可见
 
@@ -493,7 +498,7 @@ Tool Span 上记录：
 | `dangerMatch` | 清单键或空，如 `rm_recursive_or_force` | **命中了危险命令清单的哪一条**——清单调整时按键反查影响面 |
 | `sandboxDenied` | bool | 是否被内核拒绝（§3.3） |
 | `permissionDecision` | `allow` \| `ask` \| `deny` \| `cancelled` | 最终决定 |
-| `permissionDecisionSource` | `sandbox` \| `user` \| `builtin` \| `non_interactive` \| `sandbox_unavailable` \| `system` | 决定来自哪里 |
+| `permissionDecisionSource` | `sandbox` \| `user` \| `builtin` \| `non_interactive` \| `sandbox_unavailable` \| `control_tool` \| `system` | 决定来自哪里；`control_tool` 是 Core 控制工具，不经沙箱 |
 | `permissionWaitMs` | 毫秒 | 等待用户的累计耗时 |
 
 **权限不是独立 Span**：Tool Span 包围完整生命周期，等待时间作为属性记录。字段缺失时 UI 显示"来源未知"，而不是留白。
@@ -555,19 +560,19 @@ Tool Span 上记录：
 
 12. 自检在沙箱里写探针路径并确认拿到 `EPERM`；自检失败时认定沙箱不可用；
 13. 沙箱不可用时，bash 在交互式与非交互 Session 中都不执行、返回可操作的 `sandbox_unavailable`，不出卡片；**代码中不存在任何不经 Seatbelt 启动 bash 的路径**；文件工具不受影响；界面常驻提示；`runtime/sandbox-policy` section 写明 bash 不可用；
-14. 沙箱不可用时，bash / `write` / `edit` 的 schema 里不出现 `sandbox_permissions` 与 `justification`；
+14. 沙箱不可用时，bash / `write` / `edit` 的 schema 里不出现 `sandboxPermissions` 与 `justification`；
 15. `sandbox-exec` 启动失败归为"沙箱不可用"，不归为 `sandboxDenied`；
 16. Linux 上（P2 之前）行为与第 12 条相同。
 
 **越界**
 
 17. 被沙箱拒绝的结果末尾带拒绝标记与越界提示，退出码照常报告；
-18. 带 `sandbox_permissions` + `justification` 的重试出越界卡片，显示命令、理由，并逐条列出申请的路径（读写、范围、所属档）；
+18. 带 `sandboxPermissions` + `justification` 的重试出越界卡片，显示命令、理由，并逐条列出申请的路径（读写、范围、所属档）；
 19. 批准后**只有这一次**带着越界执行；紧接着的同一条命令再次需要越界、再次出卡片；
 20. 新增依赖后的 `cargo build` 以 `~/.cargo/registry` 的 `write` + `subtree` 越界成功；同一次执行中写 `$HOME` 下其他位置仍被内核拒绝；
 21. `git push` 以 `~/.ssh` 的 `read` + `subtree` 越界可以执行；`.git/hooks` 在任何越界下仍不可写；
 22. 以下请求直接拒绝、不出卡片、Turn 继续：`justification` 为空；`paths` 超过 16 条或含非绝对路径；条目已被当前策略覆盖；条目指向硬保护路径；`subtree` 落在 `/`、`$HOME` 或其祖先上；
-23. 工具 schema 中不存在任何"完全放开"的取值：`sandbox_permissions` 只有 `paths`；
+23. 工具 schema 中不存在任何"完全放开"的取值：`sandboxPermissions` 只有 `paths`；
 24. 用户拒绝越界后 Turn 停止；
 25. 进程重启后不存在任何残留的越界授权。
 

@@ -150,7 +150,8 @@ impl TurnToolset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openwork_tools::{PermissionProfile, ToolSessionContext, ToolsetConfig, builtin_registry};
+    use openwork_sandbox::{SANDBOX_EXEC, Seatbelt};
+    use openwork_tools::{ToolSessionContext, ToolsetConfig, builtin_registry};
 
     fn toolset(names: &[&str]) -> Arc<FinalizedToolset> {
         Arc::new(
@@ -159,7 +160,7 @@ mod tests {
                     &ToolsetConfig::from_names(names.iter().map(|name| name.to_string())),
                     ToolSessionContext::local(
                         std::env::temp_dir(),
-                        PermissionProfile::from_builtin_rules(std::env::temp_dir()),
+                        Arc::new(Seatbelt::probe(SANDBOX_EXEC)),
                     ),
                 )
                 .expect("finalize"),
@@ -310,7 +311,7 @@ mod tests {
                     &ToolsetConfig::from_names([UPDATE_PLAN_TOOL_NAME]),
                     ToolSessionContext::local(
                         std::env::temp_dir(),
-                        PermissionProfile::from_builtin_rules(std::env::temp_dir()),
+                        Arc::new(Seatbelt::probe(SANDBOX_EXEC)),
                     ),
                 )
                 .expect("finalize"),
@@ -360,7 +361,7 @@ mod tests {
                     &ToolsetConfig::from_names(["spawn_agent"]),
                     ToolSessionContext::local(
                         std::env::temp_dir(),
-                        PermissionProfile::from_builtin_rules(std::env::temp_dir()),
+                        Arc::new(Seatbelt::probe(SANDBOX_EXEC)),
                     ),
                 )
                 .expect("finalize"),

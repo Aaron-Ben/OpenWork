@@ -10,23 +10,27 @@ use openwork_agent::{AgentBuilder, AgentDefinition, explorer_definition};
 use openwork_chat_state::{ChatStateHandle, ConversationItem, MessageKind, ToolResultPruning};
 use openwork_core::plan::{PlanStepStatus, TurnPlan};
 use openwork_core::session::{
-    AgentMessageKind, ClientRequestId, CompactionError, CompactionRuntimeState,
-    CompactionStateCollector, ControlToolSurface, ConversationCompaction,
+    AgentMessageKind, ApprovalCard, ApprovalDanger, ApprovalPath, ClientRequestId, CompactionError,
+    CompactionRuntimeState, CompactionStateCollector, ControlToolSurface, ConversationCompaction,
     ConversationCompactionKind, NewConversationCompaction, ParentLink, PermissionDecision,
-    ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId, SessionRuntimeConfig,
-    SessionStorage, SessionUpdate, SessionUpdateEnvelope, ToolCallId, ToolProgressUpdate,
-    TraceFlushResult, TraceRecorder, TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
+    ResolvedModel, SessionApproval, SessionError, SessionHandle, SessionId, SessionModeOrigin,
+    SessionRuntimeConfig, SessionSandbox, SessionStorage, SessionUpdate, SessionUpdateEnvelope,
+    ToolCallId, ToolProgressUpdate, ToolTraceAttributesV1, TraceFlushResult, TraceRecorder,
+    TraceSignal, TraceStatus, TurnId, TurnOutcome, TurnToolset,
 };
 use openwork_core::skills::SkillRoots;
 use openwork_core::{AgentControl, ModelCapabilities, SubAgentHost, SubAgentSpec};
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
     ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
-    TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact, ToolResultState,
+    TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
+};
+use openwork_sandbox::{
+    Access, GrantScope, PathTier, SandboxBackend, SandboxEnvironment, SandboxMode, SandboxPolicy,
+    SandboxStatus, SandboxUnavailable,
 };
 use openwork_tools::{
-    AnalysisUnit, ApprovalSessionAction, Effect, InvocationAnalysis, PermissionMode,
-    PermissionProfile, ReadonlyProof, Tool, ToolCallContext, ToolExecutionError, ToolId,
+    CallInspection, DangerKey, EscalationInput, Tool, ToolCallContext, ToolExecutionError, ToolId,
     ToolInvocation, ToolProgress as RuntimeToolProgress, ToolRegistryBuilder, ToolResult, ToolRisk,
     ToolSessionContext,
 };
@@ -101,6 +105,8 @@ impl ModelPort for FakeModel {
 #[derive(Default)]
 struct ToolState {
     invocations: Mutex<Vec<ToolInvocation>>,
+    /// 每次执行拿到的策略，用来断言越界只作用于那一次。
+    policies: Mutex<Vec<SandboxPolicy>>,
     results: Mutex<VecDeque<ToolResult>>,
 }
 
@@ -127,92 +133,22 @@ impl Tool for FakeTool {
         self.risk
     }
 
-    fn permission_analysis(
-        &self,
-        session: &ToolSessionContext,
-        input: &Self::Input,
-    ) -> InvocationAnalysis {
-        let raw = self.id.to_string();
-        let path = input
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("fixture");
-        if let Some(key) = input
-            .get("readonlyProofKey")
-            .and_then(serde_json::Value::as_str)
-        {
-            return InvocationAnalysis::new(
-                raw.clone(),
-                vec![AnalysisUnit {
-                    display: raw.clone(),
-                    effects: vec![
-                        Effect::Exec {
-                            program: raw,
-                            args: Vec::new(),
-                        },
-                        Effect::read(&session.working_directory),
-                    ],
-                    allow_eligible: true,
-                    readonly_proof: Some(ReadonlyProof {
-                        key: key.to_string(),
-                    }),
-                    filesystem_command_proof: false,
-                }],
-            );
-        }
-        if input
-            .get("filesystemCommandProof")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-        {
-            return InvocationAnalysis::new(
-                raw.clone(),
-                vec![AnalysisUnit {
-                    display: "mkdir src/x".to_string(),
-                    effects: vec![
-                        Effect::Exec {
-                            program: "mkdir".to_string(),
-                            args: vec!["src/x".to_string()],
-                        },
-                        Effect::write(session.normalize_effect_path(path)),
-                    ],
-                    allow_eligible: true,
-                    readonly_proof: None,
-                    filesystem_command_proof: true,
-                }],
-            );
-        }
-        if self.risk == ToolRisk::ProcessExecution
-            && let Some(program) = input.get("program").and_then(serde_json::Value::as_str)
-        {
-            let args = input
-                .get("args")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            return InvocationAnalysis::new(
-                raw.clone(),
-                vec![AnalysisUnit::new(
-                    format!("{} {}", program, args.join(" ")).trim().to_string(),
-                    vec![Effect::Exec {
-                        program: program.to_string(),
-                        args,
-                    }],
-                )],
-            );
-        }
-        let effect = match self.risk {
-            ToolRisk::ReadOnly => Effect::read(session.normalize_effect_path(path)),
-            ToolRisk::WorkspaceMutation => Effect::write(session.normalize_effect_path(path)),
-            ToolRisk::ProcessExecution => Effect::Exec {
-                program: raw.clone(),
-                args: Vec::new(),
-            },
+    /// 与真实工具相同的事实：bash 报告命令原文，write / edit 报告写目标，两者都可以带越界。
+    fn inspect(&self, input: &Self::Input) -> CallInspection {
+        let escalation = serde_json::from_value::<EscalationInput>(input.clone())
+            .expect("escalation fields are optional");
+        let field = |name: &str| {
+            input
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("fixture")
+                .to_string()
         };
-        InvocationAnalysis::new(raw.clone(), vec![AnalysisUnit::new(raw, vec![effect])])
+        match self.risk {
+            ToolRisk::ReadOnly => CallInspection::read_only(),
+            ToolRisk::WorkspaceMutation => CallInspection::writes(field("path"), escalation),
+            ToolRisk::ProcessExecution => CallInspection::runs(field("command"), escalation),
+        }
     }
 
     async fn execute(
@@ -231,6 +167,11 @@ impl Tool for FakeTool {
             .lock()
             .unwrap()
             .push(ToolInvocation::new(self.id.to_string(), input));
+        self.state
+            .policies
+            .lock()
+            .unwrap()
+            .push(call.sandbox_policy.clone());
         if let Some(message) = progress_message {
             call.report_progress(RuntimeToolProgress::Message { message });
         }
@@ -582,6 +523,7 @@ struct RuntimeFixture {
 struct RuntimeOptions {
     session_id: SessionId,
     model_capabilities: ModelCapabilities,
+    sandbox: SandboxStatus,
     approval: SessionApproval,
     parent_link: Option<ParentLink>,
     agent_control: Option<AgentControl>,
@@ -592,10 +534,43 @@ impl Default for RuntimeOptions {
         Self {
             session_id: SessionId::new("session-test"),
             model_capabilities: test_capabilities(200_000, 32_768),
+            sandbox: SandboxStatus::Available,
             approval: SessionApproval::Interactive,
             parent_link: None,
             agent_control: None,
         }
+    }
+}
+
+/// 主机事实：主目录与工作区无关，临时根不含工作区所在的 `$TMPDIR`，工作区外的越界因此总是新权限。
+const TEST_HOME: &str = "/Users/openwork-test";
+
+fn test_sandbox(workspace: &Path) -> SessionSandbox {
+    SessionSandbox {
+        workspace_root: fs::canonicalize(workspace).expect("canonical workspace"),
+        environment: Arc::new(SandboxEnvironment::new(
+            PathBuf::from(TEST_HOME),
+            vec![PathBuf::from("/private/tmp")],
+            Vec::new(),
+        )),
+    }
+}
+
+/// 只报告自检结论的沙箱：假工具不启动进程，用不到 `wrap`。
+#[derive(Debug)]
+struct FixedSandbox(SandboxStatus);
+
+impl SandboxBackend for FixedSandbox {
+    fn status(&self) -> &SandboxStatus {
+        &self.0
+    }
+
+    fn wrap(
+        &self,
+        _policy: &SandboxPolicy,
+        _command: &[String],
+    ) -> Result<Vec<String>, SandboxUnavailable> {
+        unreachable!("fake tools never start a process")
     }
 }
 
@@ -691,13 +666,14 @@ impl SubAgentHost for SpawningSessionHost {
                 Vec::new(),
             ))],
             Vec::new(),
-            PermissionMode::Default,
+            SandboxMode::Auto,
             false,
             workspace,
             SkillRoots::default(),
             RuntimeOptions {
                 session_id: spec.session_id,
                 model_capabilities: test_capabilities(200_000, 32_768),
+                sandbox: SandboxStatus::Available,
                 approval: SessionApproval::NonInteractive,
                 parent_link: Some(ParentLink {
                     parent_session_id: spec.parent_session_id,
@@ -810,7 +786,7 @@ impl Drop for TestWorkspace {
 fn runtime(
     responses: Vec<ModelResponse>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
 ) -> RuntimeFixture {
     runtime_with_outcomes_in_workspace(
@@ -825,7 +801,7 @@ fn runtime(
 fn runtime_with_capabilities(
     responses: Vec<ModelResponse>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
     model_capabilities: ModelCapabilities,
 ) -> RuntimeFixture {
@@ -846,7 +822,7 @@ fn runtime_with_capabilities(
 fn runtime_in_workspace(
     responses: Vec<ModelResponse>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
     workspace: TestWorkspace,
 ) -> RuntimeFixture {
@@ -861,7 +837,7 @@ fn runtime_in_workspace(
 
 fn runtime_in_workspace_with_skill_roots(
     responses: Vec<ModelResponse>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     workspace: TestWorkspace,
     skill_roots: SkillRoots,
 ) -> RuntimeFixture {
@@ -878,7 +854,7 @@ fn runtime_in_workspace_with_skill_roots(
 fn runtime_with_outcomes(
     outcomes: Vec<Result<ModelResponse, ModelError>>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
 ) -> RuntimeFixture {
     runtime_with_outcomes_in_workspace(
@@ -893,7 +869,7 @@ fn runtime_with_outcomes(
 fn runtime_with_outcomes_and_capabilities(
     outcomes: Vec<Result<ModelResponse, ModelError>>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
     model_capabilities: ModelCapabilities,
 ) -> RuntimeFixture {
@@ -914,7 +890,7 @@ fn runtime_with_outcomes_and_capabilities(
 fn runtime_with_outcomes_in_workspace(
     outcomes: Vec<Result<ModelResponse, ModelError>>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
     workspace: TestWorkspace,
 ) -> RuntimeFixture {
@@ -931,7 +907,7 @@ fn runtime_with_outcomes_in_workspace(
 fn runtime_with_outcomes_in_workspace_and_skill_roots(
     outcomes: Vec<Result<ModelResponse, ModelError>>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
     workspace: TestWorkspace,
     skill_roots: SkillRoots,
@@ -950,7 +926,7 @@ fn runtime_with_outcomes_in_workspace_and_skill_roots(
 fn runtime_with_options(
     outcomes: Vec<Result<ModelResponse, ModelError>>,
     tool_results: Vec<ToolResult>,
-    permission_mode: PermissionMode,
+    permission_mode: SandboxMode,
     fail_assistant: bool,
     workspace: TestWorkspace,
     skill_roots: SkillRoots,
@@ -973,6 +949,7 @@ fn runtime_with_options(
     });
     let tools = Arc::new(ToolState {
         invocations: Mutex::new(Vec::new()),
+        policies: Mutex::new(Vec::new()),
         results: Mutex::new(tool_results.into()),
     });
     let storage = Arc::new(RecordingStorage {
@@ -1012,11 +989,12 @@ fn runtime_with_options(
             agent.toolset_config(),
             ToolSessionContext::local(
                 working_directory.clone(),
-                PermissionProfile::from_builtin_rules(working_directory.clone()),
+                Arc::new(FixedSandbox(options.sandbox.clone())),
             ),
         )
         .expect("toolset");
     let (global_update_tx, global_updates) = broadcast::channel(512);
+    let sandbox = test_sandbox(&working_directory);
     let agent_control = options.agent_control.clone().or_else(|| {
         options
             .parent_link
@@ -1055,7 +1033,13 @@ fn runtime_with_options(
             storage: storage.clone(),
             compaction_state: Arc::new(CompactionStateCollector::default()),
             trace: trace.clone(),
-            permission_mode,
+            sandbox_mode: permission_mode,
+            mode_origin: if is_sub_agent {
+                SessionModeOrigin::Inherited
+            } else {
+                SessionModeOrigin::SessionDefault
+            },
+            sandbox,
             approval: options.approval,
             parent_link: options.parent_link,
             agent_control,
@@ -1081,7 +1065,7 @@ async fn session_actor_forwards_updates_to_the_core_global_bus() {
     let mut fixture = runtime(
         vec![response("done", Vec::new())],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
 
@@ -1091,34 +1075,29 @@ async fn session_actor_forwards_updates_to_the_core_global_bus() {
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 }
 
+/// permissions.md §9.2 #1、#13：快照带模式与沙箱可用性；切换模式不写任何文件。
 #[tokio::test]
-async fn acc_13_permission_mode_is_in_memory_and_reflected_in_snapshots() {
+async fn acc_01_13_the_snapshot_carries_the_mode_and_sandbox_availability() {
     let fixture = runtime(
         vec![response("done", Vec::new())],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     let files_before = fs::read_dir(fixture.workspace.path())
         .expect("workspace before mode change")
         .count();
 
+    let snapshot = fixture.handle.snapshot().await.expect("default snapshot");
+    assert_eq!(snapshot.permission_mode, SandboxMode::Auto);
+    assert_eq!(snapshot.sandbox, SandboxStatus::Available);
     assert_eq!(
         fixture
             .handle
-            .snapshot()
-            .await
-            .expect("default snapshot")
-            .permission_mode,
-        PermissionMode::Default
-    );
-    assert_eq!(
-        fixture
-            .handle
-            .set_permission_mode(PermissionMode::AcceptEdits)
+            .set_permission_mode(SandboxMode::AcceptEdits)
             .await
             .expect("set permission mode"),
-        PermissionMode::AcceptEdits
+        SandboxMode::AcceptEdits
     );
     assert_eq!(
         fixture
@@ -1127,7 +1106,7 @@ async fn acc_13_permission_mode_is_in_memory_and_reflected_in_snapshots() {
             .await
             .expect("updated snapshot")
             .permission_mode,
-        PermissionMode::AcceptEdits
+        SandboxMode::AcceptEdits
     );
     assert_eq!(
         fs::read_dir(fixture.workspace.path())
@@ -1136,10 +1115,105 @@ async fn acc_13_permission_mode_is_in_memory_and_reflected_in_snapshots() {
         files_before,
         "changing permission mode must not write a file"
     );
+
+    let unavailable = SandboxStatus::Unavailable {
+        reason: "sandbox-exec is missing".to_string(),
+    };
+    let broken = runtime_with_options(
+        vec![Ok(response("done", Vec::new()))],
+        Vec::new(),
+        SandboxMode::Auto,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            sandbox: unavailable.clone(),
+            ..RuntimeOptions::default()
+        },
+    );
+    assert_eq!(
+        broken.handle.snapshot().await.expect("snapshot").sandbox,
+        unavailable
+    );
 }
 
+/// permissions.md §9.2 #13、#38：策略经 `runtime/sandbox-policy` 给出，不在系统前缀里；
+/// 沙箱不可用时写明 bash 不可用。
 #[tokio::test]
-async fn permission_mode_change_controls_subsequent_tool_authorization() {
+async fn acc_13_38_the_sandbox_policy_reaches_the_model_as_world_state() {
+    let unavailable = runtime_with_options(
+        vec![Ok(response("done", Vec::new()))],
+        Vec::new(),
+        SandboxMode::Auto,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            sandbox: SandboxStatus::Unavailable {
+                reason: "sandbox-exec is missing".to_string(),
+            },
+            ..RuntimeOptions::default()
+        },
+    );
+    let mut fixture = unavailable;
+    start(&fixture).await;
+    wait_for_terminal(&mut fixture.updates).await;
+
+    let requests = fixture.model.requests.lock().unwrap();
+    let texts = user_message_texts(&requests[0]);
+    let policy = texts
+        .iter()
+        .find(|text| text.starts_with("<sandbox_policy>"))
+        .expect("sandbox policy section");
+    assert!(policy.contains("\nmode: auto\n"), "{policy}");
+    assert!(
+        policy.contains("\nbash: unavailable, because the macOS sandbox failed its self-check."),
+        "{policy}"
+    );
+    let system = String::from_utf8(system_prefix_bytes(&requests[0])).expect("utf-8");
+    assert!(!system.contains("sandbox_policy"));
+    assert!(!system.contains("accept-edits"));
+}
+
+/// permissions.md §9.2 #13：沙箱不可用时危险命令不出卡片，直接交给 bash（它返回 `sandbox_unavailable`）。
+#[tokio::test]
+async fn acc_13_an_unavailable_sandbox_never_asks_about_a_dangerous_command() {
+    let mut fixture = runtime_with_options(
+        vec![
+            Ok(response(
+                "",
+                vec![tool_call("call-1", "bash", ASKS_IN_AUTO)],
+            )),
+            Ok(response("done", Vec::new())),
+        ],
+        Vec::new(),
+        SandboxMode::Auto,
+        false,
+        TestWorkspace::new(),
+        SkillRoots::default(),
+        RuntimeOptions {
+            sandbox: SandboxStatus::Unavailable {
+                reason: "sandbox-exec is missing".to_string(),
+            },
+            ..RuntimeOptions::default()
+        },
+    );
+    start(&fixture).await;
+
+    let updates = collect_updates_until_terminal(&mut fixture.updates).await;
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, SessionUpdate::PermissionRequested { .. }))
+    );
+    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 1);
+    assert_eq!(finished_tool_traces(&fixture)[0].danger_match, None);
+}
+
+/// permissions.md §9.2 #38、#44：切换后的下一次调用在新模式下执行，Trace 记下来源，
+/// 模型在同一 Turn 里收到新的策略快照。
+#[tokio::test]
+async fn acc_38_44_a_mode_switch_applies_to_the_next_call_and_is_traced() {
     let mut fixture = runtime(
         vec![
             response(
@@ -1149,12 +1223,12 @@ async fn permission_mode_change_controls_subsequent_tool_authorization() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     fixture
         .handle
-        .set_permission_mode(PermissionMode::AcceptEdits)
+        .set_permission_mode(SandboxMode::AcceptEdits)
         .await
         .expect("set permission mode");
     start(&fixture).await;
@@ -1164,23 +1238,28 @@ async fn permission_mode_change_controls_subsequent_tool_authorization() {
         TurnOutcome::Completed { .. }
     ));
     assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 1);
-    let signals = fixture.trace.signals.lock().unwrap();
-    let tool = signals
-        .iter()
-        .find_map(|signal| match signal {
-            TraceSignal::ToolCallFinished(finished) => Some(finished),
-            _ => None,
-        })
-        .expect("tool trace");
     assert_eq!(
-        tool.attributes.permission_mode.as_deref(),
-        Some("accept_edits")
+        fixture.tools.policies.lock().unwrap()[0].mode,
+        SandboxMode::AcceptEdits
     );
+    let traces = finished_tool_traces(&fixture);
+    assert_eq!(traces[0].session_mode.as_deref(), Some("accept_edits"));
     assert_eq!(
-        tool.attributes.permission_mode_origin.as_deref(),
+        traces[0].session_mode_origin.as_deref(),
         Some("user_toggle")
     );
+    assert_eq!(traces[0].sandbox_mode.as_deref(), Some("accept_edits"));
+    assert_eq!(decision(&traces[0]), (Some("allow"), Some("sandbox")));
+    let requests = fixture.model.requests.lock().unwrap();
+    assert!(
+        user_message_texts(&requests[0])
+            .iter()
+            .any(|text| text.starts_with("<sandbox_policy>\nmode: accept-edits\n"))
+    );
 }
+
+/// `auto` 下出危险命令卡片的 bash 输入：测试用它让 Turn 停在等待审批上。
+const ASKS_IN_AUTO: &str = r#"{"command":"rm -rf build"}"#;
 
 fn response(text: &str, tool_calls: Vec<ToolCallBlock>) -> ModelResponse {
     ModelResponse {
@@ -1275,6 +1354,7 @@ fn is_world_state_message(message: &Message) -> bool {
                 if text.text.contains("<user_project_context")
                     || text.text.contains("<project_instructions>")
                     || text.text.contains("<available_skills>")
+                    || text.text.contains("<sandbox_policy>")
                     || text.text.contains("不再适用。")
         )
 }
@@ -1370,7 +1450,7 @@ async fn no_tool_turn_completes_after_one_model_call() {
     let mut fixture = runtime(
         vec![response("done", Vec::new())],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1430,7 +1510,7 @@ async fn world_state_reaches_the_model_as_user_messages_not_system_parts() {
     workspace.write_skill(&skill_root, "commit", "Create a commit.");
     let mut fixture = runtime_in_workspace_with_skill_roots(
         vec![response("done", Vec::new())],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         workspace,
         SkillRoots {
             agents: Some(skill_root),
@@ -1488,7 +1568,7 @@ async fn an_unchanged_world_adds_nothing_to_the_next_model_call() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         workspace,
     );
@@ -1566,7 +1646,7 @@ async fn an_agents_md_edit_is_seen_by_the_next_model_call_in_the_same_turn() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         workspace,
     );
@@ -1596,7 +1676,7 @@ async fn invalid_project_instructions_fail_before_model_and_leave_no_draft() {
     let mut fixture = runtime_in_workspace(
         vec![response("recovered", Vec::new())],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         workspace,
     );
@@ -1646,7 +1726,7 @@ async fn tool_result_is_in_the_next_model_request() {
             response("final", Vec::new()),
         ],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -1680,14 +1760,11 @@ async fn tool_result_is_in_the_next_model_request() {
 async fn agent_message_is_persisted_after_tool_results_and_seen_by_the_same_turn() {
     let mut fixture = runtime(
         vec![
-            response(
-                "",
-                vec![tool_call("call-1", "write", r#"{"path":"README.md"}"#)],
-            ),
+            response("", vec![tool_call("call-1", "bash", ASKS_IN_AUTO)]),
             response("final", Vec::new()),
         ],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -1744,7 +1821,7 @@ async fn duplicate_agent_delivery_is_persisted_and_appended_to_chat_once() {
     let mut fixture = runtime(
         vec![response("parent saw one result", Vec::new())],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     let child_session_id = SessionId::new("session-idempotent-child");
@@ -1804,7 +1881,7 @@ async fn an_idle_parent_does_not_start_a_turn_and_consumes_mail_on_the_next_user
             response("second turn done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start_with_request(&fixture, "first-turn").await;
@@ -1862,7 +1939,7 @@ async fn a_child_terminal_answer_is_delivered_to_its_parent_session() {
     let mut parent = runtime_with_options(
         vec![Ok(response("parent consumed result", Vec::new()))],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -1875,13 +1952,14 @@ async fn a_child_terminal_answer_is_delivered_to_its_parent_session() {
     let mut child = runtime_with_options(
         vec![Ok(response("Authentication lives in auth.rs.", Vec::new()))],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-child"),
             model_capabilities: test_capabilities(200_000, 32_768),
+            sandbox: SandboxStatus::Available,
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -1936,7 +2014,7 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
     let mut parent = runtime_with_options(
         vec![Ok(response("parent handled failures", Vec::new()))],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -1950,13 +2028,14 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
     let mut failed_child = runtime_with_options(
         vec![Err(ModelError::protocol("child model failed"))],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-failed-child"),
             model_capabilities: test_capabilities(200_000, 32_768),
+            sandbox: SandboxStatus::Available,
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id: parent_session_id.clone(),
@@ -1983,13 +2062,14 @@ async fn failed_and_cancelled_children_both_notify_the_parent() {
             vec![tool_call("call-wait", "read", r#"{"waitForCancel":true}"#)],
         ))],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-cancelled-child"),
             model_capabilities: test_capabilities(200_000, 32_768),
+            sandbox: SandboxStatus::Available,
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -2060,13 +2140,14 @@ async fn a_child_still_completes_when_its_parent_can_no_longer_be_reached() {
     let mut child = runtime_with_options(
         vec![Ok(response("Answer nobody will read.", Vec::new()))],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-orphan-child"),
             model_capabilities: test_capabilities(200_000, 32_768),
+            sandbox: SandboxStatus::Available,
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id: orphan_parent_id,
@@ -2111,7 +2192,7 @@ async fn tool_result_artifacts_are_persisted_in_messages_and_forwarded_live() {
             response("final", Vec::new()),
         ],
         vec![result],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -2157,7 +2238,7 @@ async fn tool_progress_is_forwarded_before_the_terminal_tool_update() {
             response("final", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -2196,7 +2277,7 @@ async fn cancelling_a_turn_cancels_the_active_tool_call() {
             vec![tool_call("call-1", "read", r#"{"waitForCancel":true}"#)],
         )],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     let turn_id = start(&fixture).await;
@@ -2223,7 +2304,7 @@ async fn unknown_tool_becomes_a_result_and_the_model_continues() {
             response("recovered", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -2236,287 +2317,127 @@ async fn unknown_tool_becomes_a_result_and_the_model_continues() {
     assert_eq!(fixture.model.requests.lock().unwrap().len(), 2);
 }
 
-#[tokio::test]
-async fn permission_allow_executes_the_tool_and_finishes() {
-    let mut fixture = runtime(
-        vec![
-            response(
-                "",
-                vec![tool_call("call-1", "write", r#"{"path":"README.md"}"#)],
-            ),
-            response("done", Vec::new()),
-        ],
-        Vec::new(),
-        PermissionMode::Default,
-        false,
-    );
-    start(&fixture).await;
-    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
-    fixture
-        .handle
-        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowOnce)
-        .await
-        .expect("permission");
+/// 一次越界请求：写 `~/.cargo/registry`，工作区外，对两种模式都是新权限。
+const CARGO_ESCALATION: &str = r#"{"command":"cargo build","sandboxPermissions":{"paths":[{"path":"/Users/openwork-test/.cargo/registry","access":"write","scope":"subtree"}]},"justification":"Download the new dependency."}"#;
 
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn acc_54_62_69_session_exec_grant_unblocks_later_calls_only_in_that_actor() {
-    let command = r#"{"program":"cargo","args":["test","-p","openwork-tools"]}"#;
-    let mut fixture = runtime(
-        vec![
-            response("", vec![tool_call("call-1", "bash", command)]),
-            response("", vec![tool_call("call-2", "bash", command)]),
-            response("done", Vec::new()),
-        ],
-        Vec::new(),
-        PermissionMode::Default,
-        false,
-    );
-    start(&fixture).await;
-    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
-    let snapshot = fixture
-        .handle
-        .snapshot()
-        .await
-        .expect("permission snapshot");
+async fn pending_card(fixture: &RuntimeFixture) -> ApprovalCard {
+    let snapshot = fixture.handle.snapshot().await.expect("pending snapshot");
     let openwork_core::session::SessionRuntimeSnapshot::Running {
         pending_permission: Some(request),
         ..
     } = snapshot.runtime
     else {
-        panic!("permission request must stay visible")
+        panic!("the permission request must stay visible in the snapshot")
     };
-    assert!(matches!(
-        request.card.session_action,
-        Some(ApprovalSessionAction::AllowExec { .. })
-    ));
-
-    fixture
-        .handle
-        .resolve_permission(
-            turn_id,
-            tool_call_id.clone(),
-            PermissionDecision::AllowSession,
-        )
-        .await
-        .expect("install session grant");
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 2);
-    let expected_rule_id = format!("session.{}.0", tool_call_id.as_str());
-    {
-        let signals = fixture.trace.signals.lock().unwrap();
-        let granted = signals
-            .iter()
-            .find_map(|signal| match signal {
-                TraceSignal::ToolCallFinished(finished)
-                    if finished.attributes.permission_decision_source.as_deref()
-                        == Some("session_grant") =>
-                {
-                    Some(finished)
-                }
-                _ => None,
-            })
-            .expect("session-granted tool trace");
-        assert_eq!(
-            granted.attributes.permission_rule_id.as_deref(),
-            Some(expected_rule_id.as_str())
-        );
-        assert_eq!(
-            granted.attributes.permission_rule_scope.as_deref(),
-            Some("session")
-        );
-        assert_eq!(
-            granted.attributes.permission_mode.as_deref(),
-            Some("default")
-        );
-        assert_eq!(
-            granted.attributes.permission_mode_origin.as_deref(),
-            Some("session_default")
-        );
-    }
-
-    let mut fresh = runtime(
-        vec![response("", vec![tool_call("call-1", "bash", command)])],
-        Vec::new(),
-        PermissionMode::Default,
-        false,
-    );
-    start(&fresh).await;
-    let (turn_id, tool_call_id) = wait_for_permission(&mut fresh.updates).await;
-    fresh
-        .handle
-        .resolve_permission(turn_id, tool_call_id, PermissionDecision::Deny)
-        .await
-        .expect("deny fresh-session request");
-    assert!(matches!(
-        wait_for_terminal(&mut fresh.updates).await,
-        TurnOutcome::Failed { code, .. } if code == "permission_denied"
-    ));
+    request.card
 }
 
+fn finished_tool_traces(fixture: &RuntimeFixture) -> Vec<ToolTraceAttributesV1> {
+    fixture
+        .trace
+        .signals
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|signal| match signal {
+            TraceSignal::ToolCallFinished(finished) => Some(finished.attributes.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn decision(attributes: &ToolTraceAttributesV1) -> (Option<&str>, Option<&str>) {
+    (
+        attributes.permission_decision.as_deref(),
+        attributes.permission_decision_source.as_deref(),
+    )
+}
+
+/// permissions.md §9.2 #18、#19：越界卡片列出命令、理由与每条路径；批准只作用于这一次，
+/// 紧接着的同一请求再次出卡片。
 #[tokio::test]
-async fn approval_client_cannot_invent_a_session_action() {
-    let command = r#"{"program":"cargo","args":["test"]}"#;
+async fn acc_18_19_an_escalation_asks_with_its_paths_and_applies_to_that_call_only() {
     let mut fixture = runtime(
         vec![
-            response("", vec![tool_call("call-1", "bash", command)]),
+            response("", vec![tool_call("call-1", "bash", CARGO_ESCALATION)]),
+            response("", vec![tool_call("call-2", "bash", CARGO_ESCALATION)]),
+            response("", vec![tool_call("call-3", "bash", r#"{"command":"ls"}"#)]),
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
-    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
 
-    let unavailable = fixture
-        .handle
-        .resolve_permission(
-            turn_id.clone(),
-            tool_call_id.clone(),
-            PermissionDecision::AcceptEdits,
-        )
-        .await;
-    assert!(matches!(
-        unavailable,
-        Err(SessionError::PermissionDecisionUnavailable(id)) if id == tool_call_id
-    ));
-    assert!(matches!(
-        fixture
-            .handle
-            .snapshot()
-            .await
-            .expect("pending snapshot")
-            .runtime,
-        openwork_core::session::SessionRuntimeSnapshot::Running {
-            pending_permission: Some(_),
-            ..
-        }
-    ));
-
-    fixture
-        .handle
-        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowSession)
-        .await
-        .expect("use the server-offered session action");
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-}
-
-#[tokio::test]
-async fn acc_59_61_62_69_card_mode_change_reuses_the_session_mode_state() {
-    let mut fixture = runtime(
-        vec![
-            response("", vec![tool_call("call-1", "write", r#"{"path":"a.rs"}"#)]),
-            response("", vec![tool_call("call-2", "write", r#"{"path":"b.rs"}"#)]),
-            response("done", Vec::new()),
-        ],
-        Vec::new(),
-        PermissionMode::Default,
-        false,
-    );
-    start(&fixture).await;
-    let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
-    let snapshot = fixture
-        .handle
-        .snapshot()
-        .await
-        .expect("permission snapshot");
-    let openwork_core::session::SessionRuntimeSnapshot::Running {
-        pending_permission: Some(request),
-        ..
-    } = snapshot.runtime
-    else {
-        panic!("permission request must stay visible")
-    };
-    assert_eq!(
-        request.card.session_action,
-        Some(ApprovalSessionAction::EnableAcceptEdits)
-    );
-
-    fixture
-        .handle
-        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AcceptEdits)
-        .await
-        .expect("switch mode from approval card");
-    assert_eq!(
-        fixture
-            .handle
-            .snapshot()
-            .await
-            .expect("updated snapshot")
-            .permission_mode,
-        PermissionMode::AcceptEdits
-    );
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-    assert_eq!(fixture.tools.invocations.lock().unwrap().len(), 2);
-    {
-        let signals = fixture.trace.signals.lock().unwrap();
-        let automatic = signals
-            .iter()
-            .find_map(|signal| match signal {
-                // The second write ran because the card switched the mode, so its
-                // source must be `mode` — not `builtin`, which would claim it was
-                // allowed all along (permissions.md §7).
-                TraceSignal::ToolCallFinished(finished)
-                    if finished.attributes.permission_decision_source.as_deref()
-                        == Some("mode") =>
-                {
-                    Some(finished)
-                }
-                _ => None,
-            })
-            .expect("second write trace");
+    for _ in 0..2 {
+        let (turn_id, tool_call_id) = wait_for_permission(&mut fixture.updates).await;
+        let card = pending_card(&fixture).await;
+        assert_eq!(card.mode, SandboxMode::Auto);
+        assert_eq!(card.command.as_deref(), Some("cargo build"));
         assert_eq!(
-            automatic.attributes.permission_mode.as_deref(),
-            Some("accept_edits")
+            card.justification.as_deref(),
+            Some("Download the new dependency.")
         );
         assert_eq!(
-            automatic.attributes.permission_mode_origin.as_deref(),
-            Some("approval_card")
+            card.paths,
+            [ApprovalPath {
+                path: "/Users/openwork-test/.cargo/registry".to_string(),
+                access: Access::Write,
+                scope: GrantScope::Subtree,
+                tier: PathTier::Normal,
+                in_workspace: false,
+            }]
         );
+        assert_eq!(card.danger, None);
+        fixture
+            .handle
+            .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowOnce)
+            .await
+            .expect("allow once");
     }
 
-    let fresh = runtime(
-        vec![response("done", Vec::new())],
-        Vec::new(),
-        PermissionMode::Default,
-        false,
-    );
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let granted = |policy: &SandboxPolicy| {
+        policy
+            .path_grants
+            .iter()
+            .map(|grant| grant.path.clone())
+            .collect::<Vec<_>>()
+    };
+    let policies = fixture.tools.policies.lock().unwrap().clone();
     assert_eq!(
-        fresh
-            .handle
-            .snapshot()
-            .await
-            .expect("fresh actor snapshot")
-            .permission_mode,
-        PermissionMode::Default
+        policies.iter().map(granted).collect::<Vec<_>>(),
+        [
+            vec![PathBuf::from("/Users/openwork-test/.cargo/registry")],
+            vec![PathBuf::from("/Users/openwork-test/.cargo/registry")],
+            Vec::new(),
+        ]
     );
+    let traces = finished_tool_traces(&fixture);
+    assert_eq!(decision(&traces[0]), (Some("allow"), Some("user")));
+    assert_eq!(traces[0].escalation_paths.len(), 1);
+    assert_eq!(
+        traces[0].escalation_justification.as_deref(),
+        Some("Download the new dependency.")
+    );
+    assert_eq!(decision(&traces[2]), (Some("allow"), Some("sandbox")));
+    assert!(traces[2].escalation_paths.is_empty());
 }
 
+/// permissions.md §9.2 #24：用户拒绝后 Turn 停止，工具不执行，结果照样写回会话。
 #[tokio::test]
-async fn permission_deny_writes_a_tool_result_without_execution() {
+async fn acc_24_a_user_denial_stops_the_turn_without_running_the_tool() {
     let mut fixture = runtime(
         vec![response(
             "",
-            vec![tool_call("call-1", "bash", r#"{"command":"pwd"}"#)],
+            vec![tool_call("call-1", "bash", ASKS_IN_AUTO)],
         )],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -2539,20 +2460,29 @@ async fn permission_deny_writes_a_tool_result_without_execution() {
             .iter()
             .any(|message| message.role == Role::Tool)
     );
+    assert_eq!(
+        decision(&finished_tool_traces(&fixture)[0]),
+        (Some("deny"), Some("user"))
+    );
 }
 
+/// permissions.md §9.2 #9、#39：硬保护的写目标是规则拒绝，不出卡片，Turn 继续。
 #[tokio::test]
-async fn acc_57_rule_deny_returns_a_tool_result_and_the_turn_continues() {
+async fn acc_09_39_a_protected_write_target_is_refused_and_the_turn_continues() {
     let mut fixture = runtime(
         vec![
             response(
                 "",
-                vec![tool_call("call-1", "write", r#"{"path":".git/config"}"#)],
+                vec![tool_call(
+                    "call-1",
+                    "write",
+                    r#"{"path":".git/hooks/pre-commit"}"#,
+                )],
             ),
             response("continued", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -2562,14 +2492,132 @@ async fn acc_57_rule_deny_returns_a_tool_result_and_the_turn_continues() {
         TurnOutcome::Completed { final_text } if final_text == "continued"
     ));
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
-    assert_eq!(fixture.model.requests.lock().unwrap().len(), 2);
-    let snapshot = fixture.chat.snapshot().await.expect("chat snapshot");
-    assert!(snapshot.messages.iter().any(|message| {
-        message.role == Role::Tool
-            && message.content.iter().any(|block| {
-                matches!(block, ContentBlock::ToolResult(result) if result.state == ToolResultState::Denied)
-            })
-    }));
+    let requests = fixture.model.requests.lock().unwrap();
+    assert_eq!(
+        tool_result_texts(&requests[1])
+            .get("call-1")
+            .map(String::as_str),
+        Some(
+            "[sandbox: .git/hooks/pre-commit is protected and cannot be written in any mode; do not retry]"
+        )
+    );
+    drop(requests);
+    let traces = finished_tool_traces(&fixture);
+    assert_eq!(decision(&traces[0]), (Some("deny"), Some("builtin")));
+    assert_eq!(
+        traces[0].sandbox_mode, None,
+        "a call that did not run has no sandbox mode"
+    );
+    let signals = fixture.trace.signals.lock().unwrap();
+    assert!(signals.iter().any(|signal| matches!(
+        signal,
+        TraceSignal::ToolCallFinished(finished) if finished.status == TraceStatus::Denied
+    )));
+}
+
+/// permissions.md §9.2 #22：不带来新权限、或没有理由的越界请求直接拒绝，不出卡片。
+#[tokio::test]
+async fn acc_22_an_escalation_that_fails_validation_is_refused_without_a_card() {
+    let already_writable = r#"{"path":"src/a.rs","sandboxPermissions":{"paths":[{"path":"src/a.rs","access":"write","scope":"exact"}]},"justification":"Edit a.rs."}"#;
+    let no_reason = r#"{"command":"cargo build","sandboxPermissions":{"paths":[{"path":"/Users/openwork-test/.cargo/registry","access":"write","scope":"subtree"}]},"justification":" "}"#;
+    let mut fixture = runtime(
+        vec![
+            response(
+                "",
+                vec![
+                    tool_call("call-1", "write", already_writable),
+                    tool_call("call-2", "bash", no_reason),
+                ],
+            ),
+            response("continued", Vec::new()),
+        ],
+        Vec::new(),
+        SandboxMode::Auto,
+        false,
+    );
+    start(&fixture).await;
+
+    assert!(matches!(
+        wait_for_terminal(&mut fixture.updates).await,
+        TurnOutcome::Completed { final_text } if final_text == "continued"
+    ));
+    assert!(fixture.tools.invocations.lock().unwrap().is_empty());
+    let requests = fixture.model.requests.lock().unwrap();
+    let results = tool_result_texts(&requests[1]);
+    assert!(results["call-1"].starts_with("[sandbox: "), "{results:?}");
+    assert_eq!(
+        results["call-2"],
+        "[sandbox: sandboxPermissions needs a one-sentence justification that the user will read; retry with it]"
+    );
+    drop(requests);
+    for trace in finished_tool_traces(&fixture) {
+        assert_eq!(decision(&trace), (Some("deny"), Some("builtin")));
+    }
+}
+
+/// permissions.md §9.2 #26、#34：`auto` 下危险命令出卡片，标出命中的键与位置；
+/// §9.2 #32：`accept-edits` 下不单独出卡片，直接在沙箱内执行。
+#[tokio::test]
+async fn acc_26_32_34_a_dangerous_command_asks_only_in_auto_and_is_traced() {
+    let mut auto = runtime(
+        vec![
+            response("", vec![tool_call("call-1", "bash", ASKS_IN_AUTO)]),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        SandboxMode::Auto,
+        false,
+    );
+    start(&auto).await;
+    let (turn_id, tool_call_id) = wait_for_permission(&mut auto.updates).await;
+    let card = pending_card(&auto).await;
+    assert_eq!(card.command.as_deref(), Some("rm -rf build"));
+    assert_eq!(
+        card.danger,
+        Some(ApprovalDanger {
+            key: DangerKey::RmRecursiveOrForce,
+            start: 0,
+            end: "rm -rf build".len(),
+        })
+    );
+    assert!(card.paths.is_empty());
+    auto.handle
+        .resolve_permission(turn_id, tool_call_id, PermissionDecision::AllowOnce)
+        .await
+        .expect("allow once");
+    assert!(matches!(
+        wait_for_terminal(&mut auto.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let traces = finished_tool_traces(&auto);
+    assert_eq!(
+        traces[0].danger_match.as_deref(),
+        Some("rm_recursive_or_force")
+    );
+    assert_eq!(decision(&traces[0]), (Some("allow"), Some("user")));
+
+    let mut edits = runtime(
+        vec![
+            response("", vec![tool_call("call-1", "bash", ASKS_IN_AUTO)]),
+            response("done", Vec::new()),
+        ],
+        Vec::new(),
+        SandboxMode::AcceptEdits,
+        false,
+    );
+    start(&edits).await;
+    assert!(matches!(
+        wait_for_terminal(&mut edits.updates).await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(edits.tools.invocations.lock().unwrap().len(), 1);
+    let traces = finished_tool_traces(&edits);
+    assert_eq!(
+        traces[0].danger_match.as_deref(),
+        Some("rm_recursive_or_force")
+    );
+    assert_eq!(decision(&traces[0]), (Some("allow"), Some("sandbox")));
+    assert_eq!(traces[0].sandbox_mode.as_deref(), Some("accept_edits"));
 }
 
 #[tokio::test]
@@ -2580,7 +2628,7 @@ async fn assistant_persistence_failure_prevents_tool_execution() {
             vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
         )],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         true,
     );
     start(&fixture).await;
@@ -2607,7 +2655,7 @@ async fn tool_failure_is_returned_to_the_model_instead_of_stopping_the_loop() {
             "not found",
             false,
         )],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -2634,7 +2682,7 @@ async fn multiple_tool_results_keep_provider_order_in_the_next_request() {
             response("done", Vec::new()),
         ],
         vec![ToolResult::succeeded("a"), ToolResult::succeeded("b")],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -2654,21 +2702,22 @@ async fn multiple_tool_results_keep_provider_order_in_the_next_request() {
     assert_eq!(tool_ids, ["call-1", "call-2"]);
 }
 
+/// permissions.md §9.2 #41：一次响应里的多张卡片串行呈现。
 #[tokio::test]
-async fn acc_58_multiple_permission_requests_are_presented_serially() {
+async fn acc_41_multiple_permission_requests_are_presented_serially() {
     let mut fixture = runtime(
         vec![
             response(
                 "",
                 vec![
-                    tool_call("call-1", "bash", r#"{"command":"cargo test"}"#),
-                    tool_call("call-2", "bash", r#"{"command":"cargo clippy"}"#),
+                    tool_call("call-1", "bash", CARGO_ESCALATION),
+                    tool_call("call-2", "bash", ASKS_IN_AUTO),
                 ],
             ),
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -2717,10 +2766,10 @@ async fn duplicate_client_request_is_idempotent_and_a_different_turn_is_busy() {
     let mut fixture = runtime(
         vec![response(
             "",
-            vec![tool_call("call-1", "write", r#"{"path":"a"}"#)],
+            vec![tool_call("call-1", "bash", ASKS_IN_AUTO)],
         )],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     let first_turn = start(&fixture).await;
@@ -2764,7 +2813,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
             response("continued", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -2776,9 +2825,9 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         .await
         .expect("compaction");
 
-    // 首次 Model Call 之前追加了项目上下文，因此压缩源是
-    // world-state + user + assistant = 3。
-    assert_eq!(compaction.source_message_count, 3);
+    // 首次 Model Call 之前追加了项目上下文与沙箱策略，因此压缩源是
+    // world-state × 2 + user + assistant = 4。
+    assert_eq!(compaction.source_message_count, 4);
     assert_eq!(compaction.summary, compaction_summary());
     {
         let signals = fixture.trace.signals.lock().unwrap();
@@ -2794,7 +2843,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         assert_eq!(compact_trace.status, TraceStatus::Succeeded);
         assert_eq!(compact_trace.attempt_count, Some(1));
         assert_eq!(compact_trace.attributes.trigger, "manual");
-        assert_eq!(compact_trace.attributes.source_message_count, Some(3));
+        assert_eq!(compact_trace.attributes.source_message_count, Some(4));
         assert!(compact_trace.attributes.prepare_ms.is_some());
         assert_eq!(
             compact_trace.attributes.summary_max_output_tokens,
@@ -2951,7 +3000,7 @@ async fn manual_compaction_keeps_the_dynamic_skill_catalog_out_of_the_summary() 
             response("first answer", Vec::new()),
             response(compaction_summary(), Vec::new()),
         ],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         workspace,
         SkillRoots {
             agents: Some(user_root),
@@ -2991,7 +3040,7 @@ async fn session_handle_applies_disabled_skills_to_turn_and_manual_compaction() 
             response("first answer", Vec::new()),
             response(compaction_summary(), Vec::new()),
         ],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         workspace,
         SkillRoots {
             agents: Some(user_root),
@@ -3038,7 +3087,7 @@ async fn context_overflow_compacts_and_resubmits_once_in_the_same_turn() {
             Ok(response("recovered after compaction", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
 
@@ -3114,7 +3163,7 @@ async fn context_budget_threshold_compacts_before_the_first_provider_submission(
             response("continued after threshold compaction", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(2, 1),
     );
@@ -3210,7 +3259,7 @@ async fn compacted_tool_turn_records_the_seven_documented_spans() {
             ToolResult::succeeded("agents"),
             ToolResult::succeeded("trace docs"),
         ],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(10_000, 1),
     );
@@ -3293,7 +3342,7 @@ async fn threshold_compaction_and_overflow_recovery_share_one_compaction_budget(
             )),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(2, 1),
     );
@@ -3322,10 +3371,10 @@ async fn manual_compaction_is_rejected_while_a_turn_is_active() {
     let mut fixture = runtime(
         vec![response(
             "",
-            vec![tool_call("call-1", "write", r#"{"path":"a"}"#)],
+            vec![tool_call("call-1", "bash", ASKS_IN_AUTO)],
         )],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     let active_turn = start(&fixture).await;
@@ -3355,7 +3404,7 @@ async fn failed_compaction_persistence_keeps_the_previous_conversation() {
             response(compaction_summary(), Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -3397,7 +3446,7 @@ async fn empty_conversation_is_not_sent_to_the_compaction_model() {
     let fixture = runtime(
         vec![response(compaction_summary(), Vec::new())],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
 
@@ -3432,7 +3481,7 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
             response("done", Vec::new()),
         ],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     start(&fixture).await;
@@ -3479,7 +3528,8 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
         first_model.attributes.delivery_state.as_deref(),
         Some("semantic_output_emitted")
     );
-    assert_eq!(first_model.attributes.request_message_count, Some(3));
+    // system、项目上下文、沙箱策略、用户消息。
+    assert_eq!(first_model.attributes.request_message_count, Some(4));
     assert!(
         first_model
             .attributes
@@ -3530,14 +3580,25 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
         })
         .expect("tool trace");
     assert_eq!(tool.attributes.schema_version, 1);
-    assert_eq!(tool.attributes.permission_policy.as_deref(), Some("allow"));
     assert_eq!(
         tool.attributes.permission_decision.as_deref(),
         Some("allow")
     );
     assert_eq!(
         tool.attributes.permission_decision_source.as_deref(),
-        Some("builtin")
+        Some("sandbox")
+    );
+    assert_eq!(
+        tool.attributes.sandbox_mode.as_deref(),
+        Some("accept_edits")
+    );
+    assert_eq!(
+        tool.attributes.session_mode.as_deref(),
+        Some("accept_edits")
+    );
+    assert_eq!(
+        tool.attributes.session_mode_origin.as_deref(),
+        Some("session_default")
     );
     assert_eq!(tool.attributes.result_persisted, Some(true));
     assert_eq!(tool.attributes.artifact_count, Some(0));
@@ -3553,143 +3614,6 @@ async fn runtime_records_versioned_model_and_tool_trace_attributes() {
 }
 
 #[tokio::test]
-async fn acc_21_and_72_tool_trace_records_readonly_proof_and_rule_provenance() {
-    let mut fixture = runtime(
-        vec![
-            response(
-                "",
-                vec![tool_call(
-                    "call-readonly",
-                    "bash",
-                    r#"{"readonlyProofKey":"git status"}"#,
-                )],
-            ),
-            response("done", Vec::new()),
-        ],
-        vec![ToolResult::succeeded("clean")],
-        PermissionMode::Default,
-        false,
-    );
-    start(&fixture).await;
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-
-    let signals = fixture.trace.signals.lock().unwrap();
-    let tool = signals
-        .iter()
-        .find_map(|signal| match signal {
-            TraceSignal::ToolCallFinished(finished) => Some(finished),
-            _ => None,
-        })
-        .expect("readonly tool trace");
-    assert_eq!(
-        tool.attributes.permission_decision_source.as_deref(),
-        Some("readonly_proof")
-    );
-    assert_eq!(
-        tool.attributes.readonly_proof_key.as_deref(),
-        Some("git status")
-    );
-    assert_eq!(
-        tool.attributes.permission_rule_id.as_deref(),
-        Some("builtin.allow.workspace_root_read")
-    );
-    assert_eq!(
-        tool.attributes.permission_rule_scope.as_deref(),
-        Some("builtin")
-    );
-}
-
-#[tokio::test]
-async fn p4_tool_trace_records_mode_filesystem_command_source() {
-    let mut fixture = runtime(
-        vec![
-            response(
-                "",
-                vec![tool_call(
-                    "call-mkdir",
-                    "bash",
-                    r#"{"filesystemCommandProof":true,"path":"src/x"}"#,
-                )],
-            ),
-            response("done", Vec::new()),
-        ],
-        vec![ToolResult::succeeded("created")],
-        PermissionMode::AcceptEdits,
-        false,
-    );
-    start(&fixture).await;
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-
-    let signals = fixture.trace.signals.lock().unwrap();
-    let tool = signals
-        .iter()
-        .find_map(|signal| match signal {
-            TraceSignal::ToolCallFinished(finished) => Some(finished),
-            _ => None,
-        })
-        .expect("filesystem command tool trace");
-    assert_eq!(
-        tool.attributes.permission_decision_source.as_deref(),
-        Some("mode_fs_command")
-    );
-}
-
-#[tokio::test]
-async fn acc_72_builtin_denial_trace_records_rule_id_and_scope() {
-    let mut fixture = runtime(
-        vec![
-            response(
-                "",
-                vec![tool_call(
-                    "call-denied",
-                    "write",
-                    r#"{"path":".git/config"}"#,
-                )],
-            ),
-            response("done", Vec::new()),
-        ],
-        Vec::new(),
-        PermissionMode::AcceptEdits,
-        false,
-    );
-    start(&fixture).await;
-    assert!(matches!(
-        wait_for_terminal(&mut fixture.updates).await,
-        TurnOutcome::Completed { .. }
-    ));
-
-    let signals = fixture.trace.signals.lock().unwrap();
-    let tool = signals
-        .iter()
-        .find_map(|signal| match signal {
-            TraceSignal::ToolCallFinished(finished) => Some(finished),
-            _ => None,
-        })
-        .expect("denied tool trace");
-    assert_eq!(tool.status, TraceStatus::Denied);
-    assert_eq!(
-        tool.attributes.permission_decision_source.as_deref(),
-        Some("builtin")
-    );
-    assert!(
-        tool.attributes
-            .permission_rule_id
-            .as_deref()
-            .is_some_and(|id| id.starts_with("builtin.deny..git."))
-    );
-    assert_eq!(
-        tool.attributes.permission_rule_scope.as_deref(),
-        Some("builtin")
-    );
-}
-
-#[tokio::test]
 async fn tool_trace_records_result_persistence_failure_without_changing_tool_status() {
     let mut fixture = runtime(
         vec![response(
@@ -3697,7 +3621,7 @@ async fn tool_trace_records_result_persistence_failure_without_changing_tool_sta
             vec![tool_call("call-1", "read", r#"{"path":"README.md"}"#)],
         )],
         vec![ToolResult::succeeded("file contents")],
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
     );
     fixture
@@ -3762,13 +3686,13 @@ async fn parent_spawns_three_explorers_and_aggregates_their_deliveries() {
                         "spawn_agent",
                         r#"{"task_name":"inspect_runtime","message":"inspect runtime"}"#,
                     ),
-                    tool_call("delivery-barrier", "write", r#"{"path":"barrier"}"#),
+                    tool_call("delivery-barrier", "bash", ASKS_IN_AUTO),
                 ],
             )),
             Ok(response("aggregated three findings", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -3853,7 +3777,7 @@ async fn fourth_spawn_is_a_failed_tool_result_and_parent_turn_continues() {
             Ok(response("parent continued", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -3911,13 +3835,14 @@ async fn child_active_turn_owns_and_releases_its_slot_at_terminal() {
     let mut child = runtime_with_options(
         vec![Ok(response("done", Vec::new()))],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
         RuntimeOptions {
             session_id: SessionId::new("session-slot-child"),
             model_capabilities: test_capabilities(200_000, 32_768),
+            sandbox: SandboxStatus::Available,
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
@@ -3943,10 +3868,13 @@ async fn child_active_turn_owns_and_releases_its_slot_at_terminal() {
     assert_eq!(control.active_turns(), 0);
 }
 
+/// permissions.md §9.2 #36、#37：子 Agent 没有人可问，越界请求直接拒绝，拒绝文本可操作；
+/// `accept-edits` 下危险命令不出卡片，与其他调用一样在沙箱内执行（非交互 Session 在 `auto`
+/// 下拒绝危险命令由 `approval.rs` 的单元测试覆盖）；explorer 的工具面没有写工具与控制工具。
 #[tokio::test]
-async fn explorer_denies_ask_then_runs_readonly_without_permission_card() {
+async fn acc_36_37_an_unattended_explorer_refuses_escalations_without_a_card() {
     let host = Arc::new(SessionHandleHost::default());
-    let parent_session_id = SessionId::new("session-readonly-parent");
+    let parent_session_id = SessionId::new("session-unattended-parent");
     let control = AgentControl::new(
         parent_session_id.clone(),
         Arc::downgrade(&host) as Weak<dyn SubAgentHost>,
@@ -3955,37 +3883,29 @@ async fn explorer_denies_ask_then_runs_readonly_without_permission_card() {
         vec![
             Ok(response(
                 "",
-                vec![tool_call(
-                    "cargo-check",
-                    "bash",
-                    r#"{"program":"cargo","args":["check"]}"#,
-                )],
+                vec![
+                    tool_call("cargo-build", "bash", CARGO_ESCALATION),
+                    tool_call("rm-build", "bash", ASKS_IN_AUTO),
+                    tool_call("git-log", "bash", r#"{"command":"git log"}"#),
+                ],
             )),
-            Ok(response(
-                "",
-                vec![tool_call(
-                    "git-log",
-                    "bash",
-                    r#"{"command":"git log","readonlyProofKey":"git log"}"#,
-                )],
-            )),
-            Ok(response("readonly investigation complete", Vec::new())),
+            Ok(response("investigation complete", Vec::new())),
         ],
         vec![ToolResult::succeeded("commit history")],
-        PermissionMode::Default,
+        SandboxMode::AcceptEdits,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
         RuntimeOptions {
-            session_id: SessionId::new("session-readonly-child"),
-            model_capabilities: test_capabilities(200_000, 32_768),
+            session_id: SessionId::new("session-unattended-child"),
             approval: SessionApproval::NonInteractive,
             parent_link: Some(ParentLink {
                 parent_session_id,
-                task_name: "readonly_child".to_string(),
+                task_name: "unattended_child".to_string(),
                 agent_control: control.clone(),
             }),
             agent_control: Some(control),
+            ..RuntimeOptions::default()
         },
     );
     start(&child).await;
@@ -4002,56 +3922,35 @@ async fn explorer_denies_ask_then_runs_readonly_without_permission_card() {
             .iter()
             .any(|update| matches!(update, SessionUpdate::PermissionRequested { .. }))
     );
-    let bash_results = updates
-        .iter()
-        .filter_map(|update| match update {
-            SessionUpdate::ToolCallFinished {
-                tool_name,
-                output,
-                is_error,
-                ..
-            } if tool_name == "bash" => Some((*is_error, output.clone())),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(bash_results.len(), 2);
-    assert!(bash_results[0].0);
-    assert!(bash_results[0].1.contains("cannot request approval"));
-    assert!(!bash_results[1].0);
-    assert_eq!(child.tools.invocations.lock().unwrap().len(), 1);
+    let invocations = child.tools.invocations.lock().unwrap().clone();
+    assert_eq!(
+        invocations
+            .iter()
+            .map(|invocation| invocation.input["command"].clone())
+            .collect::<Vec<_>>(),
+        ["rm -rf build", "git log"]
+    );
 
     let requests = child.model.requests.lock().unwrap();
+    let results = tool_result_texts(&requests[1]);
+    assert_eq!(
+        results["cargo-build"],
+        "This sub-agent runs unattended, so nobody can approve extra sandbox paths. Keep working within the accept-edits sandbox (temporary directories are writable), or report what you could not do to the parent agent."
+    );
     let advertised = requests[0]
         .tools
         .iter()
         .map(|definition| definition.name.as_str())
         .collect::<Vec<_>>();
     assert_eq!(advertised, ["read", "grep", "glob", "list", "bash"]);
-    for excluded in ["write", "edit", "spawn_agent", "update_plan"] {
-        assert!(!advertised.contains(&excluded));
-    }
-    let readonly_trace = child
-        .trace
-        .signals
-        .lock()
-        .unwrap()
-        .iter()
-        .find_map(|signal| match signal {
-            TraceSignal::ToolCallFinished(finished)
-                if finished.attributes.readonly_proof_key.as_deref() == Some("git log") =>
-            {
-                Some(finished.clone())
-            }
-            _ => None,
-        })
-        .expect("readonly proof trace");
+    drop(requests);
+
+    let traces = finished_tool_traces(&child);
     assert_eq!(
-        readonly_trace
-            .attributes
-            .permission_decision_source
-            .as_deref(),
-        Some("readonly_proof")
+        decision(&traces[0]),
+        (Some("deny"), Some("non_interactive"))
     );
+    assert_eq!(traces[0].session_mode_origin.as_deref(), Some("inherited"));
 }
 
 #[tokio::test]
@@ -4082,7 +3981,7 @@ async fn wait_agent_can_timeout_then_wait_again_for_a_delivery() {
             Ok(response("delivery handled", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -4178,7 +4077,7 @@ async fn p2_acceptance_12_three_explorer_deliveries_do_not_trigger_wait_doom_loo
             Ok(response("three explorer reports handled", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -4272,7 +4171,7 @@ async fn three_consecutive_wait_timeouts_end_the_turn_as_doom_loop() {
             )),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -4335,7 +4234,7 @@ async fn delivered_wait_resets_timeout_streak_before_two_more_timeouts() {
     let mut fixture = runtime_with_options(
         waits,
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -4412,7 +4311,7 @@ async fn three_identical_read_calls_still_end_the_turn_as_doom_loop() {
             response("the third read should stop the turn", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4443,7 +4342,7 @@ async fn cancelling_parent_interrupts_wait_agent_immediately() {
             )],
         ))],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -4514,7 +4413,7 @@ async fn update_plan_commits_then_broadcasts_a_complete_snapshot() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4590,7 +4489,7 @@ async fn update_plan_never_asks_for_permission_even_in_default_mode() {
         ],
         Vec::new(),
         // Default mode 下普通的写工具会走审批；控制工具不该受影响。
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4631,7 +4530,7 @@ async fn an_invalid_plan_fails_the_call_without_changing_stored_state() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4687,7 +4586,7 @@ async fn a_failed_plan_commit_fails_the_turn_without_broadcasting() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     fixture
@@ -4742,7 +4641,7 @@ async fn a_mid_turn_compaction_reprojects_the_current_plan_into_the_reminder() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(2, 1),
     );
@@ -4816,7 +4715,7 @@ async fn clearing_the_plan_removes_it_from_the_next_reminder() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(2, 1),
     );
@@ -4872,7 +4771,7 @@ async fn a_turn_reports_its_unfinished_plan_steps_when_it_finishes() {
             response("here is your answer", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4905,7 +4804,7 @@ async fn a_turn_that_finished_its_plan_reports_zero() {
             response("done", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4922,7 +4821,7 @@ async fn a_turn_without_a_plan_reports_nothing_rather_than_zero() {
     let mut fixture = runtime(
         vec![response("a simple answer", Vec::new())],
         Vec::new(),
-        PermissionMode::Default,
+        SandboxMode::Auto,
         false,
     );
     start(&fixture).await;
@@ -4956,7 +4855,7 @@ async fn a_request_rebuilt_after_compaction_still_carries_world_state() {
             Ok(response("recovered after compaction", Vec::new())),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         workspace,
     );
@@ -5002,7 +4901,7 @@ async fn the_summary_request_excludes_world_state_fragments() {
             response(compaction_summary(), Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         workspace,
     );
@@ -5115,7 +5014,7 @@ async fn calibrate(results: &[usize]) -> Vec<u64> {
     let mut fixture = runtime_with_capabilities(
         responses,
         tool_results,
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(10_000_000, 4_096),
     );
@@ -5176,7 +5075,7 @@ async fn threshold_prunes_old_tool_results_instead_of_summarizing_when_that_is_e
     let mut fixture = runtime_with_capabilities(
         responses,
         tool_results,
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         capabilities_with_limit(limit),
     );
@@ -5249,7 +5148,7 @@ async fn manual_compaction_does_not_prune_first() {
     let mut fixture = runtime_with_capabilities(
         responses,
         tool_results,
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(10_000_000, 4_096),
     );
@@ -5284,7 +5183,7 @@ async fn pruning_that_is_not_enough_is_followed_by_a_summary_of_the_pruned_proje
     let mut fixture = runtime_with_capabilities(
         responses,
         tool_results,
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         capabilities_with_limit(limit),
     );
@@ -5314,7 +5213,7 @@ async fn overflow_resubmits_after_pruning_without_a_summary() {
     let mut fixture = runtime_with_options(
         outcomes,
         tool_results,
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         TestWorkspace::new(),
         SkillRoots::default(),
@@ -5346,7 +5245,7 @@ async fn nothing_to_prune_compacts_exactly_as_before() {
             response("continued after threshold compaction", Vec::new()),
         ],
         Vec::new(),
-        PermissionMode::AcceptEdits,
+        SandboxMode::AcceptEdits,
         false,
         test_capabilities(2, 1),
     );

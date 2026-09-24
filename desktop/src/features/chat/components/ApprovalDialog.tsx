@@ -1,576 +1,321 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import {
-  Check,
-  ChevronDown,
-  CircleAlert,
-  FileText,
-  Pencil,
-  ShieldAlert,
-  Terminal,
-  X,
-} from 'lucide-react'
+import { Check, CircleAlert, ShieldAlert, ShieldCheck, Trash2, X } from 'lucide-react'
 
 import type {
-  RuntimeEffectDisplay,
-  RuntimeApprovalSessionAction,
-  RuntimePermissionCardUnit,
+  RuntimeApprovalCard,
+  RuntimeApprovalDanger,
+  RuntimeApprovalPath,
   RuntimePermissionDecision,
   RuntimePermissionRequest,
-  RuntimeUnitVerdict,
 } from '@/bridge/compat'
+import { cn } from '@/lib/utils'
+import {
+  approvalKind,
+  approvalPathLabel,
+  commandSegments,
+  dangerText,
+  primaryDecision,
+  type ApprovalKind,
+} from '../approvalCard'
 import { useRuntimeStore } from '../runtimeStore'
 import { useTurnActions } from '../useTurn'
-import { FileDiffContent, type FileDiffHunk } from './FileDiffPanel'
 
 interface ApprovalCardViewProps {
   request: RuntimePermissionRequest
   resolving: boolean
   onResolve: (decision: RuntimePermissionDecision) => void
   workspaceRoot?: string
-  toolInput?: unknown
 }
 
-interface ApprovalPreview {
-  kind: 'edit' | 'write'
-  hunk: FileDiffHunk
+const SECTION_LABEL = 'text-xs font-semibold text-ink-soft'
+const MONO = 'font-mono text-[12.5px]'
+
+function modeName(t: TFunction, card: RuntimeApprovalCard): string {
+  return t(`chat.permissionModes.${card.mode}`)
 }
 
-function relativePath(path: string, workspaceRoot?: string): string {
-  if (!workspaceRoot) return path
-  const normalizedRoot = workspaceRoot.replace(/\/$/, '')
-  if (path === normalizedRoot) return '.'
-  return path.startsWith(`${normalizedRoot}/`) ? path.slice(normalizedRoot.length + 1) : path
-}
-
-function relativeDisplay(display: string, workspaceRoot?: string): string {
-  if (!workspaceRoot) return display
-  const normalizedRoot = workspaceRoot.replace(/\/$/, '')
-  return display
-    .split(`${normalizedRoot}/`).join('')
-    .split(normalizedRoot).join('.')
-    .replace(/^\s+/, '')
-}
-
-function effectLabel(t: TFunction, display: RuntimeEffectDisplay, workspaceRoot?: string): string {
-  if (display.certainty === 'trusted_program') {
-    return t('tool.permission.trustedProgram', { program: display.program })
-  }
-  if (display.certainty === 'readonly_proof') {
-    return t('tool.permission.readonlyProof')
-  }
-
-  switch (display.effect.kind) {
-    case 'read':
-      return t('tool.permission.read', { path: relativePath(display.effect.path, workspaceRoot) })
-    case 'write':
-      return t('tool.permission.write', { path: relativePath(display.effect.path, workspaceRoot) })
-    case 'exec':
-      return t('tool.permission.exec', {
-        command: [display.effect.program, ...display.effect.args].join(' '),
-      })
+function title(t: TFunction, request: RuntimePermissionRequest, kind: ApprovalKind): string {
+  const count = request.card.paths.length
+  switch (kind) {
+    case 'danger':
+      return t('tool.permission.dangerTitle')
+    case 'combined':
+      return t('tool.permission.combinedTitle', { count })
+    case 'escalation':
+      return request.card.command === null
+        ? t('tool.permission.fileEscalationTitle', { count })
+        : t('tool.permission.escalationTitle', { count })
+    default: {
+      const unreachable: never = kind
+      return unreachable
+    }
   }
 }
 
-function verdictLabel(t: TFunction, verdict: RuntimeUnitVerdict): string {
-  if (verdict.decision === 'deny') return t('tool.permission.deniedByRule')
-  if (verdict.decision === 'allow') return t('tool.permission.autoAllowed')
-  switch (verdict.source) {
-    case 'builtin_sensitive':
-      return t('tool.permission.sensitivePath')
-    case 'unparsed':
-      return t('tool.permission.unparsed')
-    case 'no_rule_covers':
-      return t('tool.permission.noRuleCovers')
-  }
-}
-
-function sessionActionDescription(t: TFunction, action: RuntimeApprovalSessionAction): string {
-  if (action.kind === 'enable_accept_edits') {
-    return t('tool.permission.enableAcceptEditsDescription')
-  }
-  if (action.grants.length === 1 && action.grants[0].exact) {
-    return t('tool.permission.allowExactForSession', { command: action.grants[0].label })
-  }
-  if (action.grants.length === 1) {
-    return t('tool.permission.allowPrefixForSession', { command: action.grants[0].label })
-  }
-  return t('tool.permission.allowManyForSession', {
-    commands: action.grants.map((grant) => grant.label).join(', '),
-  })
-}
-
-function unitWrites(unit: RuntimePermissionCardUnit): boolean {
-  return unit.effects.some(
-    (display) => display.certainty === 'inferred' && display.effect.kind === 'write',
+function grantList(
+  t: TFunction,
+  paths: RuntimeApprovalPath[],
+  workspaceRoot?: string,
+): string {
+  const grants = paths.map((path) =>
+    t('tool.permission.grant', {
+      access: t(`tool.permission.${path.access}`),
+      path: approvalPathLabel(path.path, workspaceRoot),
+    }),
   )
+  return grants.join(t('tool.permission.listSeparator'))
 }
 
-function writePaths(units: RuntimePermissionCardUnit[]): string[] {
-  return [...new Set(units.flatMap((unit) => unit.effects.flatMap((display) => (
-    display.certainty === 'inferred' && display.effect.kind === 'write'
-      ? [display.effect.path]
-      : []
-  ))))]
-}
-
-function unitWritePath(unit: RuntimePermissionCardUnit): string | null {
-  for (const display of unit.effects) {
-    if (display.certainty === 'inferred' && display.effect.kind === 'write') {
-      return display.effect.path
-    }
-  }
-  return null
-}
-
-function commandSummary(display: string): string {
-  const tokens = display.trim().split(/\s+/)
-  if (tokens[0] === 'node' && tokens[1]?.startsWith('--')) return tokens.slice(0, 2).join(' ')
-  return tokens[0] ?? display
-}
-
-function isPermanentDelete(raw: string): boolean {
-  return /(?:^|[;&|]\s*)rm\s+(?:-[^\s]*r[^\s]*f|-[^\s]*f[^\s]*r|--recursive\s+--force|--force\s+--recursive)(?:\s|$)/i.test(raw)
-}
-
-function isForcePush(raw: string): boolean {
-  return /\bgit\s+push\b[^\n;&|]*(?:--force(?:-with-lease)?|-f)(?:\s|$)/i.test(raw)
-}
-
-function asRecord(input: unknown): Record<string, unknown> | null {
-  return input != null && typeof input === 'object' && !Array.isArray(input)
-    ? input as Record<string, unknown>
-    : null
-}
-
-function textField(input: Record<string, unknown>, camel: string, snake: string): string | null {
-  const value = input[camel] ?? input[snake]
-  return typeof value === 'string' ? value : null
-}
-
-/** 审批阶段没有文件快照；这里只展示工具入参能严格证明的替换片段或拟写入内容。 */
-function approvalPreview(toolName: string, toolInput: unknown): ApprovalPreview | null {
-  const input = asRecord(toolInput)
-  if (!input) return null
-  if (toolName === 'edit') {
-    const oldText = textField(input, 'oldString', 'old_string')
-    const newText = textField(input, 'newString', 'new_string')
-    if (oldText == null || newText == null) return null
-    const deletedLines = oldText.split('\n').map((content, index) => ({
-      kind: 'deletion' as const,
-      oldLine: index + 1,
-      newLine: null,
-      content,
-    }))
-    const addedLines = newText.split('\n').map((content, index) => ({
-      kind: 'addition' as const,
-      oldLine: null,
-      newLine: index + 1,
-      content,
-    }))
-    return {
-      kind: 'edit',
-      hunk: {
-        oldStart: 1,
-        oldLines: deletedLines.length,
-        newStart: 1,
-        newLines: addedLines.length,
-        lines: [...deletedLines, ...addedLines],
-      },
-    }
-  }
-  if (toolName === 'write') {
-    const content = textField(input, 'content', 'content')
-    if (content == null) return null
-    const addedLines = content.split('\n').map((line, index) => ({
-      kind: 'addition' as const,
-      oldLine: null,
-      newLine: index + 1,
-      content: line,
-    }))
-    return {
-      kind: 'write',
-      hunk: {
-        oldStart: 0,
-        oldLines: 0,
-        newStart: 1,
-        newLines: addedLines.length,
-        lines: addedLines,
-      },
-    }
-  }
-  return null
-}
-
-function EffectRow({ display, workspaceRoot }: { display: RuntimeEffectDisplay; workspaceRoot?: string }) {
-  const { t } = useTranslation()
-  const Icon = display.certainty === 'trusted_program'
-    ? Terminal
-    : display.certainty === 'readonly_proof'
-      ? FileText
-      : display.effect.kind === 'write'
-        ? Pencil
-        : FileText
-  const fullPath = display.certainty === 'inferred' && display.effect.kind !== 'exec'
-    ? display.effect.path
-    : undefined
-  return (
-    <li className="flex min-w-0 items-start gap-2 text-xs text-ink-soft" title={fullPath}>
-      <Icon className="mt-0.5 size-3.5 shrink-0 text-ink-faint" />
-      <span className="min-w-0 truncate font-mono">{effectLabel(t, display, workspaceRoot)}</span>
-    </li>
-  )
-}
-
-function PreviewDiff({ preview }: { preview: ApprovalPreview }) {
+function CommandBlock({ command, danger }: { command: string; danger: RuntimeApprovalDanger | null }) {
   const { t } = useTranslation()
   return (
-    <div className="border-t border-line bg-paper/70">
-      <div
-        className="bg-paper-hover px-3 py-1.5 font-mono text-[11px] text-ink-faint"
-        title={t('tool.permission.previewLimitation')}
-      >
-        @@ {preview.kind === 'edit'
-          ? t('tool.permission.replacementPreview')
-          : t('tool.permission.writePreview')}
+    <div className="flex flex-col gap-1.5">
+      <div className={SECTION_LABEL}>
+        {danger ? t('tool.permission.fullCommand') : t('tool.permission.command')}
       </div>
-      <div className="max-h-[240px] overflow-auto overscroll-contain">
-        <FileDiffContent
-          change={{ changeId: `approval-${preview.kind}`, hunks: [preview.hunk] }}
-          showHunkHeaders={false}
-        />
+      <pre className={cn('m-0 whitespace-pre-wrap rounded-lg bg-code-bg px-3 py-2.5 leading-relaxed text-ink', MONO)}>
+        {commandSegments(command, danger).map((segment, index) =>
+          segment.highlighted ? (
+            <mark
+              key={index}
+              className="rounded-sm border-b-2 border-status-danger bg-status-danger-soft px-0.5 text-status-danger-ink"
+            >
+              {segment.text}
+            </mark>
+          ) : (
+            <span key={index}>{segment.text}</span>
+          ),
+        )}
+      </pre>
+    </div>
+  )
+}
+
+function AccessBadge({ access }: { access: RuntimeApprovalPath['access'] }) {
+  const { t } = useTranslation()
+  return (
+    <span
+      className={cn(
+        'shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold',
+        access === 'write'
+          ? 'border-status-danger-border bg-status-danger-soft text-status-danger-ink'
+          : 'border-status-success-border bg-status-success-soft text-status-success-ink',
+      )}
+    >
+      {t(`tool.permission.${access}`)}
+    </span>
+  )
+}
+
+function TierBadge({ path }: { path: RuntimeApprovalPath }) {
+  const { t } = useTranslation()
+  const tier = path.tier === 'normal' && path.inWorkspace ? 'workspace' : path.tier
+  const tone = path.tier === 'credential' || path.tier === 'hard_protected'
+    ? 'bg-status-danger-soft text-status-danger-ink'
+    : path.tier === 'sensitive'
+      ? 'bg-status-warning-soft text-status-warning-ink'
+      : 'bg-paper-hover text-ink-soft'
+  return (
+    <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', tone)}>
+      {t(`tool.permission.tier.${tier}`)}
+    </span>
+  )
+}
+
+function PathList({ paths, workspaceRoot }: { paths: RuntimeApprovalPath[]; workspaceRoot?: string }) {
+  const { t } = useTranslation()
+  const coversGit = paths.some((path) => path.tier === 'sensitive' && /\/\.git(\/|$)/i.test(path.path))
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className={SECTION_LABEL}>{t('tool.permission.extraPaths')}</div>
+      <ul className="m-0 flex list-none flex-col overflow-hidden rounded-[10px] border border-line p-0">
+        {paths.map((path, index) => (
+          <li
+            key={`${path.access}:${path.path}`}
+            className={cn('flex items-center gap-2.5 bg-surface px-3 py-2.5', index > 0 && 'border-t border-line')}
+          >
+            <AccessBadge access={path.access} />
+            <code className={cn('min-w-0 grow break-all text-ink', MONO)}>
+              {approvalPathLabel(path.path, workspaceRoot)}
+            </code>
+            <span className="shrink-0 text-xs text-ink-soft">{t(`tool.permission.${path.scope}`)}</span>
+            <TierBadge path={path} />
+          </li>
+        ))}
+      </ul>
+      {coversGit ? <div className="text-xs text-ink-soft">{t('tool.permission.hooksNote')}</div> : null}
+    </div>
+  )
+}
+
+function DangerReason({ card }: { card: RuntimeApprovalCard }) {
+  const { t } = useTranslation()
+  if (!card.danger) return null
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className={SECTION_LABEL}>{t('tool.permission.whyAsk')}</div>
+      <div className="flex flex-wrap items-center gap-2.5 rounded-[10px] border border-line bg-surface px-3 py-2.5">
+        <code className={cn('text-status-danger-ink', MONO)}>{dangerText(card.command, card.danger)}</code>
+        <span className="text-xs text-ink-soft">{t(`tool.permission.dangerKeys.${card.danger.key}`)}</span>
+        <code className="ml-auto font-mono text-[11px] text-ink-soft">{card.danger.key}</code>
       </div>
     </div>
   )
 }
 
-function WriteUnitCard({
-  unit,
-  preview,
-  workspaceRoot,
-}: {
-  unit: RuntimePermissionCardUnit
-  preview: ApprovalPreview | null
-  workspaceRoot?: string
-}) {
-  const { t } = useTranslation()
-  const path = unitWritePath(unit)
-  const additions = preview?.hunk.lines.filter((line) => line.kind === 'addition').length ?? null
-  const deletions = preview?.hunk.lines.filter((line) => line.kind === 'deletion').length ?? null
-
+function Note({ tone, children }: { tone: 'warning' | 'sandbox'; children: React.ReactNode }) {
+  const Icon = tone === 'warning' ? CircleAlert : ShieldCheck
   return (
-    <li
-      data-permission-unit="true"
-      data-approval-write-summary="true"
-      className={`overflow-hidden rounded-lg border ${
-        unit.outsideWorkspace
-          ? 'border-status-danger-border bg-status-danger-soft/35'
-          : 'border-line bg-paper'
-      }`}
+    <div
+      className={cn(
+        'flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs leading-relaxed',
+        tone === 'warning'
+          ? 'bg-status-warning-soft text-status-warning-ink'
+          : 'bg-status-success-soft text-status-success-ink',
+      )}
     >
-      <div className="flex min-h-9 min-w-0 items-center gap-2 px-3 py-2 text-xs">
-        <span className="shrink-0 font-semibold text-ink">{t('tool.permission.writeLabel')}</span>
-        {path ? (
-          <code className="min-w-0 truncate font-semibold text-ink" title={path}>
-            {relativePath(path, workspaceRoot)}
-          </code>
-        ) : null}
-        <span className="shrink-0 text-ink-faint">
-          {unit.outsideWorkspace
-            ? t('tool.permission.outsideWrite')
-            : t('tool.permission.insideWorkspace')}
-        </span>
-        {additions != null ? (
-          <span className="ml-auto shrink-0 font-mono text-status-success-ink">+{additions}</span>
-        ) : null}
-        {deletions != null && deletions > 0 ? (
-          <span className="shrink-0 font-mono text-status-danger-ink">−{deletions}</span>
-        ) : null}
-      </div>
-      {preview ? <PreviewDiff preview={preview} /> : null}
-    </li>
+      <Icon size={14} className="mt-0.5 shrink-0" />
+      <span>{children}</span>
+    </div>
   )
 }
 
-export function ApprovalCardView({
-  request,
-  resolving,
-  onResolve,
-  workspaceRoot,
-  toolInput,
-}: ApprovalCardViewProps) {
-  const { t } = useTranslation()
-  const titleRef = useRef<HTMLDivElement>(null)
-  const cancelRef = useRef<HTMLButtonElement>(null)
-  const preview = useMemo(
-    () => approvalPreview(request.toolName, toolInput),
-    [request.toolName, toolInput],
-  )
-  const decisionUnits = request.card.units.filter((unit) => unit.verdict.decision !== 'allow')
-  const readonlyUnits = request.card.units.filter(
-    (unit) => unit.verdict.decision === 'allow' && !unitWrites(unit) && !unit.outsideWorkspace,
-  )
-  // 已放行的写入仍会改变用户数据，不能跟只读项一起折叠掉。
-  const prominentUnits = request.card.units.filter((unit) => !readonlyUnits.includes(unit))
-  const writes = writePaths(prominentUnits)
-  const previewUnitIndex = prominentUnits.findIndex((unit) => unitWrites(unit))
-  const outsideWrite = prominentUnits.some((unit) => unit.outsideWorkspace && unitWrites(unit))
-  const permanentDelete = isPermanentDelete(request.card.raw)
-  const forcePush = isForcePush(request.card.raw)
-  const dangerous = outsideWrite || permanentDelete || forcePush
-  const firstDecisionIndex = request.card.units.findIndex((unit) => unit.verdict.decision !== 'allow')
+function footerText(
+  t: TFunction,
+  card: RuntimeApprovalCard,
+  kind: ApprovalKind,
+  workspaceRoot?: string,
+): string {
+  const mode = modeName(t, card)
+  switch (kind) {
+    case 'danger':
+      return t('tool.permission.dangerFooter')
+    case 'combined':
+      return t('tool.permission.combinedFooter', { grants: grantList(t, card.paths, workspaceRoot) })
+    case 'escalation':
+      return t('tool.permission.escalationFooter', { grants: grantList(t, card.paths, workspaceRoot), mode })
+    default: {
+      const unreachable: never = kind
+      return unreachable
+    }
+  }
+}
 
-  const title = permanentDelete
-    ? t('tool.permission.deleteTitle')
-    : forcePush
-      ? t('tool.permission.forcePushTitle')
-      : outsideWrite
-        ? t('tool.permission.outsideTitle')
-        : writes.length > 0 && readonlyUnits.length > 0
-          ? t('tool.permission.writeMixedTitle', { writes: writes.length, readonly: readonlyUnits.length })
-          : writes.length > 0
-            ? t('tool.permission.writeTitle', { count: writes.length })
-            : t('tool.permission.approvalTitle', { count: Math.max(1, decisionUnits.length) })
-  const subtitle = permanentDelete
-    ? t('tool.permission.deleteSubtitle')
-    : forcePush
-      ? t('tool.permission.forcePushSubtitle')
-      : outsideWrite
-        ? t('tool.permission.outsideSubtitle')
-        : decisionUnits.length === 1 && request.card.units.length > 1
-          ? t('tool.permission.singleDecisionSubtitle', { index: firstDecisionIndex + 1 })
-          : t('tool.permission.askSubtitle')
+export function ApprovalCardView({ request, resolving, onResolve, workspaceRoot }: ApprovalCardViewProps) {
+  const { t } = useTranslation()
+  const primaryRef = useRef<HTMLButtonElement>(null)
+  const { card } = request
+  const kind = approvalKind(card)
+  const primary = primaryDecision(card)
+  const dangerous = primary === 'deny'
+  const HeaderIcon = kind === 'escalation' ? ShieldAlert : Trash2
 
   useEffect(() => {
-    if (dangerous) cancelRef.current?.focus()
-    else titleRef.current?.focus()
-  }, [dangerous, request.toolCallId])
+    primaryRef.current?.focus()
+  }, [request.toolCallId])
 
-  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
     if (resolving) return
-    const target = event.target as HTMLElement
     if (event.key === 'Escape') {
       event.preventDefault()
       onResolve('deny')
       return
     }
-    if (event.key !== 'Enter' || target.closest('button, summary')) return
+    if (event.key !== 'Enter' || (event.target as HTMLElement).closest('button')) return
     event.preventDefault()
-    onResolve(dangerous ? 'deny' : 'allow_once')
+    onResolve(primary)
   }
 
-  return (
-    <div
-      data-approval-dialog="true"
-      data-approval-danger={dangerous ? 'true' : undefined}
-      role="alertdialog"
-      aria-modal="false"
-      aria-labelledby="permission-title"
-      className={`overflow-hidden rounded-xl bg-paper shadow-sm ${
-        dangerous ? 'border-2 border-status-danger-border' : 'border border-clay-soft'
-      }`}
-      onKeyDown={handleKeyDown}
+  const allowButton = (
+    <button
+      key="allow"
+      ref={dangerous ? undefined : primaryRef}
+      type="button"
+      disabled={resolving}
+      onClick={() => onResolve('allow_once')}
+      className={cn(
+        'inline-flex min-h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-4 text-sm font-medium transition disabled:opacity-50',
+        dangerous
+          ? 'border border-status-danger-border bg-paper text-status-danger-ink hover:bg-paper-hover'
+          : 'bg-clay text-paper hover:opacity-90',
+      )}
     >
-      <div className={`flex items-center gap-3 px-4 py-3 ${
-        dangerous ? 'bg-status-danger-soft' : 'bg-clay-soft'
-      }`}>
-        <div className="grid size-8 place-items-center rounded-lg bg-paper shadow-sm ring-1 ring-clay-soft">
-          {dangerous
-            ? <CircleAlert className="text-status-danger-ink" size={18} />
-            : <ShieldAlert className="text-clay" size={18} />}
+      {dangerous ? null : <Check size={14} />}
+      {resolving ? t('tool.processing') : t('tool.permission.allowOnce')}
+    </button>
+  )
+  const denyButton = (
+    <button
+      key="deny"
+      ref={dangerous ? primaryRef : undefined}
+      type="button"
+      disabled={resolving}
+      onClick={() => onResolve('deny')}
+      className={cn(
+        'inline-flex min-h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-4 text-sm font-medium transition disabled:opacity-50',
+        dangerous ? 'bg-clay text-paper hover:opacity-90' : 'ml-auto text-ink-soft hover:bg-paper-hover',
+      )}
+    >
+      <X size={14} />
+      {t('tool.reject')}
+    </button>
+  )
+
+  return (
+    <section
+      aria-labelledby={`approval-title-${request.toolCallId}`}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'mx-auto mb-3 flex w-full max-w-3xl flex-col overflow-hidden rounded-[14px] border bg-paper shadow-sm',
+        dangerous ? 'border-status-danger-border' : 'border-clay/45',
+      )}
+    >
+      <header className={cn('flex items-center gap-3 px-4 py-3.5', dangerous ? 'bg-status-danger-soft' : 'bg-clay-soft')}>
+        <div className="grid size-[34px] place-items-center rounded-[9px] bg-paper">
+          <HeaderIcon size={18} className={dangerous ? 'text-status-danger-ink' : 'text-clay'} />
         </div>
-        <div ref={titleRef} id="permission-title" tabIndex={-1} className="min-w-0 flex-1 outline-none">
-          <div className="text-sm font-semibold text-ink">{title}</div>
-          <div className={`mt-0.5 text-xs ${dangerous ? 'text-status-danger-ink' : 'text-ink-muted'}`}>
-            {subtitle}
+        <div className="flex grow flex-col gap-0.5">
+          <h2 id={`approval-title-${request.toolCallId}`} className="m-0 text-[15px] font-semibold text-ink">
+            {title(t, request, kind)}
+          </h2>
+          <div className={cn('text-xs', kind === 'danger' ? 'text-status-danger-ink' : 'text-ink-soft')}>
+            {kind === 'danger'
+              ? t('tool.permission.dangerSubtitle')
+              : t('tool.permission.context', { tool: request.toolName, mode: modeName(t, card) })}
           </div>
         </div>
-      </div>
+      </header>
 
-      <div data-approval-scroll="true" className="max-h-[45vh] overflow-y-auto overscroll-contain">
-        {readonlyUnits.length > 0 ? (
-          <details className="group border-b border-line px-4 py-2.5">
-            <summary
-              className="flex cursor-pointer list-none items-center gap-2 text-xs text-ink-muted"
-              title={readonlyUnits.flatMap((unit) => unit.verdict.ruleId ?? []).join(', ') || undefined}
-            >
-              <Check size={13} className="shrink-0 text-status-success-ink" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">
-                {t('tool.permission.readonlySummary', {
-                  count: readonlyUnits.length,
-                  commands: readonlyUnits.map((unit) => commandSummary(unit.display)).join(' · '),
-                })}
-              </span>
-              <ChevronDown size={13} className="shrink-0 transition-transform group-open:rotate-180" />
-            </summary>
-            <ol className="mt-2 space-y-1 pl-5">
-              {readonlyUnits.map((unit, index) => (
-                <li key={`${index}-${unit.display}`} className="truncate font-mono text-[11px] text-ink-faint">
-                  {relativeDisplay(unit.display, workspaceRoot)}
-                </li>
-              ))}
-            </ol>
-          </details>
-        ) : null}
-
-        <ol className="space-y-2 px-4 py-3">
-          {prominentUnits.map((unit, index) => {
-            const originalIndex = request.card.units.indexOf(unit)
-            const write = unitWrites(unit)
-            const unitPreview = index === previewUnitIndex ? preview : null
-            if (write && (request.toolName === 'edit' || request.toolName === 'write')) {
-              return (
-                <WriteUnitCard
-                  key={`${originalIndex}-${unit.display}`}
-                  unit={unit}
-                  preview={unitPreview}
-                  workspaceRoot={workspaceRoot}
-                />
-              )
-            }
-            return (
-              <li
-                key={`${originalIndex}-${unit.display}`}
-                data-permission-unit="true"
-                className={`rounded-lg border px-3 py-2.5 ${
-                  unit.outsideWorkspace && write
-                    ? 'border-status-danger-border bg-status-danger-soft/55'
-                    : unit.outsideWorkspace
-                      ? 'border-status-warning-border bg-status-warning-soft/55'
-                    : write
-                      ? 'border-status-success-border bg-status-success-soft/45'
-                      : 'border-line bg-paper-hover'
-                }`}
-              >
-                <div className="flex items-start gap-2">
-                  <span className="shrink-0 text-xs font-semibold text-ink-faint">{originalIndex + 1}.</span>
-                  <code
-                    className="max-h-40 min-w-0 flex-1 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words text-xs font-semibold text-ink"
-                    title={unit.display}
-                  >
-                    {relativeDisplay(unit.display, workspaceRoot)}
-                  </code>
-                  {unit.outsideWorkspace ? (
-                    <span className="shrink-0 rounded-full bg-status-danger-soft px-2 py-0.5 text-[10px] font-medium text-status-danger-ink">
-                      {t(write ? 'tool.permission.outsideWrite' : 'tool.permission.outsideWorkspace')}
-                    </span>
-                  ) : write ? (
-                    <span className="shrink-0 rounded-full bg-status-success-soft px-2 py-0.5 text-[10px] font-medium text-status-success-ink">
-                      {t('tool.permission.writeLabel')}
-                    </span>
-                  ) : null}
-                </div>
-                <ul className="mt-2 space-y-1 pl-5">
-                  {unit.effects.map((effect, effectIndex) => (
-                    <EffectRow key={effectIndex} display={effect} workspaceRoot={workspaceRoot} />
-                  ))}
-                  {unit.effects.length === 0 ? (
-                    <li className="text-xs text-status-warning-ink">{t('tool.permission.unknownEffects')}</li>
-                  ) : null}
-                </ul>
-                <div
-                  className="mt-2 pl-5 text-[11px] text-ink-faint"
-                  title={unit.verdict.ruleId ?? undefined}
-                >
-                  {verdictLabel(t, unit.verdict)}
-                </div>
-              </li>
-            )
-          })}
-        </ol>
-
-        {request.card.unparsed ? (
-          <div className="mx-4 mb-3 rounded-lg bg-status-warning-soft px-3 py-2 text-xs text-status-warning-ink">
-            {t('tool.permission.unparsedWarning')}
+      <div className="flex flex-col gap-4 px-4 py-4">
+        {card.command !== null ? <CommandBlock command={card.command} danger={card.danger} /> : null}
+        {card.justification ? (
+          <div className="flex flex-col gap-1.5">
+            <div className={SECTION_LABEL}>{t('tool.permission.justification')}</div>
+            <p className="m-0 font-serif text-[14.5px] leading-relaxed text-ink">{card.justification}</p>
           </div>
         ) : null}
-
-        <details className="group border-t border-line px-4 py-3">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs text-ink-muted hover:text-ink">
-            {t('tool.permission.showRaw')}
-            <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
-          </summary>
-          <pre className="mt-2 max-h-32 overflow-auto overscroll-contain whitespace-pre-wrap break-words rounded-lg bg-paper-hover px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink-soft">
-            {request.card.raw}
-          </pre>
-        </details>
+        {card.paths.length > 0 ? <PathList paths={card.paths} workspaceRoot={workspaceRoot} /> : null}
+        <DangerReason card={card} />
+        {card.previousDenial ? (
+          <Note tone="warning">{t('tool.permission.previousDenial', { line: card.previousDenial })}</Note>
+        ) : null}
+        {kind === 'danger' ? (
+          <Note tone="sandbox">{t('tool.permission.stillSandboxed', { mode: modeName(t, card) })}</Note>
+        ) : null}
       </div>
 
-      <div className="border-t border-clay-soft bg-paper-hover px-4 py-3">
-        {dangerous ? (
-          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
-            <button
-              ref={cancelRef}
-              type="button"
-              disabled={resolving}
-              onClick={() => onResolve('deny')}
-              className="inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-clay px-4 py-1.5 text-sm font-medium text-paper transition hover:opacity-90 disabled:opacity-50"
-            >
-              <X size={14} />
-              {t('tool.permission.cancel')}
-            </button>
-            <button
-              type="button"
-              disabled={resolving}
-              onClick={() => onResolve('allow_once')}
-              className="inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-status-danger-border bg-paper px-4 py-1.5 text-sm font-medium text-status-danger-ink transition hover:bg-status-danger-soft disabled:opacity-50"
-            >
-              {resolving
-                ? t('tool.processing')
-                : permanentDelete
-                  ? t('tool.permission.deleteAnyway')
-                  : t('tool.permission.allowDanger')}
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
-              <button
-                type="button"
-                disabled={resolving}
-                onClick={() => onResolve('allow_once')}
-                className="inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-clay px-4 py-1.5 text-sm font-medium text-paper transition hover:opacity-90 disabled:opacity-50"
-              >
-                <Check size={14} />
-                {resolving ? t('tool.processing') : t('tool.permission.allowOnce')}
-              </button>
-              {request.card.sessionAction ? (
-                <button
-                  type="button"
-                  disabled={resolving}
-                  onClick={() => onResolve(
-                    request.card.sessionAction?.kind === 'allow_exec'
-                      ? 'allow_session'
-                      : 'accept_edits',
-                  )}
-                  className="inline-flex min-h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-line-strong bg-paper px-4 py-1.5 text-sm font-medium text-ink transition hover:bg-paper-hover disabled:opacity-50"
-                >
-                  {t('tool.permission.alwaysAllowSession')}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                disabled={resolving}
-                onClick={() => onResolve('deny')}
-                className="ml-auto inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-medium text-ink-muted transition hover:bg-paper disabled:opacity-50"
-              >
-                <X size={14} />
-                {t('tool.reject')}
-              </button>
-            </div>
-            {request.card.sessionAction ? (
-              <p className="mt-1.5 text-[11px] text-ink-faint">
-                {sessionActionDescription(t, request.card.sessionAction)}
-              </p>
-            ) : null}
-          </>
-        )}
-        <p className="mt-1.5 text-[11px] text-ink-faint">
+      <footer className="flex flex-col gap-2.5 border-t border-line bg-code-bg px-4 pb-3.5 pt-3">
+        <div className="text-xs text-ink-soft">{footerText(t, card, kind, workspaceRoot)}</div>
+        <div className="flex items-center gap-2">
+          {dangerous ? [denyButton, allowButton] : [allowButton, denyButton]}
+        </div>
+        <p className="m-0 text-[11px] text-ink-faint">
           {dangerous ? t('tool.permission.dangerShortcuts') : t('tool.permission.shortcuts')}
         </p>
-      </div>
-    </div>
+      </footer>
+    </section>
   )
 }
 
@@ -584,7 +329,6 @@ export function ApprovalDialog({
 }) {
   const runtime = useRuntimeStore((state) => sessionId ? state.bySession[sessionId] : undefined)
   const current = runtime?.pendingPermission ?? null
-  const toolInput = current ? runtime?.toolCalls[current.toolCallId]?.input : undefined
   const { resolvePermission } = useTurnActions(sessionId)
   const [resolving, setResolving] = useState(false)
 
@@ -595,7 +339,6 @@ export function ApprovalDialog({
       request={current}
       resolving={resolving}
       workspaceRoot={workspaceRoot}
-      toolInput={toolInput}
       onResolve={(decision) => {
         if (resolving) return
         setResolving(true)

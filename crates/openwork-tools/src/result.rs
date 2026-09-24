@@ -29,6 +29,8 @@ pub enum ToolErrorCode {
     Timeout,
     ExecutionFailed,
     OutcomeUnknown,
+    /// 沙箱自检失败，bash 不执行（permissions.md §3.2）。
+    SandboxUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +47,10 @@ pub struct ToolResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ToolResultArtifact>,
     pub error: Option<ToolError>,
+    /// 沙箱或文件工具围栏拒绝了其中的文件操作（permissions.md §3.3）。它是结果上的事实，
+    /// 不是权限判定：命令照样执行了，退出码也照常给出。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_denied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -54,6 +60,8 @@ pub struct ToolExecutionError {
     pub code: ToolErrorCode,
     pub message: String,
     pub retryable: bool,
+    /// 见 [`ToolResult::sandbox_denied`]。
+    pub sandbox_denied: bool,
 }
 
 impl ToolExecutionError {
@@ -73,6 +81,14 @@ impl ToolExecutionError {
             message,
             false,
         )
+    }
+
+    /// 文件工具围栏按沙箱策略拒绝了路径；可以经越界重试。
+    pub fn sandbox_denied(message: impl Into<String>) -> Self {
+        Self {
+            sandbox_denied: true,
+            ..Self::denied(message)
+        }
     }
 
     pub fn cancelled(message: impl Into<String>) -> Self {
@@ -122,6 +138,7 @@ impl ToolExecutionError {
             code,
             message: message.into(),
             retryable,
+            sandbox_denied: false,
         }
     }
 }
@@ -133,6 +150,7 @@ impl ToolResult {
             content: vec![ToolResultContent::Text { text: text.into() }],
             artifacts: Vec::new(),
             error: None,
+            sandbox_denied: false,
         }
     }
 
@@ -142,6 +160,7 @@ impl ToolResult {
             content: vec![ToolResultContent::Text { text: text.into() }],
             artifacts: vec![artifact],
             error: None,
+            sandbox_denied: false,
         }
     }
 
@@ -177,7 +196,19 @@ impl ToolResult {
     }
 
     pub fn from_execution_error(error: ToolExecutionError) -> Self {
-        Self::terminal(error.status, error.code, error.message, error.retryable)
+        let sandbox_denied = error.sandbox_denied;
+        Self {
+            sandbox_denied,
+            ..Self::terminal(error.status, error.code, error.message, error.retryable)
+        }
+    }
+
+    /// 标记沙箱拒绝了其中的文件操作（结果本身不变）。
+    pub fn with_sandbox_denied(self) -> Self {
+        Self {
+            sandbox_denied: true,
+            ..self
+        }
     }
 
     pub fn is_error(&self) -> bool {
@@ -212,6 +243,7 @@ impl ToolResult {
                 message,
                 retryable,
             }),
+            sandbox_denied: false,
         }
     }
 }

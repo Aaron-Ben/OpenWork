@@ -14,10 +14,9 @@ use openwork_models::model::{
     ModelPort, ModelResponse, Role, ToolCallBlock, ToolResultBlock, ToolResultState,
 };
 use openwork_tools::{
-    Authorization, DecisionSource, ToolCallContext as RuntimeToolCallContext,
-    ToolCallId as RuntimeToolCallId, ToolErrorCode, ToolInvocation,
-    ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent, ToolResultStatus,
-    ToolValidationError,
+    ToolCallContext as RuntimeToolCallContext, ToolCallId as RuntimeToolCallId, ToolErrorCode,
+    ToolInvocation, ToolProgress as RuntimeToolProgress, ToolResult, ToolResultContent,
+    ToolResultStatus, ToolValidationError,
 };
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
@@ -31,8 +30,8 @@ use crate::agent::{
 };
 use crate::context::{
     ContextEngine, ModelContextLimits, PrepareContextInput, PreparedModelCall,
-    ResolvedSystemContext, RetainedSections, SystemContextBuildError, SystemContextBuilder,
-    WorldStateBaseline, WorldStateCapture,
+    ResolvedSystemContext, RetainedSections, SandboxPolicyState, SystemContextBuildError,
+    SystemContextBuilder, WorldStateBaseline, WorldStateCapture,
 };
 use crate::plan::{
     TurnPlan, UPDATE_PLAN_TOOL_NAME, parse_update_plan_arguments, update_plan_success_output,
@@ -43,11 +42,15 @@ use crate::storage::time::china_now;
 
 use super::toolset::{ResolvedTurnTool, TurnToolset};
 
+mod authorization;
+
+use authorization::{Authorized, denial_line};
+
 use super::agent_message::AgentMailbox;
 use super::compaction::{
     CompactionTrigger, ConversationCompactionRequest, advance_tool_result_pruning, run_compaction,
 };
-use super::permission_state::{NON_INTERACTIVE_DENIAL, SessionApproval, SessionPermissionState};
+use super::permission_state::{SessionApproval, SessionPermissionState, SessionSandbox};
 use super::{
     ClientRequestId, CompactionStateCollector, LiveToolCall, ModelCallStarted, ModelCallTraceGuard,
     ModelTraceAttributesV1, PermissionDecision, PermissionRequest, PreparedTurnInput,
@@ -80,8 +83,10 @@ pub(super) struct TurnRunRequest {
     pub cancel: CancellationToken,
     pub events: mpsc::Sender<RunnerEvent>,
     pub permission_state: watch::Receiver<SessionPermissionState>,
-    /// `NonInteractive` turns every `Ask` into an immediate denial.
+    /// `NonInteractive` 时，需要卡片的调用直接拒绝（permissions.md §6.6）。
     pub approval: SessionApproval,
+    /// 生成每次调用的沙箱策略。
+    pub sandbox: SessionSandbox,
     pub mailbox: AgentMailbox,
     pub agent_control: Option<AgentControl>,
 }
@@ -109,6 +114,7 @@ pub(super) async fn run_turn(request: TurnRunRequest) {
         request,
         repeated_tool: None,
         consecutive_wait_timeouts: 0,
+        last_sandbox_denial: None,
         last_model_call: None,
         // 新 Turn 从无计划开始，不继承上一个 Turn 的计划。
         current_plan: None,
@@ -150,6 +156,8 @@ struct TurnRunner {
     repeated_tool: Option<(String, String, usize)>,
     /// wait_agent 的同参重复本身合法，只有连续超时才说明父 Turn 没有取得进展。
     consecutive_wait_timeouts: usize,
+    /// 本 Turn 上一次被沙箱拒绝时的那一行输出，放到下一张越界卡片上。
+    last_sandbox_denial: Option<String>,
     /// The most recent Model Call submission. An overflow compaction is caused
     /// by a Model Call that already failed, so its Span and input estimate are
     /// no longer reachable through the call's return value.
@@ -401,7 +409,7 @@ impl TurnRunner {
         conversation: &mut ConversationContextView,
     ) -> Result<(), TurnRunError> {
         let world = capture
-            .capture()
+            .capture(self.sandbox_policy_state())
             .await
             .map_err(SystemContextBuildError::from)?;
         let fragments = {
@@ -442,6 +450,19 @@ impl TurnRunner {
             .await
             .advance(&world, &fragments);
         Ok(())
+    }
+
+    /// 这一次采样时的会话模式与 bash 可用性（permissions.md §4.6）。
+    fn sandbox_policy_state(&self) -> SandboxPolicyState {
+        let mode = self.request.permission_state.borrow().mode();
+        SandboxPolicyState::new(
+            &self.request.sandbox.policy(mode, Vec::new()),
+            self.request
+                .tools
+                .registered()
+                .sandbox_status()
+                .is_available(),
+        )
     }
 
     async fn drain_agent_messages(&self) -> Result<(), TurnRunError> {
@@ -830,13 +851,8 @@ impl TurnRunner {
         }
 
         let permission_state = self.request.permission_state.borrow().clone();
-        tool_trace.record_permission_mode(
-            match permission_state.mode() {
-                openwork_tools::PermissionMode::Default => "default",
-                openwork_tools::PermissionMode::AcceptEdits => "accept_edits",
-            },
-            permission_state.mode_origin().as_str(),
-        );
+        let mode = permission_state.mode();
+        tool_trace.record_session_mode(mode, permission_state.mode_origin());
 
         // 控制工具在这里分流：它不访问主机能力，也不改工作区，所以不进 PermissionEngine。
         // 免审批由这条类型化分支表达，而不是给它伪造一个 ToolRisk::ReadOnly——后者会让
@@ -854,157 +870,31 @@ impl TurnRunner {
             }
             ResolvedTurnTool::Registered(_) => {}
         }
-        let permit = match self.request.tools.registered().authorize(
-            &invocation,
-            permission_state.mode(),
-            permission_state.session_rules(),
-        ) {
-            Authorization::Allow { permit, evidence } => {
-                tool_trace.record_permission_policy("allow");
-                // `Mode` must not collapse into `Builtin`: permissions.md §7 exists
-                // to answer "为什么这条没问我就跑了", and the two answers differ —
-                // `builtin` means it was always allowed, `mode` means it ran because
-                // acceptEdits was switched on. Merging them hides the one an incident
-                // review would ask about first.
-                let source = match evidence.source {
-                    DecisionSource::ReadonlyProof => "readonly_proof",
-                    DecisionSource::ModeFsCommand => "mode_fs_command",
-                    DecisionSource::SessionGrant => "session_grant",
-                    DecisionSource::Mode => "mode",
-                    DecisionSource::Builtin => "builtin",
-                };
-                tool_trace.record_permission_decision("allow", source);
-                if let (Some(rule_id), Some(rule_scope)) =
-                    (evidence.rule_id.as_ref(), evidence.rule_scope)
-                {
-                    tool_trace.record_permission_rule(rule_id.as_str(), rule_scope.as_str());
-                }
-                if let Some(key) = evidence.readonly_proof_key.as_deref() {
-                    tool_trace.record_readonly_proof(key);
-                }
-                permit
-            }
-            Authorization::Deny {
-                reason,
-                rule_id,
-                rule_scope,
-                silent,
-            } => {
-                tool_trace.record_permission_policy("deny");
-                // permissions.md §7: built-in denials are sourced to `builtin`,
-                // everything else to the rule that produced them.
-                tool_trace
-                    .record_permission_decision("deny", if silent { "builtin" } else { "rule" });
-                tool_trace.record_permission_rule(rule_id.as_str(), rule_scope.as_str());
-                let result = ToolResult::denied(reason.clone());
-                self.append_tool_result(call, tool_call_id, result, tool_trace)
-                    .await?;
-                return Ok(());
-            }
-            Authorization::Unavailable { code, message } => {
-                // Not a permission verdict — the call could not be judged at
-                // all, so it must not read as "a rule closed this path".
-                let result = ToolResult::failed(code, message, false);
-                return self
-                    .append_tool_result(call, tool_call_id, result, tool_trace)
-                    .await;
-            }
-            Authorization::Ask { card, permit } => {
-                tool_trace.record_permission_policy("ask");
-                // An unattended Session has nobody to ask. Suspending here would
-                // hang the sub-agent until the parent Turn is cancelled, so the
-                // call is denied straight away — but the Turn continues, exactly
-                // like a rule-based `Deny`, so the model can switch to a
-                // provably read-only command. See permissions.md §6.6.
-                if !self.request.approval.is_interactive() {
-                    // §7 still applies: the denial has to be reconstructable, or
-                    // "why did the explorer find nothing" is unanswerable.
-                    tool_trace.record_permission_decision("deny", "non_interactive");
-                    let result = ToolResult::denied(NON_INTERACTIVE_DENIAL);
-                    self.append_tool_result(call, tool_call_id, result, tool_trace)
-                        .await?;
-                    return Ok(());
-                }
-                let request = PermissionRequest {
-                    session_id: self.request.session_id.clone(),
-                    turn_id: self.request.turn_id.clone(),
-                    tool_call_id: tool_call_id.clone(),
-                    provider_call_id: call.id.clone(),
-                    tool_name: resolved_tool_name.clone(),
-                    card,
-                };
-                let (respond_to, decision) = oneshot::channel();
-                if self
-                    .request
-                    .events
-                    .send(RunnerEvent::PermissionRequested {
-                        request,
-                        respond_to,
-                    })
-                    .await
-                    .is_err()
-                {
-                    tool_trace.record_permission_decision("cancelled", "system");
-                    let result = ToolResult::outcome_unknown("session actor stopped");
-                    self.append_tool_result(call, tool_call_id, result, tool_trace)
-                        .await?;
-                    return Err(TurnRunError::ActorStopped);
-                }
-                let wait_started = Instant::now();
-                let decision = tokio::select! {
-                    _ = self.request.cancel.cancelled() => {
-                        None
-                    }
-                    result = decision => result.ok(),
-                };
-                tool_trace.record_permission_wait_ms(elapsed_millis(wait_started));
-                let Some(decision) = decision else {
-                    let cancelled = self.request.cancel.is_cancelled();
-                    tool_trace.record_permission_decision("cancelled", "system");
-                    let result = if cancelled {
-                        ToolResult::cancelled("turn cancelled while waiting for permission")
-                    } else {
-                        ToolResult::outcome_unknown("permission responder stopped")
-                    };
-                    self.append_tool_result(call, tool_call_id, result, tool_trace)
-                        .await?;
-                    return Err(if cancelled {
-                        TurnRunError::Cancelled
-                    } else {
-                        TurnRunError::ActorStopped
-                    });
-                };
-                if decision == PermissionDecision::Deny {
-                    tool_trace.record_permission_decision("deny", "user");
-                    let result = ToolResult::denied("user denied tool permission");
-                    self.append_tool_result(call, tool_call_id, result, tool_trace)
-                        .await?;
-                    return Err(TurnRunError::PermissionDenied(
-                        "user denied tool permission".to_string(),
-                    ));
-                }
-                let permission_state = self.request.permission_state.borrow().clone();
-                tool_trace.record_permission_mode(
-                    match permission_state.mode() {
-                        openwork_tools::PermissionMode::Default => "default",
-                        openwork_tools::PermissionMode::AcceptEdits => "accept_edits",
-                    },
-                    permission_state.mode_origin().as_str(),
-                );
-                tool_trace.record_permission_decision("allow", "user");
-                permit
-            }
+        let (policy, mut tool_trace) = match self
+            .authorize_tool_call(
+                call,
+                &tool_call_id,
+                &resolved_tool_name,
+                &invocation,
+                mode,
+                tool_trace,
+            )
+            .await?
+        {
+            Authorized::Run { policy, tool_trace } => (policy, *tool_trace),
+            Authorized::Handled => return Ok(()),
         };
 
         let (progress_tx, mut progress_rx) = mpsc::channel(64);
         let call_context = RuntimeToolCallContext::new(
             RuntimeToolCallId::new(tool_call_id.to_string()),
             self.request.cancel.child_token(),
+            policy.clone(),
         )
         .with_progress_sender(progress_tx);
         let tools = Arc::clone(self.request.tools.registered());
         let execution_started = Instant::now();
-        let mut execution = Box::pin(tools.call(call_context, invocation, permit));
+        let mut execution = Box::pin(tools.call(call_context, invocation));
         let mut progress_open = true;
         let result = loop {
             tokio::select! {
@@ -1023,6 +913,19 @@ impl TurnRunner {
             }
         };
         tool_trace.record_execution_ms(elapsed_millis_u64(execution_started));
+        if result
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == ToolErrorCode::SandboxUnavailable)
+        {
+            // 沙箱不可用时命令没有执行（permissions.md §6.4 "沙箱不可用而未执行"）。
+            tool_trace.record_permission_decision("deny", "sandbox_unavailable");
+        } else {
+            tool_trace.record_sandbox_mode(policy.mode);
+        }
+        if result.sandbox_denied {
+            self.last_sandbox_denial = denial_line(&result);
+        }
         while let Ok(progress) = progress_rx.try_recv() {
             self.update(SessionUpdate::ToolCallProgress {
                 tool_call_id: tool_call_id.clone(),
@@ -1051,7 +954,6 @@ impl TurnRunner {
         input: &serde_json::Value,
         mut tool_trace: ToolCallTraceGuard,
     ) -> Result<(), TurnRunError> {
-        tool_trace.record_permission_policy("allow");
         // `control_tool` 是一个独立的来源，不复用 `builtin`：事故复盘要能区分
         // "它是 Core 控制工具，本来就不过权限"和"它被一条内置规则放行了"。
         tool_trace.record_permission_decision("allow", "control_tool");
@@ -1115,7 +1017,6 @@ impl TurnRunner {
         input: &serde_json::Value,
         mut tool_trace: ToolCallTraceGuard,
     ) -> Result<(), TurnRunError> {
-        tool_trace.record_permission_policy("allow");
         tool_trace.record_permission_decision("allow", "control_tool");
 
         let Some(control) = self.request.agent_control.clone() else {

@@ -73,6 +73,8 @@ pub enum AgentBuildError {
 
 #[cfg(test)]
 mod tests {
+    use openwork_sandbox::SandboxMode;
+
     use super::*;
 
     #[test]
@@ -97,8 +99,9 @@ mod tests {
         );
     }
 
+    /// multi-agent.md §11 #15：explorer 的上限是 `accept-edits`，工具面里没有写文件的工具。
     #[test]
-    fn explorer_is_a_bounded_read_only_agent() {
+    fn explorer_cannot_change_the_workspace() {
         let definition = crate::explorer_definition();
 
         assert_eq!(definition.name, "explorer");
@@ -106,10 +109,22 @@ mod tests {
             definition.tool_names,
             ["read", "grep", "glob", "list", "bash"]
         );
+        assert_eq!(definition.sandbox_ceiling, SandboxMode::AcceptEdits);
         assert_eq!(definition.policy.max_model_calls, 15);
         assert_eq!(definition.policy.doom_loop_threshold, 3);
-        assert!(definition.system_prompt.contains("git status"));
-        assert!(definition.system_prompt.contains("Do not modify"));
+        assert!(
+            definition
+                .system_prompt
+                .contains("does not let you write the workspace")
+        );
         assert!(definition.system_prompt.contains("Do not ask questions"));
+    }
+
+    #[test]
+    fn the_default_agent_may_use_the_widest_mode() {
+        assert_eq!(
+            AgentDefinition::default().sandbox_ceiling,
+            SandboxMode::Auto
+        );
     }
 }

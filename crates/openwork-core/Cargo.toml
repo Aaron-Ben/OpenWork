@@ -5,6 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+openwork-sandbox = { workspace = true }
 openwork-agent = { workspace = true }
 openwork-chat-state = { workspace = true }
 openwork-credentials = { workspace = true }

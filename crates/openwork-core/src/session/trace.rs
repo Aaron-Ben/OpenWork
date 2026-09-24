@@ -3,7 +3,8 @@ use openwork_models::model::{
     FinishReason, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelTransportObserver,
     ModelTransportSignal, ModelTransportSignalKind, ThinkingMode, TokenUsage,
 };
-use openwork_tools::{ToolResult, ToolResultStatus};
+use openwork_sandbox::{PathGrant, SandboxMode};
+use openwork_tools::{DangerKey, ToolResult, ToolResultStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -14,9 +15,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::{ContextBudgetEstimate, ProjectionSummary};
 
+use super::permission_state::SessionModeOrigin;
+pub use super::tool_trace_attributes::{EscalationPathTrace, ToolTraceAttributesV1};
 use super::{SessionId, TurnId};
 
-const TRACE_SCHEMA_VERSION: u16 = 1;
+pub(super) const TRACE_SCHEMA_VERSION: u16 = 1;
 const MAX_TRACE_STRING_CHARS: usize = 256;
 const MAX_TRACE_ERROR_CHARS: usize = 512;
 const MAX_ARTIFACT_TYPES: usize = 16;
@@ -254,40 +257,6 @@ struct ContextBudgetTraceV1 {
     request_estimated_input_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ToolTraceAttributesV1 {
-    pub schema_version: u16,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_policy: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_mode_origin: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_decision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_decision_source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub readonly_proof_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_rule_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_rule_scope: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artifact_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_retryable: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result_persisted: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_truncated: Option<bool>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub artifact_types: Vec<String>,
-}
-
 /// Classified outcome of one compaction summary attempt.
 ///
 /// A bare `failed` cannot distinguish "the model returned an unusable summary"
@@ -462,34 +431,6 @@ impl CompactionTraceAttributesV1 {
         self.reclaimed_conversation_tokens = self
             .conversation_tokens_before
             .map(|before| before.saturating_sub(tokens));
-    }
-}
-
-impl ToolTraceAttributesV1 {
-    pub fn new() -> Self {
-        Self {
-            schema_version: TRACE_SCHEMA_VERSION,
-            permission_policy: None,
-            permission_mode: None,
-            permission_mode_origin: None,
-            permission_decision: None,
-            permission_decision_source: None,
-            readonly_proof_key: None,
-            permission_rule_id: None,
-            permission_rule_scope: None,
-            execution_ms: None,
-            artifact_count: None,
-            error_retryable: None,
-            result_persisted: None,
-            output_truncated: None,
-            artifact_types: Vec::new(),
-        }
-    }
-}
-
-impl Default for ToolTraceAttributesV1 {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1124,27 +1065,30 @@ impl ToolCallTraceGuard {
         &self.started.span_id
     }
 
-    pub fn record_permission_policy(&mut self, policy: &str) {
-        self.attributes.permission_policy = Some(bounded(policy, MAX_TRACE_STRING_CHARS));
+    /// 调用发生时会话的模式与它的来源（permissions.md §7）。
+    pub fn record_session_mode(&mut self, mode: SandboxMode, origin: SessionModeOrigin) {
+        self.attributes.session_mode = Some(mode.as_str().to_string());
+        self.attributes.session_mode_origin = Some(origin.as_str().to_string());
     }
 
-    pub fn record_permission_mode(&mut self, mode: &str, origin: &str) {
-        self.attributes.permission_mode = Some(bounded(mode, MAX_TRACE_STRING_CHARS));
-        self.attributes.permission_mode_origin = Some(bounded(origin, MAX_TRACE_STRING_CHARS));
+    /// 这次调用实际执行时的模式；只有执行了的调用才记。
+    pub fn record_sandbox_mode(&mut self, mode: SandboxMode) {
+        self.attributes.sandbox_mode = Some(mode.as_str().to_string());
+    }
+
+    pub fn record_escalation(&mut self, grants: &[PathGrant], justification: &str) {
+        self.attributes.escalation_paths = grants.iter().map(EscalationPathTrace::from).collect();
+        self.attributes.escalation_justification =
+            Some(bounded(justification, MAX_TRACE_STRING_CHARS));
+    }
+
+    pub fn record_danger(&mut self, key: DangerKey) {
+        self.attributes.danger_match = Some(key.as_str().to_string());
     }
 
     pub fn record_permission_decision(&mut self, decision: &str, source: &str) {
         self.attributes.permission_decision = Some(bounded(decision, MAX_TRACE_STRING_CHARS));
         self.attributes.permission_decision_source = Some(bounded(source, MAX_TRACE_STRING_CHARS));
-    }
-
-    pub fn record_readonly_proof(&mut self, key: &str) {
-        self.attributes.readonly_proof_key = Some(bounded(key, MAX_TRACE_STRING_CHARS));
-    }
-
-    pub fn record_permission_rule(&mut self, rule_id: &str, rule_scope: &str) {
-        self.attributes.permission_rule_id = Some(bounded(rule_id, MAX_TRACE_STRING_CHARS));
-        self.attributes.permission_rule_scope = Some(bounded(rule_scope, MAX_TRACE_STRING_CHARS));
     }
 
     pub fn record_permission_wait_ms(&mut self, duration_ms: i64) {
@@ -1159,6 +1103,7 @@ impl ToolCallTraceGuard {
         self.attributes.artifact_count = Some(saturating_u64(result.artifacts.len()));
         self.attributes.error_retryable = result.error.as_ref().map(|error| error.retryable);
         self.attributes.result_persisted = Some(result_persisted);
+        self.attributes.sandbox_denied = Some(result.sandbox_denied);
         let mut artifact_types = result
             .artifacts
             .iter()
@@ -1488,24 +1433,6 @@ mod tests {
                 ..TraceFlushResult::default()
             }
         }
-    }
-
-    #[test]
-    fn tool_trace_attributes_accept_legacy_json_without_p2_permission_fields() {
-        let attributes: ToolTraceAttributesV1 = serde_json::from_value(serde_json::json!({
-            "schemaVersion": 1,
-            "permissionPolicy": "allow",
-            "permissionDecision": "allow",
-            "permissionDecisionSource": "builtin",
-            "artifactTypes": []
-        }))
-        .expect("legacy tool attributes");
-
-        assert!(attributes.readonly_proof_key.is_none());
-        assert!(attributes.permission_mode.is_none());
-        assert!(attributes.permission_mode_origin.is_none());
-        assert!(attributes.permission_rule_id.is_none());
-        assert!(attributes.permission_rule_scope.is_none());
     }
 
     #[test]

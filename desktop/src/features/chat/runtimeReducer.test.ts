@@ -137,19 +137,14 @@ describe('runtimeReducer', () => {
           turnId: 'turn-1',
           toolCallId: 'tool-1',
           providerCallId: 'call-1',
-          toolName: 'read',
+          toolName: 'bash',
           card: {
-            units: [{
-              display: 'read /repo/README.md',
-              effects: [{
-                certainty: 'inferred',
-                effect: { kind: 'read', path: '/repo/README.md' },
-              }],
-              verdict: { decision: 'ask', source: 'no_rule_covers', ruleId: null },
-              outsideWorkspace: false,
-            }],
-            raw: 'read /repo/README.md',
-            unparsed: false,
+            mode: 'auto',
+            command: 'rm -rf build',
+            justification: null,
+            paths: [],
+            danger: { key: 'rm_recursive_or_force', start: 0, end: 12 },
+            previousDenial: null,
           },
         },
       }),
@@ -159,8 +154,7 @@ describe('runtimeReducer', () => {
       envelope(3, {
         type: 'permission_resolved',
         toolCallId: 'tool-1',
-        decision: 'accept_edits',
-        permissionMode: 'accept_edits',
+        decision: 'allow_once',
       }),
     )
 
@@ -169,7 +163,7 @@ describe('runtimeReducer', () => {
     expect(requested.phase).toBe('waiting_permission')
     expect(resolved.pendingPermission).toBeNull()
     expect(resolved.phase).toBe('running_tools')
-    expect(resolved.permissionMode).toBe('accept_edits')
+    expect(resolved.permissionMode).toBe('auto')
   })
 
   it('appends live tool progress until the terminal result replaces it', () => {
@@ -266,6 +260,7 @@ describe('runtimeReducer', () => {
       sessionId: 'session-1',
       lastUpdateSequence: 8,
       permissionMode: 'accept_edits',
+      sandbox: { state: 'available' },
       runtime: {
         state: 'running',
         turnId: 'turn-8',
@@ -397,7 +392,8 @@ describe('runtimeReducer plan handling', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 12,
-      permissionMode: 'default',
+      permissionMode: 'auto',
+      sandbox: { state: 'available' },
       runtime: {
         state: 'running',
         turnId: 'turn-1',
@@ -423,7 +419,8 @@ describe('runtimeReducer plan handling', () => {
       version: 1,
       sessionId: 'session-1',
       lastUpdateSequence: 20,
-      permissionMode: 'default',
+      permissionMode: 'auto',
+      sandbox: { state: 'available' },
       runtime: {
         state: 'terminal',
         turnId: 'turn-1',

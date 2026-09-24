@@ -1,11 +1,11 @@
 //! World State：会话中会变化的上下文，以追加消息进入 Conversation。
 //!
 //! 分工见 `docs/research/codex-context-engineering-refactor.md` §8：System 前缀
-//! 只保留 `core/agent-system` 且在 Session 内恒定；这里的三个 section 变化时
+//! 只保留 `core/agent-system` 且在 Session 内恒定；这里的四个 section 变化时
 //! 才向对话末尾追加一条**全量重渲染**的消息，没变就一个字节都不发。
 //!
-//! 本模块只有纯逻辑：捕获正文的 IO 仍在 `context/` 下的三个 loader 里，接线在
-//! 阶段二 C 完成。
+//! 本模块只有纯逻辑：捕获正文的 IO 在 `context/` 下的三个 loader 里；沙箱策略由
+//! Session 在采样时给出（permissions.md §4.6）。
 
 use openwork_chat_state::{ConversationItem, MessageKind};
 use openwork_models::model::ContentBlock;
@@ -14,11 +14,13 @@ mod agents_md;
 mod body;
 mod capture;
 mod project_context;
+mod sandbox_policy;
 mod skills_catalog;
 
 pub(crate) use agents_md::AgentsMdState;
 pub(crate) use capture::{WorldStateCapture, WorldStateCaptureError};
 pub(crate) use project_context::ProjectContextState;
+pub(crate) use sandbox_policy::SandboxPolicyState;
 pub(crate) use skills_catalog::SkillsCatalogState;
 
 /// 上一次比较基线中某个 section 的状态。
@@ -83,6 +85,7 @@ pub(crate) struct RetainedSections {
     pub(crate) project_context: bool,
     pub(crate) agents_md: bool,
     pub(crate) skills_catalog: bool,
+    pub(crate) sandbox_policy: bool,
 }
 
 impl RetainedSections {
@@ -105,6 +108,7 @@ impl RetainedSections {
             retained.project_context |= ProjectContextState::matches(text);
             retained.agents_md |= AgentsMdState::matches(text);
             retained.skills_catalog |= SkillsCatalogState::matches(text);
+            retained.sandbox_policy |= SandboxPolicyState::matches(text);
         }
 
         retained
@@ -130,7 +134,7 @@ impl WorldStateFragment {
     }
 }
 
-/// 三个 section 的当前值。
+/// 四个 section 的当前值。
 ///
 /// 具名字段而不是动态注册表：Codex 的类型擦除注册表是为了让扩展在运行时贡献
 /// section，OpenWork 没有扩展 API，那层间接买不到任何东西（§3.2）。
@@ -139,6 +143,7 @@ pub(crate) struct WorldState {
     pub(crate) project_context: ProjectContextState,
     pub(crate) agents_md: AgentsMdState,
     pub(crate) skills_catalog: SkillsCatalogState,
+    pub(crate) sandbox_policy: SandboxPolicyState,
 }
 
 /// Session actor 持有的内存基线（§8.1）。不持久化；恢复后如何取舍见
@@ -148,6 +153,7 @@ pub(crate) struct WorldStateBaseline {
     project_context: SectionBaseline<Option<String>>,
     agents_md: SectionBaseline<Option<String>>,
     skills_catalog: SectionBaseline<Option<String>>,
+    sandbox_policy: SectionBaseline<Option<String>>,
 }
 
 /// 某个 section 的内存基线。
@@ -204,6 +210,9 @@ impl WorldStateBaseline {
                 SkillsCatalogState::ID => {
                     self.skills_catalog = SectionBaseline::Known(world.skills_catalog.snapshot());
                 }
+                SandboxPolicyState::ID => {
+                    self.sandbox_policy = SectionBaseline::Known(world.sandbox_policy.snapshot());
+                }
                 _ => {}
             }
         }
@@ -216,9 +225,9 @@ impl WorldState {
     /// 推进由 `WorldStateBaseline::advance` 在落库成功之后单独完成，理由见那里。
     ///
     /// 一次采样有几个 section 变化就返回几条，不合并（§8.4）：压缩自愈需要逐个
-    /// section 判断它的消息还在不在，合成一条就只能三个一起重发。
+    /// section 判断它的消息还在不在，合成一条就只能全部一起重发。
     ///
-    /// 顺序固定为 project_context → agents_md → skills_catalog，保证同样的输入
+    /// 顺序固定为 project_context → agents_md → skills_catalog → sandbox_policy，保证同样的输入
     /// 产生同样的字节。
     pub(crate) fn render_diff(
         &self,
@@ -235,6 +244,8 @@ impl WorldState {
                 .render_diff(baseline.agents_md.as_previous(retained.agents_md)),
             self.skills_catalog
                 .render_diff(baseline.skills_catalog.as_previous(retained.skills_catalog)),
+            self.sandbox_policy
+                .render_diff(baseline.sandbox_policy.as_previous(retained.sandbox_policy)),
         ]
         .into_iter()
         .flatten()
@@ -253,15 +264,17 @@ mod tests {
             project_context: ProjectContextState::new(project),
             agents_md: AgentsMdState::new(agents.map(str::to_string)),
             skills_catalog: SkillsCatalogState::new(skills.map(str::to_string)),
+            sandbox_policy: SandboxPolicyState::auto_for_test(),
         }
     }
 
-    /// 投影里三个 section 的消息都还在。
+    /// 投影里四个 section 的消息都还在。
     fn all_retained() -> RetainedSections {
         RetainedSections {
             project_context: true,
             agents_md: true,
             skills_catalog: true,
+            sandbox_policy: true,
         }
     }
 
@@ -291,7 +304,7 @@ mod tests {
         ConversationItem::real_with_kind(Message::text(Role::User, text), MessageKind::WorldState)
     }
 
-    /// 首次采样：三个 section 都发，且顺序固定。
+    /// 首次采样：四个 section 都发，且顺序固定。
     #[test]
     fn the_first_sampling_emits_every_section_in_a_fixed_order() {
         let mut baseline = WorldStateBaseline::default();
@@ -307,7 +320,8 @@ mod tests {
             [
                 ProjectContextState::ID,
                 AgentsMdState::ID,
-                SkillsCatalogState::ID
+                SkillsCatalogState::ID,
+                SandboxPolicyState::ID
             ]
         );
     }
@@ -371,7 +385,7 @@ mod tests {
         let retained = RetainedSections::default();
 
         let first = world.render_diff(&baseline, retained);
-        assert_eq!(first.len(), 3);
+        assert_eq!(first.len(), 4);
         let retried = world.render_diff(&baseline, retained);
         assert_eq!(retried, first);
 
@@ -393,7 +407,14 @@ mod tests {
         baseline.advance(&world, &project_only);
 
         let remaining = world.render_diff(&baseline, all_retained());
-        assert_eq!(ids(&remaining), [AgentsMdState::ID, SkillsCatalogState::ID]);
+        assert_eq!(
+            ids(&remaining),
+            [
+                AgentsMdState::ID,
+                SkillsCatalogState::ID,
+                SandboxPolicyState::ID
+            ]
+        );
     }
 
     // ---- §9.3 的四象限 ----
@@ -434,7 +455,7 @@ mod tests {
 
         let fragments = world.render_diff(&WorldStateBaseline::default(), all_retained());
 
-        assert_eq!(fragments.len(), 3);
+        assert_eq!(fragments.len(), 4);
         let agents = fragments
             .iter()
             .find(|fragment| fragment.section_id == AgentsMdState::ID)
@@ -457,12 +478,15 @@ mod tests {
         let fragments =
             world.render_diff(&WorldStateBaseline::default(), RetainedSections::default());
 
-        assert_eq!(ids(&fragments), [ProjectContextState::ID]);
+        assert_eq!(
+            ids(&fragments),
+            [ProjectContextState::ID, SandboxPolicyState::ID]
+        );
     }
 
     // ---- 投影扫描 ----
 
-    /// 扫描认得三个 section 各自的消息。
+    /// 扫描认得四个 section 各自的消息。
     #[test]
     fn the_scan_recognizes_each_section() {
         let retained = RetainedSections::scan(&[
@@ -471,6 +495,7 @@ mod tests {
             ),
             world_state_item("<project_instructions>\n规范\n</project_instructions>"),
             world_state_item("<available_skills>\n</available_skills>"),
+            world_state_item("<sandbox_policy>\nmode: auto\n</sandbox_policy>"),
         ]);
 
         assert_eq!(retained, all_retained());
