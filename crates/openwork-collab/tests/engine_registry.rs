@@ -9,6 +9,7 @@ use openwork_collab::computer::{
     },
     opencode::OpenCodeAdapter,
 };
+use openwork_sandbox::{EngineConfinement, SANDBOX_EXEC, SandboxEnvironment, Seatbelt};
 
 #[derive(Clone)]
 struct FakeEngineAdapter {
@@ -98,7 +99,11 @@ impl AgentEngineRuntime for FakeAgentRuntime {
 async fn registry_creates_one_stateful_runtime_per_agent() {
     let mut registry = EngineRegistry::new();
     registry
-        .register(OpenCodeAdapter::with_executable("unused-opencode"))
+        .register(OpenCodeAdapter::new(
+            "unused-opencode",
+            Seatbelt::probe(SANDBOX_EXEC),
+            PathBuf::from("/tmp/unused-user-data"),
+        ))
         .unwrap();
     registry.register(FakeEngineAdapter::new()).unwrap();
 
@@ -165,6 +170,8 @@ fn runtime_config(agent_id: &str) -> EngineRuntimeConfig {
     EngineRuntimeConfig {
         config_root: home.join("engine-config"),
         instructions_file: home.join("AGENTS.md"),
+        confinement: EngineConfinement::new(&SandboxEnvironment::detect(Vec::new()).unwrap())
+            .with_writable_root(&home),
         state_file: home.join("session.json"),
         context_fingerprint: "test-persona".to_string(),
         home,

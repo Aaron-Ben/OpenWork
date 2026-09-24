@@ -7,21 +7,17 @@ use std::time::Duration;
 
 use openwork_collab::computer::engine::{
     AgentEngineRuntime, ClassifyRequest, EngineAdapter, EngineAvailability, EngineError,
-    EngineRuntimeConfig, TurnRequest,
+    EngineRuntimeConfig, TurnRequest, TurnResult,
 };
 use openwork_collab::computer::opencode::OpenCodeAdapter;
+use openwork_sandbox::{EngineConfinement, SANDBOX_EXEC, SandboxEnvironment, Seatbelt};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn opencode_run_turn_uses_stdin_and_returns_resumable_structured_result() {
     let directory = tempfile::tempdir().unwrap();
     let executable = support::fake_opencode(&directory).await;
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "openai/gpt-5",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "openai/gpt-5").await;
 
     let result = runtime
         .run_turn(TurnRequest {
@@ -73,7 +69,7 @@ printf '%s\n' \
         .unwrap();
 
     let mut runtime = runtime_with_timeout(
-        OpenCodeAdapter::with_executable(executable),
+        adapter(executable, &directory),
         &directory,
         "test/model",
         None,
@@ -116,7 +112,7 @@ sleep 60
         .unwrap();
 
     let mut runtime = runtime_with_timeout(
-        OpenCodeAdapter::with_executable(executable),
+        adapter(executable, &directory),
         &directory,
         "test/model",
         Some(Duration::from_millis(50)),
@@ -161,12 +157,7 @@ exit 1
         .await
         .unwrap();
 
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
     let result = runtime
         .run_turn(TurnRequest {
             prompt: "reply".to_string(),
@@ -203,12 +194,7 @@ sleep 60
         .await
         .unwrap();
 
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         runtime.run_turn(TurnRequest {
@@ -248,12 +234,7 @@ exit 1
         .await
         .unwrap();
 
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
     let result = runtime
         .run_turn(TurnRequest {
             prompt: "reply".to_string(),
@@ -300,12 +281,13 @@ printf '%s\n' \
     tokio::fs::set_permissions(&executable, permissions)
         .await
         .unwrap();
-    let adapter = OpenCodeAdapter::with_executable(executable);
+    let adapter = adapter(executable, &directory);
 
     let result = adapter
         .classify(ClassifyRequest {
             cwd: directory.path().to_path_buf(),
             config_root: directory.path().join("config"),
+            confinement: confinement(&directory),
             prompt: r#"{"actionable":false}"#.to_string(),
             model: None,
             environment: Default::default(),
@@ -323,12 +305,7 @@ printf '%s\n' \
 async fn main_turn_config_loads_the_managed_agents_file_as_instructions() {
     let directory = tempfile::tempdir().unwrap();
     let executable = config_echoing_opencode(&directory).await;
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
 
     let result = runtime
         .run_turn(TurnRequest {
@@ -354,7 +331,7 @@ async fn main_turn_config_loads_the_managed_agents_file_as_instructions() {
 async fn classify_config_does_not_load_agent_instructions() {
     let directory = tempfile::tempdir().unwrap();
     let executable = config_echoing_opencode(&directory).await;
-    let adapter = OpenCodeAdapter::with_executable(executable);
+    let adapter = adapter(executable, &directory);
     let mut runtime = runtime(adapter.clone(), &directory, "test/model").await;
     runtime
         .run_turn(TurnRequest {
@@ -368,6 +345,7 @@ async fn classify_config_does_not_load_agent_instructions() {
         .classify(ClassifyRequest {
             cwd: directory.path().to_path_buf(),
             config_root: directory.path().join("config"),
+            confinement: confinement(&directory),
             prompt: "classify".to_string(),
             model: None,
             environment: Default::default(),
@@ -378,6 +356,150 @@ async fn classify_config_does_not_load_agent_instructions() {
 
     let config: serde_json::Value = serde_json::from_str(&result.text).unwrap();
     assert_eq!(config, serde_json::json!({"permission": {"*": "allow"}}));
+}
+
+/// 真实 OpenCode 找不到 `--session` 时 stdout 为空，只在 stderr 写 `Session not found`
+/// 并以 1 退出（opencode `cli/cmd/run.ts`）。adapter 必须清掉旧 session 并用新会话重跑，
+/// 否则每次轮询都会带着同一个失效的 id 失败。
+#[tokio::test]
+async fn a_stale_session_reported_only_on_stderr_starts_a_fresh_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = executable_script(
+        &directory,
+        "opencode-stale-session",
+        r#"#!/bin/sh
+cat >/dev/null
+case " $* " in
+  *" --session "*) echo 'Error: Session not found' >&2; exit 1 ;;
+esac
+printf '%s\n' \
+  '{"type":"step_start","sessionID":"ses_fresh"}' \
+  '{"type":"text","part":{"text":"fresh"}}'
+"#,
+    )
+    .await;
+    tokio::fs::write(
+        directory.path().join("session.json"),
+        r#"{"engine_id":"opencode","model":"test/model","context_fingerprint":"test-persona","session_id":"ses_stale","updated_at":"2026-09-24T00:00:00Z"}"#,
+    )
+    .await
+    .unwrap();
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
+
+    let result = turn(&mut runtime).await.unwrap();
+
+    assert_eq!(result.text, "fresh");
+    let session: serde_json::Value = serde_json::from_slice(
+        &tokio::fs::read(directory.path().join("session.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(session["session_id"], "ses_fresh");
+}
+
+/// collaboration.md §3.1：沙箱自检失败时 inventory 报错，Turn 也不会在沙箱外启动 OpenCode。
+#[tokio::test]
+async fn unavailable_sandbox_fails_closed_without_starting_opencode() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = executable_script(
+        &directory,
+        "opencode-marker",
+        &format!(
+            "#!/bin/sh\ntouch '{}'\n",
+            directory.path().join("started").display()
+        ),
+    )
+    .await;
+    let adapter = OpenCodeAdapter::new(
+        executable,
+        Seatbelt::probe(directory.path().join("missing-sandbox-exec")),
+        directory.path().join("user-data"),
+    );
+
+    assert!(matches!(
+        adapter.probe().await,
+        Err(EngineError::Sandbox(_))
+    ));
+    let mut runtime = runtime(adapter, &directory, "test/model").await;
+    let result = runtime
+        .run_turn(TurnRequest {
+            prompt: "work".to_string(),
+            cancellation: CancellationToken::new(),
+        })
+        .await;
+
+    assert!(matches!(result, Err(EngineError::Sandbox(_))));
+    assert!(!directory.path().join("started").exists());
+}
+
+/// collaboration.md §3.1：沙箱读不到用户的 OpenCode 数据目录，登录信息由 Computer 读出后
+/// 经 `OPENCODE_AUTH_CONTENT` 传入；用户没有登录过时不设置这个变量。
+#[tokio::test]
+async fn user_auth_reaches_opencode_through_the_environment() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = executable_script(
+        &directory,
+        "opencode-auth-echo",
+        r#"#!/bin/sh
+cat >/dev/null
+text=$(printf '%s' "${OPENCODE_AUTH_CONTENT-unset}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+printf '%s\n' \
+  '{"type":"step_start","sessionID":"ses_auth"}' \
+  "{\"type\":\"text\",\"part\":{\"text\":\"$text\"}}"
+"#,
+    )
+    .await;
+    let adapter = adapter(executable, &directory);
+    let mut runtime = runtime(adapter, &directory, "test/model").await;
+    assert_eq!(turn(&mut runtime).await.unwrap().text, "unset");
+    let auth = directory.path().join("user-data/opencode/auth.json");
+    tokio::fs::create_dir_all(auth.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&auth, r#"{"deepseek":{"type":"api","key":"sk-test"}}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        turn(&mut runtime).await.unwrap().text,
+        r#"{"deepseek":{"type":"api","key":"sk-test"}}"#
+    );
+}
+
+/// 登录信息进入环境变量，超过 64 KiB 时拒绝启动而不是截断。
+#[tokio::test]
+async fn oversized_user_auth_is_rejected_before_opencode_starts() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = executable_script(
+        &directory,
+        "opencode-marker",
+        &format!(
+            "#!/bin/sh\ntouch '{}'\n",
+            directory.path().join("started").display()
+        ),
+    )
+    .await;
+    let auth = directory.path().join("user-data/opencode/auth.json");
+    tokio::fs::create_dir_all(auth.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&auth, vec![b'x'; 64 * 1024 + 1])
+        .await
+        .unwrap();
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
+
+    let result = runtime
+        .run_turn(TurnRequest {
+            prompt: "work".to_string(),
+            cancellation: CancellationToken::new(),
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(EngineError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData
+    ));
+    assert!(!directory.path().join("started").exists());
 }
 
 #[tokio::test]
@@ -404,12 +526,7 @@ wait
     tokio::fs::set_permissions(&executable, permissions)
         .await
         .unwrap();
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
     let cancellation = CancellationToken::new();
     let pid_file = directory.path().join("pids");
     let pid_file_for_task = pid_file.clone();
@@ -474,10 +591,7 @@ exit 91
         .await
         .unwrap();
 
-    let inventory = OpenCodeAdapter::with_executable(executable)
-        .probe()
-        .await
-        .unwrap();
+    let inventory = adapter(executable, &directory).probe().await.unwrap();
     assert_eq!(inventory.availability, EngineAvailability::Available);
     assert!(!directory.path().join("unexpected-invocation").exists());
 }
@@ -485,7 +599,7 @@ exit 91
 #[tokio::test]
 async fn inventory_reports_a_missing_executable_without_starting_opencode() {
     let directory = tempfile::tempdir().unwrap();
-    let inventory = OpenCodeAdapter::with_executable(directory.path().join("not-installed"))
+    let inventory = adapter(directory.path().join("not-installed"), &directory)
         .probe()
         .await
         .unwrap();
@@ -516,12 +630,7 @@ printf '\n'
         .await
         .unwrap();
 
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         runtime.run_turn(TurnRequest {
@@ -563,12 +672,7 @@ exit 1
         .await
         .unwrap();
 
-    let mut runtime = runtime(
-        OpenCodeAdapter::with_executable(executable),
-        &directory,
-        "test/model",
-    )
-    .await;
+    let mut runtime = runtime(adapter(executable, &directory), &directory, "test/model").await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         runtime.run_turn(TurnRequest {
@@ -617,6 +721,51 @@ printf '%s\n' \
     executable
 }
 
+async fn turn(runtime: &mut Box<dyn AgentEngineRuntime>) -> Result<TurnResult, EngineError> {
+    runtime
+        .run_turn(TurnRequest {
+            prompt: "work".to_string(),
+            cancellation: CancellationToken::new(),
+        })
+        .await
+}
+
+async fn executable_script(
+    directory: &tempfile::TempDir,
+    name: &str,
+    script: &str,
+) -> std::path::PathBuf {
+    let executable = directory.path().join(name);
+    tokio::fs::write(&executable, script).await.unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+    executable
+}
+
+/// 在真实 Seatbelt 下运行；用户数据目录是测试目录里的 `user-data`。
+fn adapter(
+    executable: impl Into<std::path::PathBuf>,
+    directory: &tempfile::TempDir,
+) -> OpenCodeAdapter {
+    OpenCodeAdapter::new(
+        executable,
+        Seatbelt::probe(SANDBOX_EXEC),
+        directory.path().join("user-data"),
+    )
+}
+
+/// 测试目录建在系统临时根下，本来就可写；这里只是给出一个真实的围栏。
+fn confinement(directory: &tempfile::TempDir) -> EngineConfinement {
+    EngineConfinement::new(&SandboxEnvironment::detect(Vec::new()).unwrap())
+        .with_writable_root(directory.path())
+}
+
 async fn runtime(
     adapter: OpenCodeAdapter,
     directory: &tempfile::TempDir,
@@ -636,6 +785,7 @@ async fn runtime_with_timeout(
             home: directory.path().to_path_buf(),
             config_root: directory.path().join("config"),
             instructions_file: directory.path().join("AGENTS.md"),
+            confinement: confinement(directory),
             state_file: directory.path().join("session.json"),
             context_fingerprint: "test-persona".to_string(),
             model: model.to_string(),

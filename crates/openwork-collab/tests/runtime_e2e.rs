@@ -13,6 +13,7 @@ use openwork_collab::{
     protocol::{DesktopCommand, DesktopCommandRequest, DesktopCommandResult, request_id},
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
+use openwork_sandbox::{SANDBOX_EXEC, SandboxEnvironment, Seatbelt};
 use sqlx::{Executor, PgPool};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -111,9 +112,13 @@ async fn run_smoke(
     };
 
     let state = tempfile::tempdir().unwrap();
-    let engine_executable = match engine_executable {
-        Some(executable) => executable,
-        None => support::fake_opencode(&state).await,
+    // 真实 OpenCode 使用用户自己的登录信息；fake OpenCode 不需要。
+    let (engine_executable, user_data_home) = match engine_executable {
+        Some(executable) => (executable, real_user_data_home()),
+        None => (
+            support::fake_opencode(&state).await,
+            state.path().join("user-data"),
+        ),
     };
     let daemon_shutdown = CancellationToken::new();
     let daemon = ComputerDaemon::new(
@@ -123,12 +128,17 @@ async fn run_smoke(
             runtime_base_url: base_url.clone(),
             computer_secret,
             shim_executable: std::path::PathBuf::from(env!("CARGO_BIN_EXE_openwork")),
+            sandbox_environment: SandboxEnvironment::detect(Vec::new()).unwrap(),
             poll_interval: Duration::from_millis(100),
             roster_interval: Duration::from_millis(100),
             heartbeat_interval: Duration::from_millis(100),
             engine_rescan_interval: Duration::from_millis(250),
         },
-        EngineRegistry::single(OpenCodeAdapter::with_executable(engine_executable)),
+        EngineRegistry::single(OpenCodeAdapter::new(
+            engine_executable,
+            Seatbelt::probe(SANDBOX_EXEC),
+            user_data_home,
+        )),
     );
     let daemon_task_shutdown = daemon_shutdown.clone();
     let daemon_task = tokio::spawn(async move { daemon.run(daemon_task_shutdown).await });
@@ -244,4 +254,12 @@ async fn desktop_server_computer_and_real_opencode_smoke() {
         Duration::from_secs(180),
     )
     .await;
+}
+
+/// 用户自己的 XDG data 目录，真实 OpenCode 的登录信息在其中。
+fn real_user_data_home() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share"))
 }

@@ -16,6 +16,7 @@ use openwork_collab::{
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
+use openwork_sandbox::{SANDBOX_EXEC, SandboxEnvironment, Seatbelt};
 use sha2::{Digest, Sha256};
 use sqlx::{Executor, PgPool};
 use tokio_util::sync::CancellationToken;
@@ -219,12 +220,17 @@ async fn desired_state_reconciles_without_restart_and_keeps_persistent_home() {
             runtime_base_url: base_url.clone(),
             computer_secret,
             shim_executable: std::path::PathBuf::from(env!("CARGO_BIN_EXE_openwork")),
+            sandbox_environment: SandboxEnvironment::detect(Vec::new()).unwrap(),
             poll_interval: Duration::from_millis(100),
             roster_interval: Duration::from_millis(100),
             heartbeat_interval: Duration::from_millis(100),
             engine_rescan_interval: Duration::from_millis(250),
         },
-        EngineRegistry::single(OpenCodeAdapter::with_executable(executable)),
+        EngineRegistry::single(OpenCodeAdapter::new(
+            executable,
+            Seatbelt::probe(SANDBOX_EXEC),
+            directory.path().join("user-data"),
+        )),
     );
     let task_shutdown = daemon_shutdown.clone();
     let daemon_task = tokio::spawn(async move { daemon.run(task_shutdown).await });

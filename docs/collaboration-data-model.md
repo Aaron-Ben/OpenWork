@@ -272,7 +272,9 @@ Redis 不保存消息正文、Agent config、Board、Run 或待执行 Agenda que
 ├── agents/<agent-id>/
 │   ├── AGENTS.md
 │   ├── work/
-│   └── engines/<engine-id>/session.json
+│   └── engines/<engine-id>/
+│       ├── session.json
+│       └── data/                              Engine 自己的数据目录（XDG_DATA_HOME）
 └── runtime/<runtime-session-id>/
     ├── bin/openwork
     ├── agents/<agent-id>/runtime-token
@@ -285,7 +287,7 @@ Redis 不保存消息正文、Agent config、Board、Run 或待执行 Agenda que
 
 OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd 上方的 `AGENTS.md`。正式 Turn 的派生配置用 `instructions` 引用 `agents/<agent-id>/AGENTS.md` 的绝对路径，使 persona 与协作契约每轮进入系统提示词；分类调用使用单独的配置目录，不加载 persona。
 
-多个 Agent 的 `work` 彼此独立；它不是多个 Agent 共同操作同一个真实项目 checkout，也不是 OS 安全沙箱。Agent home、RuntimeSession 文件和 JWT 只提供应用层身份、状态与 API 权限隔离；同一 macOS 登录用户下的可信本机进程仍共享该用户的 OS 文件权限。
+多个 Agent 的 `work` 彼此独立；它不是多个 Agent 共同操作同一个真实项目 checkout。Engine 进程能读写哪些目录由 Seatbelt 约束，见 [collaboration.md §3.1](collaboration.md)。
 
 ## 10. 事务与并发不变量
 

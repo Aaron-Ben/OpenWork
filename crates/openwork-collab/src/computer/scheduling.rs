@@ -5,6 +5,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::engine::EngineError;
 
+/// 只有用户能解决的 Engine 失败（未登录、凭证无效）之后的暂停时长；
+/// 数字来自 Cumora `daemon.ts` 的 `ENGINE_BACKOFF_AFTER_OPERATOR_FIX_MS`。
+const OPERATOR_FIX_BACKOFF: Duration = Duration::from_secs(15 * 60);
+/// Engine 没有给出 retry-after 时的限流冷却。
+const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(60);
+
 #[derive(Clone)]
 pub struct RunnerResources {
     main_slots: Arc<Semaphore>,
@@ -115,13 +121,62 @@ impl AdaptivePacer {
     }
 }
 
+/// 一次失败的正式 Turn 之后，该 Agent 暂停多久才能再拉起 Engine；`None` 表示照常重试。
+///
+/// 失败的 Run 不推进 delivery，下一次轮询会再次触发同一批消息。不暂停的话，
+/// 未登录的 OpenCode 会在每次轮询时被重新拉起并留下一条失败 Run。
+pub(super) fn engine_backoff_after(error: &EngineError) -> Option<Duration> {
+    match error {
+        EngineError::RateLimited { retry_after, .. } => {
+            Some(retry_after.unwrap_or(RATE_LIMIT_BACKOFF))
+        }
+        EngineError::Unauthenticated { .. } => Some(OPERATOR_FIX_BACKOFF),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use tokio_util::sync::CancellationToken;
 
-    use super::RunnerResources;
+    use super::{OPERATOR_FIX_BACKOFF, RATE_LIMIT_BACKOFF, RunnerResources, engine_backoff_after};
+    use crate::computer::engine::EngineError;
+
+    /// 未登录这类失败重试也不会好，暂停 15 分钟；限流按 retry-after 冷却；其他失败照常重试。
+    #[test]
+    fn engine_failures_that_need_the_user_pause_the_agent_longer_than_rate_limits() {
+        let unauthenticated = EngineError::Unauthenticated {
+            detail: "not logged in".to_string(),
+        };
+        assert_eq!(
+            engine_backoff_after(&unauthenticated),
+            Some(OPERATOR_FIX_BACKOFF)
+        );
+        assert_eq!(OPERATOR_FIX_BACKOFF, Duration::from_secs(15 * 60));
+
+        let told = EngineError::RateLimited {
+            retry_after: Some(Duration::from_secs(7)),
+            detail: "429".to_string(),
+        };
+        assert_eq!(engine_backoff_after(&told), Some(Duration::from_secs(7)));
+        let untold = EngineError::RateLimited {
+            retry_after: None,
+            detail: "429".to_string(),
+        };
+        assert_eq!(engine_backoff_after(&untold), Some(RATE_LIMIT_BACKOFF));
+
+        for transient in [
+            EngineError::Process {
+                detail: "exit status 1".to_string(),
+            },
+            EngineError::Cancelled,
+            EngineError::Timeout { operation: "turn" },
+        ] {
+            assert_eq!(engine_backoff_after(&transient), None, "{transient}");
+        }
+    }
 
     #[tokio::test]
     async fn local_resources_allow_two_agents_but_bound_a_third_main_turn() {

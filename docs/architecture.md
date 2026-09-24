@@ -18,7 +18,7 @@ openwork-sandbox          → 无 OpenWork 依赖
 openwork-models           → 无 OpenWork 依赖
 openwork-credentials      → 无 OpenWork 依赖
 
-openwork-collab           → 独立协作分支；内部单向依赖见下文
+openwork-collab           → openwork-sandbox；除此之外是独立协作分支，内部单向依赖见下文
 ```
 
 **这个方向不可逆转。** 具体禁止：
@@ -93,9 +93,10 @@ src/
 | 模式（`auto` / `accept-edits`，子 Agent 的角色上限也取这两者之一）与四档路径的**唯一定义**：可写根、受保护子路径、凭据禁读 | 启动工具进程——`ProcessBackend` 负责。唯一的例外是启动自检：它自己运行两次 `sandbox-exec`，那是一次性的环境检查，不是 Tool Call |
 | Seatbelt profile 与 `sandbox-exec` argv；越界请求的路径校验（数量、绝对路径、硬保护、过宽、是否带来新权限） | 越界是否批准、`justification` 是否为空——Core 负责 |
 | 自检结论（可用 / 不可用及原因） | 危险命令检测——它关心 bash 语法，不关心沙箱，留在 `openwork-tools` |
+| 协作 Engine 进程的围栏 `EngineConfinement`：可写根、`$HOME` 下的可读例外及其 Seatbelt profile（[collaboration.md §3.1](collaboration.md)） | 围栏里放哪些目录——协作 Computer 按 Agent home 布局决定 |
 | 拒绝识别 | 会话模式的存储——Core 负责 |
 
-**单独成 crate 的理由是多个消费者共享同一份事实**：`openwork-tools` 用它包装 bash、做文件工具围栏；`openwork-core` 用它盖章每次调用的策略、校验越界请求、写 Trace 与策略上下文；`openwork-agent` 用它声明角色的模式上限。三处若各自持有路径知识，"bash 能写而 write 工具不能写"这类不一致就会出现——对等测试（[permissions.md §2.4](permissions.md)）也只有在同一个 crate 提供推导函数时才有意义。
+**单独成 crate 的理由是多个消费者共享同一份事实**：`openwork-tools` 用它包装 bash、做文件工具围栏；`openwork-collab` 用它把本机 Engine 进程关进 Seatbelt，与工作台共用 profile 生成和路径转义；`openwork-core` 用它盖章每次调用的策略、校验越界请求、写 Trace 与策略上下文；`openwork-agent` 用它声明角色的模式上限。三处若各自持有路径知识，"bash 能写而 write 工具不能写"这类不一致就会出现——对等测试（[permissions.md §2.4](permissions.md)）也只有在同一个 crate 提供推导函数时才有意义。
 
 **无 OpenWork 依赖**，只依赖标准库与序列化；平台差异（P2 的 Linux 后端）也收在它内部。
 
@@ -115,7 +116,7 @@ computer/   ← bin/openwork-collab.rs
 protocol/   ← bin/openwork.rs
 ```
 
-`protocol/` 只保存 Server、Computer、shim 与 Desktop host 共同使用的线协议，不包含 SQL、Redis、进程管理、Engine 原生事件或业务判断。`server/` 是协作世界的唯一持久事实写者，拥有 loopback HTTP/SSE、RuntimeSession、房间/消息/看板/Climate、Run、Agenda、PostgreSQL 与 Redis coordination；它不启动 Engine。`computer/` 是 macOS 本机 BYOA 宿主，拥有 desired-state reconcile、`AgentRunner`、home、shim、`EngineRegistry`、`EngineAdapter` interface 与生产 `OpenCodeAdapter`；它不直接使用 SQLx、Redis、`openwork-core` 或 `openwork-credentials`，也不持有 Server 数据库凭证。
+`protocol/` 只保存 Server、Computer、shim 与 Desktop host 共同使用的线协议，不包含 SQL、Redis、进程管理、Engine 原生事件或业务判断。`server/` 是协作世界的唯一持久事实写者，拥有 loopback HTTP/SSE、RuntimeSession、房间/消息/看板/Climate、Run、Agenda、PostgreSQL 与 Redis coordination；它不启动 Engine。`computer/` 是 macOS 本机 BYOA 宿主，拥有 desired-state reconcile、`AgentRunner`、home、shim、`EngineRegistry`、`EngineAdapter` interface 与生产 `OpenCodeAdapter`，并经 `openwork-sandbox` 在 Seatbelt 下启动 Engine；它不直接使用 SQLx、Redis、`openwork-core` 或 `openwork-credentials`，也不持有 Server 数据库凭证。
 
 目标进程与通信边界：
 

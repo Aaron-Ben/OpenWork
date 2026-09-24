@@ -147,6 +147,7 @@ async fn a_failed_runner_is_rebuilt_without_waiting_for_the_roster_poll() {
             runtime_base_url: base_url.clone(),
             computer_secret,
             shim_executable: std::path::PathBuf::from(env!("CARGO_BIN_EXE_openwork")),
+            sandbox_environment: openwork_sandbox::SandboxEnvironment::detect(Vec::new()).unwrap(),
             poll_interval: Duration::from_millis(50),
             roster_interval: Duration::from_secs(60),
             heartbeat_interval: Duration::from_millis(100),

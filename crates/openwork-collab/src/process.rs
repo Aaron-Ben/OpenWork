@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
+use openwork_sandbox::{SANDBOX_EXEC, SandboxEnvironment, Seatbelt};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
@@ -57,6 +58,13 @@ pub async fn run_server_process() -> Result<(), ProcessError> {
 pub async fn run_computer_process() -> Result<(), ProcessError> {
     let bootstrap = read_bootstrap::<ComputerProcessBootstrap>().await?;
     let shutdown = CancellationToken::new();
+    // 读取主目录并做一次 Seatbelt 自检，两者都会阻塞地访问文件系统或启动 sandbox-exec。
+    let (sandbox_environment, sandbox) = tokio::task::spawn_blocking(|| {
+        let environment = SandboxEnvironment::detect(Vec::new())?;
+        Ok::<_, std::io::Error>((environment, Seatbelt::probe(SANDBOX_EXEC)))
+    })
+    .await
+    .map_err(std::io::Error::other)??;
     let daemon = ComputerDaemon::new(
         ComputerOptions {
             openwork_root: PathBuf::from(&bootstrap.openwork_root),
@@ -64,13 +72,16 @@ pub async fn run_computer_process() -> Result<(), ProcessError> {
             runtime_base_url: bootstrap.base_url,
             computer_secret: bootstrap.computer_secret,
             shim_executable: PathBuf::from(bootstrap.shim_executable),
+            sandbox_environment,
             poll_interval: Duration::from_secs(20),
             roster_interval: Duration::from_secs(60),
             heartbeat_interval: Duration::from_secs(30),
             engine_rescan_interval: Duration::from_secs(5 * 60),
         },
-        EngineRegistry::single(OpenCodeAdapter::with_executable(
+        EngineRegistry::single(OpenCodeAdapter::new(
             bootstrap.engine_executable,
+            sandbox,
+            user_data_home()?,
         )),
     );
     write_ready(&ComputerProcessReady {
@@ -90,6 +101,14 @@ pub async fn run_computer_process() -> Result<(), ProcessError> {
         }
     }
     Ok(())
+}
+
+/// 用户自己的 XDG data 目录（`$XDG_DATA_HOME`，缺省为 `~/.local/share`）。
+fn user_data_home() -> Result<PathBuf, ProcessError> {
+    match std::env::var_os("XDG_DATA_HOME") {
+        Some(path) if !path.is_empty() => Ok(PathBuf::from(path)),
+        _ => Ok(PathBuf::from(std::env::var("HOME")?).join(".local/share")),
+    }
 }
 
 async fn read_bootstrap<T: serde::de::DeserializeOwned>() -> Result<T, ProcessError> {

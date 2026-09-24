@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+use openwork_sandbox::SandboxEnvironment;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -35,6 +36,8 @@ pub struct ComputerOptions {
     pub runtime_base_url: String,
     pub computer_secret: String,
     pub shim_executable: PathBuf,
+    /// 主目录与临时根，Engine 沙箱据此划定可读写范围（collaboration.md §3.1）。
+    pub sandbox_environment: SandboxEnvironment,
     pub poll_interval: Duration,
     pub roster_interval: Duration,
     pub heartbeat_interval: Duration,
@@ -106,6 +109,7 @@ impl ComputerDaemon {
             &self.options.runtime_session_id,
             self.options.shim_executable,
             self.options.runtime_base_url,
+            self.options.sandbox_environment,
         )
         .await?;
         let resources = RunnerResources::local();
@@ -768,6 +772,7 @@ impl RunnerFactory<'_> {
                 home: home.work_root.clone(),
                 config_root: home.config_root.clone(),
                 instructions_file: home.instructions_file.clone(),
+                confinement: home.confinement.clone(),
                 state_file: home.state_file.clone(),
                 context_fingerprint: home.context_fingerprint.clone(),
                 model: assignment.main_model_id.clone(),

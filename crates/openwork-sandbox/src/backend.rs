@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::confinement::EngineConfinement;
 use crate::policy::{Actor, SandboxPolicy};
 use crate::probe::{SandboxStatus, probe};
 use crate::seatbelt::SeatbeltProfile;
@@ -53,6 +54,23 @@ impl Seatbelt {
 
     pub fn sandbox_exec(&self) -> &Path {
         &self.sandbox_exec
+    }
+
+    /// 在 `confinement` 内运行 `command` 的 argv（collaboration.md §3.1）；自检失败时返回原因，
+    /// 调用方不得退回无沙箱运行。
+    pub fn confine(
+        &self,
+        confinement: &EngineConfinement,
+        command: &[String],
+    ) -> Result<Vec<String>, SandboxUnavailable> {
+        match &self.status {
+            SandboxStatus::Available => {
+                Ok(SeatbeltProfile::confined(confinement).wrap(&self.sandbox_exec, command))
+            }
+            SandboxStatus::Unavailable { reason } => Err(SandboxUnavailable {
+                reason: reason.clone(),
+            }),
+        }
     }
 }
 

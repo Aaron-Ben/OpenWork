@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::confinement::EngineConfinement;
 use crate::policy::{Actor, GrantScope, PathGrant, SandboxPolicy};
 use crate::tiers;
 
@@ -57,6 +58,42 @@ impl SeatbeltProfile {
                 ));
             }
         }
+        builder.finish()
+    }
+
+    /// 生成把一个协作 Agent 的 Engine 进程树关进 `confinement` 的 profile（collaboration.md §3.1）。
+    ///
+    /// `$HOME` 之内只拒绝 `file-read-data`（读内容、列目录），不拒绝 `stat`：解析 Agent
+    /// 目录的上级路径、`realpath` 都要读上级目录的元数据。
+    pub fn confined(confinement: &EngineConfinement) -> Self {
+        let mut builder = Builder::default();
+        builder.line("(version 1)");
+        builder.line("(allow default)");
+        builder.line("(deny file-write*)");
+        builder.allow_devices();
+        let writable = confinement
+            .writable_roots()
+            .map(Path::to_path_buf)
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|root| builder.subpath(root))
+            .collect::<Vec<_>>();
+        if !writable.is_empty() {
+            builder.line(&format!("(allow file-write* {})", writable.join(" ")));
+        }
+        let home = builder.subpath(confinement.home());
+        let exceptions = confinement
+            .home_read_exceptions()
+            .map(Path::to_path_buf)
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|path| format!("(require-not {})", builder.subpath(path)))
+            .collect::<Vec<_>>();
+        builder.line(&format!(
+            "(deny file-read-data (require-all {home}{}{}))",
+            if exceptions.is_empty() { "" } else { " " },
+            exceptions.join(" ")
+        ));
         builder.finish()
     }
 
@@ -206,6 +243,52 @@ mod tests {
                 vec![PathBuf::from("/home/me/.agents/skills")],
             )),
         )
+    }
+
+    /// collaboration.md §3.1：写只放行临时根与 Agent 根；`$HOME` 内只拒绝读内容，例外逐条扣除；
+    /// 路径只经 `-D` 参数进入。
+    #[test]
+    fn engine_confinement_profile_names_every_path_only_as_a_parameter() {
+        let environment = SandboxEnvironment::new(
+            PathBuf::from("/home/me"),
+            vec![PathBuf::from("/private/tmp")],
+            Vec::new(),
+        );
+        let agent = r#"/home/me/.openwork/agents/a"b (allow default)"#;
+        let confinement = EngineConfinement::new(&environment)
+            .with_writable_root(Path::new(agent))
+            .with_readable_path(Path::new(
+                "/home/me/.openwork/runtime/s/agents/a/runtime-token",
+            ));
+
+        let profile = SeatbeltProfile::confined(&confinement);
+
+        assert!(!profile.text.contains("/home/me"));
+        assert!(!profile.text.contains("/private/tmp"));
+        let name = |value: &str| {
+            let (name, _) = profile
+                .parameters
+                .iter()
+                .find(|(_, parameter)| parameter == value)
+                .unwrap_or_else(|| panic!("missing parameter {value}"));
+            name.clone()
+        };
+        let (home, temp, root, token) = (
+            name("/home/me"),
+            name("/private/tmp"),
+            name(agent),
+            name("/home/me/.openwork/runtime/s/agents/a/runtime-token"),
+        );
+        assert!(profile.text.contains(&format!(
+            "(allow file-write* (subpath (param \"{temp}\")) (subpath (param \"{root}\")))"
+        )));
+        assert!(profile.text.contains(&format!(
+            "(deny file-read-data (require-all (subpath (param \"{home}\")) \
+             (require-not (subpath (param \"{temp}\"))) \
+             (require-not (subpath (param \"{root}\"))) \
+             (require-not (subpath (param \"{token}\")))))"
+        )));
+        assert!(!profile.text.contains("deny file-read*"));
     }
 
     #[test]

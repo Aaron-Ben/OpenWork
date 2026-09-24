@@ -114,7 +114,22 @@ Agent JWT 至少携带 Agent ID、RuntimeSession ID 和过期时间。Computer �
 
 Desktop、Computer、Agent credential 不能跨 namespace 互换。
 
-这些凭证与每个 Agent 的独立 home 是**应用层逻辑隔离**，不是 macOS 安全沙箱。Computer、Runner、Engine 和 shim 都属于同一登录用户下的可信本机进程；被攻陷或恶意的本机 Engine 进程仍可能读取该用户有权读取的其他文件。JWT 负责限制 Server API 中“以哪个 Agent、哪个 RuntimeSession 做什么”，不负责建立 OS 级机密边界。
+JWT 负责限制 Server API 中“以哪个 Agent、哪个 RuntimeSession 做什么”；文件边界由 §3.1 的 Engine 沙箱负责。
+
+### 3.1 Engine 沙箱
+
+Engine 进程（OpenCode 及它启动的全部子进程，包括 shim）在 macOS Seatbelt 下运行，规则由 `openwork-sandbox::EngineConfinement` 生成：
+
+| 访问 | 放行 | 其余 |
+|---|---|---|
+| 写 | 本 Agent 的 `agents/<id>/`、`runtime/<session-id>/derived/<id>/`、临时目录、可写设备 | 拒绝 |
+| 读文件内容 | `$HOME` 之外全部可读；`$HOME` 之内只有本 Agent 的 `agents/<id>/`、`derived/<id>/`、本 Agent 的 `runtime-token`、`runtime/<session-id>/bin/`、shim 与 Engine 可执行文件 | `$HOME` 之内其余拒绝，包括其他 Agent 的目录与 token、用户自己的 OpenCode 数据和凭证目录 |
+| 网络 | 放行：Engine 自己要连模型服务商 | — |
+
+- `$HOME` 内只拒绝读取**内容**（`file-read-data`，含列目录），不拒绝 `stat`，否则解析 Agent 目录的上级路径会失败。
+- 每个 Agent 使用独立的 OpenCode 数据目录 `agents/<id>/engines/opencode/data`（`XDG_DATA_HOME`）。登录信息由 Computer 在沙箱外、每次启动 OpenCode 前读取用户的 `opencode/auth.json`，经 `OPENCODE_AUTH_CONTENT` 传入，因此用户重新登录后下一次 Turn 即生效。登录文件超过 64 KiB 时拒绝启动 OpenCode：环境变量与 argv 共用 macOS 的 1 MiB `ARG_MAX`，不截断。切换到独立数据目录后，旧 session id 在新目录中不存在，OpenCode 报 `Session not found` 时按 session 失效处理，自动开新会话。
+- Computer 启动时做一次沙箱自检。不可用时 OpenCode 的 inventory 为 error，任何 Runner 都不启动，不退回无沙箱运行。
+- 沙箱挡不住的：模型能看到本 Agent 的 JWT 与 Provider 登录信息，因为它们必须进入同一个进程树；OpenCode 必须是 `$HOME` 之外、或单文件的可执行文件（Homebrew、官方安装脚本），依赖 `$HOME` 下解释器的安装方式（如 nvm 里的 npm 包）无法在沙箱内启动。
 
 ## 4. HTTP 与 SSE seam
 
@@ -286,6 +301,7 @@ Redis 协调不可用时 Agenda 关闭本次尝试。Card-focused Agenda Run 可
 | Redis Pub/Sub 不可用 | 消息仍持久；即时 wake 可丢失，poll 恢复 |
 | Redis 安全协调不可用 | HELD/Agenda 等需要原子协调的动作按各自规则拒绝或关闭 |
 | Engine rate limit | 记录结构化错误与 retry-after，pacer 延后后续调用 |
+| Engine 沙箱自检失败 | OpenCode inventory 为 error 并显示原因，不启动任何 Runner |
 | Engine 未登录或凭证无效 | Run 记为失败，该 Agent 暂停 15 分钟（聊天与 Agenda 共用），其他 Agent 不受影响 |
 | Runner panic/异常退出 | Computer 立即进入有界指数退避重建，不等待 roster poll；重复失败仍可观测且不形成紧循环 |
 | Engine 忽略取消 | 先终止进程组，超时后强制结束子进程 |
@@ -304,6 +320,7 @@ Redis 协调不可用时 Agenda 关闭本次尝试。Card-focused Agenda Run 可
 7. User deterministic、Agent triage、HELD、Direct Room 与 Climate 权限；
 8. Board 并发 self-assign、并发 move、terminal 与 Agenda；
 9. OpenCode rate limit、session invalid、输出上限、敏感信息脱敏、取消和强制终止；
-10. opt-in 的真实 OpenCode smoke。
+10. Engine 沙箱：Engine 进程只能写本 Agent 的目录，读不到 `$HOME` 下其他 Agent 的目录与 token，沙箱不可用时不启动；
+11. opt-in 的真实 OpenCode smoke。
 
 命令见 [`crates/openwork-collab/README.md`](../crates/openwork-collab/README.md)。存储约束见 [collaboration-data-model.md](collaboration-data-model.md)，Desktop 投影见 [collaboration-desktop.md](collaboration-desktop.md)。

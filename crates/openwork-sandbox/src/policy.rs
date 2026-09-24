@@ -171,7 +171,7 @@ const GO_CACHE_VARIABLE: &str = "GOCACHE";
 /// 临时根下 OpenWork 私有缓存的目录名。
 const PRIVATE_CACHE_DIRECTORY: &str = "openwork";
 
-fn canonical_or_lexical(path: &Path) -> PathBuf {
+pub(crate) fn canonical_or_lexical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 

@@ -21,6 +21,9 @@ fn one_local_engine_path_keeps_separate_server_and_computer_facades() {
     assert!(!computer.contains("redis::"));
     let server = source_text(&crate_root.join("src/server"));
     assert!(!server.contains("Command::new"));
+    // Engine 沙箱只属于 Computer；Server 不启动 Engine，也就不需要它（architecture.md §1）。
+    assert!(!server.contains("openwork_sandbox"));
+    assert!(computer.contains("openwork_sandbox"));
     assert!(crate_root.join("src/protocol/desktop.rs").exists());
     assert!(crate_root.join("src/protocol/computer.rs").exists());
     assert!(crate_root.join("src/protocol/agent.rs").exists());

@@ -1,11 +1,16 @@
+//! OpenCode adapter：一次性 `opencode run --format json`，输出解析、session 延续与错误归一化。
+//! 启动所需的环境（可执行文件、沙箱 argv、派生配置、登录信息）在 [`launch`]。
+
 use std::{
-    collections::BTreeMap,
     path::PathBuf,
     process::{ExitStatus, Stdio},
     time::Duration,
 };
 
 use async_trait::async_trait;
+use openwork_sandbox::{
+    EngineConfinement, SandboxBackend, SandboxStatus, SandboxUnavailable, Seatbelt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{
@@ -21,24 +26,25 @@ use super::engine::{
     TurnResult,
 };
 
+mod launch;
+
 const TRIAGE_AGENT: &str = "openwork-triage";
 const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 1024 * 1024;
 const MAX_JSONL_LINE_BYTES: usize = 1024 * 1024;
 const ERROR_TAIL_BYTES: usize = 16 * 1024;
-const INVENTORY_TIMEOUT: Duration = Duration::from_secs(3);
 const CLASSIFY_TIMEOUT: Duration = Duration::from_secs(60);
-/// classify 专用的 `XDG_CONFIG_HOME` 子目录。OpenCode 会拼接各层配置里的
-/// `instructions`，与主 Turn 共用配置目录就会把 Agent persona 带进分类调用。
-const CLASSIFY_CONFIG_DIR: &str = "classify";
 
 #[derive(Clone, Debug)]
 pub struct OpenCodeAdapter {
     executable: PathBuf,
+    sandbox: Seatbelt,
+    user_data_home: PathBuf,
 }
 
 struct ExecutionRequest {
     cwd: PathBuf,
+    confinement: EngineConfinement,
     prompt: String,
     args: Vec<String>,
     model: Option<String>,
@@ -75,16 +81,14 @@ struct SessionMetadata {
     updated_at: String,
 }
 
-impl Default for OpenCodeAdapter {
-    fn default() -> Self {
-        Self::with_executable("opencode")
-    }
-}
-
 impl OpenCodeAdapter {
-    pub fn with_executable(executable: impl Into<PathBuf>) -> Self {
+    /// `executable` 是命令名或路径。每个 OpenCode 进程都在 `sandbox` 内启动（collaboration.md §3.1）；
+    /// `user_data_home` 是用户自己的 XDG data 目录，登录信息从其中的 `opencode/auth.json` 读取。
+    pub fn new(executable: impl Into<PathBuf>, sandbox: Seatbelt, user_data_home: PathBuf) -> Self {
         Self {
             executable: executable.into(),
+            sandbox,
+            user_data_home,
         }
     }
 
@@ -93,9 +97,15 @@ impl OpenCodeAdapter {
             .args
             .windows(2)
             .any(|arguments| arguments[0] == "--session" && !arguments[1].is_empty());
-        let mut command = Command::new(&self.executable);
+        let argv = self
+            .confined_argv(request.confinement, request.args)
+            .await?;
+        let (program, arguments) = argv.split_first().ok_or_else(|| EngineError::Process {
+            detail: "sandbox produced an empty command".to_string(),
+        })?;
+        let mut command = Command::new(program);
         command
-            .args(request.args)
+            .args(arguments)
             .current_dir(&request.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -105,6 +115,10 @@ impl OpenCodeAdapter {
         command.process_group(0);
         if let Some(config_content) = request.config_content {
             command.env("OPENCODE_CONFIG_CONTENT", config_content);
+        }
+        // 沙箱读不到用户自己的 OpenCode 数据目录，登录信息由 Computer 在沙箱外读出后传入。
+        if let Some(auth) = self.user_auth().await? {
+            command.env("OPENCODE_AUTH_CONTENT", auth);
         }
         let mut child = command.spawn().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -173,14 +187,16 @@ impl OpenCodeAdapter {
         });
         let stderr = redact_error_tail(&output.stderr_tail, &request.cwd);
         if resuming {
-            let detail = match &parsed {
-                Err(error) => Some(error.to_string()),
-                Ok(_) if !output.status.success() => Some(stderr.clone()),
-                Ok(_) => None,
-            };
-            if let Some(detail) = detail
-                && session_invalid_text(&detail)
-            {
+            // 真实 OpenCode 找不到 session 时 stdout 为空、只写 stderr，所以两处都要看。
+            let failed = !output.status.success();
+            let invalid = [
+                parsed.as_ref().err().map(ToString::to_string),
+                failed.then(|| stderr.clone()),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|detail| session_invalid_text(detail));
+            if let Some(detail) = invalid {
                 return Err(EngineError::SessionInvalid { detail });
             }
         }
@@ -449,37 +465,22 @@ impl EngineAdapter for OpenCodeAdapter {
     }
 
     async fn probe(&self) -> Result<EngineInventory, EngineError> {
-        let mut command = Command::new("/usr/bin/which");
-        command
-            .arg(&self.executable)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        let status = tokio::time::timeout(INVENTORY_TIMEOUT, command.status())
-            .await
-            .map_err(|_| EngineError::Timeout {
-                operation: "inventory scan",
-            })??;
-        let availability = match status.code() {
-            Some(0) => EngineAvailability::Available,
-            Some(1) => EngineAvailability::Missing,
-            _ => {
-                return Err(EngineError::Process {
-                    detail: format!("/usr/bin/which failed with {status}"),
-                });
+        if let SandboxStatus::Unavailable { reason } = self.sandbox.status() {
+            return Err(SandboxUnavailable {
+                reason: reason.clone(),
             }
+            .into());
+        }
+        let availability = match self.locate().await? {
+            Some(_) => EngineAvailability::Available,
+            None => EngineAvailability::Missing,
         };
         Ok(EngineInventory { availability })
     }
 
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError> {
-        let environment = prepare_environment(
-            &request.config_root.join(CLASSIFY_CONFIG_DIR),
-            None,
-            request.environment,
-        )
-        .await?;
+        let environment =
+            launch::classify_environment(&request.config_root, request.environment).await?;
         let mut args = vec![
             "run".to_string(),
             "--pure".to_string(),
@@ -494,10 +495,11 @@ impl EngineAdapter for OpenCodeAdapter {
         let result = self
             .execute(ExecutionRequest {
                 cwd: request.cwd,
+                confinement: request.confinement,
                 prompt: request.prompt,
                 args,
                 model: request.model,
-                config_content: Some(triage_config_content()),
+                config_content: Some(launch::triage_config_content()),
                 environment,
                 cancellation: request.cancellation,
                 absolute_timeout: Some(CLASSIFY_TIMEOUT),
@@ -515,9 +517,9 @@ impl EngineAdapter for OpenCodeAdapter {
         &self,
         mut config: EngineRuntimeConfig,
     ) -> Result<Box<dyn AgentEngineRuntime>, EngineError> {
-        config.environment = prepare_environment(
+        config.environment = launch::turn_environment(
             &config.config_root,
-            Some(&config.instructions_file),
+            &config.instructions_file,
             config.environment,
         )
         .await?;
@@ -550,6 +552,7 @@ impl OpenCodeRuntime {
         self.adapter
             .execute(ExecutionRequest {
                 cwd: self.config.home.clone(),
+                confinement: self.config.confinement.clone(),
                 prompt,
                 args,
                 model: Some(self.config.model.clone()),
@@ -588,43 +591,6 @@ impl AgentEngineRuntime for OpenCodeRuntime {
     async fn shutdown(&mut self) -> Result<(), EngineError> {
         Ok(())
     }
-}
-
-/// 写入 OpenWork 派生的全局 OpenCode 配置，并返回让 OpenCode 只读这份配置的环境。
-///
-/// `OPENCODE_DISABLE_PROJECT_CONFIG` 同时关掉了 cwd 上方 AGENTS.md 的自动加载，
-/// 所以 `instructions` 必须写成绝对路径（opencode `session/instruction.ts`）。
-async fn prepare_environment(
-    config_home: &std::path::Path,
-    instructions: Option<&std::path::Path>,
-    mut environment: BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, EngineError> {
-    let mut config = serde_json::json!({"permission": {"*": "allow"}});
-    if let Some(instructions) = instructions {
-        let instructions = instructions.to_str().ok_or_else(|| {
-            EngineError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Agent instructions path is not valid UTF-8",
-            ))
-        })?;
-        config["instructions"] = serde_json::json!([instructions]);
-    }
-    let opencode_config = config_home.join("opencode");
-    secure_directory(&opencode_config).await?;
-    atomic_write(
-        &opencode_config.join("opencode.json"),
-        config.to_string().as_bytes(),
-    )
-    .await?;
-    environment.insert(
-        "XDG_CONFIG_HOME".to_string(),
-        config_home.to_string_lossy().into_owned(),
-    );
-    environment.insert(
-        "OPENCODE_DISABLE_PROJECT_CONFIG".to_string(),
-        "1".to_string(),
-    );
-    Ok(environment)
 }
 
 async fn load_session(config: &EngineRuntimeConfig) -> Result<Option<String>, EngineError> {
@@ -704,20 +670,6 @@ async fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), Engine
     drop(file);
     tokio::fs::rename(temporary, path).await?;
     Ok(())
-}
-
-fn triage_config_content() -> String {
-    serde_json::json!({
-        "agent": {
-            TRIAGE_AGENT: {
-                "description": "OpenWork local classifier (tool-free)",
-                "mode": "primary",
-                "prompt": "Return only the requested JSON decision. Do not call tools.",
-                "permission": {"*": "deny"}
-            }
-        }
-    })
-    .to_string()
 }
 
 fn parse_output(stdout: &[u8], model: Option<String>) -> Result<ExecutionResult, EngineError> {
@@ -858,6 +810,13 @@ mod tests {
             home: directory.path().join("work"),
             config_root: directory.path().join("config"),
             instructions_file: directory.path().join("AGENTS.md"),
+            confinement: openwork_sandbox::EngineConfinement::new(
+                &openwork_sandbox::SandboxEnvironment::new(
+                    directory.path().to_path_buf(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             state_file,
             context_fingerprint: "new-context".to_string(),
             model: "new/model".to_string(),

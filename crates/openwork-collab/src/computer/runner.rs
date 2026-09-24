@@ -20,17 +20,12 @@ use super::{
         TurnResult,
     },
     home::{AgentHome, HomeError},
-    scheduling::RunnerResources,
+    scheduling::{RunnerResources, engine_backoff_after},
     triage::parse_triage,
 };
 
 const AGENDA_QUIET_WINDOW: Duration = Duration::from_secs(90);
 const AGENDA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
-/// 只有用户能解决的 Engine 失败（未登录、凭证无效）之后的暂停时长；
-/// 数字来自 Cumora `daemon.ts` 的 `ENGINE_BACKOFF_AFTER_OPERATOR_FIX_MS`。
-const OPERATOR_FIX_BACKOFF: Duration = Duration::from_secs(15 * 60);
-/// Engine 没有给出 retry-after 时的限流冷却。
-const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(60);
 
 pub struct AgentRunner {
     assignment: AgentAssignment,
@@ -246,6 +241,7 @@ impl AgentRunner {
                     .classify(ClassifyRequest {
                         cwd: self.home.work_root.clone(),
                         config_root: self.home.config_root.clone(),
+                        confinement: self.home.confinement.clone(),
                         prompt,
                         model: Some(payload.model.clone()),
                         environment: self.home.environment.clone(),
@@ -465,6 +461,7 @@ impl AgentRunner {
                 .classify(ClassifyRequest {
                     cwd: self.home.work_root.clone(),
                     config_root: self.home.config_root.clone(),
+                    confinement: self.home.confinement.clone(),
                     prompt: payload.classify_prompt,
                     model: Some(self.assignment.triage_model_id.clone()),
                     environment: self.home.environment.clone(),
@@ -680,20 +677,6 @@ async fn debounce_wakes(wakes: &mut mpsc::Receiver<()>, shutdown: &CancellationT
     }
 }
 
-/// 一次失败的正式 Turn 之后，该 Agent 暂停多久才能再拉起 Engine；`None` 表示照常重试。
-///
-/// 失败的 Run 不推进 delivery，下一次轮询会再次触发同一批消息。不暂停的话，
-/// 未登录的 OpenCode 会在每次轮询时被重新拉起并留下一条失败 Run。
-fn engine_backoff_after(error: &EngineError) -> Option<Duration> {
-    match error {
-        EngineError::RateLimited { retry_after, .. } => {
-            Some(retry_after.unwrap_or(RATE_LIMIT_BACKOFF))
-        }
-        EngineError::Unauthenticated { .. } => Some(OPERATOR_FIX_BACKOFF),
-        _ => None,
-    }
-}
-
 fn token_needs_refresh(expires_at: i64, now: i64) -> bool {
     expires_at <= now + 5 * 60
 }
@@ -793,45 +776,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
-    use super::{
-        OPERATOR_FIX_BACKOFF, RATE_LIMIT_BACKOFF, agenda_due, build_prompt, engine_backoff_after,
-        next_trigger, token_needs_refresh,
-    };
-    use crate::computer::engine::EngineError;
-
-    /// 未登录这类失败重试也不会好，暂停 15 分钟；限流按 retry-after 冷却；其他失败照常重试。
-    #[test]
-    fn engine_failures_that_need_the_user_pause_the_agent_longer_than_rate_limits() {
-        let unauthenticated = EngineError::Unauthenticated {
-            detail: "not logged in".to_string(),
-        };
-        assert_eq!(
-            engine_backoff_after(&unauthenticated),
-            Some(OPERATOR_FIX_BACKOFF)
-        );
-        assert_eq!(OPERATOR_FIX_BACKOFF, Duration::from_secs(15 * 60));
-
-        let told = EngineError::RateLimited {
-            retry_after: Some(Duration::from_secs(7)),
-            detail: "429".to_string(),
-        };
-        assert_eq!(engine_backoff_after(&told), Some(Duration::from_secs(7)));
-        let untold = EngineError::RateLimited {
-            retry_after: None,
-            detail: "429".to_string(),
-        };
-        assert_eq!(engine_backoff_after(&untold), Some(RATE_LIMIT_BACKOFF));
-
-        for transient in [
-            EngineError::Process {
-                detail: "exit status 1".to_string(),
-            },
-            EngineError::Cancelled,
-            EngineError::Timeout { operation: "turn" },
-        ] {
-            assert_eq!(engine_backoff_after(&transient), None, "{transient}");
-        }
-    }
+    use super::{agenda_due, build_prompt, next_trigger, token_needs_refresh};
 
     #[test]
     fn refreshes_agent_token_with_five_minutes_remaining() {

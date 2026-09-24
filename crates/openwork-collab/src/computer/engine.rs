@@ -6,6 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use openwork_sandbox::{EngineConfinement, SandboxUnavailable};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +38,8 @@ pub struct TurnResult {
 pub struct ClassifyRequest {
     pub cwd: PathBuf,
     pub config_root: PathBuf,
+    /// Engine 进程树的 Seatbelt 围栏（collaboration.md §3.1）。
+    pub confinement: EngineConfinement,
     pub prompt: String,
     pub model: Option<String>,
     pub environment: BTreeMap<String, String>,
@@ -57,6 +60,8 @@ pub struct EngineRuntimeConfig {
     /// 受管的 `AGENTS.md`（身份、persona 与协作契约）。Engine 必须把它作为每轮的
     /// 系统指令加载；`context_fingerprint` 就是它的内容摘要。
     pub instructions_file: PathBuf,
+    /// Engine 进程树的 Seatbelt 围栏（collaboration.md §3.1）。
+    pub confinement: EngineConfinement,
     pub state_file: PathBuf,
     pub context_fingerprint: String,
     pub model: String,
@@ -169,6 +174,9 @@ pub enum EngineError {
     Reported { detail: String },
     #[error("Engine session is invalid: {detail}")]
     SessionInvalid { detail: String },
+    /// 沙箱自检失败；Engine 不得在沙箱外运行（collaboration.md §3.1）。
+    #[error("Engine {0}")]
+    Sandbox(#[from] SandboxUnavailable),
     #[error("Engine I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("Engine turn was cancelled")]
