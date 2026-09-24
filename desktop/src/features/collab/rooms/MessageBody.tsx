@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
+import { identityClasses } from '@/features/collab/components/agentIdentity'
+import { cn } from '@/lib/utils'
 import { CardChip } from './CardLinks'
 import { textSegments } from './messageText'
 import type { FoundCard } from './roomTimeline'
@@ -20,7 +22,11 @@ export function MessageBody({ body, knownIds, findCard, selectedCardId, onOpenCa
     switch (segment.kind) {
       case 'text': return segment.text
       case 'mention':
-        return <span key={index} className="rounded bg-clay-soft px-1 font-semibold text-ink">@{segment.id}</span>
+        return (
+          <span key={index} className={cn('rounded px-1 font-semibold', segment.id === 'all' ? 'bg-clay-soft text-clay-ink' : identityClasses(segment.id).mention)}>
+            @{segment.id}
+          </span>
+        )
       case 'card':
         return (
           <CardChip

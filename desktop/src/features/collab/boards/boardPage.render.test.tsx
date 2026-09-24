@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CollabAgent, CollabBoard, CollabCard } from '@/bridge/collab'
+import { identityClasses } from '@/features/collab/components/agentIdentity'
 import { AddCardInline } from './AddCardInline'
 import { BoardCardTile } from './BoardCardTile'
 import { KindTag } from './BoardColumn'
@@ -35,7 +36,7 @@ describe('BoardCardTile', () => {
   it('shows who is working on it and for how long', () => {
     const markup = tile(card({ agentState: 'working' }))
     expect(markup).toContain('Ada 处理中 · 3 分 12 秒')
-    expect(markup).toContain('ring-status-success')
+    expect(markup).toContain(identityClasses('ada').ring)
   })
 
   it('shows a queued wake', () => {

@@ -289,7 +289,7 @@ export const enUS = {
       pin: 'Pin', unpin: 'Unpin', roomActions: 'Room actions', yesterday: 'Yesterday', monthDay: '{{month}}/{{day}}',
       lastMessage: '{{author}}: {{body}}', groupSummary: 'Group · you and {{count}} Agents', directSummary: 'Direct message',
       workingCount: '{{count}} working', showPanel: 'Show side panel', hidePanel: 'Hide side panel',
-      quoteReply: 'Quote reply', copyMessage: 'Copy message', jumpToQuote: 'Jump to original', viewProfile: 'View {{name}}’s profile',
+      quoteReply: 'Quote reply', jumpToQuote: 'Jump to original', viewProfile: 'View {{name}}’s profile',
       cardLabel: 'Board card', openCard: 'Open card {{title}}', deletedCard: 'Card deleted', unassigned: 'Unassigned',
       cardLocation: '{{board}} → {{column}}', nameSeparator: ', ',
       notes: {

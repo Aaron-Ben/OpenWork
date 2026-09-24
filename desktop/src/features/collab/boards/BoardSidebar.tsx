@@ -11,7 +11,7 @@ export function BoardSidebar() {
 
   return (
     <aside className="flex h-full w-full flex-col overflow-hidden border-r border-line bg-paper-hover">
-      <div className="border-b border-line px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-ink-faint">
+      <div className="border-b border-line px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-ink-soft">
         {t('collab.boards.allBoards')}
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -28,10 +28,10 @@ export function BoardSidebar() {
               onClick={() => selectBoard(board.id)}
             >
               <span className="flex min-w-0 items-center gap-2">
-                <ClipboardList className="shrink-0 text-clay" size={15} />
+                <ClipboardList className="shrink-0 text-clay-ink" size={15} />
                 <strong className="truncate text-sm">{board.title}</strong>
               </span>
-              <span className="flex items-center justify-between gap-2 pl-6 text-[11px] text-ink-faint">
+              <span className="flex items-center justify-between gap-2 pl-6 text-[11px] text-ink-soft">
                 <span>{t('collab.boards.cardCount', { count: cardCount })}</span>
                 {completeCount > 0 ? (
                   <span className="inline-flex items-center gap-1 text-status-success-ink">
@@ -43,7 +43,7 @@ export function BoardSidebar() {
           )
         })}
         {boards.length === 0 ? (
-          <p className="px-3 py-10 text-center text-sm text-ink-faint">{t('collab.boards.empty')}</p>
+          <p className="px-3 py-10 text-center text-sm text-ink-soft">{t('collab.boards.empty')}</p>
         ) : null}
       </nav>
     </aside>

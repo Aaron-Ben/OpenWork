@@ -357,7 +357,7 @@ export const zhCN = {
       pin: '置顶', unpin: '取消置顶', roomActions: '房间操作', yesterday: '昨天', monthDay: '{{month}}月{{day}}日',
       lastMessage: '{{author}}：{{body}}', groupSummary: '群组 · 你和 {{count}} 位 Agent', directSummary: '私聊',
       workingCount: '{{count}} 位工作中', showPanel: '展开右侧栏', hidePanel: '收起右侧栏',
-      quoteReply: '引用回复', copyMessage: '复制消息', jumpToQuote: '跳到原文', viewProfile: '查看 {{name}} 的资料',
+      quoteReply: '引用回复', jumpToQuote: '跳到原文', viewProfile: '查看 {{name}} 的资料',
       cardLabel: '看板卡片', openCard: '打开卡片 {{title}}', deletedCard: '卡片已删除', unassigned: '未分配',
       cardLocation: '{{board}} → {{column}}', nameSeparator: '、',
       notes: {

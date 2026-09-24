@@ -113,8 +113,8 @@ export function MessageStream({ roomId, agents, onQuote }: {
             ? <MessageItem key={item.key} message={item.message} context={context} />
             : <RoomNoteRow key={item.key} note={item.note} />)}
         </div>
-        {roomWindow?.loading ? <p className="py-4 text-center text-sm text-ink-faint">{t('collab.rooms.loading')}</p> : null}
-        {snapshot && messages.length === 0 ? <p className="py-16 text-center text-sm text-ink-faint">{t('collab.rooms.noMessages')}</p> : null}
+        {roomWindow?.loading ? <p className="py-4 text-center text-sm text-ink-soft">{t('collab.rooms.loading')}</p> : null}
+        {snapshot && messages.length === 0 ? <p className="py-16 text-center text-sm text-ink-soft">{t('collab.rooms.noMessages')}</p> : null}
         {roomWindow?.error ? <p className="py-2 text-sm text-status-danger-ink">{roomWindow.error}</p> : null}
       </div>
       <ScrollToLatestButton visible={!atBottom} label={t('collab.rooms.scrollToLatest')} onClick={() => scrollToLatest()} />

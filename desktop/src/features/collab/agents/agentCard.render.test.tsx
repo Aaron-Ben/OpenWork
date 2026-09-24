@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CollabAgent, CollabAgentActivity } from '@/bridge/collab'
+import { identityClasses } from '@/features/collab/components/agentIdentity'
 import { AgentCard } from './AgentCard'
 import { HireCard } from './AgentManager'
 
@@ -27,7 +28,9 @@ describe('AgentCard', () => {
     expect(markup).toContain('>工作中<')
     expect(markup).toContain('处理卡片「Backfill」 · 3 分 12 秒')
     expect(markup).toContain('bg-status-success')
-    expect(markup).toContain('ring-status-success')
+    // 工作中的外圈用 Agent 的识别色（collaboration-desktop.md §11）。
+    expect(markup).toContain(identityClasses('ada').ring)
+    expect(markup).toContain(identityClasses('ada').avatar)
   })
 
   it('shows the queued cards', () => {

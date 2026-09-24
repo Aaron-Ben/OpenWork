@@ -22,7 +22,7 @@ export function CollabRail({ view, macOS = isMacOS }: { view: CollabView; macOS?
       <div data-tauri-drag-region={macOS ? 'deep' : undefined} className={macOS ? 'h-7 shrink-0' : 'hidden'} />
       <div className="flex flex-1 flex-col items-center gap-2 px-2 py-2">
         {items.map((item) => (
-          <Button key={item.view} type="button" variant="ghost" size="icon" className={`size-11 rounded-2xl ${view === item.view ? 'bg-paper text-clay shadow-sm' : ''}`} aria-label={item.label} onClick={() => navigate(item.view)}>
+          <Button key={item.view} type="button" variant="ghost" size="icon" className={`size-11 rounded-2xl ${view === item.view ? 'bg-paper text-clay-ink shadow-sm' : ''}`} aria-label={item.label} onClick={() => navigate(item.view)}>
             {item.icon}
           </Button>
         ))}

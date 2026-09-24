@@ -28,7 +28,7 @@ const KIND_TAG_CLASSES: Record<CollabColumnKind | 'none', string> = {
   todo: 'border border-line-strong text-ink-soft',
   doing: 'bg-status-success-soft text-status-success-ink',
   done: 'bg-ink text-paper',
-  none: 'border border-dashed border-line-strong text-ink-faint',
+  none: 'border border-dashed border-line-strong text-ink-soft',
 }
 
 /** 列头的类型标记（collaboration-desktop.md §9）：TODO 描边、DOING success 底、DONE 墨色底、未分类虚线。 */
@@ -82,7 +82,7 @@ export function BoardColumn({ column, first, last, agents, now, selectedCardId, 
       <div className="group/header flex shrink-0 items-center gap-2 px-3 py-3">
         <h3 className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-semibold">
           <span className="truncate">{column.title}</span>
-          <span className="font-normal text-ink-faint">{column.cards.length}</span>
+          <span className="font-normal text-ink-soft">{column.cards.length}</span>
           <KindTag kind={column.kind} />
         </h3>
         <div className="hidden shrink-0 group-hover/header:flex">
@@ -109,7 +109,7 @@ export function BoardColumn({ column, first, last, agents, now, selectedCardId, 
         ))}
         {dropTarget && drag.dropIndex === column.cards.length ? dropLine : null}
         {column.cards.length === 0 && !dropTarget ? (
-          <p className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-xs text-ink-faint">{t('collab.boards.emptyColumn')}</p>
+          <p className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-xs text-ink-soft">{t('collab.boards.emptyColumn')}</p>
         ) : null}
         <AddCardInline onCreate={actions.onCreateCard} />
       </div>

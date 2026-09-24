@@ -285,7 +285,7 @@ export const zhTW = {
       pin: '置頂', unpin: '取消置頂', roomActions: '房間操作', yesterday: '昨天', monthDay: '{{month}}月{{day}}日',
       lastMessage: '{{author}}：{{body}}', groupSummary: '群組 · 你和 {{count}} 位 Agent', directSummary: '私聊',
       workingCount: '{{count}} 位工作中', showPanel: '展開右側欄', hidePanel: '收起右側欄',
-      quoteReply: '引用回覆', copyMessage: '複製訊息', jumpToQuote: '跳到原文', viewProfile: '查看 {{name}} 的資料',
+      quoteReply: '引用回覆', jumpToQuote: '跳到原文', viewProfile: '查看 {{name}} 的資料',
       cardLabel: '看板卡片', openCard: '開啟卡片 {{title}}', deletedCard: '卡片已刪除', unassigned: '未指派',
       cardLocation: '{{board}} → {{column}}', nameSeparator: '、',
       notes: {

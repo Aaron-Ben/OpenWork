@@ -321,7 +321,8 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 ## 11. 视觉
 
 - 沿用工作台的设计令牌（`app/theme/globals.css`）：`paper` / `paper-hover` / `surface` 三层面、`ink` 系文字、`line` 边框、`clay` 唯一强调色、`status-*` 状态色；标题用衬线字体。亮色与暗色都由现有令牌驱动。
-- 新增一组 **Agent 识别色**令牌，只用于头像、名字、提及标签和工作中外圈：亮暗各 6 档低饱和色，从 clay 同一色系向外扩展，彼此在亮度上也有差别。Agent 按 ID 的稳定哈希取色，不随列表顺序变化。
+- 新增一组 **Agent 识别色**令牌 `--agent-1` … `--agent-6`，只用于头像、名字、提及标签和工作中外圈：亮暗各 6 档低饱和色，从 clay 同一色系向外扩展，彼此在亮度上也有差别（亮色相对亮度 0.07–0.14，暗色 0.35–0.57），在 `paper` 与 `paper-hover` 上都不低于 4.5:1。Agent 按 ID 的 FNV-1a 哈希取色（`features/collab/components/agentIdentity.ts`），不随列表顺序变化；`@all` 用 clay。
+- clay 色的文字与图标用 `--clay-ink`（亮色 `#a24e36`，5.2:1）；`--clay` 本身在米色底上只有 2.8:1，只用于底色、描边与放置线。
 - 小号说明文字在米色底上需要满足 4.5:1 对比度：设计稿用的次级文字比当前 `--ink-faint`（`#8a8780`）更深。协作界面的 11–12px 说明文字使用 `ink-soft`，不使用 `ink-faint`。
 - 图标沿用 lucide；不使用 emoji。
 

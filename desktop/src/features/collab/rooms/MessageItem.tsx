@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { CollabRoomMessage } from '@/bridge/collab'
 import { CopyButton } from '@/components/ui/CopyButton'
+import { identityClasses } from '@/features/collab/components/agentIdentity'
 import { ParticipantAvatar } from '@/features/collab/components/ParticipantAvatar'
 import { formatBeijingClock } from '@/lib/dateTime'
 import { cn } from '@/lib/utils'
@@ -44,15 +45,15 @@ export function MessageItem({ message, context }: { message: CollabRoomMessage, 
       )}
     >
       <button type="button" disabled={isUser} aria-label={t('collab.rooms.viewProfile', { name })} className="rounded-full" onClick={openAuthor}>
-        <ParticipantAvatar name={name} isUser={isUser} />
+        <ParticipantAvatar participantId={message.authorId} name={name} />
       </button>
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex items-baseline gap-2">
           {isUser
             ? <strong className="text-[13px]">{name}</strong>
-            : <button type="button" className="text-[13px] font-bold text-ink hover:underline" onClick={openAuthor}>{name}</button>}
-          {message.authorRole ? <span className="text-[11px] text-ink-faint">{message.authorRole}</span> : null}
-          <span className="text-xs tabular-nums text-ink-faint">{formatBeijingClock(message.createdAt)}</span>
+            : <button type="button" className={cn('text-[13px] font-bold hover:underline', identityClasses(message.authorId).text)} onClick={openAuthor}>{name}</button>}
+          {message.authorRole ? <span className="text-[11px] text-ink-soft">{message.authorRole}</span> : null}
+          <span className="text-xs tabular-nums text-ink-soft">{formatBeijingClock(message.createdAt)}</span>
         </div>
         {message.quoted ? (
           <button
@@ -67,7 +68,7 @@ export function MessageItem({ message, context }: { message: CollabRoomMessage, 
                 body: message.quoted.body,
               })}
             </span>
-            <span className="shrink-0 text-[11px] text-ink-faint">{t('collab.rooms.jumpToQuote')}</span>
+            <span className="shrink-0 text-[11px] text-ink-soft">{t('collab.rooms.jumpToQuote')}</span>
           </button>
         ) : null}
         <div className="max-w-[640px] text-sm leading-relaxed">

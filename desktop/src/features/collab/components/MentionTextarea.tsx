@@ -95,7 +95,7 @@ export function MentionTextarea({
                 }}
               >
                 <span className="font-semibold">@{candidate.id}</span>
-                <span className="truncate text-xs text-ink-faint">
+                <span className="truncate text-xs text-ink-soft">
                   {'agent' in candidate
                     ? [candidate.agent.displayName, candidate.agent.role].filter(Boolean).join(' · ')
                     : t('collab.rooms.mentionAll')}

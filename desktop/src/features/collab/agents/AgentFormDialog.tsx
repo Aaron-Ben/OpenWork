@@ -71,7 +71,7 @@ export function AgentFormDialog({ agent, error, onSubmit, onClose }: {
         <Field label={t('collab.agents.persona')}>
           <Textarea required rows={6} value={input.persona} onChange={(event) => change({ persona: event.target.value })} />
         </Field>
-        <p className="text-xs text-ink-faint">{t('collab.agents.personaHint')}</p>
+        <p className="text-xs text-ink-soft">{t('collab.agents.personaHint')}</p>
         {error ? <p className="text-sm text-status-danger-ink">{error}</p> : null}
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>

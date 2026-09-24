@@ -123,7 +123,7 @@ export function DeleteBoardEntityDialog({ kind, id, label, onClose }: { kind: De
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-status-danger-soft text-status-danger"><AlertTriangle size={19} /></span>
           <div>
             <h2 className="font-serif text-xl font-semibold">{t(`collab.boards.delete${capitalize(kind)}`)}</h2>
-            <p className="mt-1 text-sm text-ink-muted">{t(`collab.boards.delete${capitalize(kind)}Prompt`, { name: label })}</p>
+            <p className="mt-1 text-sm text-ink-soft">{t(`collab.boards.delete${capitalize(kind)}Prompt`, { name: label })}</p>
           </div>
         </div>
         <div className="flex justify-end gap-2">
@@ -160,7 +160,7 @@ function DialogActions({ saving, submitLabel, onClose }: { saving: boolean; subm
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="grid gap-1 text-xs font-medium text-ink-muted"><span>{label}</span>{children}</label>
+  return <label className="grid gap-1 text-xs font-medium text-ink-soft"><span>{label}</span>{children}</label>
 }
 
 function optional(value: string): string | null {

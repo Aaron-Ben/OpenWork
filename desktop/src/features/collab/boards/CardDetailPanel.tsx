@@ -80,7 +80,7 @@ export function CardDetailPanel({ board, card, agents, onDelete }: {
   return (
     <aside aria-label={t('collab.boards.detail')} className="flex w-[340px] shrink-0 flex-col border-l border-line bg-paper-hover">
       <div className="flex h-14 shrink-0 items-center gap-2 border-b border-line pl-4 pr-2.5">
-        <span className="flex-1 truncate text-xs text-ink-faint">{t('collab.rooms.cardPreview', { board: board.title })}</span>
+        <span className="flex-1 truncate text-xs text-ink-soft">{t('collab.rooms.cardPreview', { board: board.title })}</span>
         <button type="button" aria-label={t('collab.boards.closeDetail')} className="grid size-[30px] place-items-center rounded-lg text-ink-soft hover:bg-paper" onClick={() => selectCard(null)}><X size={15} /></button>
       </div>
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -108,14 +108,14 @@ export function CardDetailPanel({ board, card, agents, onDelete }: {
           />
         </div>
         <div className="grid grid-cols-[60px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 text-[13px]">
-          <span className="text-ink-faint">{t('collab.rooms.column')}</span>
+          <span className="text-ink-soft">{t('collab.rooms.column')}</span>
           <Select value={card.columnId} onValueChange={(columnId) => void apply(() => moveCard(card.id, columnId, null))}>
             <SelectTrigger className="h-8 border border-line bg-paper px-2.5 text-[13px]"><SelectValue /></SelectTrigger>
             <SelectContent sideOffset={5}>
               {board.columns.map((column) => <SelectItem key={column.id} value={column.id}>{column.title}</SelectItem>)}
             </SelectContent>
           </Select>
-          <span className="text-ink-faint">{t('collab.rooms.assignee')}</span>
+          <span className="text-ink-soft">{t('collab.rooms.assignee')}</span>
           <Select value={card.assigneeId ?? UNASSIGNED} onValueChange={(value) => void apply(() => assignCard(card.id, value === UNASSIGNED ? null : value))}>
             <SelectTrigger className="h-8 border border-line bg-paper px-2.5 text-[13px]"><SelectValue /></SelectTrigger>
             <SelectContent sideOffset={5}>

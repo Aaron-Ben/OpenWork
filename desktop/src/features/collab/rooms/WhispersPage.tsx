@@ -57,20 +57,20 @@ export function WhispersPage({ rooms, agents }: { rooms: CollabRoomSummary[], ag
               >
                 <span className="flex shrink-0">
                   {room.memberIds.slice(0, 2).map((id, index) => (
-                    <ParticipantAvatar key={id} name={names.get(id) ?? id} isUser={false} size={28} className={cn(index > 0 && '-ml-2 border-2 border-paper-hover')} />
+                    <ParticipantAvatar key={id} participantId={id} name={names.get(id) ?? id} size={28} className={cn(index > 0 && '-ml-2 border-2 border-paper-hover')} />
                   ))}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="truncate text-sm font-medium">{pairTitle(room)}</span>
                   {room.lastMessage ? (
-                    <span className="truncate text-xs text-ink-faint">{t('collab.rooms.lastMessage', { author: room.lastMessage.authorName, body: room.lastMessage.body })}</span>
+                    <span className="truncate text-xs text-ink-soft">{t('collab.rooms.lastMessage', { author: room.lastMessage.authorName, body: room.lastMessage.body })}</span>
                   ) : null}
                 </span>
-                {stamp?.kind === 'today' ? <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">{stamp.clock}</span> : null}
+                {stamp?.kind === 'today' ? <span className="shrink-0 text-[11px] tabular-nums text-ink-soft">{stamp.clock}</span> : null}
               </button>
             )
           })}
-          {whispers.length === 0 ? <p className="px-3 py-8 text-center text-sm text-ink-faint">{t('collab.whispers.empty')}</p> : null}
+          {whispers.length === 0 ? <p className="px-3 py-8 text-center text-sm text-ink-soft">{t('collab.whispers.empty')}</p> : null}
         </nav>
       </aside>
       {active ? (
@@ -80,12 +80,12 @@ export function WhispersPage({ rooms, agents }: { rooms: CollabRoomSummary[], ag
               <h2 className="truncate font-serif text-lg font-semibold">{pairTitle(active)}</h2>
             </header>
             <MessageStream roomId={active.id} agents={agents} onQuote={null} />
-            <p className="shrink-0 border-t border-line px-6 py-3 text-center text-xs text-ink-faint">{t('collab.whispers.readOnly')}</p>
+            <p className="shrink-0 border-t border-line px-6 py-3 text-center text-xs text-ink-soft">{t('collab.whispers.readOnly')}</p>
           </section>
           <RoomSidebar room={active} members={agents.filter((agent) => active.memberIds.includes(agent.id))} agents={agents} />
         </>
       ) : (
-        <section className="grid min-w-0 flex-1 place-items-center bg-paper text-sm text-ink-faint">{whispers.length > 0 ? t('collab.whispers.pickOne') : null}</section>
+        <section className="grid min-w-0 flex-1 place-items-center bg-paper text-sm text-ink-soft">{whispers.length > 0 ? t('collab.whispers.pickOne') : null}</section>
       )}
     </div>
   )

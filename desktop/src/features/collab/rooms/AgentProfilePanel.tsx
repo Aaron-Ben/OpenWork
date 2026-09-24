@@ -30,15 +30,15 @@ export function AgentProfilePanel({ agentId, agents }: { agentId: string, agents
   return (
     <>
       <div className="flex h-14 shrink-0 items-center gap-2 border-b border-line pl-4 pr-2.5">
-        <span className="flex-1 text-xs text-ink-faint">{t('collab.rooms.agentProfile')}</span>
+        <span className="flex-1 text-xs text-ink-soft">{t('collab.rooms.agentProfile')}</span>
         <button type="button" aria-label={t('collab.rooms.closeProfile')} className="grid size-[30px] place-items-center rounded-lg text-ink-soft hover:bg-paper" onClick={closePanel}><X size={15} /></button>
       </div>
       {agent ? (
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-5">
           <div className="flex flex-col items-start gap-2.5">
-            <ParticipantAvatar name={agent.displayName} isUser={false} size={64} ring={agent.activity.kind === 'working'} />
+            <ParticipantAvatar participantId={agent.id} name={agent.displayName} size={64} ring={agent.activity.kind === 'working'} />
             <div className="flex flex-col gap-0.5">
-              <h3 className="font-serif text-2xl font-semibold">{agent.displayName} <span className="font-sans text-[13px] font-normal text-ink-faint">@{agent.id}</span></h3>
+              <h3 className="font-serif text-2xl font-semibold">{agent.displayName} <span className="font-sans text-[13px] font-normal text-ink-soft">@{agent.id}</span></h3>
               {agent.role ? <span className="font-serif text-sm italic text-ink-soft">{agent.role}</span> : null}
             </div>
           </div>
@@ -51,16 +51,16 @@ export function AgentProfilePanel({ agentId, agents }: { agentId: string, agents
             <button type="button" className="h-[34px] rounded-lg border border-line-strong px-3 text-[13px]" onClick={() => navigate('agents')}>{t('collab.rooms.editInAgents')}</button>
           </div>
           <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-semibold tracking-wide text-ink-faint">{t('collab.rooms.persona')}</span>
+            <span className="text-[11px] font-semibold tracking-wide text-ink-soft">{t('collab.rooms.persona')}</span>
             <p className="line-clamp-6 whitespace-pre-line text-[13px] leading-relaxed text-ink-soft">{agent.persona}</p>
           </div>
           <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-2.5 gap-y-1.5 text-xs">
-            <span className="text-ink-faint">{t('collab.rooms.mainModel')}</span><code className="truncate font-mono text-ink-soft">{agent.mainModelId}</code>
-            <span className="text-ink-faint">{t('collab.rooms.triageModel')}</span><code className="truncate font-mono text-ink-soft">{agent.triageModelId}</code>
+            <span className="text-ink-soft">{t('collab.rooms.mainModel')}</span><code className="truncate font-mono text-ink-soft">{agent.mainModelId}</code>
+            <span className="text-ink-soft">{t('collab.rooms.triageModel')}</span><code className="truncate font-mono text-ink-soft">{agent.triageModelId}</code>
           </div>
         </div>
       ) : (
-        <p className="p-4 text-sm text-ink-faint">{t('collab.rooms.unknownAgent')}</p>
+        <p className="p-4 text-sm text-ink-soft">{t('collab.rooms.unknownAgent')}</p>
       )}
     </>
   )

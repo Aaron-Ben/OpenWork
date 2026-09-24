@@ -51,10 +51,10 @@ export function ObservabilityPage() {
       <header data-tauri-drag-region="deep" className="flex h-12 shrink-0 items-center justify-between border-b border-line px-6">
         <div className="flex items-baseline gap-3">
           <h1 className="font-serif text-lg font-semibold">{t('collab.observability.title')}</h1>
-          <span className="text-xs text-ink-faint">{t('collab.observability.subtitle')}</span>
+          <span className="text-xs text-ink-soft">{t('collab.observability.subtitle')}</span>
         </div>
         <div className="flex items-center gap-3">
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-faint">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-soft">
             <input className="size-4 accent-clay" type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
             {t('collab.observability.autoRefresh')}
           </label>
@@ -98,11 +98,11 @@ export function ObservabilityPage() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {loading ? (
-                <div className="flex items-center justify-center gap-2 py-12 text-sm text-ink-faint">
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-ink-soft">
                   <LoaderCircle className="animate-spin" size={16} />{t('collab.observability.loading')}
                 </div>
               ) : runs.length === 0 ? (
-                <p className="py-12 text-center text-sm text-ink-faint">{t('collab.observability.empty')}</p>
+                <p className="py-12 text-center text-sm text-ink-soft">{t('collab.observability.empty')}</p>
               ) : runs.map((run) => (
                 <RunRow
                   key={run.id}
@@ -123,7 +123,7 @@ export function ObservabilityPage() {
             </div>
           ) : null}
           {trace ? <TraceDetail run={trace.run} events={trace.events} /> : (
-            <div className="grid h-full place-items-center text-sm text-ink-faint">
+            <div className="grid h-full place-items-center text-sm text-ink-soft">
               {t('collab.observability.selectRun')}
             </div>
           )}
@@ -150,8 +150,8 @@ function RunRow({ run, selected, agentName, onClick }: {
         <strong className="truncate text-sm">{agentName ?? `@${run.agentId}`}</strong>
         <RunStatusBadge status={run.status} />
       </span>
-      <span className="truncate font-mono text-[11px] text-ink-faint">{run.stage}</span>
-      <span className="flex justify-between text-xs text-ink-muted">
+      <span className="truncate font-mono text-[11px] text-ink-soft">{run.stage}</span>
+      <span className="flex justify-between text-xs text-ink-soft">
         <span>{formatTime(run.startedAt)}</span>
         <span>{formatDuration(run.durationMs, t)}</span>
       </span>
@@ -167,7 +167,7 @@ function FilterSelect({ label, value, onChange, options }: {
   options: Array<{ value: string; label: string }>
 }) {
   return (
-    <div className="grid min-w-0 gap-1.5 text-[11px] text-ink-faint">
+    <div className="grid min-w-0 gap-1.5 text-[11px] text-ink-soft">
       <span>{label}</span>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger

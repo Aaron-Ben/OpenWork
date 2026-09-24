@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { CollabAgent, CollabCard, CollabColumnKind } from '@/bridge/collab'
 import { elapsedText } from '@/features/collab/components/agentStatus'
+import { identityClasses } from '@/features/collab/components/agentIdentity'
 import { ParticipantAvatar } from '@/features/collab/components/ParticipantAvatar'
 import { agoText } from '@/features/collab/components/timeText'
 import { textSegments } from '@/features/collab/rooms/messageText'
@@ -65,7 +66,7 @@ export function BoardCardTile({ card, columnKind, agents, now, selected, onSelec
       {card.description ? (
         <p className="line-clamp-2 text-xs leading-relaxed text-ink-soft">
           {textSegments(card.description, knownIds).map((segment, index) => segment.kind === 'mention'
-            ? <span key={index} className="font-semibold text-clay">@{segment.id}</span>
+            ? <span key={index} className={cn('font-semibold', segment.id === 'all' ? 'text-clay-ink' : identityClasses(segment.id).text)}>@{segment.id}</span>
             : segment.kind === 'card' ? segment.id : segment.text)}
         </p>
       ) : null}
@@ -82,7 +83,7 @@ function CardFooter({ card, assignee, assigneeName, now }: {
 }) {
   const { t } = useTranslation()
   const avatar = assigneeName
-    ? <ParticipantAvatar name={assigneeName} isUser={card.assigneeId === 'local-user'} size={20} ring={card.agentState === 'working'} />
+    ? <ParticipantAvatar participantId={card.assigneeId ?? ''} name={assigneeName} size={20} ring={card.agentState === 'working'} />
     : null
   const footer = cardFooter(card)
   switch (footer) {
@@ -106,14 +107,14 @@ function CardFooter({ card, assignee, assigneeName, now }: {
         </span>
       )
     case 'unassigned':
-      return <span className="text-xs text-ink-faint">{t('collab.rooms.unassigned')}</span>
+      return <span className="text-xs text-ink-soft">{t('collab.rooms.unassigned')}</span>
     case 'updated': {
       const ago = card.updatedAt ? agoText(elapsedSeconds(card.updatedAt, now)) : null
       return (
         <span className="flex items-center gap-1.5 text-xs text-ink-soft">
           {avatar}
           <span className="truncate">{assigneeName}</span>
-          {ago ? <span className="text-ink-faint">· {t('collab.boards.updatedAgo', { ago: t(ago.key, ago.values) })}</span> : null}
+          {ago ? <span className="text-ink-soft">· {t('collab.boards.updatedAgo', { ago: t(ago.key, ago.values) })}</span> : null}
         </span>
       )
     }

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CollabAgent, CollabAgentActivity, CollabBoard, CollabRoomMessage, CollabRoomSummary } from '@/bridge/collab'
+import { identityClasses } from '@/features/collab/components/agentIdentity'
 import { Composer, QuoteBar } from './Composer'
 import { MessageBody } from './MessageBody'
 import { MessageItem, type MessageContext } from './MessageItem'
@@ -83,6 +84,8 @@ describe('MessageBody', () => {
       />,
     )
     expect(markup).toContain('>@bo</span>')
+    // 提及标签用被提及者的识别色（collaboration-desktop.md §7.2、§11）。
+    expect(markup).toContain(identityClasses('bo').mention)
     expect(markup.match(/aria-label="打开卡片 Backfill in batches"/g)).toHaveLength(1)
     expect(markup).toContain('border-clay')
     expect(markup).toContain(`<code class="`)
@@ -102,6 +105,7 @@ describe('MessageItem', () => {
       />,
     )
     expect(markup).toContain('aria-label="查看 Ada 的资料"')
+    expect(markup).toContain(identityClasses('ada').text)
     expect(markup).toContain('Architect')
     expect(markup).toContain('10:07')
     expect(markup).toContain('你：Who takes the backfill?')
@@ -162,5 +166,15 @@ describe('Composer', () => {
     const markup = renderToStaticMarkup(<Composer roomId="room-1" members={[agent('ada', idle)]} />)
     expect(markup).toContain('aria-label="提及成员"')
     expect(markup).toContain('只 @ 某人时，其他 Agent 会先判断是否与自己有关')
+  })
+})
+
+describe('mention colours', () => {
+  it('uses clay for @all and each Agent’s own colour otherwise', () => {
+    const markup = renderToStaticMarkup(
+      <MessageBody body="@all and @ada" knownIds={new Set(['ada'])} findCard={() => null} selectedCardId={null} onOpenCard={vi.fn()} />,
+    )
+    expect(markup).toContain('bg-clay-soft text-clay-ink')
+    expect(markup).toContain(identityClasses('ada').mention)
   })
 })

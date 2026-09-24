@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils'
+import { identityClasses } from './agentIdentity'
 
 export const LOCAL_USER_ID = 'local-user'
 
@@ -8,23 +9,25 @@ function initial(name: string): string {
 }
 
 /**
- * 参与者头像。用户用墨色；Agent 暂用 clay 浅底，识别色在 U2e 接入（collaboration-desktop.md §11）。
- * `ring` 表示正在工作。
+ * 参与者头像：用户用墨色，Agent 用自己的识别色（collaboration-desktop.md §11）。`ring` 表示正在工作，
+ * 外圈也是识别色。
  */
-export function ParticipantAvatar({ name, isUser, size = 32, ring = false, className }: {
+export function ParticipantAvatar({ participantId, name, size = 32, ring = false, className }: {
+  participantId: string
   name: string
-  isUser: boolean
   size?: number
   ring?: boolean
   className?: string
 }) {
+  const isUser = participantId === LOCAL_USER_ID
+  const identity = identityClasses(participantId)
   return (
     <span
       aria-hidden="true"
       className={cn(
         'grid shrink-0 place-items-center rounded-full font-bold',
-        isUser ? 'bg-ink text-paper' : 'bg-clay-soft text-ink',
-        ring && 'ring-2 ring-status-success ring-offset-2 ring-offset-paper',
+        isUser ? 'bg-ink text-paper' : identity.avatar,
+        ring && ['ring-2 ring-offset-2 ring-offset-paper', identity.ring],
         className,
       )}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }}
@@ -49,7 +52,7 @@ export function RoomHive({ memberIds, names, you }: {
           key={id}
           className={cn(
             'absolute grid size-[19px] place-items-center rounded-full border-2 border-paper-hover text-[9px] font-bold',
-            id === LOCAL_USER_ID ? 'bg-ink text-paper' : 'bg-clay-soft text-ink',
+            id === LOCAL_USER_ID ? 'bg-ink text-paper' : identityClasses(id).avatar,
             HIVE_SPOTS[index],
           )}
         >

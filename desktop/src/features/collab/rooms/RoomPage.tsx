@@ -44,7 +44,7 @@ export function RoomPage({ room, agents }: { room: CollabRoomSummary, agents: Co
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line px-5">
           <div className="flex min-w-0 flex-1 flex-col">
             <h2 className="truncate font-serif text-lg font-semibold">{room.title ?? room.id}</h2>
-            <span className="truncate text-xs text-ink-faint">
+            <span className="truncate text-xs text-ink-soft">
               {workingCount > 0 ? `${summary} · ${t('collab.rooms.workingCount', { count: workingCount })}` : summary}
             </span>
           </div>
@@ -52,8 +52,8 @@ export function RoomPage({ room, agents }: { room: CollabRoomSummary, agents: Co
             {members.slice(0, HEADER_AVATARS).map((agent, index) => (
               <ParticipantAvatar
                 key={agent.id}
+                participantId={agent.id}
                 name={agent.displayName}
-                isUser={false}
                 size={28}
                 ring={agent.activity.kind === 'working'}
                 className={cn(index > 0 && '-ml-1.5 border-2 border-paper')}

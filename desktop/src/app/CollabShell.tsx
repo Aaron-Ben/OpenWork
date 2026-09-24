@@ -51,7 +51,7 @@ export function CollabShell() {
           sidebar={<RoomList rooms={rooms} agents={agents} activeRoomId={activeRoomId} onSelect={selectRoom} />}
         >
           {activeRoom ? <RoomPage room={activeRoom} agents={agents} /> : (
-            <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
+            <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-soft">{t('collab.rooms.empty')}</section>
           )}
         </ResizableSidebarLayout>
       ) : view === 'whispers' ? (

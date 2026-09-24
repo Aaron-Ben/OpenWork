@@ -15,10 +15,10 @@ export function TraceDetail({ run, events }: { run: CollabRun; events: CollabRun
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="font-serif text-xl font-semibold">@{run.agentId}</h2>
           <RunStatusBadge status={run.status} />
-          {run.outcome ? <span className="rounded-full bg-paper-hover px-2 py-0.5 text-xs text-ink-muted">{run.outcome}</span> : null}
+          {run.outcome ? <span className="rounded-full bg-paper-hover px-2 py-0.5 text-xs text-ink-soft">{run.outcome}</span> : null}
         </div>
-        <p className="break-all font-mono text-xs text-ink-faint">{run.id}</p>
-        {run.triggerReason ? <p className="text-sm text-ink-muted">{run.triggerReason}</p> : null}
+        <p className="break-all font-mono text-xs text-ink-soft">{run.id}</p>
+        {run.triggerReason ? <p className="text-sm text-ink-soft">{run.triggerReason}</p> : null}
       </div>
 
       <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
@@ -46,7 +46,7 @@ export function TraceDetail({ run, events }: { run: CollabRun; events: CollabRun
 
       <section className="grid gap-3">
         <h3 className="font-serif text-lg font-semibold">{t('collab.observability.timeline')}</h3>
-        {events.length === 0 ? <p className="text-sm text-ink-faint">{t('collab.observability.noEvents')}</p> : null}
+        {events.length === 0 ? <p className="text-sm text-ink-soft">{t('collab.observability.noEvents')}</p> : null}
         <div className="relative grid gap-3 before:absolute before:bottom-4 before:left-[7px] before:top-4 before:w-px before:bg-line">
           {events.map((event) => <EventRow key={event.id} event={event} />)}
         </div>
@@ -77,16 +77,16 @@ function EventRow({ event }: { event: CollabRunEvent }) {
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <strong className="text-sm">{eventLabel(event.kind, event.data, t)}</strong>
-            <span className="ml-2 font-mono text-[11px] text-ink-faint">{event.source}</span>
+            <span className="ml-2 font-mono text-[11px] text-ink-soft">{event.source}</span>
           </div>
-          <time className="text-xs text-ink-faint">{formatTime(event.createdAt)}</time>
+          <time className="text-xs text-ink-soft">{formatTime(event.createdAt)}</time>
         </div>
-        {details ? <p className="mt-1 text-sm text-ink-muted">{details}</p> : null}
+        {details ? <p className="mt-1 text-sm text-ink-soft">{details}</p> : null}
         <EventDetails event={event} />
         {Object.keys(event.data).length > 0 ? (
           <details className="mt-2 text-xs">
-            <summary className="cursor-pointer select-none text-ink-faint">{t('collab.observability.rawData')}</summary>
-            <pre className="mt-2 max-h-72 overflow-auto rounded-xl bg-paper-hover p-3 font-mono text-[11px] leading-relaxed text-ink-muted">{JSON.stringify(event.data, null, 2)}</pre>
+            <summary className="cursor-pointer select-none text-ink-soft">{t('collab.observability.rawData')}</summary>
+            <pre className="mt-2 max-h-72 overflow-auto rounded-xl bg-paper-hover p-3 font-mono text-[11px] leading-relaxed text-ink-soft">{JSON.stringify(event.data, null, 2)}</pre>
           </details>
         ) : null}
       </div>
@@ -102,8 +102,8 @@ function EventDetails({ event }: { event: CollabRunEvent }) {
     <dl className="mt-3 grid gap-x-5 gap-y-2 rounded-xl bg-paper-hover p-3 text-xs sm:grid-cols-2">
       {properties.map(([label, value]) => (
         <div key={label} className="grid grid-cols-[minmax(88px,auto)_minmax(0,1fr)] gap-2">
-          <dt className="text-ink-faint">{label}</dt>
-          <dd className="min-w-0 break-words font-mono text-ink-muted">{value}</dd>
+          <dt className="text-ink-soft">{label}</dt>
+          <dd className="min-w-0 break-words font-mono text-ink-soft">{value}</dd>
         </div>
       ))}
     </dl>
@@ -111,11 +111,11 @@ function EventDetails({ event }: { event: CollabRunEvent }) {
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl bg-paper-hover p-3"><dt className="text-xs text-ink-faint">{label}</dt><dd className="mt-1 truncate text-sm font-semibold">{value}</dd></div>
+  return <div className="rounded-xl bg-paper-hover p-3"><dt className="text-xs text-ink-soft">{label}</dt><dd className="mt-1 truncate text-sm font-semibold">{value}</dd></div>
 }
 
 function Property({ label, value }: { label: string; value: string }) {
-  return <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2"><dt className="text-ink-faint">{label}</dt><dd className="truncate font-mono text-xs">{value}</dd></div>
+  return <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2"><dt className="text-ink-soft">{label}</dt><dd className="truncate font-mono text-xs">{value}</dd></div>
 }
 
 function eventLabel(kind: string, data: Record<string, unknown>, t: ReturnType<typeof useTranslation>['t']): string {

@@ -37,7 +37,7 @@ export function CreateGroupDialog({ agents, onCreated, onClose }: {
     <div className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-6" role="dialog" aria-modal="true">
       <form className="grid w-full max-w-md gap-4 rounded-3xl bg-paper p-6 shadow-xl" onSubmit={submit}>
         <div className="flex items-center gap-2">
-          <Users size={20} className="text-clay" />
+          <Users size={20} className="text-clay-ink" />
           <h2 className="font-serif text-xl font-semibold">{t('collab.rooms.createGroup')}</h2>
         </div>
         <label className="grid gap-1 text-xs font-medium text-ink-soft">
@@ -50,10 +50,10 @@ export function CreateGroupDialog({ agents, onCreated, onClose }: {
             <label key={agent.id} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2 text-sm">
               <input className="size-4 accent-clay" type="checkbox" checked={selected.includes(agent.id)} onChange={() => toggle(agent.id)} />
               <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
-              <span className="text-xs text-ink-faint">@{agent.id}</span>
+              <span className="text-xs text-ink-soft">@{agent.id}</span>
             </label>
           ))}
-          <p className="text-xs text-ink-faint">{t('collab.rooms.minimumMembers')}</p>
+          <p className="text-xs text-ink-soft">{t('collab.rooms.minimumMembers')}</p>
         </fieldset>
         {error ? <p className="text-sm text-status-danger-ink">{error}</p> : null}
         <div className="flex justify-end gap-2">

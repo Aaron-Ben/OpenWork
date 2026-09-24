@@ -86,7 +86,7 @@ export function Composer({ roomId, members }: { roomId: string, members: CollabA
         <button type="button" aria-label={t('collab.rooms.mentionButton')} className="grid size-[30px] place-items-center rounded-lg text-ink-soft hover:bg-paper-hover" onClick={startMention}>
           <AtSign size={16} />
         </button>
-        <span className="flex-1 truncate text-xs text-ink-faint">{t('collab.rooms.composerHint')}</span>
+        <span className="flex-1 truncate text-xs text-ink-soft">{t('collab.rooms.composerHint')}</span>
         <button type="submit" disabled={!draft.trim()} className="flex h-8 items-center gap-1.5 rounded-lg bg-ink px-3.5 text-[13px] font-semibold text-paper disabled:opacity-40">
           <Send size={14} />{t('collab.rooms.send')}
         </button>
@@ -102,7 +102,7 @@ export function QuoteBar({ quoting, onCancel }: { quoting: CollabRoomMessage, on
   return (
     <div className="flex items-center gap-2 border-b border-line px-3 py-1.5 text-xs text-ink-soft">
       <span className="min-w-0 flex-1 truncate">{`${t('collab.rooms.replyingTo', { name })}${quoting.body}`}</span>
-      <button type="button" aria-label={t('collab.rooms.cancelQuote')} className="grid size-6 place-items-center rounded text-ink-faint hover:text-ink" onClick={onCancel}>
+      <button type="button" aria-label={t('collab.rooms.cancelQuote')} className="grid size-6 place-items-center rounded text-ink-soft hover:text-ink" onClick={onCancel}>
         <X size={14} />
       </button>
     </div>

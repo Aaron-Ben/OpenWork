@@ -47,14 +47,14 @@ export function ManageMembersDialog({ roomId, agents, onClose }: {
     <div className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-6" role="dialog" aria-modal="true">
       <section className="grid w-full max-w-md gap-4 rounded-3xl bg-paper p-6 shadow-xl">
         <div className="flex items-center gap-2">
-          <Users size={20} className="text-clay" />
+          <Users size={20} className="text-clay-ink" />
           <h2 className="font-serif text-xl font-semibold">{t('collab.rooms.manageMembers')}</h2>
         </div>
         <div className="grid gap-2">
           {members.map((member) => (
             <div key={member.id} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2 text-sm">
               <span className="min-w-0 flex-1 truncate">{member.displayName}</span>
-              <span className="text-xs text-ink-faint">@{member.id}</span>
+              <span className="text-xs text-ink-soft">@{member.id}</span>
               {member.kind === 'agent' ? (
                 <Button type="button" variant="ghost" size="icon" className="size-8 text-status-danger-ink" aria-label={t('collab.rooms.removeMember', { name: member.displayName })} onClick={() => void remove(member.id)}>
                   <UserMinus size={15} />

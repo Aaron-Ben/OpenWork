@@ -70,7 +70,7 @@ export function BoardCanvas({ board, agents, onEditBoard, onAddColumn, onEditCol
         <header className="flex shrink-0 items-center gap-4 border-b border-line px-5 py-3.5">
           <div className="flex min-w-0 flex-1 flex-col">
             <h2 className="truncate font-serif text-xl font-semibold">{board.title}</h2>
-            <span className="text-xs text-ink-faint">
+            <span className="text-xs text-ink-soft">
               {t('collab.boards.summary', { cards: summary.cardCount, agents: summary.workingAgentCount })}
             </span>
           </div>

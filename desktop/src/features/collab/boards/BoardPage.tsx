@@ -69,7 +69,7 @@ export function BoardPage() {
               onDelete={(entity, id, label) => setDialog({ kind: 'delete', entity, id, label })}
             />
           ) : (
-            <div className="grid h-full place-items-center text-ink-faint">
+            <div className="grid h-full place-items-center text-ink-soft">
               <div className="text-center">
                 <ClipboardList className="mx-auto mb-3 opacity-50" size={36} />
                 <p className="text-sm">{loading ? t('common.loading') : t('collab.boards.empty')}</p>

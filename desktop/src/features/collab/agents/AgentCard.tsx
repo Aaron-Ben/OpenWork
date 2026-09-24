@@ -58,12 +58,12 @@ export function AgentCard({ agent, now, actions }: { agent: CollabAgent, now: nu
       </div>
       <div className="flex items-center gap-3.5">
         <span className="relative inline-block shrink-0">
-          <ParticipantAvatar name={agent.displayName} isUser={false} size={52} ring={agent.activity.kind === 'working'} />
+          <ParticipantAvatar participantId={agent.id} name={agent.displayName} size={52} ring={agent.activity.kind === 'working'} />
           <span aria-hidden="true" className={cn('absolute bottom-0 right-0 size-[13px] rounded-full border-[3px] border-surface', DOT_CLASSES[tone])} />
         </span>
         <div className="flex min-w-0 flex-col gap-1">
           <span className="truncate font-serif text-lg font-semibold">
-            {agent.displayName} <span className="font-sans text-[13px] font-normal text-ink-faint">@{agent.id}</span>
+            {agent.displayName} <span className="font-sans text-[13px] font-normal text-ink-soft">@{agent.id}</span>
           </span>
           {agent.role ? <span className="truncate font-serif text-[13px] italic text-ink-soft">{agent.role}</span> : null}
           <span className="flex gap-1.5">
@@ -75,8 +75,8 @@ export function AgentCard({ agent, now, actions }: { agent: CollabAgent, now: nu
       <StateLine agent={agent} now={now} />
       <p className="line-clamp-3 whitespace-pre-line text-[13px] leading-relaxed text-ink-soft">{agent.persona}</p>
       <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
-        <span className="text-ink-faint">{t('collab.agents.mainModel')}</span><code className="truncate font-mono text-ink-soft" title={agent.mainModelId}>{agent.mainModelId}</code>
-        <span className="text-ink-faint">{t('collab.agents.triageModel')}</span><code className="truncate font-mono text-ink-soft" title={agent.triageModelId}>{agent.triageModelId}</code>
+        <span className="text-ink-soft">{t('collab.agents.mainModel')}</span><code className="truncate font-mono text-ink-soft" title={agent.mainModelId}>{agent.mainModelId}</code>
+        <span className="text-ink-soft">{t('collab.agents.triageModel')}</span><code className="truncate font-mono text-ink-soft" title={agent.triageModelId}>{agent.triageModelId}</code>
       </div>
       <div className="mt-auto flex items-center gap-2 border-t border-line pt-3">
         <label className="flex flex-1 items-center gap-2 text-[13px] text-ink-soft">
@@ -106,7 +106,7 @@ function StateLine({ agent, now }: { agent: CollabAgent, now: number }) {
   const icon = activity.kind === 'working'
     ? <ClipboardCheck size={15} className="text-status-success-ink" />
     : activity.kind === 'queued'
-      ? <Zap size={15} className="text-clay" />
+      ? <Zap size={15} className="text-clay-ink" />
       : <Clock size={15} className="text-ink-soft" />
   return (
     <div className="flex items-center gap-2.5 rounded-xl bg-paper-hover px-3 py-2.5 text-[13px]">

@@ -33,7 +33,7 @@ export function WorkBar({ agents, roomId }: { agents: CollabAgent[], roomId: str
       {first ? (
         <>
           <WorkingDots />
-          <ParticipantAvatar name={first.agent.displayName} isUser={false} size={18} />
+          <ParticipantAvatar participantId={first.agent.id} name={first.agent.displayName} size={18} />
           <span className="truncate">{label}</span>
         </>
       ) : null}

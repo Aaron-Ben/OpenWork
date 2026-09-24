@@ -25,7 +25,7 @@ export function CardPreviewPanel({ cardId, agents }: { cardId: string, agents: C
   return (
     <>
       <div className="flex h-14 shrink-0 items-center gap-2 border-b border-line pl-4 pr-2.5">
-        <span className="flex-1 truncate text-xs text-ink-faint">{t('collab.rooms.cardPreview', { board: found?.board.title ?? '' })}</span>
+        <span className="flex-1 truncate text-xs text-ink-soft">{t('collab.rooms.cardPreview', { board: found?.board.title ?? '' })}</span>
         <button type="button" aria-label={t('collab.rooms.closePreview')} className="grid size-[30px] place-items-center rounded-lg text-ink-soft hover:bg-paper" onClick={closePanel}><X size={15} /></button>
       </div>
       {found ? (
@@ -33,14 +33,14 @@ export function CardPreviewPanel({ cardId, agents }: { cardId: string, agents: C
           <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto p-4">
             <h3 className="font-serif text-lg font-semibold leading-snug">{found.card.title}</h3>
             <div className="grid grid-cols-[60px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 text-[13px]">
-              <span className="text-ink-faint">{t('collab.rooms.column')}</span>
+              <span className="text-ink-soft">{t('collab.rooms.column')}</span>
               <span className="flex items-center gap-1.5">
                 {found.column.title}
                 {found.column.kind ? <span className="rounded border border-line-strong px-1.5 text-[10px] font-semibold uppercase tracking-wide text-ink-soft">{found.column.kind}</span> : null}
               </span>
-              <span className="text-ink-faint">{t('collab.rooms.assignee')}</span>
+              <span className="text-ink-soft">{t('collab.rooms.assignee')}</span>
               <span className="flex items-center gap-2">
-                {assignee ? <><ParticipantAvatar name={assignee.displayName} isUser={false} size={20} />{assignee.displayName}</> : t('collab.rooms.unassigned')}
+                {assignee ? <><ParticipantAvatar participantId={assignee.id} name={assignee.displayName} size={20} />{assignee.displayName}</> : t('collab.rooms.unassigned')}
               </span>
             </div>
             {found.card.agentState ? (
@@ -63,12 +63,12 @@ export function CardPreviewPanel({ cardId, agents }: { cardId: string, agents: C
               className="flex h-8 items-center gap-1.5 rounded-lg border border-line-strong px-3 text-[13px]"
               onClick={() => { focusCard(found.board.id, found.card.id); navigate('boards') }}
             >
-              <SquareKanban size={13} className="text-clay" />{t('collab.rooms.openBoard')}
+              <SquareKanban size={13} className="text-clay-ink" />{t('collab.rooms.openBoard')}
             </button>
           </div>
         </>
       ) : (
-        <p className="p-4 text-sm text-ink-faint">{t('collab.rooms.deletedCard')}</p>
+        <p className="p-4 text-sm text-ink-soft">{t('collab.rooms.deletedCard')}</p>
       )}
     </>
   )

@@ -131,7 +131,7 @@ export function AgentManager() {
           ))}
           {tab === 'active' ? <HireCard onClick={() => setForm({ agent: null })} /> : null}
         </div>
-        {tab === 'archived' && archived.length === 0 ? <p className="py-20 text-center text-sm text-ink-faint">{t('collab.agents.noArchived')}</p> : null}
+        {tab === 'archived' && archived.length === 0 ? <p className="py-20 text-center text-sm text-ink-soft">{t('collab.agents.noArchived')}</p> : null}
       </div>
       {form ? (
         <AgentFormDialog agent={form.agent} error={error} onSubmit={submit} onClose={() => { setForm(null); setError(null) }} />
@@ -145,7 +145,7 @@ export function HireCard({ onClick }: { onClick: () => void }) {
   const { t } = useTranslation()
   return (
     <button type="button" className="flex min-h-64 flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed border-line-strong p-5 text-ink-soft hover:bg-paper-hover" onClick={onClick}>
-      <span className="grid size-[52px] place-items-center rounded-full bg-paper-hover text-clay"><Plus size={22} /></span>
+      <span className="grid size-[52px] place-items-center rounded-full bg-paper-hover text-clay-ink"><Plus size={22} /></span>
       <span className="font-serif text-lg font-semibold text-ink">{t('collab.agents.create')}</span>
       <span className="max-w-60 text-center text-[13px] leading-normal">{t('collab.agents.hireHint')}</span>
     </button>

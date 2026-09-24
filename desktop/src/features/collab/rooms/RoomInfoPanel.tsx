@@ -27,19 +27,19 @@ export function RoomInfoPanel({ room, members, agents }: {
         <h3 className="text-sm font-semibold">{t('collab.rooms.roomInfo')}</h3>
       </div>
       <div className="flex items-center justify-between px-3.5 pb-1.5 pt-3.5">
-        <span className="text-[11px] font-semibold tracking-wide text-ink-faint">{t('collab.rooms.members', { count: room.memberIds.length })}</span>
+        <span className="text-[11px] font-semibold tracking-wide text-ink-soft">{t('collab.rooms.members', { count: room.memberIds.length })}</span>
         {room.kind === 'group' ? (
-          <button type="button" className="text-xs font-semibold text-clay" onClick={() => setManaging(true)}>{t('collab.rooms.manage')}</button>
+          <button type="button" className="text-xs font-semibold text-clay-ink" onClick={() => setManaging(true)}>{t('collab.rooms.manage')}</button>
         ) : null}
       </div>
       <div className="flex flex-col gap-0.5 px-2">
         {members.map((agent) => (
           <div key={agent.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
             <button type="button" aria-label={t('collab.rooms.viewProfile', { name: agent.displayName })} className="rounded-full" onClick={() => showAgent(agent.id)}>
-              <ParticipantAvatar name={agent.displayName} isUser={false} size={30} ring={agent.activity.kind === 'working'} />
+              <ParticipantAvatar participantId={agent.id} name={agent.displayName} size={30} ring={agent.activity.kind === 'working'} />
             </button>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-[13px] font-semibold">{agent.displayName} <span className="font-normal text-ink-faint">@{agent.id}</span></span>
+              <span className="truncate text-[13px] font-semibold">{agent.displayName} <span className="font-normal text-ink-soft">@{agent.id}</span></span>
               <span className="truncate text-xs text-ink-soft"><AgentStatusText activity={agent.activity} now={now} /></span>
             </span>
             <AgentStatusTag activity={agent.activity} />

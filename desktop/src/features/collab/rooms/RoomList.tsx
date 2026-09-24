@@ -57,7 +57,7 @@ export function RoomList({ rooms, agents, activeRoomId, onSelect }: {
         </Button>
       </header>
       <div className="flex flex-col gap-2.5 px-3 pb-2.5">
-        <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-paper px-2.5 text-sm text-ink-faint">
+        <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-paper px-2.5 text-sm text-ink-soft">
           <Search size={15} />
           <input type="search" value={query} placeholder={t('collab.rooms.searchPlaceholder')} className="w-full bg-transparent text-ink outline-none" onChange={(event) => setQuery(event.target.value)} />
         </label>
@@ -79,14 +79,14 @@ export function RoomList({ rooms, agents, activeRoomId, onSelect }: {
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
         {pinned.length > 0 ? (
           <>
-            <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold tracking-wider text-ink-faint">{t('collab.rooms.pinnedHeading')}</div>
+            <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold tracking-wider text-ink-soft">{t('collab.rooms.pinnedHeading')}</div>
             {pinned.map(row)}
             <div role="separator" className="mx-2.5 my-2 h-px bg-line" />
           </>
         ) : null}
         {others.map(row)}
         {pinned.length + others.length === 0 ? (
-          <p className="px-3 py-8 text-center text-sm text-ink-faint">{rooms.length === 0 ? t('collab.rooms.empty') : t('collab.rooms.noMatches')}</p>
+          <p className="px-3 py-8 text-center text-sm text-ink-soft">{rooms.length === 0 ? t('collab.rooms.empty') : t('collab.rooms.noMatches')}</p>
         ) : null}
       </nav>
       {creating ? (

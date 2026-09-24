@@ -16,7 +16,7 @@ export function CardChip({ cardId, found, selected, onOpen }: {
 }) {
   const { t } = useTranslation()
   if (!found) {
-    return <span className="rounded bg-code-bg px-1 font-mono text-[0.85em] text-ink-faint" title={t('collab.rooms.deletedCard')}>{cardId}</span>
+    return <span className="rounded bg-code-bg px-1 font-mono text-[0.85em] text-ink-soft" title={t('collab.rooms.deletedCard')}>{cardId}</span>
   }
   return (
     <button
@@ -28,7 +28,7 @@ export function CardChip({ cardId, found, selected, onOpen }: {
       )}
       onClick={() => onOpen(cardId)}
     >
-      <SquareKanban size={13} className="shrink-0 text-clay" />
+      <SquareKanban size={13} className="shrink-0 text-clay-ink" />
       <span className="truncate">{found.card.title}</span>
     </button>
   )
@@ -59,14 +59,14 @@ export function CardSummary({ cardId, found, assigneeName, selected, onOpen }: {
       )}
       onClick={() => onOpen(cardId)}
     >
-      <span aria-hidden="true" className="grid h-11 w-9 shrink-0 place-items-center rounded-md border border-line bg-paper text-clay">
+      <span aria-hidden="true" className="grid h-11 w-9 shrink-0 place-items-center rounded-md border border-line bg-paper text-clay-ink">
         <SquareKanban size={16} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5 text-[10.5px] font-bold tracking-widest text-clay">
+        <span className="flex items-center gap-1.5 text-[10.5px] font-bold tracking-widest text-clay-ink">
           {t('collab.rooms.cardLabel')}
           <span className="size-[3px] rounded-full bg-ink-faint" />
-          <span className="font-mono font-medium tracking-normal text-ink-faint">{cardId.slice(0, 13)}</span>
+          <span className="font-mono font-medium tracking-normal text-ink-soft">{cardId.slice(0, 13)}</span>
         </span>
         <span className="truncate text-sm font-semibold">{found.card.title}</span>
         <span className="truncate text-xs text-ink-soft">

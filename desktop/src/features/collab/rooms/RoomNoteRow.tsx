@@ -12,7 +12,7 @@ export function RoomNoteRow({ note }: { note: CollabRoomNote }) {
   switch (note.kind) {
     case 'routing':
       return (
-        <div className="flex items-center gap-2 pl-11 text-xs text-ink-faint">
+        <div className="flex items-center gap-2 pl-11 text-xs text-ink-soft">
           <Split size={14} className="shrink-0" />
           <span>{t('collab.rooms.notes.routing', { skipped: note.skippedNames.join(separator), targets: note.targetNames.join(separator) })}</span>
         </div>
@@ -23,7 +23,7 @@ export function RoomNoteRow({ note }: { note: CollabRoomNote }) {
           <div className="flex items-center gap-2.5">
             <PauseCircle size={15} className="shrink-0" />
             <span className="flex-1">{t('collab.rooms.notes.lapFloor', { name: note.speakerName })}</span>
-            <button type="button" aria-expanded={explaining} className="font-semibold text-clay" onClick={() => setExplaining((current) => !current)}>
+            <button type="button" aria-expanded={explaining} className="font-semibold text-clay-ink" onClick={() => setExplaining((current) => !current)}>
               {t('collab.rooms.notes.lapFloorWhy')}
             </button>
           </div>
