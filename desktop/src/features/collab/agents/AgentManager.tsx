@@ -10,7 +10,7 @@ import { useCollabRuntimeStore } from '@/features/collab/runtimeStore'
 import { AgentCard } from './AgentCard'
 import { useAgentStore } from './agentStore'
 
-const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'
+const DEFAULT_MODEL = 'deepseek/deepseek-flash'
 
 function emptyAgent(): CollabAgentInput {
   return {

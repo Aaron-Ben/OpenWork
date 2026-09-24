@@ -321,6 +321,39 @@ async fn main_turn_config_loads_the_managed_agents_file_as_instructions() {
         serde_json::json!({
             "permission": {"*": "allow"},
             "instructions": [directory.path().join("AGENTS.md").to_string_lossy()],
+            "provider": {"test": {"models": {"model": {"status": "active"}}}},
+        })
+    );
+}
+
+/// collaboration.md §6：OpenCode 刷新模型目录后会删掉标为 deprecated 的模型（opencode
+/// `provider/provider.ts` 1694 行），用户选的模型因此在第一次运行后失效。派生配置显式把
+/// Agent 选的主模型和判断模型标为 active；模型 id 里的 `/` 属于模型名。
+#[tokio::test]
+async fn derived_configs_keep_the_chosen_models_active_even_when_the_catalog_deprecates_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = config_echoing_opencode(&directory).await;
+    let adapter = adapter(executable, &directory);
+
+    let result = adapter
+        .classify(ClassifyRequest {
+            cwd: directory.path().to_path_buf(),
+            config_root: directory.path().join("config"),
+            confinement: confinement(&directory),
+            prompt: "classify".to_string(),
+            model: Some("openrouter/deepseek/deepseek-v4-flash".to_string()),
+            environment: Default::default(),
+            cancellation: CancellationToken::new(),
+        })
+        .await
+        .unwrap();
+
+    let config: serde_json::Value = serde_json::from_str(&result.text).unwrap();
+    assert_eq!(
+        config,
+        serde_json::json!({
+            "permission": {"*": "allow"},
+            "provider": {"openrouter": {"models": {"deepseek/deepseek-v4-flash": {"status": "active"}}}},
         })
     );
 }

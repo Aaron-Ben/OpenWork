@@ -31,6 +31,7 @@
 | E12 | 房间与看板之间按 Cumora 方式用卡片链接连接：消息里的 `card-…` id 渲染成胶囊，点击在房间右侧栏预览卡片；`AGENTS.md` 契约补“谈到卡片时写出 id”；不做看板事件自动写入房间（2026-09-24） |
 | E13 | `reply` / `dm` 正文直接跟在 id 后面（多个参数按空格拼接），`--stdin`、`--file`、`--` 仍可用；起因是 K1 实测中模型第一次总写成位置参数、每次多一跳（2026-09-24） |
 | E14 | CLI 三处修正：`--` 之前任何位置的 `--help` / `-h` 显示帮助，子命令后只显示该子命令的用法；glance 没有新消息时写明 `No new messages since you last read this room (latest sequence N).`；`AGENTS.md` 写明发消息的写法与 `openwork <command> --help`。起因是 E13 实测中 Bo 猜 `--body`、子命令 `--help` 只报错、Ada 被 `(no messages)` 误导（2026-09-24） |
+| E15 | 派生的 OpenCode 配置把 Agent 的主模型与判断模型标为 `status: active`，不再因模型目录刷新后标为 deprecated 而失效；Desktop 默认模型改为 `deepseek/deepseek-flash`。缓存目录仍是每次会话的临时目录，持久化另议（2026-09-24） |
 | E11 | 协作模式不要运行记录：删除运行记录页与其专用后端（`observability`、`collab_run_events`、事件上报、`collab_run_list`/`collab_run_trace`）；界面只展示当前状态和房间说明行；`collab_runs` 与 `collab_triages` 保留为内部状态（2026-09-24） |
 
 ## 3. 写文档时新定的实现细节（2026-09-24 用户已确认）
@@ -54,6 +55,8 @@
 - 2026-09-24 CLI 三处修正（子命令 `--help`、glance 空结果文案、`AGENTS.md` 写明发消息方式与 `<command> --help`）：新增 `help_after_a_subcommand_shows_only_that_usage`、`empty_glance_says_nothing_new_since_the_last_read`，扩展 `acc_08_standing_contract_names_the_addressing_rules`，均先失败后通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过；其余全部通过。真实模型复测（`deepseek/deepseek-flash`）：点名结果不变（只有 Bo、只有 Ada，回答正确，10 个 Run 全部 completed）；命令只有 Ada 的 `glance` + `reply` 和 Bo 的 `reply`，没有 `--help`、没有失败重试、没有 `participants` / `members`。
 
 - 2026-09-24 提交前审查（/review-branch）两条阻塞已修：`home.rs` 中 acc_08 测试插在 acc_10 的文档注释与 `cfg(macos)` 之间，已移到前面；collaboration.md §7.1 补上发消息写法与 `<command> --help`，并记为 E14。修后 `scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
+
+- 2026-09-24 E15：`derived_configs_keep_the_chosen_models_active_even_when_the_catalog_deprecates_them` 与更新后的 `main_turn_config_loads_the_managed_agents_file_as_instructions` 先失败后通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。真实模型实测（不预置模型目录，OpenCode 1.18.18；`brew upgrade` 后 tap 的稳定版仍是 1.18.18）：`deepseek/deepseek-v4-flash` 两轮都成功（此前第二轮全部失败），运行后缓存里的 `models.json` 确实把它标为 deprecated，派生配置里是 `status: active`；`deepseek/deepseek-flash` 首次运行也成功（自带快照里没有它）。两次点名结果都正确，10 个 Run 全部 completed。
 
 ## 5. 待定
 

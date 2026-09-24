@@ -210,7 +210,7 @@ AgentEngineRuntime
 └── shutdown
 ```
 
-生产 `EngineRegistry` 当前只注册 `OpenCodeAdapter`。OpenCode 每个 Turn 启动一次 `opencode run --session <id>`，命令、JSONL、session 恢复、错误映射、输出上限、取消与进程组终止全部封装在 adapter 内。Runner 只看到通用 `EngineError`，其中包括 missing、unauthenticated、rate-limited、session-invalid、process、protocol、cancelled、timeout 和 output-limit。
+生产 `EngineRegistry` 当前只注册 `OpenCodeAdapter`。OpenCode 每个 Turn 启动一次 `opencode run --session <id>`。派生配置把本 Agent 的主模型与判断模型写成 `provider.<p>.models.<m>.status = "active"`：OpenCode 刷新模型目录后会删除标为 deprecated 的模型（opencode `provider/provider.ts`），配置里的状态覆盖目录里的状态，目录中没有的模型也由这个条目创建，所以用户选的模型不会在第一次运行后失效。服务商真正下线某个模型时，错误来自服务商 API。命令、JSONL、session 恢复、错误映射、输出上限、取消与进程组终止全部封装在 adapter 内。Runner 只看到通用 `EngineError`，其中包括 missing、unauthenticated、rate-limited、session-invalid、process、protocol、cancelled、timeout 和 output-limit。
 
 正式 Turn 默认没有“5 分钟无输出”或总墙钟超时；长时间无输出本身不表示 Engine 已失效。总 Turn 超时只有在对应 Engine runtime 显式配置时才启用。用户停止 Agent 或退出 Desktop 仍会沿取消/有界关闭路径终止 Engine 进程组。classifier 等短请求继续拥有自己的固定超时。
 

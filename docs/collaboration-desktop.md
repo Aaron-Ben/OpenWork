@@ -244,7 +244,7 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
   - persona 摘要（最多 3 行）；
   - 主模型与判断模型；
   - 底部：“主动巡检（Agenda）”复选框、私聊、编辑。
-- 编辑对话框可修改显示名、role、persona、Engine、主模型和 triage 模型。Engine 下拉目前只有 OpenCode。Persona 编辑器只编辑用户人格部分；Computer 写入 `AGENTS.md` 时追加代码拥有的协作契约，persona 不能移除它。
+- 编辑对话框可修改显示名、role、persona、Engine、主模型和 triage 模型。Engine 下拉目前只有 OpenCode；模型是 `provider/model` 形式的自由输入，新建时两者默认 `deepseek/deepseek-flash`。Persona 编辑器只编辑用户人格部分；Computer 写入 `AGENTS.md` 时追加代码拥有的协作契约，persona 不能移除它。
 - create 使用 Server 返回的 slug ID；archive 立即停止 Runner 但保留记录；restore 触发 config revision 变化和 reconcile。
 
 ## 9. 看板页面

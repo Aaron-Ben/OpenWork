@@ -479,8 +479,12 @@ impl EngineAdapter for OpenCodeAdapter {
     }
 
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError> {
-        let environment =
-            launch::classify_environment(&request.config_root, request.environment).await?;
+        let environment = launch::classify_environment(
+            &request.config_root,
+            request.model.as_deref(),
+            request.environment,
+        )
+        .await?;
         let mut args = vec![
             "run".to_string(),
             "--pure".to_string(),
@@ -520,6 +524,7 @@ impl EngineAdapter for OpenCodeAdapter {
         config.environment = launch::turn_environment(
             &config.config_root,
             &config.instructions_file,
+            &config.model,
             config.environment,
         )
         .await?;

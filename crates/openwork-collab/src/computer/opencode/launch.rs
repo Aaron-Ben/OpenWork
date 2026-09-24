@@ -101,21 +101,29 @@ impl OpenCodeAdapter {
     }
 }
 
-/// 正式 Turn 的环境：派生配置用 `instructions` 引用受管的 `AGENTS.md`。
+/// 正式 Turn 的环境：派生配置用 `instructions` 引用受管的 `AGENTS.md`，并保持主模型可用。
 pub(super) async fn turn_environment(
     config_root: &std::path::Path,
     instructions: &std::path::Path,
+    model: &str,
     environment: BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, EngineError> {
-    prepare_environment(config_root, Some(instructions), environment).await
+    prepare_environment(config_root, Some(instructions), Some(model), environment).await
 }
 
-/// 分类调用的环境：独立的配置目录，不加载 Agent persona。
+/// 分类调用的环境：独立的配置目录，不加载 Agent persona，并保持判断模型可用。
 pub(super) async fn classify_environment(
     config_root: &std::path::Path,
+    model: Option<&str>,
     environment: BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, EngineError> {
-    prepare_environment(&config_root.join(CLASSIFY_CONFIG_DIR), None, environment).await
+    prepare_environment(
+        &config_root.join(CLASSIFY_CONFIG_DIR),
+        None,
+        model,
+        environment,
+    )
+    .await
 }
 
 /// 写入 OpenWork 派生的全局 OpenCode 配置，并返回让 OpenCode 只读这份配置的环境。
@@ -125,9 +133,18 @@ pub(super) async fn classify_environment(
 async fn prepare_environment(
     config_home: &std::path::Path,
     instructions: Option<&std::path::Path>,
+    model: Option<&str>,
     mut environment: BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, EngineError> {
     let mut config = serde_json::json!({"permission": {"*": "allow"}});
+    // OpenCode 刷新模型目录后会删掉 deprecated 的模型（opencode `provider/provider.ts`），
+    // 用户为 Agent 选的模型因此在第一次运行后失效。配置里的 `status` 覆盖目录中的状态；
+    // 目录里没有的模型也会由这个条目创建。`provider/model` 中第一个 `/` 之后都属于模型名。
+    if let Some((provider, model)) = model.and_then(|model| model.split_once('/')) {
+        config["provider"] = serde_json::json!({
+            provider: {"models": {model: {"status": "active"}}}
+        });
+    }
     if let Some(instructions) = instructions {
         let instructions = instructions.to_str().ok_or_else(|| {
             EngineError::Io(std::io::Error::new(

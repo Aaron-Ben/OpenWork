@@ -83,7 +83,7 @@ A real OpenCode smoke is opt-in because it makes a real model request:
 
 ```sh
 OPENWORK_REAL_OPENCODE_SMOKE=1 \
-OPENWORK_REAL_OPENCODE_MODEL=deepseek/deepseek-v4-flash \
+OPENWORK_REAL_OPENCODE_MODEL=deepseek/deepseek-flash \
 TEST_DATABASE_URL=postgres://openwork:openwork@127.0.0.1:5432/openwork \
 TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
 cargo test -p openwork-collab --test runtime_e2e desktop_server_computer_and_real_opencode_smoke

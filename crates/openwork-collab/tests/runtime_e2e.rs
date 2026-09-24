@@ -244,7 +244,7 @@ async fn desktop_server_computer_and_real_opencode_smoke() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("opencode"));
     let model = std::env::var("OPENWORK_REAL_OPENCODE_MODEL")
-        .unwrap_or_else(|_| "deepseek/deepseek-v4-flash".to_string());
+        .unwrap_or_else(|_| "deepseek/deepseek-flash".to_string());
     run_smoke(
         Some(executable),
         &model,

@@ -41,7 +41,7 @@
 - 2026-09-24 测量中发现的计划外问题：
   1. 保持沉默的 Agent 从不结算：delivery 只有 action/ack/triage_false 才结算（`server/runs.rs`），协作契约从未提到 `openwork ack`；用户消息跳过 triage，于是每 20 秒一轮完整 Turn，永不停止（第三次测量 5 分钟 34 个 Run）。Cumora 由 daemon 在成功 Turn 后自行 `ackSeen`。
   2. OpenCode 以继承的 `PWD` 作为项目目录（opencode `cli/cmd/run.ts:333`），不是 Agent 的 `work/`。
-  3. `XDG_CACHE_HOME` 每次 RuntimeSession 都是空目录：OpenCode 回落到自带快照，模型目录与 models.dev 不一致；Desktop 默认模型 `deepseek/deepseek-v4-flash` 在目录刷新后被 OpenCode 本地判为 deprecated 而拒绝（DeepSeek API 仍可调用）。
+  3. `XDG_CACHE_HOME` 每次 RuntimeSession 都是空目录：OpenCode 回落到自带快照，模型目录与 models.dev 不一致；Desktop 默认模型 `deepseek/deepseek-v4-flash` 在目录刷新后被 OpenCode 本地判为 deprecated 而拒绝（DeepSeek API 仍可调用）。→ 模型失效部分由 collab-core E15 解决（派生配置标 active，默认模型改为 `deepseek/deepseek-flash`）；缓存目录本身仍每次会话清空。
   4. `Model not found` 不触发暂停，每 20 秒重试。
 
 - 2026-09-24 D6 实现（已提交 `d9aa9dd`）：迁移 `202609240001_settle_completed_runs.sql` 扩展 `eligible_reason`；`server/runs.rs` 在 completed 时把未 eligible 的 delivery 记为 `completed` 后统一结算。复现测试 `messaging::a_completed_silent_run_settles_its_delivery_so_the_agent_is_not_woken_again` 先失败（`last_read_seq` 为 0）后通过；`scripts/check.sh` 除已知不稳定测试外全部通过，该测试单独重跑通过。
