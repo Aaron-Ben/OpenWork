@@ -278,12 +278,12 @@ fn board_structure_is_user_owned_and_card_order_is_server_owned() {
             "Agent protocol owns Desktop Board structure: {forbidden}"
         );
     }
-    let board = std::fs::read_to_string(crate_root.join("src/server/board.rs")).unwrap();
+    let board = std::fs::read_to_string(crate_root.join("src/server/board/mod.rs")).unwrap();
     assert!(board.contains("SET CONSTRAINTS collab_cards_position_unique DEFERRED"));
     assert!(board.contains("ORDER BY id FOR UPDATE"));
     assert!(board.contains("before Card is not in target Column"));
     let migration = source_files(&crate_root.join("migrations"), "sql");
-    assert!(migration.contains("is_terminal BOOLEAN NOT NULL"));
+    assert!(migration.contains("kind IN ('todo', 'doing', 'done')"));
     assert!(migration.contains("UNIQUE (board_id, position) DEFERRABLE"));
     assert!(migration.contains("UNIQUE (column_id, position) DEFERRABLE"));
 }

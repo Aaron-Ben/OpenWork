@@ -251,7 +251,7 @@ impl Agenda {
                     floor(extract(epoch FROM card.updated_at))::BIGINT AS updated_at
              FROM collab_cards card
              JOIN collab_board_columns board_column
-               ON board_column.id = card.column_id AND NOT board_column.is_terminal
+               ON board_column.id = card.column_id AND board_column.kind IS DISTINCT FROM 'done'
              WHERE card.assignee_id = $1
              ORDER BY card.updated_at, card.id
              LIMIT $2",
@@ -351,7 +351,7 @@ impl Agenda {
                     "SELECT floor(extract(epoch FROM card.updated_at))::BIGINT
                      FROM collab_cards card
                      JOIN collab_board_columns board_column
-                       ON board_column.id = card.column_id AND NOT board_column.is_terminal
+                       ON board_column.id = card.column_id AND board_column.kind IS DISTINCT FROM 'done'
                      WHERE card.id = $1 AND card.assignee_id = $2",
                 )
                 .bind(card_id)

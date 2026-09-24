@@ -56,7 +56,7 @@ export function BoardCanvas({ board, agents, onEditBoard, onAddColumn, onEditCol
             <section key={column.id} className="flex max-h-full w-72 shrink-0 flex-col rounded-2xl border border-line bg-paper-hover">
               <div className="flex shrink-0 items-start justify-between gap-2 border-b border-line px-3 py-3">
                 <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
-                  {column.isTerminal ? <CheckCircle2 className="shrink-0 text-status-success" size={14} /> : null}
+                  {column.kind === 'done' ? <CheckCircle2 className="shrink-0 text-status-success" size={14} /> : null}
                   <span className="truncate">{column.title}</span>
                   <span className="text-ink-faint">{column.cards.length}</span>
                 </h3>

@@ -1,5 +1,5 @@
 use openwork_collab::protocol::{
-    AgentView, BoardView, CardView, DesktopCommand, DesktopCommandResult, MessageView,
+    AgentView, BoardView, CardView, ColumnKind, DesktopCommand, DesktopCommandResult, MessageView,
     ParticipantView, RoomView, RunSummaryView, RunTraceView, RuntimeStatusView,
 };
 use serde::Deserialize;
@@ -335,14 +335,14 @@ pub async fn collab_board_column_create(
     client: tauri::State<'_, CollabDaemonClient>,
     board_id: String,
     title: String,
-    is_terminal: bool,
+    kind: Option<ColumnKind>,
 ) -> Result<BoardView, CommandError> {
     board_result(
         client
             .call(DesktopCommand::CreateBoardColumn {
                 board_id,
                 title,
-                is_terminal,
+                kind,
             })
             .await?,
     )
@@ -353,14 +353,14 @@ pub async fn collab_board_column_update(
     client: tauri::State<'_, CollabDaemonClient>,
     column_id: String,
     title: String,
-    is_terminal: bool,
+    kind: Option<ColumnKind>,
 ) -> Result<BoardView, CommandError> {
     board_result(
         client
             .call(DesktopCommand::UpdateBoardColumn {
                 column_id,
                 title,
-                is_terminal,
+                kind,
             })
             .await?,
     )

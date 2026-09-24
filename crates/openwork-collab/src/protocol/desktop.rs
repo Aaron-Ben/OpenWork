@@ -125,12 +125,12 @@ pub enum DesktopCommand {
     CreateBoardColumn {
         board_id: String,
         title: String,
-        is_terminal: bool,
+        kind: Option<ColumnKind>,
     },
     UpdateBoardColumn {
         column_id: String,
         title: String,
-        is_terminal: bool,
+        kind: Option<ColumnKind>,
     },
     MoveBoardColumn {
         column_id: String,
@@ -295,8 +295,39 @@ pub struct BoardColumnView {
     pub id: String,
     pub title: String,
     pub position: i32,
-    pub is_terminal: bool,
+    pub kind: Option<ColumnKind>,
     pub cards: Vec<CardView>,
+}
+
+/// Column 的语义（collaboration.md §11.1）；列名可以随意改，领取与 Agenda 只看它。
+/// `None` 表示未分类：领取不会把卡片移出未分类列。
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnKind {
+    Todo,
+    Doing,
+    Done,
+}
+
+impl ColumnKind {
+    /// 数据库 `collab_board_columns.kind` 中的取值。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::Doing => "doing",
+            Self::Done => "done",
+        }
+    }
+
+    /// 解析数据库取值；迁移的 CHECK 约束保证只会出现这三种。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "todo" => Some(Self::Todo),
+            "doing" => Some(Self::Doing),
+            "done" => Some(Self::Done),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

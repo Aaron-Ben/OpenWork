@@ -18,7 +18,7 @@ export function BoardSidebar() {
         {boards.map((board) => {
           const cardCount = board.columns.reduce((count, column) => count + column.cards.length, 0)
           const completeCount = board.columns
-            .filter((column) => column.isTerminal)
+            .filter((column) => column.kind === 'done')
             .reduce((count, column) => count + column.cards.length, 0)
           return (
             <button

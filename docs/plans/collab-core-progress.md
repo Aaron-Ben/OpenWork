@@ -17,7 +17,8 @@
 | K3 | 完成 | lap floor（`n > k`，本批每个房间都越过时以 `lap_floor` 跳过），人类关注 = 人类消息或 `collab_rooms.user_viewed_seq`（迁移 `202609240004`）；判断顺序为硬上限 → 私聊检查点 → lap floor；写入时的 20 条硬上限也按最近一次人类关注计数；Desktop `RoomViewed` 命令（只增不减、不进幂等账本）、Tauri `collab_room_viewed`、`messageStore` 在前台看到新消息时上报 |
 | K4 | 完成（含 E17） | `Messages::duplicate_of_last_peer_in`：锁住房间行后与最近一条别人发的 normal 消息比较（去首尾空白），`reply`（含带 HELD token 的重试）与 `dm` 在写入前调用，拒绝码 `DUPLICATE`，文本附对方原话前 200 字 |
 | K8 | 完成 | 对齐 Cumora 的差距，见 E18–E22。迁移 `202609240005`（`collab_messages.run_id`、triage source `fail_closed`）；`reply` 的检查拆到 `server/agent_commands/reply.rs`（原 `agent_commands.rs` 708 行、`reply` 约 160 行）；shim 拆为 `shim/{mod,parse,render}.rs`（原 966 行）；Runner 的 triage 模型一步拆到 `runner/classify.rs`（`runner/mod.rs` 799→770 行）；集成测试夹具拆到 `tests/support/room_fixture.rs`，发布检查的测试移到 `tests/posting.rs`（`messaging.rs` 1524→1016 行） |
-| K6–K7 | 未开始 | |
+| K6 | 完成（后端、迁移、Desktop bridge 与列编辑对话框的类型下拉；列头类型标记在 U2） | 迁移 `202609240006_column_kind.sql`（加 `kind` 并按 `is_terminal` 与默认标题回填，删除 `is_terminal`）；protocol `ColumnKind`，`BoardColumnView.kind`、`CreateBoardColumn` / `UpdateBoardColumn` 的 `kind`；Agenda 与 Run 候选改为排除 `kind = 'done'`；`board.rs`（895 行）拆为 `board/{mod,columns,claim}.rs`；领取在 `board/claim.rs`，拒绝文本逐字：`card <id> is already being worked by @<holder> — move on to another card.`、`card <id> is in a done column; it is finished, so pick another card.`；`BoardOperationError::Domain.message` 改为 `Cow` 以带上负责人 |
+| K7 | 未开始 | |
 
 ## 2. 已定决策
 
@@ -44,6 +45,7 @@
 | E20 | 模型可见的消息列表照 Cumora 设上限：inbox 240 字、messages 280 字、glance 200 字、HELD 最多 8 条每条 200 字、引用 180 字，截断处 `…` 并注明 `messages --json`；`messages --json` 输出完整正文；`messages` 推进 seen；triage 模型输入每类最后 40 条、每条 500 字（2026-09-24） |
 | E21 | triage 模型失败照 Cumora：限流与超时退避、delivery 保留；无法解析与其他错误 fail closed（`fail_closed`，结算为 `triage_false`，不退避）。走到模型这一步的批次只含 Agent 消息（2026-09-24） |
 | E22 | `AGENTS.md` 的开头一段与五条 glance-and-yield 规则、每轮增量的开头一段照搬 Cumora 原文，只替换命令名、去掉表情回应；Desktop 窗口回到前台时补报 `collab_room_viewed`（2026-09-24） |
+| E23 | 卡片的“更新时间”只在这张卡片本身被创建、修改、改派、领取或移动时刷新；`renumber` 重排同列其他卡片只改 position。起因是 K6 发现旁边卡片进出会清零整列的 20 分钟接手计时；Cumora 的 position 留空档（`cli.ts` `card move` 取 `MAX(position) + 1000`），移动只改被移动的那一张（2026-09-24） |
 | E11 | 协作模式不要运行记录：删除运行记录页与其专用后端（`observability`、`collab_run_events`、事件上报、`collab_run_list`/`collab_run_trace`）；界面只展示当前状态和房间说明行；`collab_runs` 与 `collab_triages` 保留为内部状态（2026-09-24） |
 
 ## 3. 写文档时新定的实现细节（2026-09-24 用户已确认）
@@ -88,6 +90,9 @@
 - 2026-09-24 K8：验收 §16 #11 → `posting::acc_11_a_verbatim_repeat_of_the_last_peer_message_is_rejected`（改为私聊不拦、`--continue` 也拦）；#20 → `posting::acc_20_an_agent_cannot_post_twice_in_a_row_until_someone_else_speaks`、`computer::shim::parse::tests::acc_20_reply_takes_continue_anywhere_outside_the_body`；#21 → `posting::acc_21_held_lists_eight_messages_and_listing_counts_as_seen`、`computer::shim::render::tests::acc_21_listings_cut_long_bodies_like_cumora`、`acc_21_messages_json_prints_full_bodies`、`computer::shim::parse::tests::acc_21_only_messages_takes_json`、`server::triage::tests::acc_21_triage_input_keeps_the_latest_forty_messages_cut_to_500_chars`；#22 → `computer::runner::classify::tests::acc_22_triage_failures_back_off_or_fail_closed_like_cumora`、`posting::acc_22_a_failed_triage_model_fails_closed_for_agent_only_messages`；§7.1/§7.2 → `computer::home::tests::acc_08_standing_contract_names_the_addressing_rules`、`computer::prompt::tests::acc_08_message_turn_prompt_renders_the_documented_delta`；collaboration-desktop.md §12 #10 → `rooms/messageStore.test.ts`。先看到失败的：契约原文、增量开头、Desktop 前台补报、`messages` 推进 seen（临时去掉修复后 `acc_21` 失败）；其余服务端、shim 渲染与 fail closed 的测试与实现同时写成，没有先看到失败。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。
 - 2026-09-24 K8 提交前审查（/review-branch）三条阻塞已修：`reply` 超过 60 行，拆出 `check_gates` 与 `quote`；§16 #11 的并发条目改用群聊 `--continue` 并发同一句覆盖（`posting::acc_11_concurrent_identical_group_posts_publish_only_once`）——临时去掉 `reply_context_in` 的 `FOR UPDATE OF room` 后连跑 5 次仍通过，两个请求很难真正交错，这条测试只验证结果、证明不了锁；§9.1 第 3 步改为“seen 推进到列出的最后一条（最多 8 条）”。
 - 2026-09-24 K8 真实模型实测（`deepseek/deepseek-flash`）：数 1 到 6 结果正确，HELD 1 次后直接重发，没有触发连发；讨论场景（K2 的两问 + “先发一句在做、再单独发 3 步计划”）中，Ada 在自己的消息是房间最后一条时 20 秒后想再补一句，被 `MONOLOGUE` 拒绝后没有用 `--continue`，讨论停止（K3 实测时三人各多接一轮）；Ada 同一 Run 里的“On it”与计划两条都发出。
+
+- 2026-09-24 K6：验收 §16 #13 → `server::board::claim::tests::acc_13_claim_moves_only_from_todo_to_the_leftmost_doing`、`acc_13_takeover_needs_an_archived_holder_or_an_idle_card_without_a_running_run`、`board_agenda::acc_13_claim_advances_todo_and_takes_over_only_archived_or_idle_stale_work`（todo → 最左 doing 并追加在末尾、原列重新编号、重复领取幂等、未分类列与无 doing 列的 Board 不动、done 列 `CONFLICT` 且不写入、未过 20 分钟不可接手、过了但负责人有 running Run 不可接手、Run 结束后可接手、归档后立即可接手）；并发领取只有一个成功 → `board_agenda::acc_15_concurrent_claim_and_move_keep_one_owner_and_contiguous_positions`；§16 #15 → 同一测试与 `acc_15_agenda_is_opt_in_excludes_only_done_columns_and_opens_a_card_focused_run`（未分类列仍进 Agenda，`done` 排除）；Desktop → `bridge/collab.test.ts` 的 column create/update 用例改为 `kind`。集成测试与实现同时写成；写完后临时改回旧语义验证：去掉推进时 acc_13 与并发测试失败，忽略 running Run 条件时 acc_13 失败，恢复后通过。`scripts/check.sh` 首轮只有 fmt 未过，格式化后全部通过（`reported_rate_limit_terminates_a_still_running_opencode_process` 本次也通过）。
+- 2026-09-24 E23：`acc_13_claim_advances_todo_and_takes_over_only_archived_or_idle_stale_work` 增加“同列前面的卡片移走后仍可接手”一步，先失败（`CONFLICT`，Held 的计时被重排清零），`renumber` 不再写 `updated_at`、`move_card_in` 只刷新被移动的卡片后通过。
 
 ## 5. 待定
 

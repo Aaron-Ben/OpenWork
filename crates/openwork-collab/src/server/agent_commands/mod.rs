@@ -441,7 +441,7 @@ fn message_effect(message: &MessageView) -> AgentCommandEffect {
 
 fn board_failure(failure: BoardOperationError) -> Result<AgentCommandResponse, sqlx::Error> {
     match failure {
-        BoardOperationError::Domain { code, message } => Ok(error(code, message)),
+        BoardOperationError::Domain { code, message } => Ok(error(code, &message)),
         BoardOperationError::Database(error) => Err(error),
     }
 }

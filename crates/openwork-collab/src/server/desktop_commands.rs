@@ -275,9 +275,9 @@ impl DesktopCommands {
             DesktopCommand::CreateBoardColumn {
                 board_id,
                 title,
-                is_terminal,
+                kind,
             } => {
-                let board = Board::create_column_in(transaction, &board_id, &title, is_terminal)
+                let board = Board::create_column_in(transaction, &board_id, &title, kind)
                     .await
                     .map_err(board_error)?;
                 board_result(board)
@@ -285,9 +285,9 @@ impl DesktopCommands {
             DesktopCommand::UpdateBoardColumn {
                 column_id,
                 title,
-                is_terminal,
+                kind,
             } => {
-                let board = Board::update_column_in(transaction, &column_id, &title, is_terminal)
+                let board = Board::update_column_in(transaction, &column_id, &title, kind)
                     .await
                     .map_err(board_error)?;
                 board_result(board)

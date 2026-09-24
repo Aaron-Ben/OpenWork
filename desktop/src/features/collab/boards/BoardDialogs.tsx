@@ -2,9 +2,10 @@ import { AlertTriangle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { CollabBoard, CollabBoardColumn } from '@/bridge/collab'
+import type { CollabBoard, CollabBoardColumn, CollabColumnKind } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useBoardStore } from './boardStore'
 
 export function BoardEditorDialog({ board, onClose }: { board: CollabBoard | null; onClose: () => void }) {
@@ -41,12 +42,17 @@ export function BoardEditorDialog({ board, onClose }: { board: CollabBoard | nul
   )
 }
 
+/** Radix Select 不接受空字符串作为选项值，未分类在界面上用 `none` 表示，提交时换回 `null`。 */
+type ColumnKindChoice = CollabColumnKind | 'none'
+
+const COLUMN_KIND_CHOICES: readonly ColumnKindChoice[] = ['todo', 'doing', 'done', 'none']
+
 export function ColumnEditorDialog({ boardId, column, onClose }: { boardId: string; column: CollabBoardColumn | null; onClose: () => void }) {
   const { t } = useTranslation()
   const createColumn = useBoardStore((state) => state.createColumn)
   const updateColumn = useBoardStore((state) => state.updateColumn)
   const [title, setTitle] = useState(column?.title ?? '')
-  const [isTerminal, setIsTerminal] = useState(column?.isTerminal ?? false)
+  const [kind, setKind] = useState<ColumnKindChoice>(column?.kind ?? 'none')
   const [saving, setSaving] = useState(false)
 
   async function submit(event: React.FormEvent) {
@@ -55,8 +61,9 @@ export function ColumnEditorDialog({ boardId, column, onClose }: { boardId: stri
     if (!normalizedTitle || saving) return
     setSaving(true)
     try {
-      if (column) await updateColumn(column.id, normalizedTitle, isTerminal)
-      else await createColumn(boardId, normalizedTitle, isTerminal)
+      const columnKind = kind === 'none' ? null : kind
+      if (column) await updateColumn(column.id, normalizedTitle, columnKind)
+      else await createColumn(boardId, normalizedTitle, columnKind)
       onClose()
     } catch {
       setSaving(false)
@@ -68,13 +75,19 @@ export function ColumnEditorDialog({ boardId, column, onClose }: { boardId: stri
       <form className="grid gap-4" onSubmit={submit}>
         <h2 className="font-serif text-xl font-semibold">{t(column ? 'collab.boards.editColumn' : 'collab.boards.addColumn')}</h2>
         <Field label={t('collab.boards.columnName')}><Input autoFocus required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} /></Field>
-        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3 text-sm">
-          <input type="checkbox" className="mt-0.5 size-4 accent-clay" checked={isTerminal} onChange={(event) => setIsTerminal(event.target.checked)} />
-          <span>
-            <strong className="block font-medium">{t('collab.boards.terminal')}</strong>
-            <span className="mt-0.5 block text-xs text-ink-faint">{t('collab.boards.terminalDescription')}</span>
-          </span>
-        </label>
+        <Field label={t('collab.boards.columnKind')}>
+          <Select value={kind} onValueChange={(value) => setKind(value as ColumnKindChoice)}>
+            <SelectTrigger className="h-9 border border-line">
+              <SelectValue>{t(`collab.boards.columnKinds.${kind}`)}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {COLUMN_KIND_CHOICES.map((choice) => (
+                <SelectItem key={choice} value={choice}>{t(`collab.boards.columnKinds.${choice}`)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="block text-xs font-normal text-ink-soft">{t('collab.boards.columnKindDescription')}</span>
+        </Field>
         <DialogActions saving={saving} submitLabel={t('common.save')} onClose={onClose} />
       </form>
     </DialogFrame>

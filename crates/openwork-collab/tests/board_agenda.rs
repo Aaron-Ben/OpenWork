@@ -4,8 +4,9 @@ use openwork_collab::{
     protocol::{
         AgendaCandidate, AgendaDecision, AgendaDecisionRequest, AgendaDecisionResponse,
         AgendaPayload, AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
-        AgentTokenResponse, AgentView, BoardView, CardView, DesktopCommand, DesktopCommandRequest,
-        DesktopCommandResult, FinishRunRequest, InboxResponse, OpenRunRequest, RunView, request_id,
+        AgentTokenResponse, AgentView, BoardView, CardView, ColumnKind, DesktopCommand,
+        DesktopCommandRequest, DesktopCommandResult, FinishRunRequest, InboxResponse,
+        OpenRunRequest, RunView, request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -271,6 +272,64 @@ impl Fixture {
             .unwrap();
     }
 
+    async fn claim(&self, token: &str, card_id: &str) -> AgentCommandResult {
+        self.command(
+            token,
+            AgentCommand::CardClaim {
+                card_id: card_id.to_string(),
+            },
+        )
+        .await
+        .result
+    }
+
+    async fn claimed(&self, token: &str, card_id: &str) -> CardView {
+        match self.claim(token, card_id).await {
+            AgentCommandResult::Card { card } => card,
+            result => panic!("claim returned {result:?}"),
+        }
+    }
+
+    /// 把卡片的最后更新时间拨回 21 分钟前，越过 §11.3 的 20 分钟。
+    async fn age_card(&self, card_id: &str) {
+        sqlx::query(
+            "UPDATE collab_cards
+             SET updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai') - INTERVAL '21 minutes'
+             WHERE id = $1",
+        )
+        .bind(card_id)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
+
+    async fn stored_card(&self, card_id: &str) -> (String, Option<String>) {
+        sqlx::query_as("SELECT column_id, assignee_id FROM collab_cards WHERE id = $1")
+            .bind(card_id)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    async fn create_column(
+        &self,
+        board_id: &str,
+        title: &str,
+        kind: Option<ColumnKind>,
+    ) -> BoardView {
+        match self
+            .desktop(DesktopCommand::CreateBoardColumn {
+                board_id: board_id.to_string(),
+                title: title.to_string(),
+                kind,
+            })
+            .await
+        {
+            DesktopCommandResult::Board(board) => board,
+            result => panic!("create Column returned {result:?}"),
+        }
+    }
+
     async fn stop(self) {
         self.server.shutdown().await.unwrap();
         self.pool.close().await;
@@ -297,9 +356,13 @@ async fn desktop_owns_board_structure_while_agent_owns_the_card_workflow() {
         board
             .columns
             .iter()
-            .filter(|column| column.is_terminal)
-            .count(),
-        1
+            .map(|column| column.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            Some(ColumnKind::Todo),
+            Some(ColumnKind::Doing),
+            Some(ColumnKind::Done)
+        ]
     );
     assert_eq!(board.columns[0].position, 0);
     assert_eq!(board.columns[1].position, 1);
@@ -322,7 +385,7 @@ async fn desktop_owns_board_structure_while_agent_owns_the_card_workflow() {
         .desktop(DesktopCommand::CreateBoardColumn {
             board_id: board.id.clone(),
             title: "Review".to_string(),
-            is_terminal: false,
+            kind: None,
         })
         .await;
     let DesktopCommandResult::Board(updated) = result else {
@@ -456,8 +519,9 @@ async fn desktop_owns_board_structure_while_agent_owns_the_card_workflow() {
     fixture.stop().await;
 }
 
+/// collaboration.md §16 #13、#15: concurrent claims have one winner; concurrent moves stay contiguous.
 #[tokio::test]
-async fn concurrent_claim_and_move_keep_one_owner_and_contiguous_positions() {
+async fn acc_15_concurrent_claim_and_move_keep_one_owner_and_contiguous_positions() {
     let Some(fixture) = Fixture::start().await else {
         return;
     };
@@ -535,7 +599,8 @@ async fn concurrent_claim_and_move_keep_one_owner_and_contiguous_positions() {
     .fetch_all(&fixture.pool)
     .await
     .unwrap();
-    assert_eq!(target_positions, vec![0, 1, 2, 3]);
+    // 领取把卡片从 todo 推进到了这一列，再加上 4 张移入的卡片。
+    assert_eq!(target_positions, vec![0, 1, 2, 3, 4]);
     let source_positions: Vec<i32> = sqlx::query_scalar(
         "SELECT position FROM collab_cards WHERE column_id = $1 ORDER BY position",
     )
@@ -543,15 +608,187 @@ async fn concurrent_claim_and_move_keep_one_owner_and_contiguous_positions() {
     .fetch_all(&fixture.pool)
     .await
     .unwrap();
-    assert_eq!(source_positions, vec![0, 1, 2]);
+    assert_eq!(source_positions, vec![0, 1]);
 
     fixture.finish(&alpha_token, &alpha_run.id).await;
     fixture.finish(&beta_token, &beta_run.id).await;
     fixture.stop().await;
 }
 
+/// collaboration.md §16 #13: claiming moves `todo` to the leftmost `doing` and nothing else;
+/// another Agent takes over only an archived assignee's card, or one idle 20 minutes
+/// whose assignee has no running Run.
 #[tokio::test]
-async fn agenda_is_opt_in_and_opens_a_card_focused_run_without_a_room() {
+async fn acc_13_claim_advances_todo_and_takes_over_only_archived_or_idle_stale_work() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha = fixture.create_agent("TakeAlpha").await;
+    let beta = fixture.create_agent("TakeBeta").await;
+    let (alpha_token, alpha_run, _) = fixture.start_message_run(&alpha.id).await;
+    let (beta_token, beta_run, _) = fixture.start_message_run(&beta.id).await;
+    let board = fixture.create_board().await;
+    let (todo, doing, done) = (
+        board.columns[0].id.clone(),
+        board.columns[1].id.clone(),
+        board.columns[2].id.clone(),
+    );
+    fixture
+        .create_column(&board.id, "Second doing", Some(ColumnKind::Doing))
+        .await;
+    let board = fixture.create_column(&board.id, "Backlog", None).await;
+    let backlog = board.columns[4].id.clone();
+
+    // todo → 最左的 doing，追加在末尾；原列重新连续编号；再次领取幂等且不后退。
+    let first = fixture
+        .create_card(&alpha_token, &board.id, &todo, "First", None)
+        .await;
+    let second = fixture
+        .create_card(&alpha_token, &board.id, &todo, "Second", None)
+        .await;
+    let claimed = fixture.claimed(&beta_token, &first.id).await;
+    assert_eq!(
+        (
+            claimed.column_id.as_str(),
+            claimed.position,
+            claimed.assignee_id.as_deref()
+        ),
+        (doing.as_str(), 0, Some(beta.id.as_str()))
+    );
+    assert_eq!(fixture.stored_card(&second.id).await.0, todo);
+    let second_position: i32 =
+        sqlx::query_scalar("SELECT position FROM collab_cards WHERE id = $1")
+            .bind(&second.id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(second_position, 0);
+    let again = fixture.claimed(&beta_token, &first.id).await;
+    assert_eq!(again.column_id, doing);
+
+    // 未分类列不动；done 列不可领取，负责人不变。
+    let parked = fixture
+        .create_card(&alpha_token, &board.id, &backlog, "Parked", None)
+        .await;
+    assert_eq!(
+        fixture.claimed(&beta_token, &parked.id).await.column_id,
+        backlog
+    );
+    let finished = fixture
+        .create_card(&alpha_token, &board.id, &done, "Finished", None)
+        .await;
+    assert_eq!(
+        fixture.claim(&beta_token, &finished.id).await,
+        AgentCommandResult::Error {
+            code: "CONFLICT".to_string(),
+            message: format!(
+                "card {} is in a done column; it is finished, so pick another card.",
+                finished.id
+            ),
+        }
+    );
+    assert_eq!(
+        fixture.stored_card(&finished.id).await,
+        (done.clone(), None)
+    );
+
+    // 没有 doing 列的 Board：领取成功但卡片留在 todo。
+    let plain = fixture.create_board().await;
+    fixture
+        .desktop(DesktopCommand::UpdateBoardColumn {
+            column_id: plain.columns[1].id.clone(),
+            title: "Doing".to_string(),
+            kind: None,
+        })
+        .await;
+    let plain_card = fixture
+        .create_card(&alpha_token, &plain.id, &plain.columns[0].id, "Plain", None)
+        .await;
+    assert_eq!(
+        fixture.claimed(&beta_token, &plain_card.id).await.column_id,
+        plain.columns[0].id
+    );
+
+    // Alpha 的卡片：未过 20 分钟不可接手；过了但 Alpha 有 running Run 仍不可接手；
+    // Run 结束后可接手。
+    let held = fixture
+        .create_card(
+            &alpha_token,
+            &board.id,
+            &todo,
+            "Held",
+            Some(alpha.id.clone()),
+        )
+        .await;
+    let conflict = AgentCommandResult::Error {
+        code: "CONFLICT".to_string(),
+        message: format!(
+            "card {} is already being worked by @{} — move on to another card.",
+            held.id, alpha.id
+        ),
+    };
+    assert_eq!(fixture.claim(&beta_token, &held.id).await, conflict);
+    fixture.age_card(&held.id).await;
+    assert_eq!(fixture.claim(&beta_token, &held.id).await, conflict);
+    assert_eq!(
+        fixture.stored_card(&held.id).await,
+        (todo.clone(), Some(alpha.id.clone()))
+    );
+    // 同列排在前面的卡片移走会让 Held 的 position 前移，但这不算 Held 被更新，计时不清零。
+    fixture
+        .command(
+            &alpha_token,
+            AgentCommand::CardMove {
+                card_id: second.id.clone(),
+                column_id: backlog.clone(),
+                before_card_id: None,
+            },
+        )
+        .await;
+    fixture.finish(&alpha_token, &alpha_run.id).await;
+    let taken = fixture.claimed(&beta_token, &held.id).await;
+    assert_eq!(
+        (taken.column_id.as_str(), taken.assignee_id.as_deref()),
+        (doing.as_str(), Some(beta.id.as_str()))
+    );
+
+    // 没有 running Run 但不到 20 分钟：仍不可接手。
+    let fresh = fixture
+        .create_card(
+            &beta_token,
+            &board.id,
+            &todo,
+            "Fresh",
+            Some(alpha.id.clone()),
+        )
+        .await;
+    assert!(matches!(
+        fixture.claim(&beta_token, &fresh.id).await,
+        AgentCommandResult::Error { ref code, .. } if code == "CONFLICT"
+    ));
+
+    // 负责人归档后立即可接手。
+    fixture
+        .desktop(DesktopCommand::ArchiveAgent {
+            agent_id: alpha.id.clone(),
+        })
+        .await;
+    assert_eq!(
+        fixture
+            .claimed(&beta_token, &fresh.id)
+            .await
+            .assignee_id
+            .as_deref(),
+        Some(beta.id.as_str())
+    );
+
+    fixture.finish(&beta_token, &beta_run.id).await;
+    fixture.stop().await;
+}
+
+/// collaboration.md §16 #15: with Column `kind` replacing the terminal flag, Agenda skips only `done`.
+#[tokio::test]
+async fn acc_15_agenda_is_opt_in_excludes_only_done_columns_and_opens_a_card_focused_run() {
     let Some(fixture) = Fixture::start().await else {
         return;
     };
@@ -561,12 +798,12 @@ async fn agenda_is_opt_in_and_opens_a_card_focused_run_without_a_room() {
     let todo = board
         .columns
         .iter()
-        .find(|column| !column.is_terminal)
+        .find(|column| column.kind == Some(ColumnKind::Todo))
         .unwrap();
     let done = board
         .columns
         .iter()
-        .find(|column| column.is_terminal)
+        .find(|column| column.kind == Some(ColumnKind::Done))
         .unwrap();
     let card = fixture
         .create_card(
@@ -601,7 +838,7 @@ async fn agenda_is_opt_in_and_opens_a_card_focused_run_without_a_room() {
         .desktop(DesktopCommand::UpdateBoardColumn {
             column_id: todo.id.clone(),
             title: "Looks done but is active".to_string(),
-            is_terminal: false,
+            kind: None,
         })
         .await;
     assert!(fixture.agenda(&token).await.candidate_set.candidates.iter().any(
@@ -624,7 +861,7 @@ async fn agenda_is_opt_in_and_opens_a_card_focused_run_without_a_room() {
         .desktop(DesktopCommand::UpdateBoardColumn {
             column_id: done.id.clone(),
             title: "Archived result".to_string(),
-            is_terminal: true,
+            kind: Some(ColumnKind::Done),
         })
         .await;
     assert!(fixture.agenda(&token).await.candidate_set.candidates.iter().all(

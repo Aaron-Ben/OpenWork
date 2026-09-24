@@ -102,8 +102,8 @@ describe('R3 collaboration command bridge', () => {
     vi.mocked(invoke).mockResolvedValue(null)
 
     await collabCommands.updateBoard('board-1', 'Delivery', 'Shared work')
-    await collabCommands.createBoardColumn('board-1', 'Review', false)
-    await collabCommands.updateBoardColumn('column-1', 'Released', true)
+    await collabCommands.createBoardColumn('board-1', 'Review', null)
+    await collabCommands.updateBoardColumn('column-1', 'Released', 'done')
     await collabCommands.moveBoardColumn('column-1', 'column-2')
     await collabCommands.assignCard('card-1', 'alpha')
     await collabCommands.deleteCard('card-1')
@@ -116,12 +116,12 @@ describe('R3 collaboration command bridge', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'collab_board_column_create', {
       boardId: 'board-1',
       title: 'Review',
-      isTerminal: false,
+      kind: null,
     })
     expect(invoke).toHaveBeenNthCalledWith(3, 'collab_board_column_update', {
       columnId: 'column-1',
       title: 'Released',
-      isTerminal: true,
+      kind: 'done',
     })
     expect(invoke).toHaveBeenNthCalledWith(4, 'collab_board_column_move', {
       columnId: 'column-1',

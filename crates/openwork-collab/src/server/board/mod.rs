@@ -1,8 +1,14 @@
+//! Board、Column 与 Card 的读写（collaboration.md §11）。Column 结构在 `columns`，领取在 `claim`。
+
+mod claim;
+mod columns;
+
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
-use crate::protocol::{BoardColumnView, BoardView, CardView, entity_id};
+use crate::protocol::{BoardColumnView, BoardView, CardView, ColumnKind, entity_id};
 
 /// 新建 Card 的内容，以及由谁创建。
 pub(crate) struct NewCard<'a> {
@@ -22,7 +28,7 @@ pub(crate) struct Board {
 pub(crate) enum BoardOperationError {
     Domain {
         code: &'static str,
-        message: &'static str,
+        message: Cow<'static, str>,
     },
     Database(sqlx::Error),
 }
@@ -61,19 +67,21 @@ impl Board {
         .bind(actor_id)
         .execute(&mut **transaction)
         .await?;
-        for (position, title, is_terminal) in
-            [(0, "Todo", false), (1, "Doing", false), (2, "Done", true)]
-        {
+        for (position, title, kind) in [
+            (0, "Todo", ColumnKind::Todo),
+            (1, "Doing", ColumnKind::Doing),
+            (2, "Done", ColumnKind::Done),
+        ] {
             sqlx::query(
                 "INSERT INTO collab_board_columns (
-                    id, board_id, title, position, is_terminal
+                    id, board_id, title, position, kind
                  ) VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(entity_id("col"))
             .bind(&board_id)
             .bind(title)
             .bind(position)
-            .bind(is_terminal)
+            .bind(kind.as_str())
             .execute(&mut **transaction)
             .await?;
         }
@@ -88,7 +96,7 @@ impl Board {
             "SELECT board.id AS board_id, board.title AS board_title,
                     board.description AS board_description, board.created_by AS board_created_by,
                     board_column.id AS column_id, board_column.title AS column_title,
-                    board_column.position AS column_position, board_column.is_terminal,
+                    board_column.position AS column_position, board_column.kind AS column_kind,
                     card.id AS card_id, card.column_id AS card_column_id,
                     card.title AS card_title, card.description AS card_description,
                     card.position AS card_position, card.assignee_id,
@@ -154,125 +162,6 @@ impl Board {
         Ok(())
     }
 
-    pub(crate) async fn create_column_in(
-        transaction: &mut Transaction<'_, Postgres>,
-        board_id: &str,
-        title: &str,
-        is_terminal: bool,
-    ) -> Result<BoardView, BoardOperationError> {
-        let title = valid_title(title, 200, "Column title must be 1..200 bytes")?;
-        lock_board(transaction, board_id).await?;
-        let position: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*)::INTEGER FROM collab_board_columns WHERE board_id = $1",
-        )
-        .bind(board_id)
-        .fetch_one(&mut **transaction)
-        .await?;
-        sqlx::query(
-            "INSERT INTO collab_board_columns (id, board_id, title, position, is_terminal)
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(entity_id("col"))
-        .bind(board_id)
-        .bind(title)
-        .bind(position)
-        .bind(is_terminal)
-        .execute(&mut **transaction)
-        .await?;
-        Self::get_in(transaction, board_id)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn update_column_in(
-        transaction: &mut Transaction<'_, Postgres>,
-        column_id: &str,
-        title: &str,
-        is_terminal: bool,
-    ) -> Result<BoardView, BoardOperationError> {
-        let title = valid_title(title, 200, "Column title must be 1..200 bytes")?;
-        let board_id = board_id_for_column(transaction, column_id).await?;
-        lock_board(transaction, &board_id).await?;
-        let updated = sqlx::query(
-            "UPDATE collab_board_columns
-             SET title = $2, is_terminal = $3
-             WHERE id = $1 AND board_id = $4",
-        )
-        .bind(column_id)
-        .bind(title)
-        .bind(is_terminal)
-        .bind(&board_id)
-        .execute(&mut **transaction)
-        .await?;
-        if updated.rows_affected() == 0 {
-            return Err(domain("NOT_FOUND", "Column does not exist"));
-        }
-        touch_board(transaction, &board_id).await?;
-        Self::get_in(transaction, &board_id)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn move_column_in(
-        transaction: &mut Transaction<'_, Postgres>,
-        column_id: &str,
-        before_column_id: Option<&str>,
-    ) -> Result<BoardView, BoardOperationError> {
-        sqlx::query("SET CONSTRAINTS collab_board_columns_position_unique DEFERRED")
-            .execute(&mut **transaction)
-            .await?;
-        let board_id = board_id_for_column(transaction, column_id).await?;
-        lock_board(transaction, &board_id).await?;
-        let mut columns = locked_column_ids(transaction, &board_id).await?;
-        columns.retain(|id| id != column_id);
-        let index = match before_column_id {
-            Some(before) => columns
-                .iter()
-                .position(|id| id == before)
-                .ok_or_else(|| domain("NOT_FOUND", "before Column is not in the Board"))?,
-            None => columns.len(),
-        };
-        columns.insert(index, column_id.to_string());
-        renumber_columns(transaction, &board_id, &columns).await?;
-        touch_board(transaction, &board_id).await?;
-        Self::get_in(transaction, &board_id)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn delete_column_in(
-        transaction: &mut Transaction<'_, Postgres>,
-        column_id: &str,
-    ) -> Result<BoardView, BoardOperationError> {
-        sqlx::query("SET CONSTRAINTS collab_board_columns_position_unique DEFERRED")
-            .execute(&mut **transaction)
-            .await?;
-        let board_id = board_id_for_column(transaction, column_id).await?;
-        lock_board(transaction, &board_id).await?;
-        let column_ids = [column_id.to_string()];
-        if lock_columns(transaction, &column_ids).await?.len() != 1 {
-            return Err(domain("NOT_FOUND", "Column does not exist"));
-        }
-        let has_cards: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM collab_cards WHERE column_id = $1)")
-                .bind(column_id)
-                .fetch_one(&mut **transaction)
-                .await?;
-        if has_cards {
-            return Err(domain("CONFLICT", "Column still contains Cards"));
-        }
-        sqlx::query("DELETE FROM collab_board_columns WHERE id = $1")
-            .bind(column_id)
-            .execute(&mut **transaction)
-            .await?;
-        let columns = locked_column_ids(transaction, &board_id).await?;
-        renumber_columns(transaction, &board_id, &columns).await?;
-        touch_board(transaction, &board_id).await?;
-        Self::get_in(transaction, &board_id)
-            .await
-            .map_err(Into::into)
-    }
-
     pub(crate) async fn list(&self) -> Result<Vec<BoardView>, sqlx::Error> {
         self.list_filtered(None).await
     }
@@ -284,7 +173,7 @@ impl Board {
             "SELECT board.id AS board_id, board.title AS board_title,
                     board.description AS board_description, board.created_by AS board_created_by,
                     board_column.id AS column_id, board_column.title AS column_title,
-                    board_column.position AS column_position, board_column.is_terminal,
+                    board_column.position AS column_position, board_column.kind AS column_kind,
                     card.id AS card_id, card.column_id AS card_column_id,
                     card.title AS card_title, card.description AS card_description,
                     card.position AS card_position, card.assignee_id,
@@ -305,7 +194,7 @@ impl Board {
             "SELECT board.id AS board_id, board.title AS board_title,
                     board.description AS board_description, board.created_by AS board_created_by,
                     board_column.id AS column_id, board_column.title AS column_title,
-                    board_column.position AS column_position, board_column.is_terminal,
+                    board_column.position AS column_position, board_column.kind AS column_kind,
                     card.id AS card_id, card.column_id AS card_column_id,
                     card.title AS card_title, card.description AS card_description,
                     card.position AS card_position, card.assignee_id,
@@ -494,53 +383,6 @@ impl Board {
         Ok(board_id)
     }
 
-    pub(crate) async fn claim_card_in(
-        transaction: &mut Transaction<'_, Postgres>,
-        card_id: &str,
-        actor_id: &str,
-    ) -> Result<CardView, BoardOperationError> {
-        let current: Option<(String, String)> =
-            sqlx::query_as("SELECT board_id, column_id FROM collab_cards WHERE id = $1")
-                .bind(card_id)
-                .fetch_optional(&mut **transaction)
-                .await?;
-        let Some((board_id, column_id)) = current else {
-            return Err(domain("NOT_FOUND", "open Card does not exist"));
-        };
-        lock_board(transaction, &board_id).await?;
-        lock_columns(transaction, std::slice::from_ref(&column_id)).await?;
-        let assignee: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT card.assignee_id
-             FROM collab_cards card
-             JOIN collab_board_columns board_column
-               ON board_column.id = card.column_id AND NOT board_column.is_terminal
-             WHERE card.id = $1 FOR UPDATE OF card",
-        )
-        .bind(card_id)
-        .fetch_optional(&mut **transaction)
-        .await?;
-        let Some(assignee) = assignee else {
-            return Err(domain("NOT_FOUND", "open Card does not exist"));
-        };
-        match assignee.as_deref() {
-            Some(current) if current == actor_id => {}
-            Some(_) => return Err(domain("CONFLICT", "Card is already assigned")),
-            None => {
-                sqlx::query(
-                    "UPDATE collab_cards
-                     SET assignee_id = $2,
-                         updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-                     WHERE id = $1",
-                )
-                .bind(card_id)
-                .bind(actor_id)
-                .execute(&mut **transaction)
-                .await?;
-            }
-        }
-        card(transaction, card_id).await.map_err(Into::into)
-    }
-
     pub(crate) async fn move_card_in(
         transaction: &mut Transaction<'_, Postgres>,
         card_id: &str,
@@ -608,6 +450,7 @@ impl Board {
         if source_column_id != target_column_id {
             renumber(transaction, target_column_id, &target).await?;
         }
+        touch_card(transaction, card_id).await?;
         card(transaction, card_id).await.map_err(Into::into)
     }
 }
@@ -642,17 +485,6 @@ async fn lock_board(
     Ok(())
 }
 
-async fn board_id_for_column(
-    transaction: &mut Transaction<'_, Postgres>,
-    column_id: &str,
-) -> Result<String, BoardOperationError> {
-    sqlx::query_scalar("SELECT board_id FROM collab_board_columns WHERE id = $1")
-        .bind(column_id)
-        .fetch_optional(&mut **transaction)
-        .await?
-        .ok_or_else(|| domain("NOT_FOUND", "Column does not exist"))
-}
-
 async fn lock_columns(
     transaction: &mut Transaction<'_, Postgres>,
     column_ids: &[String],
@@ -664,53 +496,6 @@ async fn lock_columns(
     .bind(column_ids)
     .fetch_all(&mut **transaction)
     .await
-}
-
-async fn locked_column_ids(
-    transaction: &mut Transaction<'_, Postgres>,
-    board_id: &str,
-) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT id FROM collab_board_columns WHERE board_id = $1
-         ORDER BY position, id FOR UPDATE",
-    )
-    .bind(board_id)
-    .fetch_all(&mut **transaction)
-    .await
-}
-
-async fn renumber_columns(
-    transaction: &mut Transaction<'_, Postgres>,
-    board_id: &str,
-    column_ids: &[String],
-) -> Result<(), BoardOperationError> {
-    for (position, column_id) in column_ids.iter().enumerate() {
-        sqlx::query(
-            "UPDATE collab_board_columns SET position = $1
-             WHERE id = $2 AND board_id = $3",
-        )
-        .bind(position as i32)
-        .bind(column_id)
-        .bind(board_id)
-        .execute(&mut **transaction)
-        .await?;
-    }
-    Ok(())
-}
-
-async fn touch_board(
-    transaction: &mut Transaction<'_, Postgres>,
-    board_id: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE collab_boards
-         SET updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
-         WHERE id = $1",
-    )
-    .bind(board_id)
-    .execute(&mut **transaction)
-    .await?;
-    Ok(())
 }
 
 async fn locked_card_ids(
@@ -726,6 +511,10 @@ async fn locked_card_ids(
     .await
 }
 
+/// 把 `card_ids` 按顺序写成 `column_id` 里从 0 开始的连续 position。
+///
+/// 不刷新 `updated_at`：同列别的卡片进出只让这些卡片的 position 变了，不算它们被更新，
+/// 否则领取的 20 分钟接手计时（collaboration.md §11.3）会被旁边卡片的移动一直清零。
 async fn renumber(
     transaction: &mut Transaction<'_, Postgres>,
     column_id: &str,
@@ -734,8 +523,7 @@ async fn renumber(
     for (position, card_id) in card_ids.iter().enumerate() {
         sqlx::query(
             "UPDATE collab_cards
-             SET column_id = $1, position = $2,
-                 updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             SET column_id = $1, position = $2
              WHERE id = $3",
         )
         .bind(column_id)
@@ -744,6 +532,22 @@ async fn renumber(
         .execute(&mut **transaction)
         .await?;
     }
+    Ok(())
+}
+
+/// 刷新被移动的那张卡片的 `updated_at`。
+async fn touch_card(
+    transaction: &mut Transaction<'_, Postgres>,
+    card_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE collab_cards
+         SET updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+         WHERE id = $1",
+    )
+    .bind(card_id)
+    .execute(&mut **transaction)
+    .await?;
     Ok(())
 }
 
@@ -782,7 +586,7 @@ struct BoardRow {
     column_id: Option<String>,
     column_title: Option<String>,
     column_position: Option<i32>,
-    is_terminal: Option<bool>,
+    column_kind: Option<String>,
     card_id: Option<String>,
     card_column_id: Option<String>,
     card_title: Option<String>,
@@ -843,7 +647,7 @@ fn assemble(rows: Vec<BoardRow>) -> Vec<BoardView> {
                 id: column_id.clone(),
                 title: row.column_title.expect("Column title is non-null"),
                 position: row.column_position.expect("Column position is non-null"),
-                is_terminal: row.is_terminal.expect("Column terminal flag is non-null"),
+                kind: row.column_kind.as_deref().and_then(ColumnKind::parse),
                 cards: Vec::new(),
             });
         }
@@ -890,6 +694,9 @@ fn valid_title<'a>(
     Ok(value)
 }
 
-fn domain(code: &'static str, message: &'static str) -> BoardOperationError {
-    BoardOperationError::Domain { code, message }
+fn domain(code: &'static str, message: impl Into<Cow<'static, str>>) -> BoardOperationError {
+    BoardOperationError::Domain {
+        code,
+        message: message.into(),
+    }
 }

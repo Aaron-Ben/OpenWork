@@ -3,9 +3,9 @@
 use openwork_collab::{
     protocol::{
         AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
-        AgentTokenResponse, AppendRunEventsRequest, BoardView, DesiredAgents, DesktopCommand,
-        DesktopCommandRequest, DesktopCommandResult, FinishRunRequest, InboxResponse,
-        OpenRunRequest, RunEventInput, RunView, entity_id, request_id,
+        AgentTokenResponse, AppendRunEventsRequest, BoardView, ColumnKind, DesiredAgents,
+        DesktopCommand, DesktopCommandRequest, DesktopCommandResult, FinishRunRequest,
+        InboxResponse, OpenRunRequest, RunEventInput, RunView, entity_id, request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -498,8 +498,12 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
     };
     assert_eq!(columns.len(), 3);
     assert_eq!(
-        columns.iter().filter(|column| column.is_terminal).count(),
-        1
+        columns.iter().map(|column| column.kind).collect::<Vec<_>>(),
+        vec![
+            Some(ColumnKind::Todo),
+            Some(ColumnKind::Doing),
+            Some(ColumnKind::Done)
+        ]
     );
 
     let local_user_count: i64 = sqlx::query_scalar(

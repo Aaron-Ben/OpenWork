@@ -36,6 +36,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "monologue run and fail closed triage",
         include_str!("../../migrations/202609240005_monologue_fail_closed.sql"),
     ),
+    (
+        202_609_240_006,
+        "column kind",
+        include_str!("../../migrations/202609240006_column_kind.sql"),
+    ),
 ];
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {

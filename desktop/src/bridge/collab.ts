@@ -92,11 +92,14 @@ export interface CollabCard {
   createdBy: string
 }
 
+/** Column 的语义（collaboration.md §11.1）；`null` 表示未分类。 */
+export type CollabColumnKind = 'todo' | 'doing' | 'done'
+
 export interface CollabBoardColumn {
   id: string
   title: string
   position: number
-  isTerminal: boolean
+  kind: CollabColumnKind | null
   cards: CollabCard[]
 }
 
@@ -218,15 +221,15 @@ export const collabCommands = {
   createBoardColumn: (
     boardId: string,
     title: string,
-    isTerminal: boolean,
+    kind: CollabColumnKind | null,
   ): Promise<CollabBoard> =>
-    invoke('collab_board_column_create', { boardId, title, isTerminal }),
+    invoke('collab_board_column_create', { boardId, title, kind }),
   updateBoardColumn: (
     columnId: string,
     title: string,
-    isTerminal: boolean,
+    kind: CollabColumnKind | null,
   ): Promise<CollabBoard> =>
-    invoke('collab_board_column_update', { columnId, title, isTerminal }),
+    invoke('collab_board_column_update', { columnId, title, kind }),
   moveBoardColumn: (
     columnId: string,
     beforeColumnId: string | null,
