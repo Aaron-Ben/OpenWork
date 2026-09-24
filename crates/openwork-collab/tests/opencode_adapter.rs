@@ -317,6 +317,69 @@ printf '%s\n' \
     assert_eq!(result.text, r#"{"actionable":false}"#);
 }
 
+/// 设置了 `OPENCODE_DISABLE_PROJECT_CONFIG` 后 OpenCode 不再读 cwd 上方的 AGENTS.md，
+/// 协作契约只能经全局配置的 `instructions` 绝对路径进入系统提示词。
+#[tokio::test]
+async fn main_turn_config_loads_the_managed_agents_file_as_instructions() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = config_echoing_opencode(&directory).await;
+    let mut runtime = runtime(
+        OpenCodeAdapter::with_executable(executable),
+        &directory,
+        "test/model",
+    )
+    .await;
+
+    let result = runtime
+        .run_turn(TurnRequest {
+            prompt: "work".to_string(),
+            cancellation: CancellationToken::new(),
+        })
+        .await
+        .unwrap();
+
+    let config: serde_json::Value = serde_json::from_str(&result.text).unwrap();
+    assert_eq!(
+        config,
+        serde_json::json!({
+            "permission": {"*": "allow"},
+            "instructions": [directory.path().join("AGENTS.md").to_string_lossy()],
+        })
+    );
+}
+
+/// 小模型分类不带 Agent persona：它的配置目录与主 Turn 分开，
+/// 否则 OpenCode 会把两份配置里的 `instructions` 拼在一起。
+#[tokio::test]
+async fn classify_config_does_not_load_agent_instructions() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = config_echoing_opencode(&directory).await;
+    let adapter = OpenCodeAdapter::with_executable(executable);
+    let mut runtime = runtime(adapter.clone(), &directory, "test/model").await;
+    runtime
+        .run_turn(TurnRequest {
+            prompt: "work".to_string(),
+            cancellation: CancellationToken::new(),
+        })
+        .await
+        .unwrap();
+
+    let result = adapter
+        .classify(ClassifyRequest {
+            cwd: directory.path().to_path_buf(),
+            config_root: directory.path().join("config"),
+            prompt: "classify".to_string(),
+            model: None,
+            environment: Default::default(),
+            cancellation: CancellationToken::new(),
+        })
+        .await
+        .unwrap();
+
+    let config: serde_json::Value = serde_json::from_str(&result.text).unwrap();
+    assert_eq!(config, serde_json::json!({"permission": {"*": "allow"}}));
+}
+
 #[tokio::test]
 async fn cancellation_terminates_the_entire_opencode_process_group() {
     let directory = tempfile::tempdir().unwrap();
@@ -527,6 +590,33 @@ exit 1
     assert!(!error.contains(&directory.path().to_string_lossy().into_owned()));
 }
 
+/// 把 OpenCode 实际读到的全局 `opencode.json` 原样作为回复文本输出。
+async fn config_echoing_opencode(directory: &tempfile::TempDir) -> std::path::PathBuf {
+    let executable = directory.path().join("opencode-config-echo");
+    tokio::fs::write(
+        &executable,
+        r#"#!/bin/sh
+cat >/dev/null
+config=$(cat "$XDG_CONFIG_HOME/opencode/opencode.json")
+text=$(printf '%s' "$config" | sed 's/\\/\\\\/g; s/"/\\"/g')
+printf '%s\n' \
+  '{"type":"step_start","sessionID":"ses_config"}' \
+  "{\"type\":\"text\",\"part\":{\"text\":\"$text\"}}"
+"#,
+    )
+    .await
+    .unwrap();
+    let mut permissions = tokio::fs::metadata(&executable)
+        .await
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o700);
+    tokio::fs::set_permissions(&executable, permissions)
+        .await
+        .unwrap();
+    executable
+}
+
 async fn runtime(
     adapter: OpenCodeAdapter,
     directory: &tempfile::TempDir,
@@ -545,6 +635,7 @@ async fn runtime_with_timeout(
         .create_agent_runtime(EngineRuntimeConfig {
             home: directory.path().to_path_buf(),
             config_root: directory.path().join("config"),
+            instructions_file: directory.path().join("AGENTS.md"),
             state_file: directory.path().join("session.json"),
             context_fingerprint: "test-persona".to_string(),
             model: model.to_string(),

@@ -190,7 +190,8 @@ AgentEngineRuntime
 - main 模型最多 2 个并发，triage 最多 4 个并发；
 - busy 时的多次 wake 合并为一个 `rerun_requested`；
 - Turn 结束后重新读取 durable inbox，不在内存堆积消息正文；
-- rate limit 进入结构化 pacer，并按 Engine 提供的 retry-after 或本地退避恢复；
+- rate limit 进入结构化 pacer，并按 Engine 提供的 retry-after 或本地 60 秒退避恢复；
+- Engine 未登录或凭证无效时，该 Agent 暂停 15 分钟再拉起 Engine：失败 Run 不推进 delivery，否则每次 poll 都会重复失败；
 - Engine/model/persona fingerprint 不一致时不恢复旧 Engine session。
 
 ## 7. Message、triage 与 HELD
@@ -285,6 +286,7 @@ Redis 协调不可用时 Agenda 关闭本次尝试。Card-focused Agenda Run 可
 | Redis Pub/Sub 不可用 | 消息仍持久；即时 wake 可丢失，poll 恢复 |
 | Redis 安全协调不可用 | HELD/Agenda 等需要原子协调的动作按各自规则拒绝或关闭 |
 | Engine rate limit | 记录结构化错误与 retry-after，pacer 延后后续调用 |
+| Engine 未登录或凭证无效 | Run 记为失败，该 Agent 暂停 15 分钟（聊天与 Agenda 共用），其他 Agent 不受影响 |
 | Runner panic/异常退出 | Computer 立即进入有界指数退避重建，不等待 roster poll；重复失败仍可观测且不形成紧循环 |
 | Engine 忽略取消 | 先终止进程组，超时后强制结束子进程 |
 | Run 在结算前中断 | delivery 不推进，下次启动重新读取 |

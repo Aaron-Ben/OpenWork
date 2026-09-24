@@ -767,6 +767,7 @@ impl RunnerFactory<'_> {
             .create_agent_runtime(EngineRuntimeConfig {
                 home: home.work_root.clone(),
                 config_root: home.config_root.clone(),
+                instructions_file: home.instructions_file.clone(),
                 state_file: home.state_file.clone(),
                 context_fingerprint: home.context_fingerprint.clone(),
                 model: assignment.main_model_id.clone(),

@@ -28,6 +28,9 @@ const MAX_JSONL_LINE_BYTES: usize = 1024 * 1024;
 const ERROR_TAIL_BYTES: usize = 16 * 1024;
 const INVENTORY_TIMEOUT: Duration = Duration::from_secs(3);
 const CLASSIFY_TIMEOUT: Duration = Duration::from_secs(60);
+/// classify 专用的 `XDG_CONFIG_HOME` 子目录。OpenCode 会拼接各层配置里的
+/// `instructions`，与主 Turn 共用配置目录就会把 Agent persona 带进分类调用。
+const CLASSIFY_CONFIG_DIR: &str = "classify";
 
 #[derive(Clone, Debug)]
 pub struct OpenCodeAdapter {
@@ -471,7 +474,12 @@ impl EngineAdapter for OpenCodeAdapter {
     }
 
     async fn classify(&self, request: ClassifyRequest) -> Result<ClassifyResult, EngineError> {
-        let environment = prepare_environment(&request.config_root, request.environment).await?;
+        let environment = prepare_environment(
+            &request.config_root.join(CLASSIFY_CONFIG_DIR),
+            None,
+            request.environment,
+        )
+        .await?;
         let mut args = vec![
             "run".to_string(),
             "--pure".to_string(),
@@ -507,7 +515,12 @@ impl EngineAdapter for OpenCodeAdapter {
         &self,
         mut config: EngineRuntimeConfig,
     ) -> Result<Box<dyn AgentEngineRuntime>, EngineError> {
-        config.environment = prepare_environment(&config.config_root, config.environment).await?;
+        config.environment = prepare_environment(
+            &config.config_root,
+            Some(&config.instructions_file),
+            config.environment,
+        )
+        .await?;
         let session_id = load_session(&config).await?;
         Ok(Box::new(OpenCodeRuntime {
             adapter: self.clone(),
@@ -577,20 +590,35 @@ impl AgentEngineRuntime for OpenCodeRuntime {
     }
 }
 
+/// 写入 OpenWork 派生的全局 OpenCode 配置，并返回让 OpenCode 只读这份配置的环境。
+///
+/// `OPENCODE_DISABLE_PROJECT_CONFIG` 同时关掉了 cwd 上方 AGENTS.md 的自动加载，
+/// 所以 `instructions` 必须写成绝对路径（opencode `session/instruction.ts`）。
 async fn prepare_environment(
-    config_root: &std::path::Path,
+    config_home: &std::path::Path,
+    instructions: Option<&std::path::Path>,
     mut environment: BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, String>, EngineError> {
-    let opencode_config = config_root.join("opencode");
+    let mut config = serde_json::json!({"permission": {"*": "allow"}});
+    if let Some(instructions) = instructions {
+        let instructions = instructions.to_str().ok_or_else(|| {
+            EngineError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Agent instructions path is not valid UTF-8",
+            ))
+        })?;
+        config["instructions"] = serde_json::json!([instructions]);
+    }
+    let opencode_config = config_home.join("opencode");
     secure_directory(&opencode_config).await?;
     atomic_write(
         &opencode_config.join("opencode.json"),
-        br#"{"permission":{"*":"allow"}}"#,
+        config.to_string().as_bytes(),
     )
     .await?;
     environment.insert(
         "XDG_CONFIG_HOME".to_string(),
-        config_root.to_string_lossy().into_owned(),
+        config_home.to_string_lossy().into_owned(),
     );
     environment.insert(
         "OPENCODE_DISABLE_PROJECT_CONFIG".to_string(),
@@ -829,6 +857,7 @@ mod tests {
         EngineRuntimeConfig {
             home: directory.path().join("work"),
             config_root: directory.path().join("config"),
+            instructions_file: directory.path().join("AGENTS.md"),
             state_file,
             context_fingerprint: "new-context".to_string(),
             model: "new/model".to_string(),

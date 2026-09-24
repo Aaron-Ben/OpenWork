@@ -277,9 +277,13 @@ Redis 不保存消息正文、Agent config、Board、Run 或待执行 Agenda que
     ├── bin/openwork
     ├── agents/<agent-id>/runtime-token
     └── derived/<agent-id>/<engine-id>/
+        ├── opencode/opencode.json            正式 Turn
+        └── classify/opencode/opencode.json   triage 与 Agenda 分类
 ```
 
 持久 Agent home 只保存受管 persona/协作契约、私有工作文件和最小 Engine continuity。RuntimeSession 目录只保存短期凭证与派生配置：启动清除陈旧目录，正常退出清除当前目录。
+
+OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd 上方的 `AGENTS.md`。正式 Turn 的派生配置用 `instructions` 引用 `agents/<agent-id>/AGENTS.md` 的绝对路径，使 persona 与协作契约每轮进入系统提示词；分类调用使用单独的配置目录，不加载 persona。
 
 多个 Agent 的 `work` 彼此独立；它不是多个 Agent 共同操作同一个真实项目 checkout，也不是 OS 安全沙箱。Agent home、RuntimeSession 文件和 JWT 只提供应用层身份、状态与 API 权限隔离；同一 macOS 登录用户下的可信本机进程仍共享该用户的 OS 文件权限。
 

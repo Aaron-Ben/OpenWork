@@ -54,6 +54,9 @@ pub struct ClassifyResult {
 pub struct EngineRuntimeConfig {
     pub home: PathBuf,
     pub config_root: PathBuf,
+    /// 受管的 `AGENTS.md`（身份、persona 与协作契约）。Engine 必须把它作为每轮的
+    /// 系统指令加载；`context_fingerprint` 就是它的内容摘要。
+    pub instructions_file: PathBuf,
     pub state_file: PathBuf,
     pub context_fingerprint: String,
     pub model: String,

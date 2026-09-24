@@ -16,6 +16,8 @@ pub struct HomeManager {
 pub struct AgentHome {
     pub work_root: PathBuf,
     pub config_root: PathBuf,
+    /// 受管的 `AGENTS.md`；Engine adapter 负责让 Engine 把它作为系统指令加载。
+    pub instructions_file: PathBuf,
     pub state_file: PathBuf,
     pub context_fingerprint: String,
     pub environment: BTreeMap<String, String>,
@@ -91,7 +93,8 @@ impl HomeManager {
 
         let managed_context = standing_prompt(assignment);
         let context_fingerprint = managed_context_fingerprint(&managed_context);
-        atomic_write(&root.join("AGENTS.md"), managed_context.as_bytes(), 0o600).await?;
+        let instructions_file = root.join("AGENTS.md");
+        atomic_write(&instructions_file, managed_context.as_bytes(), 0o600).await?;
         atomic_write(&token_file, runtime_token.as_bytes(), 0o600).await?;
 
         let original_path = std::env::var("PATH").unwrap_or_default();
@@ -133,6 +136,7 @@ impl HomeManager {
         Ok(AgentHome {
             work_root,
             config_root,
+            instructions_file,
             state_file: engine_root.join("session.json"),
             context_fingerprint,
             environment,
@@ -304,6 +308,7 @@ mod tests {
         assert!(
             home.environment["PATH"].starts_with(&format!("{}:", runtime.join("bin").display()))
         );
+        assert_eq!(home.instructions_file, persistent.join("AGENTS.md"));
         let managed_context = tokio::fs::read_to_string(persistent.join("AGENTS.md"))
             .await
             .unwrap();

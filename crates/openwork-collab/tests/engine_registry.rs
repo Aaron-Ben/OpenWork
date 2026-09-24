@@ -164,6 +164,7 @@ fn runtime_config(agent_id: &str) -> EngineRuntimeConfig {
     let home = PathBuf::from("/tmp").join(agent_id);
     EngineRuntimeConfig {
         config_root: home.join("engine-config"),
+        instructions_file: home.join("AGENTS.md"),
         state_file: home.join("session.json"),
         context_fingerprint: "test-persona".to_string(),
         home,
