@@ -101,7 +101,7 @@ collab_room_viewed
 ```
 
 - `RoomView` 增加 `unreadCount`（sequence 大于 `user_viewed_seq`、作者不是 `local-user` 的 normal 消息数）、`lastMessage`（作者显示名与正文前 80 字）、`workingAgentIds`（在该房间有 running Run 的 Agent）、`userIsMember`。
-- `collab_room_open` 返回一个房间快照：消息、成员及其 `activity`、说明行（§7.3）。`MessageView` 增加 `authorName`、`authorKind`、`authorRole` 与可空的 `quoted { id, authorName, body }`（原文前 180 字）。
+- `collab_room_open` 返回一个房间快照：消息、成员及其 `activity`、说明行（§7.3）。`MessageView` 增加 `authorName`、`authorKind`、`authorRole` 与可空的 `quoted { id, authorId, authorName, body }`（原文前 180 字）。
 - `collab_message_send` 增加可选的 `quotedMessageId`。
 - `collab_room_viewed { roomId, upToSeq }`：用户看到了这个房间到 `upToSeq` 为止的消息。Server 只增不减地写入 `collab_rooms.user_viewed_seq`（collaboration.md §13.3.4）。
 - Desktop 用户可以创建 Group 并改变 Group audience。Direct Room 创建是“创建或返回已有 Room”。成员操作只接受 Agent ID；固定用户始终由 Server 管理。

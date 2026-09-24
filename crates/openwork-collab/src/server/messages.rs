@@ -1,11 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::protocol::{DeliveryRange, InboxResponse, MessageView, TriggerEnvelope, entity_id};
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use crate::protocol::{
+    DeliveryRange, InboxResponse, MessageView, QuotedMessageView, TriggerEnvelope, entity_id,
+};
+use sqlx::{FromRow, PgExecutor, PgPool, Postgres, Transaction};
 
 use super::{agents::Agents, auth::AgentClaims, climate::Climate, rooms::Rooms};
 
 const INBOX_MESSAGE_LIMIT: usize = 200;
+/// Characters of a quoted message shown under a reply (collaboration.md §9.3, Cumora `cli.ts` inbox).
+const QUOTE_BODY_MAX_CHARS: i32 = 180;
 
 #[derive(Clone)]
 pub(crate) struct Messages {
@@ -17,33 +21,106 @@ impl Messages {
         Self { pool }
     }
 
+    /// 用户发消息；`quoted_message_id` 不是本房间的消息时返回 `NOT_FOUND`。
     pub(crate) async fn send_user_in(
         transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
         body: &str,
+        quoted_message_id: Option<&str>,
     ) -> Result<MessageView, sqlx::Error> {
         if !Self::valid_body(body) {
             return Err(sqlx::Error::Protocol(
                 "INVALID_ARGUMENT: message body is invalid".to_string(),
             ));
         }
-        let message_id = entity_id("msg");
-        let sequence = insert(
-            transaction,
-            room_id,
-            "local-user",
-            "normal",
-            body,
-            &message_id,
+        let quoted = match quoted_message_id {
+            Some(quoted_id) => Some(
+                Self::quote_in(transaction, room_id, quoted_id)
+                    .await?
+                    .ok_or_else(|| {
+                        sqlx::Error::Protocol(format!(
+                            "NOT_FOUND: {}",
+                            Self::quote_not_found(quoted_id, room_id)
+                        ))
+                    })?,
+            ),
+            None => None,
+        };
+        Self::insert_in(transaction, room_id, "local-user", body, quoted).await
+    }
+
+    /// 本房间里 `quoted_id` 这条消息的引用摘要；不在本房间时返回 `None`。
+    pub(crate) async fn quote_in(
+        transaction: &mut Transaction<'_, Postgres>,
+        room_id: &str,
+        quoted_id: &str,
+    ) -> Result<Option<QuotedMessageView>, sqlx::Error> {
+        sqlx::query_as::<_, QuoteRow>(
+            "SELECT message.id, message.author_id, author.display_name AS author_name,
+                    LEFT(message.body, $3) AS body
+             FROM collab_messages message
+             JOIN collab_participants author ON author.id = message.author_id
+             WHERE message.room_id = $1 AND message.id = $2",
         )
-        .await?;
-        Ok(MessageView {
-            id: message_id,
-            room_id: room_id.to_string(),
-            sequence,
-            author_id: "local-user".to_string(),
-            body: body.to_string(),
-        })
+        .bind(room_id)
+        .bind(quoted_id)
+        .bind(QUOTE_BODY_MAX_CHARS)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map(|row| row.map(QuotedMessageView::from))
+    }
+
+    /// 引用目标不在本房间时给模型与用户的说明。
+    pub(crate) fn quote_not_found(quoted_id: &str, room_id: &str) -> String {
+        format!("{quoted_id} is not a message in {room_id}; quote an id from this room's messages")
+    }
+
+    /// 把查询行转成 `MessageView`，并用一次查询补齐被引用消息的摘要。
+    pub(crate) async fn views<'e, E>(
+        executor: E,
+        rows: Vec<MessageRow>,
+    ) -> Result<Vec<MessageView>, sqlx::Error>
+    where
+        E: PgExecutor<'e>,
+    {
+        let quoted_ids = rows
+            .iter()
+            .filter_map(|row| row.quoted_message_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let quotes = if quoted_ids.is_empty() {
+            BTreeMap::new()
+        } else {
+            sqlx::query_as::<_, QuoteRow>(
+                "SELECT message.id, message.author_id, author.display_name AS author_name,
+                        LEFT(message.body, $2) AS body
+                 FROM collab_messages message
+                 JOIN collab_participants author ON author.id = message.author_id
+                 WHERE message.id = ANY($1)",
+            )
+            .bind(&quoted_ids)
+            .bind(QUOTE_BODY_MAX_CHARS)
+            .fetch_all(executor)
+            .await?
+            .into_iter()
+            .map(|row| (row.id.clone(), QuotedMessageView::from(row)))
+            .collect::<BTreeMap<_, _>>()
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| MessageView {
+                quoted: row
+                    .quoted_message_id
+                    .as_ref()
+                    .and_then(|id| quotes.get(id).cloned()),
+                id: row.id,
+                room_id: row.room_id,
+                sequence: row.sequence,
+                author_id: row.author_id,
+                body: row.body,
+            })
+            .collect())
     }
 
     pub(crate) fn valid_body(body: &str) -> bool {
@@ -52,20 +129,34 @@ impl Messages {
             && !body.as_bytes().contains(&0)
     }
 
-    pub(crate) async fn insert_agent_in(
+    /// 插入一条 normal 消息；`quoted` 必须已由 [`Self::quote_in`] 在同一房间确认。
+    pub(crate) async fn insert_in(
         transaction: &mut Transaction<'_, Postgres>,
         room_id: &str,
         author_id: &str,
         body: &str,
+        quoted: Option<QuotedMessageView>,
     ) -> Result<MessageView, sqlx::Error> {
         let id = entity_id("msg");
-        let sequence = insert(transaction, room_id, author_id, "normal", body, &id).await?;
+        let sequence = insert(
+            transaction,
+            &NewMessage {
+                id: &id,
+                room_id,
+                author_id,
+                kind: "normal",
+                body,
+                quoted_message_id: quoted.as_ref().map(|quoted| quoted.id.as_str()),
+            },
+        )
+        .await?;
         Ok(MessageView {
             id,
             room_id: room_id.to_string(),
             sequence,
             author_id: author_id.to_string(),
             body: body.to_string(),
+            quoted,
         })
     }
 
@@ -75,9 +166,9 @@ impl Messages {
         compose_anchor: i64,
         agent_id: &str,
     ) -> Result<Vec<MessageView>, sqlx::Error> {
-        sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body FROM (
-                SELECT id, room_id, sequence, author_id, body
+        let rows = sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body, quoted_message_id FROM (
+                SELECT id, room_id, sequence, author_id, body, quoted_message_id
                 FROM collab_messages
                 WHERE room_id = $1 AND sequence > $2 AND author_id <> $3
                 ORDER BY sequence DESC LIMIT 50
@@ -87,8 +178,8 @@ impl Messages {
         .bind(compose_anchor)
         .bind(agent_id)
         .fetch_all(&mut **transaction)
-        .await
-        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+        .await?;
+        Self::views(&mut **transaction, rows).await
     }
 
     pub(crate) async fn between_in(
@@ -98,8 +189,8 @@ impl Messages {
         up_to_sequence: i64,
         agent_id: &str,
     ) -> Result<Vec<MessageView>, sqlx::Error> {
-        sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body
+        let rows = sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body, quoted_message_id
              FROM collab_messages
              WHERE room_id = $1 AND sequence > $2 AND sequence <= $3
                AND author_id <> $4
@@ -110,8 +201,8 @@ impl Messages {
         .bind(up_to_sequence)
         .bind(agent_id)
         .fetch_all(&mut **transaction)
-        .await
-        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+        .await?;
+        Self::views(&mut **transaction, rows).await
     }
 
     pub(crate) async fn peer_max_in(
@@ -157,14 +248,14 @@ impl Messages {
     }
 
     pub(crate) async fn list(&self, room_id: &str) -> Result<Vec<MessageView>, sqlx::Error> {
-        sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body
+        let rows = sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body, quoted_message_id
              FROM collab_messages WHERE room_id = $1 ORDER BY sequence",
         )
         .bind(room_id)
         .fetch_all(&self.pool)
-        .await
-        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+        .await?;
+        Self::views(&self.pool, rows).await
     }
 
     pub(crate) async fn list_for_agent_in(
@@ -188,10 +279,10 @@ impl Messages {
                 "NOT_FOUND: Room is not visible to this Agent".to_string(),
             ));
         };
-        sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body FROM (
+        let rows = sqlx::query_as::<_, MessageRow>(
+            "SELECT id, room_id, sequence, author_id, body, quoted_message_id FROM (
                 SELECT message.id, message.room_id, message.sequence,
-                       message.author_id, message.body
+                       message.author_id, message.body, message.quoted_message_id
                 FROM collab_messages message
                 WHERE message.room_id = $1
                   AND ($3 = 'direct' OR message.created_at >= $2)
@@ -205,8 +296,8 @@ impl Messages {
         .bind(room_kind)
         .bind(i64::from(tail.clamp(1, 200)))
         .fetch_all(&mut **transaction)
-        .await
-        .map(|rows| rows.into_iter().map(MessageView::from).collect())
+        .await?;
+        Self::views(&mut **transaction, rows).await
     }
 
     pub(crate) async fn wake_recipients(
@@ -230,6 +321,11 @@ impl Messages {
                            '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
                            '([^A-Za-z0-9_-]|$)'
                        )
+                   ) OR EXISTS (
+                       SELECT 1 FROM collab_messages quoted
+                       WHERE quoted.room_id = message.room_id
+                         AND quoted.id = message.quoted_message_id
+                         AND quoted.author_id = rm.participant_id
                    )
                )
              ORDER BY rm.participant_id",
@@ -262,6 +358,15 @@ impl Messages {
                                 '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
                                 '([^A-Za-z0-9_-]|$)'
                             )
+                      ) OR EXISTS (
+                          SELECT 1
+                          FROM collab_messages reply
+                          JOIN collab_messages quoted
+                            ON quoted.room_id = reply.room_id AND quoted.id = reply.quoted_message_id
+                          WHERE reply.room_id = rm.room_id
+                            AND reply.sequence > rm.last_read_seq
+                            AND reply.author_id <> $1
+                            AND quoted.author_id = rm.participant_id
                       )
                   )
                   AND m.sequence > rm.last_read_seq AND m.author_id <> $1
@@ -311,7 +416,7 @@ impl Messages {
                 SELECT *
                 FROM UNNEST($2::TEXT[], $3::BIGINT[]) AS selected(room_id, take_count)
              ), ranked AS (
-                SELECT m.id, m.room_id, m.sequence, m.author_id, m.body,
+                SELECT m.id, m.room_id, m.sequence, m.author_id, m.body, m.quoted_message_id,
                        rm.last_read_seq, m.created_at, allocation.take_count,
                        ROW_NUMBER() OVER (
                            PARTITION BY m.room_id ORDER BY m.sequence
@@ -333,11 +438,20 @@ impl Messages {
                                 '(^|[^A-Za-z0-9_-])@' || rm.participant_id ||
                                 '([^A-Za-z0-9_-]|$)'
                             )
+                      ) OR EXISTS (
+                          SELECT 1
+                          FROM collab_messages reply
+                          JOIN collab_messages quoted
+                            ON quoted.room_id = reply.room_id AND quoted.id = reply.quoted_message_id
+                          WHERE reply.room_id = rm.room_id
+                            AND reply.sequence > rm.last_read_seq
+                            AND reply.author_id <> $1
+                            AND quoted.author_id = rm.participant_id
                       )
                   )
                   AND m.sequence > rm.last_read_seq AND m.author_id <> $1
              )
-             SELECT id, room_id, sequence, author_id, body, last_read_seq
+             SELECT id, room_id, sequence, author_id, body, quoted_message_id, last_read_seq
              FROM ranked
              WHERE room_position <= take_count
              ORDER BY created_at, room_id, sequence",
@@ -353,21 +467,17 @@ impl Messages {
             total_count > rows.len() as i64 || total_rooms > unread_rooms.len() as i64;
         let mut ranges = BTreeMap::<String, (i64, i64)>::new();
         let mut participant_ids = BTreeSet::<String>::new();
-        let mut messages = Vec::with_capacity(rows.len());
+        let mut message_rows = Vec::with_capacity(rows.len());
         for row in rows {
+            let message = row.message;
             ranges
-                .entry(row.room_id.clone())
-                .and_modify(|range| range.1 = row.sequence)
-                .or_insert((row.last_read_seq + 1, row.sequence));
-            participant_ids.insert(row.author_id.clone());
-            messages.push(MessageView {
-                id: row.id,
-                room_id: row.room_id,
-                sequence: row.sequence,
-                author_id: row.author_id,
-                body: row.body,
-            });
+                .entry(message.room_id.clone())
+                .and_modify(|range| range.1 = message.sequence)
+                .or_insert((row.last_read_seq + 1, message.sequence));
+            participant_ids.insert(message.author_id.clone());
+            message_rows.push(message);
         }
+        let messages = Self::views(&self.pool, message_rows).await?;
         let participant_ids = participant_ids.into_iter().collect::<Vec<_>>();
         let climates = Climate::for_participants(&self.pool, &claims.sub, &participant_ids).await?;
         let team = Agents::team(&self.pool, &participant_ids).await?;
@@ -402,13 +512,19 @@ impl Messages {
     }
 }
 
+/// 一条待插入的消息。
+struct NewMessage<'a> {
+    id: &'a str,
+    room_id: &'a str,
+    author_id: &'a str,
+    kind: &'a str,
+    body: &'a str,
+    quoted_message_id: Option<&'a str>,
+}
+
 async fn insert(
     transaction: &mut Transaction<'_, Postgres>,
-    room_id: &str,
-    author_id: &str,
-    kind: &str,
-    body: &str,
-    message_id: &str,
+    message: &NewMessage<'_>,
 ) -> Result<i64, sqlx::Error> {
     let sequence: i64 = sqlx::query_scalar(
         "UPDATE collab_rooms
@@ -417,40 +533,50 @@ async fn insert(
              updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
          WHERE id = $1 RETURNING next_seq",
     )
-    .bind(room_id)
+    .bind(message.room_id)
     .fetch_one(&mut **transaction)
     .await?;
     sqlx::query(
-        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO collab_messages (id, room_id, sequence, author_id, kind, body, quoted_message_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(message_id)
-    .bind(room_id)
+    .bind(message.id)
+    .bind(message.room_id)
     .bind(sequence)
-    .bind(author_id)
-    .bind(kind)
-    .bind(body)
+    .bind(message.author_id)
+    .bind(message.kind)
+    .bind(message.body)
+    .bind(message.quoted_message_id)
     .execute(&mut **transaction)
     .await?;
     Ok(sequence)
 }
 
+/// 读取消息的公共列；经 [`Messages::views`] 补齐引用摘要后才成为 `MessageView`。
 #[derive(FromRow)]
-struct MessageRow {
+pub(crate) struct MessageRow {
+    pub(crate) id: String,
+    pub(crate) room_id: String,
+    pub(crate) sequence: i64,
+    pub(crate) author_id: String,
+    pub(crate) body: String,
+    pub(crate) quoted_message_id: Option<String>,
+}
+
+#[derive(FromRow)]
+struct QuoteRow {
     id: String,
-    room_id: String,
-    sequence: i64,
     author_id: String,
+    author_name: String,
     body: String,
 }
 
-impl From<MessageRow> for MessageView {
-    fn from(row: MessageRow) -> Self {
+impl From<QuoteRow> for QuotedMessageView {
+    fn from(row: QuoteRow) -> Self {
         Self {
             id: row.id,
-            room_id: row.room_id,
-            sequence: row.sequence,
             author_id: row.author_id,
+            author_name: row.author_name,
             body: row.body,
         }
     }
@@ -458,11 +584,8 @@ impl From<MessageRow> for MessageView {
 
 #[derive(FromRow)]
 struct InboxRow {
-    id: String,
-    room_id: String,
-    sequence: i64,
-    author_id: String,
-    body: String,
+    #[sqlx(flatten)]
+    message: MessageRow,
     last_read_seq: i64,
 }
 

@@ -156,6 +156,7 @@ impl Fixture {
         self.desktop(DesktopCommand::SendMessage {
             room_id: room.id.clone(),
             body: "Open an R6 test run.".to_string(),
+            quoted_message_id: None,
         })
         .await;
         let token = self.token(agent_id).await;

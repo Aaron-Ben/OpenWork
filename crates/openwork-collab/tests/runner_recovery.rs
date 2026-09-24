@@ -169,6 +169,7 @@ async fn a_failed_runner_is_rebuilt_without_waiting_for_the_roster_poll() {
         DesktopCommand::SendMessage {
             room_id: room.id,
             body: "Trigger the intentional crash.".to_string(),
+            quoted_message_id: None,
         },
     )
     .await;

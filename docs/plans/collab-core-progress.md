@@ -12,7 +12,8 @@
 | 设计稿 | v2 已确认 | https://claude.ai/artifact/MDGsQTdy7KuRLYPuvFGHeR（去掉运行记录页、“最近的协调”、Agent 运行统计与房间里的卡片事件行） |
 | U1、U2 | 未开始 | |
 | K1 | 完成 | `computer/prompt.rs` 渲染增量（从 `runner.rs` 移出，runner.rs 879→795 行）；inbox 增加 `rooms` 与 `team`；`AGENTS.md` 契约增加 Addressing 一节；fake OpenCode 改为从 `# room-…` 标题行取房间 |
-| K2–K7 | 未开始 | |
+| K5 | 完成（后端、CLI、Agent 提示与 Desktop bridge；Desktop 界面在 U2） | 迁移 `202609240002_message_quotes.sql`（`(room_id, id)` 唯一约束 + 同房间复合外键）；`MessageView.quoted`；`reply --quote`；Desktop `collab_message_send` 增加 `quotedMessageId`；引用穿透 mute（inbox 与唤醒）；inbox/glance/messages 与增量显示消息 id 和引用行；`AGENTS.md` 补 `--quote`；`Messages::views` 统一补齐引用摘要，`insert` 改用 `NewMessage` 结构（原 6 个参数） |
+| K2–K4、K6–K7 | 未开始 | |
 
 ## 2. 已定决策
 
@@ -58,8 +59,10 @@
 
 - 2026-09-24 E15：`derived_configs_keep_the_chosen_models_active_even_when_the_catalog_deprecates_them` 与更新后的 `main_turn_config_loads_the_managed_agents_file_as_instructions` 先失败后通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。真实模型实测（不预置模型目录，OpenCode 1.18.18；`brew upgrade` 后 tap 的稳定版仍是 1.18.18）：`deepseek/deepseek-v4-flash` 两轮都成功（此前第二轮全部失败），运行后缓存里的 `models.json` 确实把它标为 deprecated，派生配置里是 `status: active`；`deepseek/deepseek-flash` 首次运行也成功（自带快照里没有它）。两次点名结果都正确，10 个 Run 全部 completed。
 
+- 2026-09-24 K5：验收 §16 #12 → `messaging::acc_12_quotes_stay_in_the_room_and_reach_a_muted_author`（先因字段不存在编译失败，实现后通过）、`computer::shim::tests::acc_12_reply_takes_a_quote_before_the_body`、`acc_12_message_listings_show_ids_and_quoted_originals`、`computer::prompt::tests::acc_12_quoted_messages_show_the_original_under_the_reply`、`bridge/collab.test.ts` 的 quoted send 用例。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过。唤醒路径（`wake_recipients`）的引用例外没有独立测试，由 inbox 路径覆盖投递正确性。
+- 2026-09-24 K5 真实模型实测（`deepseek/deepseek-flash`，不预置目录，临时测试跑完已删）：点名结果不变（只有 Bo、只有 Ada，回答正确，10 个 Run 全部 completed）；Bo 与 Ada 都主动用 `openwork reply <room> --quote <被回答的用户消息 id> <text>` 一次发布成功，没有多余命令。
+
 ## 5. 待定
 
 
-- `AGENTS.md` 的 `--quote` 一句与增量里的引用行留到 K5：在 `reply --quote` 存在之前写进契约会让模型调用不存在的参数。
 - 重写 collaboration-desktop.md 时新定的界面细节（2026-09-24 用户已确认）：Agent 之间的房间只读并显示提示；卡片详情的“在房间中讨论”打开与负责人的私聊并预填卡片引用；识别色按 Agent ID 稳定哈希取 6 档；协作界面的小号说明文字用 `ink-soft`；新增 `collab_room_open` 返回房间快照，取代 `collab_message_list`。

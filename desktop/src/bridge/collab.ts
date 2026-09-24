@@ -70,6 +70,15 @@ export interface CollabMessage {
   sequence: number
   authorId: string
   body: string
+  quoted: CollabQuotedMessage | null
+}
+
+/** 被引用消息的摘要；`body` 最多 180 个字符（collaboration.md §9.3）。 */
+export interface CollabQuotedMessage {
+  id: string
+  authorId: string
+  authorName: string
+  body: string
 }
 
 export interface CollabCard {
@@ -190,8 +199,8 @@ export const collabCommands = {
     invoke('collab_group_member_add', { roomId, agentId }),
   removeGroupMember: (roomId: string, agentId: string): Promise<CollabParticipant[]> =>
     invoke('collab_group_member_remove', { roomId, agentId }),
-  sendMessage: (roomId: string, body: string): Promise<CollabMessage> =>
-    invoke('collab_message_send', { roomId, body }),
+  sendMessage: (roomId: string, body: string, quotedMessageId: string | null): Promise<CollabMessage> =>
+    invoke('collab_message_send', { roomId, body, quotedMessageId }),
   listMessages: (roomId: string): Promise<CollabMessage[]> =>
     invoke('collab_message_list', { roomId }),
   listBoards: (): Promise<CollabBoard[]> => invoke('collab_board_list'),

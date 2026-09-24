@@ -361,6 +361,7 @@ impl Rooms {
             sequence,
             author_id: "local-user".to_string(),
             body,
+            quoted: None,
         };
         Ok((
             Self::list_members_in(transaction, room_id).await?,

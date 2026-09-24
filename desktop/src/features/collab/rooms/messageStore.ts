@@ -44,7 +44,7 @@ export const useMessageStore = create<MessageStoreState>((set, get) => ({
     }
   },
   send: async (roomId, body) => {
-    await collabCommands.sendMessage(roomId, body)
+    await collabCommands.sendMessage(roomId, body, null)
     await get().open(roomId)
   },
 }))

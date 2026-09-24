@@ -140,6 +140,7 @@ fn room_header(room_id: &str, rooms: &[RoomView]) -> String {
     }
 }
 
+/// 消息行；带引用时下一行是被引用的原文（collaboration.md §7.2、§9.3）。
 fn message_line(message: &MessageView, team: &[TeamMember]) -> String {
     let body = message
         .body
@@ -150,11 +151,20 @@ fn message_line(message: &MessageView, team: &[TeamMember]) -> String {
         .chars()
         .take(MESSAGE_BODY_MAX_CHARS)
         .collect::<String>();
-    format!(
+    let line = format!(
         "  [{}] {}: {body}",
         message.id,
         author(&message.author_id, team)
-    )
+    );
+    match &message.quoted {
+        Some(quoted) => format!(
+            "{line}\n    ↩ quoting [{}] {}: {}",
+            quoted.id,
+            quoted.author_name,
+            quoted.body.split_whitespace().collect::<Vec<_>>().join(" ")
+        ),
+        None => line,
+    }
 }
 
 fn author(author_id: &str, team: &[TeamMember]) -> String {
@@ -262,6 +272,7 @@ mod tests {
             sequence,
             author_id: author_id.to_string(),
             body: body.to_string(),
+            quoted: None,
         }
     }
 
@@ -361,6 +372,25 @@ mod tests {
         ));
         assert!(!prompt.contains("[msg-g6]"));
         assert_eq!(prompt.matches("\n  [msg-").count(), 40);
+    }
+
+    /// collaboration.md §7.2、§9.3、§16 #12：带引用的消息下一行是被引用的原文，不占 40 行预算。
+    #[test]
+    fn acc_12_quoted_messages_show_the_original_under_the_reply() {
+        let mut reply = message("msg-2", "room-g", 2, "bo", "Use a partial index.");
+        reply.quoted = Some(crate::protocol::QuotedMessageView {
+            id: "msg-1".to_string(),
+            author_id: "local-user".to_string(),
+            author_name: "User".to_string(),
+            body: "Which index\n  should we add?".to_string(),
+        });
+        let messages = vec![reply];
+        let (rooms, team) = (rooms(), team());
+        let prompt = message_turn_prompt(&turn(&messages, &rooms, &team, &[]));
+
+        assert!(prompt.contains(
+            "  [msg-2] Bo (agent): Use a partial index.\n    ↩ quoting [msg-1] User: Which index should we add?\n"
+        ));
     }
 
     /// collaboration.md §7.2：正文截断到 600 个字符（按字符而非字节）。

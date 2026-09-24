@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, io::Read as _};
+use std::io::Read as _;
 
 use crate::protocol::{
     AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
@@ -12,7 +12,7 @@ const HELP: &str = "Usage:
   openwork members <room-id>
   openwork participants
   openwork glance <room-id>
-  openwork reply <room-id> [--held-token <token>] (<body> | --stdin | --file <path>)
+  openwork reply <room-id> [--quote <message-id>] [--held-token <token>] (<body> | --stdin | --file <path>)
   openwork ack <room-id>
   openwork dm <participant-id> (<body> | --stdin | --file <path>)
   openwork climate show [participant-id]
@@ -229,29 +229,27 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
             })
         }
         [command, room_id, tail @ ..] if command == "reply" => {
-            let (held_token, body_arguments) = if let [flag, token, rest @ ..] = tail {
-                if flag == "--held-token" {
-                    (Some(token.clone()), rest)
-                } else {
-                    (None, tail)
-                }
-            } else {
-                (None, tail)
-            };
-            let positional = body_arguments.first().is_none_or(|first| first != "--");
-            if positional
-                && body_arguments
-                    .iter()
-                    .any(|argument| argument == "--held-token")
+            let (options, body_arguments) = leading_options(tail, &["--held-token", "--quote"]);
+            if let [flag] = body_arguments
+                && matches!(flag.as_str(), "--held-token" | "--quote")
             {
-                return Err(ShimError::Arguments(
-                    "put --held-token before the message body".to_string(),
-                ));
+                return Err(ShimError::Arguments(format!("{flag} requires a value")));
+            }
+            let positional = body_arguments.first().is_none_or(|first| first != "--");
+            if let Some(misplaced) = body_arguments
+                .iter()
+                .find(|argument| matches!(argument.as_str(), "--held-token" | "--quote"))
+                .filter(|_| positional)
+            {
+                return Err(ShimError::Arguments(format!(
+                    "put {misplaced} before the message body"
+                )));
             }
             Ok(AgentCommand::Reply {
                 room_id: room_id.clone(),
                 body: parse_body(body_arguments).await?,
-                held_token,
+                held_token: options.get("--held-token").cloned(),
+                quoted_message_id: options.get("--quote").cloned(),
             })
         }
         [card, action, tail @ ..] if card == "card" && action == "create" => {
@@ -297,6 +295,23 @@ async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand, ShimError
         }
         _ => Err(ShimError::Arguments(format!("unknown command\n\n{HELP}"))),
     }
+}
+
+/// 取出正文之前成对出现的 `allowed` 选项，返回选项与剩余参数。
+fn leading_options<'a>(
+    arguments: &'a [String],
+    allowed: &[&str],
+) -> (std::collections::BTreeMap<String, String>, &'a [String]) {
+    let mut options = std::collections::BTreeMap::new();
+    let mut rest = arguments;
+    while let [flag, value, remaining @ ..] = rest {
+        if !allowed.contains(&flag.as_str()) {
+            break;
+        }
+        options.insert(flag.clone(), value.clone());
+        rest = remaining;
+    }
+    (options, rest)
 }
 
 fn parse_tail(value: &str) -> Result<u32, ShimError> {
@@ -492,16 +507,24 @@ fn render(response: AgentCommandResponse) -> Result<ShimOutput, ShimError> {
     Ok(ShimOutput { text, exit_code })
 }
 
+/// 每条消息带上 id，模型才能用 `--quote` 引用它；引用的原文在下一行（collaboration.md §9.3）。
 fn render_messages(output: &mut String, messages: &[crate::protocol::MessageView]) {
     if messages.is_empty() {
         output.push_str("\n(no messages)");
     }
     for message in messages {
-        let _ = write!(
-            output,
-            "\n[{}] {} @ {}: {}",
-            message.sequence, message.author_id, message.room_id, message.body
-        );
+        output.push_str(&format!(
+            "\n[{}] #{} {} @ {}: {}",
+            message.id, message.sequence, message.author_id, message.room_id, message.body
+        ));
+        if let Some(quoted) = &message.quoted {
+            output.push_str(&format!(
+                "\n    ↩ quoting [{}] {}: {}",
+                quoted.id,
+                quoted.author_name,
+                quoted.body.split_whitespace().collect::<Vec<_>>().join(" ")
+            ));
+        }
     }
 }
 
@@ -558,7 +581,8 @@ enum ShimError {
 mod tests {
     use super::{help_request, parse_command, parse_score, parse_tail, render};
     use crate::protocol::{
-        AgentCommand, AgentCommandResponse, AgentCommandResult, ParticipantView,
+        AgentCommand, AgentCommandResponse, AgentCommandResult, MessageView, ParticipantView,
+        QuotedMessageView,
     };
 
     /// 子命令后面的 `--help` 只显示这个子命令的用法；`--` 之后的 `--help` 是正文。
@@ -568,7 +592,7 @@ mod tests {
         assert_eq!(
             help(&["reply", "--help"]).as_deref(),
             Some(
-                "Usage:\n  openwork reply <room-id> [--held-token <token>] (<body> | --stdin | --file <path>)"
+                "Usage:\n  openwork reply <room-id> [--quote <message-id>] [--held-token <token>] (<body> | --stdin | --file <path>)"
             )
         );
         assert_eq!(
@@ -665,7 +689,79 @@ mod tests {
             room_id: "room-1".to_string(),
             body: body.to_string(),
             held_token: held_token.map(str::to_string),
+            quoted_message_id: None,
         }
+    }
+
+    /// collaboration.md §9.3、§16 #12：`--quote` 与 `--held-token` 写在正文之前、顺序任意；
+    /// 写在正文之后或缺少值时拒绝并说明（模型可见文本逐字断言）。
+    #[tokio::test]
+    async fn acc_12_reply_takes_a_quote_before_the_body() {
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply",
+                "room-1",
+                "--held-token",
+                "hold-1",
+                "--quote",
+                "msg-7",
+                "Agreed."
+            ]))
+            .await
+            .unwrap(),
+            AgentCommand::Reply {
+                room_id: "room-1".to_string(),
+                body: "Agreed.".to_string(),
+                held_token: Some("hold-1".to_string()),
+                quoted_message_id: Some("msg-7".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command(arguments(&[
+                "reply", "room-1", "Agreed.", "--quote", "msg-7"
+            ]))
+            .await
+            .unwrap_err()
+            .to_string(),
+            "invalid arguments: put --quote before the message body"
+        );
+        assert_eq!(
+            parse_command(arguments(&["reply", "room-1", "--quote"]))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "invalid arguments: --quote requires a value"
+        );
+    }
+
+    /// messages 与 glance 的每行带消息 id，引用的原文在下一行。
+    #[test]
+    fn acc_12_message_listings_show_ids_and_quoted_originals() {
+        let output = render(AgentCommandResponse {
+            result: AgentCommandResult::Messages {
+                room_id: "room-1".to_string(),
+                messages: vec![MessageView {
+                    id: "msg-2".to_string(),
+                    room_id: "room-1".to_string(),
+                    sequence: 2,
+                    author_id: "bo".to_string(),
+                    body: "Use a partial index.".to_string(),
+                    quoted: Some(QuotedMessageView {
+                        id: "msg-1".to_string(),
+                        author_id: "local-user".to_string(),
+                        author_name: "User".to_string(),
+                        body: "Which index\n should we add?".to_string(),
+                    }),
+                }],
+            },
+            effects: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            output.text,
+            "Messages in room-1\n[msg-2] #2 bo @ room-1: Use a partial index.\n    ↩ quoting [msg-1] User: Which index should we add?"
+        );
     }
 
     /// 正文可以直接跟在房间 id 后面（Cumora `reply <convo_id> "<body>"`）；多个参数按空格拼接，

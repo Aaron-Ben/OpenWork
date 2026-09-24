@@ -252,6 +252,7 @@ pub enum AgentCommand {
         room_id: String,
         body: String,
         held_token: Option<String>,
+        quoted_message_id: Option<String>,
     },
     Ack {
         room_id: String,

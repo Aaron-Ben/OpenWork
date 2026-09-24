@@ -16,6 +16,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "settle completed runs",
         include_str!("../../migrations/202609240001_settle_completed_runs.sql"),
     ),
+    (
+        202_609_240_002,
+        "message quotes",
+        include_str!("../../migrations/202609240002_message_quotes.sql"),
+    ),
 ];
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {

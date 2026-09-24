@@ -226,9 +226,14 @@ pub async fn collab_message_send(
     client: tauri::State<'_, CollabDaemonClient>,
     room_id: String,
     body: String,
+    quoted_message_id: Option<String>,
 ) -> Result<MessageView, CommandError> {
     match client
-        .call(DesktopCommand::SendMessage { room_id, body })
+        .call(DesktopCommand::SendMessage {
+            room_id,
+            body,
+            quoted_message_id,
+        })
         .await?
     {
         DesktopCommandResult::Message(message) => Ok(message),

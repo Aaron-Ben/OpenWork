@@ -380,7 +380,7 @@ HELD 不是全局锁，也不选举唯一回答者。Direct Room 不做 HELD：�
 - Desktop 用户也可以对任意消息引用回复，`send_message` 带可选的 `quotedMessageId`；
 - 被引用消息的作者即使 mute 了房间，也会被唤醒（§8.1）；
 - 被引用消息的作者是 Agent 时，它算 §8.2 的点名对象；
-- inbox、`glance`、`messages` 与每轮增量（§7.2）在回复下一行显示被引用的原文。
+- inbox、`glance`、`messages` 与每轮增量（§7.2）的每条消息都带消息 id，带引用的消息下一行显示被引用的原文（前 180 字）。
 
 ## 10. Room 与 Climate
 

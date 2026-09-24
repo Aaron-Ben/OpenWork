@@ -28,6 +28,7 @@ struct ReplyInput<'a> {
     room_id: &'a str,
     body: &'a str,
     held_token: Option<&'a str>,
+    quoted_message_id: Option<&'a str>,
     request_id: &'a str,
 }
 
@@ -137,6 +138,7 @@ impl AgentCommands {
                 room_id,
                 body,
                 held_token,
+                quoted_message_id,
             } => {
                 let (response, reserved) = self
                     .reply(
@@ -147,6 +149,7 @@ impl AgentCommands {
                             room_id: &room_id,
                             body: &body,
                             held_token: held_token.as_deref(),
+                            quoted_message_id: quoted_message_id.as_deref(),
                             request_id: &request_id,
                         },
                     )
@@ -422,6 +425,7 @@ impl AgentCommands {
             room_id,
             body,
             held_token,
+            quoted_message_id,
             request_id,
         } = input;
         if !Messages::valid_body(body) {
@@ -430,6 +434,18 @@ impl AgentCommands {
         let context = Runs::reply_context_in(transaction, run_id, room_id, &claims.sub).await?;
         let Some((snapshot_anchor, room_kind, member_count)) = context else {
             return Ok((error("NOT_FOUND", "Room is not in the active Run"), false));
+        };
+        let quoted = match quoted_message_id {
+            Some(quoted_id) => match Messages::quote_in(transaction, room_id, quoted_id).await? {
+                Some(quoted) => Some(quoted),
+                None => {
+                    return Ok((
+                        error("NOT_FOUND", &Messages::quote_not_found(quoted_id, room_id)),
+                        false,
+                    ));
+                }
+            },
+            None => None,
         };
         if room_kind == "direct" && held_token.is_some() {
             return Ok((
@@ -539,7 +555,7 @@ impl AgentCommands {
                 }
             }
         }
-        let message = Messages::insert_agent_in(transaction, room_id, &claims.sub, body).await?;
+        let message = Messages::insert_in(transaction, room_id, &claims.sub, body, quoted).await?;
         Runs::mark_delivery_action_in(transaction, run_id, room_id).await?;
         Ok((
             AgentCommandResponse {
@@ -628,7 +644,7 @@ async fn direct_message(
             "Agent conversation reached its deterministic loop cap",
         ));
     }
-    let message = Messages::insert_agent_in(transaction, &room_id, &claims.sub, body).await?;
+    let message = Messages::insert_in(transaction, &room_id, &claims.sub, body, None).await?;
     Runs::mark_delivery_action_in(transaction, run_id, &room_id).await?;
     Ok(AgentCommandResponse {
         result: AgentCommandResult::DirectMessageSent {

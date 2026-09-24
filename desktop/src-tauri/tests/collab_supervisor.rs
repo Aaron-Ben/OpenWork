@@ -169,6 +169,7 @@ async fn send_and_wait_for_reply(client: &CollabDaemonClient, room_id: &str, cou
         .call(DesktopCommand::SendMessage {
             room_id: room_id.to_string(),
             body: format!("Reply through OpenCode for message {count}."),
+            quoted_message_id: None,
         })
         .await
         .unwrap();

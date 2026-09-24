@@ -4,8 +4,8 @@ use openwork_collab::{
     protocol::{
         AgentCommand, AgentCommandRequest, AgentCommandResponse, AgentCommandResult,
         AgentTokenResponse, AgentView, DesktopCommand, DesktopCommandRequest, DesktopCommandResult,
-        FinishRunRequest, InboxResponse, OpenRunRequest, RoomView, RunView, TeamMember,
-        TriagePayload, request_id,
+        FinishRunRequest, InboxResponse, OpenRunRequest, QuotedMessageView, RoomView, RunView,
+        TeamMember, TriagePayload, request_id,
     },
     server::{CollaborationServer, RuntimeCredentials, ServerOptions},
 };
@@ -136,6 +136,7 @@ impl Fixture {
             .desktop(DesktopCommand::SendMessage {
                 room_id: room_id.to_string(),
                 body: body.to_string(),
+                quoted_message_id: None,
             })
             .await;
         assert!(matches!(result, DesktopCommandResult::Message(_)));
@@ -507,6 +508,140 @@ async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room
     fixture.stop().await;
 }
 
+/// collaboration.md §9.3、§16 #12：只能引用同一房间的消息，发布结果与 inbox 都带着被引用的原文；
+/// 被引用的作者即使 mute 了房间也会收到引用它的消息，普通消息则不会。
+#[tokio::test]
+async fn acc_12_quotes_stay_in_the_room_and_reach_a_muted_author() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha = fixture.create_agent("Alpha").await;
+    let beta = fixture.create_agent("Beta").await;
+    let group = fixture
+        .create_group(vec![alpha.id.clone(), beta.id.clone()])
+        .await;
+    let other = fixture.create_direct(&alpha.id).await;
+    fixture
+        .send_user(&group.id, "Which index should we add?")
+        .await;
+    fixture
+        .send_user(&other.id, "Unrelated direct question.")
+        .await;
+    let token = fixture.token(&alpha.id).await;
+    let inbox = fixture.inbox(&token).await;
+    let question = inbox
+        .messages
+        .iter()
+        .find(|message| message.room_id == group.id)
+        .unwrap()
+        .clone();
+    let foreign = inbox
+        .messages
+        .iter()
+        .find(|message| message.room_id == other.id)
+        .unwrap()
+        .clone();
+    let run = fixture.open_run(&token, &inbox).await;
+
+    let rejected = fixture
+        .command(
+            &token,
+            AgentCommand::Reply {
+                room_id: group.id.clone(),
+                body: "Wrong quote".to_string(),
+                held_token: None,
+                quoted_message_id: Some(foreign.id.clone()),
+            },
+        )
+        .await;
+    assert_eq!(
+        rejected.result,
+        AgentCommandResult::Error {
+            code: "NOT_FOUND".to_string(),
+            message: format!(
+                "{} is not a message in {}; quote an id from this room's messages",
+                foreign.id, group.id
+            ),
+        }
+    );
+    let published = fixture
+        .command(
+            &token,
+            AgentCommand::Reply {
+                room_id: group.id.clone(),
+                body: "Add a partial index.".to_string(),
+                held_token: None,
+                quoted_message_id: Some(question.id.clone()),
+            },
+        )
+        .await;
+    let AgentCommandResult::MessagePublished { message: reply } = published.result else {
+        panic!("quoted reply was not published: {:?}", published.result)
+    };
+    assert_eq!(
+        reply.quoted,
+        Some(QuotedMessageView {
+            id: question.id.clone(),
+            author_id: "local-user".to_string(),
+            author_name: "User".to_string(),
+            body: "Which index should we add?".to_string(),
+        })
+    );
+    fixture.finish(&token, &run.id, "completed").await;
+    let group_messages: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM collab_messages WHERE room_id = $1")
+            .bind(&group.id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(group_messages, 2);
+
+    sqlx::query(
+        "UPDATE collab_room_members SET muted = TRUE WHERE room_id = $1 AND participant_id = $2",
+    )
+    .bind(&group.id)
+    .bind(&alpha.id)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+    fixture.send_user(&group.id, "Plain follow-up.").await;
+    assert!(fixture.inbox(&token).await.messages.is_empty());
+    let DesktopCommandResult::Message(sent) = fixture
+        .desktop(DesktopCommand::SendMessage {
+            room_id: group.id.clone(),
+            body: "Why partial?".to_string(),
+            quoted_message_id: Some(reply.id.clone()),
+        })
+        .await
+    else {
+        panic!("Desktop send returned the wrong result")
+    };
+    assert_eq!(
+        sent.quoted
+            .as_ref()
+            .map(|quoted| quoted.author_name.as_str()),
+        Some("Alpha")
+    );
+    let inbox = fixture.inbox(&token).await;
+    assert_eq!(
+        inbox
+            .messages
+            .iter()
+            .map(|message| message.body.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Plain follow-up.", "Why partial?"]
+    );
+    assert_eq!(
+        inbox.messages[1]
+            .quoted
+            .as_ref()
+            .map(|quoted| quoted.id.as_str()),
+        Some(reply.id.as_str())
+    );
+
+    fixture.stop().await;
+}
+
 /// collaboration.md §7.2、§16 #8：inbox 带上本批房间的类型与标题，以及渲染名册所需的
 /// 全部 active 参与者；已归档且没有出现在本批消息里的 Agent 不在其中。
 #[tokio::test]
@@ -602,6 +737,7 @@ async fn group_agent_chatter_stops_at_the_deterministic_loop_cap() {
                 room_id: group.id,
                 body: "This reply must not extend the Agent loop.".to_string(),
                 held_token: None,
+                quoted_message_id: None,
             },
         )
         .await;
@@ -641,6 +777,7 @@ async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration(
                 room_id: group.id.clone(),
                 body: "Alpha answer".to_string(),
                 held_token: None,
+                quoted_message_id: None,
             },
         ),
         fixture.command(
@@ -649,6 +786,7 @@ async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration(
                 room_id: group.id.clone(),
                 body: "Beta answer".to_string(),
                 held_token: None,
+                quoted_message_id: None,
             },
         )
     );
@@ -673,6 +811,7 @@ async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration(
         room_id: group.id.clone(),
         body: "Reconsidered answer".to_string(),
         held_token: Some(held_token),
+        quoted_message_id: None,
     };
     let retried = fixture
         .command_with_request_id(
@@ -704,6 +843,7 @@ async fn concurrent_group_replies_hold_one_agent_until_a_single_reconsideration(
                 room_id: group.id.clone(),
                 body: "A forbidden second reconsideration".to_string(),
                 held_token: Some(consumed_held_token),
+                quoted_message_id: None,
             },
         )
         .await;

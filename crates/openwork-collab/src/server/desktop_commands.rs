@@ -222,8 +222,18 @@ impl DesktopCommands {
                 effects.push(room_effect(Some(room_id)));
                 (DesktopCommandResult::Members { members }, effects)
             }
-            DesktopCommand::SendMessage { room_id, body } => {
-                let message = Messages::send_user_in(transaction, &room_id, &body).await?;
+            DesktopCommand::SendMessage {
+                room_id,
+                body,
+                quoted_message_id,
+            } => {
+                let message = Messages::send_user_in(
+                    transaction,
+                    &room_id,
+                    &body,
+                    quoted_message_id.as_deref(),
+                )
+                .await?;
                 let effect = message_effect(message.clone());
                 (DesktopCommandResult::Message(message), vec![effect])
             }

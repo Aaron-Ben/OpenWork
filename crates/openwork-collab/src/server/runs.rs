@@ -1,8 +1,11 @@
-use sqlx::{FromRow, PgPool};
+use sqlx::PgPool;
 
 use crate::protocol::{FinishRunRequest, MessageView, RunView, TriggerEnvelope};
 
-use super::auth::{AgentClaims, authorize_agent_transaction};
+use super::{
+    auth::{AgentClaims, authorize_agent_transaction},
+    messages::{MessageRow, Messages},
+};
 
 #[derive(Clone)]
 pub(crate) struct Runs {
@@ -85,9 +88,9 @@ impl Runs {
         .bind(&claims.runtime_session_id)
         .fetch_one(&mut **transaction)
         .await?;
-        let messages = sqlx::query_as::<_, RunInboxMessageRow>(
+        let rows = sqlx::query_as::<_, MessageRow>(
             "SELECT message.id, message.room_id, message.sequence,
-                    message.author_id, message.body
+                    message.author_id, message.body, message.quoted_message_id
              FROM collab_run_deliveries delivery
              JOIN collab_runs run ON run.id = delivery.run_id
              JOIN collab_messages message ON message.room_id = delivery.room_id
@@ -101,10 +104,8 @@ impl Runs {
         .bind(&claims.sub)
         .bind(&claims.runtime_session_id)
         .fetch_all(&mut **transaction)
-        .await?
-        .into_iter()
-        .map(MessageView::from)
-        .collect();
+        .await?;
+        let messages = Messages::views(&mut **transaction, rows).await?;
         Ok((carried_over, messages))
     }
 
@@ -485,27 +486,6 @@ impl Runs {
             status: terminal_status.to_string(),
             outcome: outcome.map(str::to_string),
         })
-    }
-}
-
-#[derive(FromRow)]
-struct RunInboxMessageRow {
-    id: String,
-    room_id: String,
-    sequence: i64,
-    author_id: String,
-    body: String,
-}
-
-impl From<RunInboxMessageRow> for MessageView {
-    fn from(row: RunInboxMessageRow) -> Self {
-        Self {
-            id: row.id,
-            room_id: row.room_id,
-            sequence: row.sequence,
-            author_id: row.author_id,
-            body: row.body,
-        }
     }
 }
 

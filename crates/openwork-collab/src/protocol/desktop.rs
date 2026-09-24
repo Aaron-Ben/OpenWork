@@ -99,6 +99,7 @@ pub enum DesktopCommand {
     SendMessage {
         room_id: String,
         body: String,
+        quoted_message_id: Option<String>,
     },
     ListMessages {
         room_id: String,
@@ -238,6 +239,18 @@ pub struct MessageView {
     pub room_id: String,
     pub sequence: i64,
     pub author_id: String,
+    pub body: String,
+    /// 这条消息引用的同一房间内的消息（collaboration.md §9.3）。
+    pub quoted: Option<QuotedMessageView>,
+}
+
+/// 被引用消息的摘要；`body` 最多 180 个字符。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotedMessageView {
+    pub id: String,
+    pub author_id: String,
+    pub author_name: String,
     pub body: String,
 }
 

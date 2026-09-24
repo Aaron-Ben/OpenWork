@@ -79,6 +79,7 @@ async fn redis_disconnect_cannot_erase_a_durable_message_or_start_agenda() {
         DesktopCommand::SendMessage {
             room_id: room.id,
             body: "Redis is unavailable; keep this durable.".to_string(),
+            quoted_message_id: None,
         },
     )
     .await
@@ -258,6 +259,7 @@ async fn redis_subscriber_recovers_after_a_live_connection_is_cut() {
         DesktopCommand::SendMessage {
             room_id: room.id.clone(),
             body: "before Redis cut".to_string(),
+            quoted_message_id: None,
         },
     )
     .await
@@ -278,6 +280,7 @@ async fn redis_subscriber_recovers_after_a_live_connection_is_cut() {
         DesktopCommand::SendMessage {
             room_id: room.id.clone(),
             body: "persist while Redis is cut".to_string(),
+            quoted_message_id: None,
         },
     )
     .await
@@ -295,6 +298,7 @@ async fn redis_subscriber_recovers_after_a_live_connection_is_cut() {
         DesktopCommand::SendMessage {
             room_id: room.id,
             body: "after Redis reconnect".to_string(),
+            quoted_message_id: None,
         },
     )
     .await

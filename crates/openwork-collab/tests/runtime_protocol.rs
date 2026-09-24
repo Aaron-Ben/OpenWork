@@ -246,6 +246,7 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
             command: DesktopCommand::SendMessage {
                 room_id: room.id.clone(),
                 body: "   ".to_string(),
+                quoted_message_id: None,
             },
         })
         .await;
@@ -256,6 +257,7 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
             command: DesktopCommand::SendMessage {
                 room_id: room.id.clone(),
                 body: "Please investigate this.".to_string(),
+                quoted_message_id: None,
             },
         })
         .await
@@ -332,6 +334,7 @@ async fn runtime_scopes_credentials_runs_typed_commands_and_rejects_old_sessions
             room_id: room.id.clone(),
             body: "I am on it.".to_string(),
             held_token: None,
+            quoted_message_id: None,
         },
     };
     let first_result = fixture

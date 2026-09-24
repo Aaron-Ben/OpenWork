@@ -53,10 +53,21 @@ describe('R3 collaboration command bridge', () => {
 
   it('keeps user identity and local paths out of message sends', async () => {
     vi.mocked(invoke).mockResolvedValue(null)
-    await collabCommands.sendMessage('general', 'hello @helper')
+    await collabCommands.sendMessage('general', 'hello @helper', null)
     expect(invoke).toHaveBeenCalledWith('collab_message_send', {
       roomId: 'general',
       body: 'hello @helper',
+      quotedMessageId: null,
+    })
+  })
+
+  it('sends the quoted message id with a quote reply', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    await collabCommands.sendMessage('general', 'Why partial?', 'msg-7')
+    expect(invoke).toHaveBeenCalledWith('collab_message_send', {
+      roomId: 'general',
+      body: 'Why partial?',
+      quotedMessageId: 'msg-7',
     })
   })
 

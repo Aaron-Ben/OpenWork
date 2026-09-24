@@ -150,6 +150,7 @@ async fn run_smoke(
         DesktopCommand::SendMessage {
             room_id: room.id.clone(),
             body: prompt.to_string(),
+            quoted_message_id: None,
         },
     )
     .await;

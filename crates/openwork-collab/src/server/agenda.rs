@@ -10,6 +10,7 @@ use time::OffsetDateTime;
 use super::{
     auth::{AgentClaims, SigningKey},
     coordination::Coordination,
+    messages::{MessageRow, Messages},
 };
 
 const CANDIDATE_LIMIT: i64 = 20;
@@ -320,9 +321,9 @@ impl Agenda {
 
     async fn recent_messages(&self, room_id: &str) -> Result<Vec<MessageView>, sqlx::Error> {
         let rows = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body
+            "SELECT id, room_id, sequence, author_id, body, quoted_message_id
              FROM (
-                 SELECT id, room_id, sequence, author_id, body
+                 SELECT id, room_id, sequence, author_id, body, quoted_message_id
                  FROM collab_messages WHERE room_id = $1
                  ORDER BY sequence DESC LIMIT $2
              ) recent ORDER BY sequence",
@@ -331,7 +332,7 @@ impl Agenda {
         .bind(RECENT_MESSAGE_LIMIT)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(MessageView::from).collect())
+        Messages::views(&self.pool, rows).await
     }
 
     async fn revalidate(
@@ -492,27 +493,6 @@ struct StalledRoomRow {
     room_id: String,
     last_sequence: i64,
     last_activity_at: i64,
-}
-
-#[derive(FromRow)]
-struct MessageRow {
-    id: String,
-    room_id: String,
-    sequence: i64,
-    author_id: String,
-    body: String,
-}
-
-impl From<MessageRow> for MessageView {
-    fn from(row: MessageRow) -> Self {
-        Self {
-            id: row.id,
-            room_id: row.room_id,
-            sequence: row.sequence,
-            author_id: row.author_id,
-            body: row.body,
-        }
-    }
 }
 
 fn protocol_error(message: &str) -> sqlx::Error {
