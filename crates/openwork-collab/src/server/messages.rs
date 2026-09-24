@@ -337,17 +337,6 @@ impl Messages {
         .await
     }
 
-    pub(crate) async fn list(&self, room_id: &str) -> Result<Vec<MessageView>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, MessageRow>(
-            "SELECT id, room_id, sequence, author_id, body, quoted_message_id
-             FROM collab_messages WHERE room_id = $1 ORDER BY sequence",
-        )
-        .bind(room_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Self::views(&self.pool, rows).await
-    }
-
     pub(crate) async fn list_for_agent_in(
         transaction: &mut Transaction<'_, Postgres>,
         agent_id: &str,

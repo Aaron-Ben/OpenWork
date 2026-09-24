@@ -15,6 +15,8 @@ use super::{
     inventory::EngineInventory,
     messages::Messages,
     observability::Observability,
+    room_snapshot::RoomSnapshots,
+    room_summaries::RoomSummaries,
     rooms::Rooms,
     runtime_session::RuntimeSession,
     scheduler::Scheduler,
@@ -27,7 +29,6 @@ pub(crate) struct DesktopCommands {
     pub(super) agents: Agents,
     pub(super) board: Board,
     pub(super) inventory: EngineInventory,
-    pub(super) messages: Messages,
     pub(super) rooms: Rooms,
     pub(super) observability: Observability,
     pub(super) scheduler: Scheduler,
@@ -112,14 +113,15 @@ impl DesktopCommands {
                 })
             }
             DesktopCommand::ListRooms => Ok(DesktopCommandResult::Rooms {
-                rooms: self.rooms.list().await?,
+                rooms: RoomSummaries::list(&self.pool).await?,
             }),
             DesktopCommand::ListRoomMembers { room_id } => Ok(DesktopCommandResult::Members {
                 members: self.rooms.list_members(&room_id).await?,
             }),
-            DesktopCommand::ListMessages { room_id } => Ok(DesktopCommandResult::Messages {
-                messages: self.messages.list(&room_id).await?,
-            }),
+            DesktopCommand::OpenRoom { room_id } => {
+                let snapshot = RoomSnapshots::open(&self.pool, &self.agents, &room_id).await?;
+                Ok(DesktopCommandResult::RoomSnapshot(Box::new(snapshot)))
+            }
             DesktopCommand::RoomViewed { room_id, up_to_seq } => {
                 Ok(DesktopCommandResult::RoomViewed {
                     user_viewed_seq: self.rooms.mark_viewed(&room_id, up_to_seq).await?,
@@ -237,6 +239,14 @@ impl DesktopCommands {
                 let mut effects: Vec<_> = message.into_iter().map(message_effect).collect();
                 effects.push(room_effect(Some(room_id)));
                 (DesktopCommandResult::Members { members }, effects)
+            }
+            DesktopCommand::PinRoom { room_id, pinned } => {
+                RoomSummaries::pin_in(transaction, &room_id, pinned).await?;
+                let effect = room_effect(Some(room_id.clone()));
+                (
+                    DesktopCommandResult::RoomPinned { room_id, pinned },
+                    vec![effect],
+                )
             }
             DesktopCommand::SendMessage {
                 room_id,

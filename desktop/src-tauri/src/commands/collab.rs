@@ -1,6 +1,7 @@
 use openwork_collab::protocol::{
     AgentView, BoardView, CardView, ColumnKind, DesktopCommand, DesktopCommandResult, MessageView,
-    ParticipantView, RoomView, RunSummaryView, RunTraceView, RuntimeStatusView,
+    ParticipantView, RoomSnapshotView, RoomSummaryView, RoomView, RunSummaryView, RunTraceView,
+    RuntimeStatusView,
 };
 use serde::Deserialize;
 
@@ -141,7 +142,7 @@ pub async fn collab_agent_restore(
 #[tauri::command]
 pub async fn collab_room_list(
     client: tauri::State<'_, CollabDaemonClient>,
-) -> Result<Vec<RoomView>, CommandError> {
+) -> Result<Vec<RoomSummaryView>, CommandError> {
     match client.call(DesktopCommand::ListRooms).await? {
         DesktopCommandResult::Rooms { rooms } => Ok(rooms),
         response => Err(unexpected(response)),
@@ -259,16 +260,30 @@ pub async fn collab_room_viewed(
     }
 }
 
+/// 房间快照：消息、Agent 成员及其当前状态、说明行（collaboration-desktop.md §4.2）。
 #[tauri::command]
-pub async fn collab_message_list(
+pub async fn collab_room_open(
     client: tauri::State<'_, CollabDaemonClient>,
     room_id: String,
-) -> Result<Vec<MessageView>, CommandError> {
+) -> Result<RoomSnapshotView, CommandError> {
+    match client.call(DesktopCommand::OpenRoom { room_id }).await? {
+        DesktopCommandResult::RoomSnapshot(snapshot) => Ok(*snapshot),
+        response => Err(unexpected(response)),
+    }
+}
+
+/// 置顶或取消置顶一个房间（collaboration-desktop.md §4.5）。
+#[tauri::command]
+pub async fn collab_room_pin(
+    client: tauri::State<'_, CollabDaemonClient>,
+    room_id: String,
+    pinned: bool,
+) -> Result<(), CommandError> {
     match client
-        .call(DesktopCommand::ListMessages { room_id })
+        .call(DesktopCommand::PinRoom { room_id, pinned })
         .await?
     {
-        DesktopCommandResult::Messages { messages } => Ok(messages),
+        DesktopCommandResult::RoomPinned { .. } => Ok(()),
         response => Err(unexpected(response)),
     }
 }

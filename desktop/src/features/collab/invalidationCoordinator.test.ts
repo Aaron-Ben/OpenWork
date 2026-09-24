@@ -56,10 +56,14 @@ describe('collaboration invalidation coordinator', () => {
     expect(actions.messages).not.toHaveBeenCalled()
   })
 
-  it('refreshes boards only while the board workspace is visible', async () => {
+  it('refreshes boards on pages that show cards', async () => {
     const hidden = refreshers()
-    await refreshForInvalidation(invalidation('board', 'board-a'), context, hidden)
+    await refreshForInvalidation(invalidation('board', 'board-a'), { ...context, view: 'agents' }, hidden)
     expect(hidden.boards).not.toHaveBeenCalled()
+
+    const rooms = refreshers()
+    await refreshForInvalidation(invalidation('board', 'board-a'), context, rooms)
+    expect(rooms.boards).toHaveBeenCalledOnce()
 
     const visible = refreshers()
     await refreshForInvalidation(

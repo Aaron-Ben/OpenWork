@@ -1,88 +1,100 @@
-import { Hash, Plus, Users } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { CollabAgent, CollabRoom } from '@/bridge/collab'
+import type { CollabAgent, CollabRoomSummary } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { useNow } from '@/features/collab/components/useNow'
+import { cn } from '@/lib/utils'
+import { CreateGroupDialog } from './CreateGroupDialog'
+import { roomListSections, unreadRoomCount, type RoomFilter } from './roomListModel'
+import { RoomListRow } from './RoomListRow'
 import { useRoomStore } from './roomStore'
+import { useRoomViewStore } from './roomViewStore'
 
+const FILTERS: RoomFilter[] = ['all', 'unread', 'direct', 'group']
+/** 列表时间（“今天/昨天/日期”）的刷新间隔。 */
+const STAMP_REFRESH_MS = 60_000
+
+/** 房间列表（collaboration-desktop.md §7.1）：搜索、四个筛选、置顶在前的平铺列表。 */
 export function RoomList({ rooms, agents, activeRoomId, onSelect }: {
-  rooms: CollabRoom[]
+  rooms: CollabRoomSummary[]
   agents: CollabAgent[]
   activeRoomId: string | null
   onSelect: (roomId: string) => void
 }) {
   const { t } = useTranslation()
-  const createGroup = useRoomStore((state) => state.createGroup)
-  const error = useRoomStore((state) => state.error)
+  const pin = useRoomStore((state) => state.pin)
+  const setManaging = useRoomViewStore((state) => state.setManaging)
+  const now = useNow(STAMP_REFRESH_MS)
   const [creating, setCreating] = useState(false)
-  const [title, setTitle] = useState('')
-  const [selected, setSelected] = useState<string[]>([])
+  const [filter, setFilter] = useState<RoomFilter>('all')
+  const [query, setQuery] = useState('')
+  const names = new Map(agents.map((agent) => [agent.id, agent.displayName]))
+  const { pinned, others } = roomListSections(rooms, agents, filter, query)
+  const unread = unreadRoomCount(rooms)
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (!title.trim() || selected.length < 2) return
-    const room = await createGroup(title.trim(), selected)
-    if (!room) return
-    setTitle('')
-    setSelected([])
-    setCreating(false)
-    onSelect(room.id)
-  }
-
-  function toggle(agentId: string) {
-    setSelected((current) => current.includes(agentId)
-      ? current.filter((id) => id !== agentId)
-      : [...current, agentId])
-  }
+  const row = (room: CollabRoomSummary) => (
+    <RoomListRow
+      key={room.id}
+      room={room}
+      agents={agents}
+      names={names}
+      active={room.id === activeRoomId}
+      now={now}
+      onSelect={() => onSelect(room.id)}
+      onPin={(next) => void pin(room.id, next)}
+      onManage={() => { onSelect(room.id); setManaging(true) }}
+    />
+  )
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-auto border-r border-line bg-paper-hover">
-      <header className="flex h-12 shrink-0 items-center justify-between px-4">
+    <aside className="flex h-full w-full flex-col border-r border-line bg-paper-hover">
+      <header className="flex h-14 shrink-0 items-center justify-between pl-4 pr-3">
         <h1 className="font-serif text-lg font-semibold">{t('collab.rooms.title')}</h1>
         <Button type="button" variant="ghost" size="icon" className="size-8" disabled={agents.filter((agent) => agent.archivedAt === null).length < 2} aria-label={t('collab.rooms.createGroup')} onClick={() => setCreating(true)}>
           <Plus size={16} />
         </Button>
       </header>
-      <nav className="grid gap-1 p-2">
-        {rooms.map((room) => (
-          <Button key={room.id} type="button" variant="ghost" className={`h-auto min-h-10 justify-start rounded-xl px-3 py-2 ${activeRoomId === room.id ? 'bg-paper shadow-sm' : ''}`} onClick={() => onSelect(room.id)}>
-            <Hash size={16} className="shrink-0 text-ink-faint" />
-            <span className="truncate">{room.title ?? room.id}</span>
-          </Button>
-        ))}
-        {rooms.length === 0 ? <p className="px-3 py-8 text-center text-sm text-ink-faint">{t('collab.rooms.empty')}</p> : null}
+      <div className="flex flex-col gap-2.5 px-3 pb-2.5">
+        <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-paper px-2.5 text-sm text-ink-faint">
+          <Search size={15} />
+          <input type="search" value={query} placeholder={t('collab.rooms.searchPlaceholder')} className="w-full bg-transparent text-ink outline-none" onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <div role="group" aria-label={t('collab.rooms.filterLabel')} className="flex flex-wrap gap-1.5">
+          {FILTERS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              aria-pressed={filter === item}
+              className={cn('h-[26px] rounded-full border px-2.5 text-xs font-semibold', filter === item ? 'border-ink bg-ink text-paper' : 'border-line bg-paper text-ink-soft')}
+              onClick={() => setFilter(item)}
+            >
+              {t(`collab.rooms.filters.${item}`)}
+              {item === 'unread' && unread > 0 ? <span className="ml-1 opacity-70">{unread}</span> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
+        {pinned.length > 0 ? (
+          <>
+            <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold tracking-wider text-ink-faint">{t('collab.rooms.pinnedHeading')}</div>
+            {pinned.map(row)}
+            <div role="separator" className="mx-2.5 my-2 h-px bg-line" />
+          </>
+        ) : null}
+        {others.map(row)}
+        {pinned.length + others.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-ink-faint">{rooms.length === 0 ? t('collab.rooms.empty') : t('collab.rooms.noMatches')}</p>
+        ) : null}
       </nav>
       {creating ? (
-        <div className="fixed inset-0 z-30 grid place-items-center bg-black/30 p-6" role="dialog" aria-modal="true">
-          <form className="grid w-full max-w-md gap-4 rounded-3xl bg-paper p-6 shadow-xl" onSubmit={submit}>
-            <div className="flex items-center gap-2">
-              <Users size={20} className="text-clay" />
-              <h2 className="font-serif text-xl font-semibold">{t('collab.rooms.createGroup')}</h2>
-            </div>
-            <label className="grid gap-1 text-xs font-medium text-ink-muted">
-              <span>{t('collab.rooms.groupName')}</span>
-              <Input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} />
-            </label>
-            <fieldset className="grid gap-2">
-              <legend className="mb-1 text-xs font-medium text-ink-muted">{t('collab.rooms.selectMembers')}</legend>
-              {agents.filter((agent) => agent.archivedAt === null).map((agent) => (
-                <label key={agent.id} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2 text-sm">
-                  <input className="size-4 accent-clay" type="checkbox" checked={selected.includes(agent.id)} onChange={() => toggle(agent.id)} />
-                  <span className="min-w-0 flex-1 truncate">{agent.displayName}</span>
-                  <span className="text-xs text-ink-faint">@{agent.id}</span>
-                </label>
-              ))}
-              <p className="text-xs text-ink-faint">{t('collab.rooms.minimumMembers')}</p>
-            </fieldset>
-            {error ? <p className="text-sm text-red-600">{error}</p> : null}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => setCreating(false)}>{t('common.cancel')}</Button>
-              <Button type="submit" variant="accent" disabled={!title.trim() || selected.length < 2}>{t('collab.rooms.createGroup')}</Button>
-            </div>
-          </form>
-        </div>
+        <CreateGroupDialog
+          agents={agents}
+          onClose={() => setCreating(false)}
+          onCreated={(roomId) => { setCreating(false); onSelect(roomId) }}
+        />
       ) : null}
     </aside>
   )

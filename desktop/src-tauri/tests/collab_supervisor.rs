@@ -175,15 +175,16 @@ async fn send_and_wait_for_reply(client: &CollabDaemonClient, room_id: &str, cou
         .unwrap();
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            if let Ok(DesktopCommandResult::Messages { messages }) = client
-                .call(DesktopCommand::ListMessages {
+            if let Ok(DesktopCommandResult::RoomSnapshot(snapshot)) = client
+                .call(DesktopCommand::OpenRoom {
                     room_id: room_id.to_string(),
                 })
                 .await
             {
+                let messages = &snapshot.messages;
                 if messages.len() == count {
                     assert!(
-                        messages.last().unwrap().body.contains("Agent says"),
+                        messages.last().unwrap().message.body.contains("Agent says"),
                         "unexpected message sequence: {messages:#?}"
                     );
                     return;

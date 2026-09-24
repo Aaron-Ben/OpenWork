@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { CollabAgent, CollabAgentActivity } from '@/bridge/collab'
-import { roomWorkingLabel } from './roomWorking'
+import { roomWorkers, roomWorkingLabel } from './roomWorking'
 
 function agent(id: string, activity: CollabAgentActivity): CollabAgent {
   return {
@@ -55,5 +55,23 @@ describe('roomWorkingLabel', () => {
       agent('bo', working(null, '2026-09-25T10:00:00+08:00')),
       agent('cy', { kind: 'queued', cardCount: 1, firstCardTitle: 'Fix login' }),
     ], 'room-1')).toBeNull()
+  })
+})
+
+const workingIn = (roomId: string, startedAt: string, cardTitle: string | null = null): CollabAgentActivity => ({
+  kind: 'working', roomId, roomTitle: null, cardId: cardTitle ? 'card-1' : null, cardTitle, startedAt,
+})
+
+describe('roomWorkers', () => {
+  it('lists Agents working in this room, earliest first', () => {
+    const workers = roomWorkers([
+      agent('bo', workingIn('room-1', '2026-09-25T10:05:00+08:00')),
+      agent('ada', workingIn('room-1', '2026-09-25T10:01:00+08:00', 'Backfill')),
+      agent('cy', workingIn('room-2', '2026-09-25T10:00:00+08:00')),
+    ], 'room-1')
+    expect(workers.map((worker) => [worker.agent.id, worker.cardTitle, worker.startedAt])).toEqual([
+      ['ada', 'Backfill', '2026-09-25T10:01:00+08:00'],
+      ['bo', null, '2026-09-25T10:05:00+08:00'],
+    ])
   })
 })

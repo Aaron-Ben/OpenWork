@@ -63,7 +63,8 @@ export async function refreshForInvalidation(
       }
       break
     case 'board':
-      if (context.view === 'boards') tasks.push(refreshers.boards())
+      // 房间页的卡片胶囊、摘要卡与预览也读看板（collaboration-desktop.md §7.2）。
+      if (context.view !== 'agents' && context.view !== 'observability') tasks.push(refreshers.boards())
       break
     case 'engine_inventory':
       tasks.push(refreshers.runtime())
@@ -92,12 +93,13 @@ export function useCollabInvalidationCoordinator(): void {
     void listenToCollabInvalidations((invalidation) => {
       const navigation = useCollabNavigationStore.getState()
       const rooms = useRoomStore.getState()
-      const activeRoom = rooms.rooms.find((room) => room.id === navigation.activeRoomId)
+      const activeRoomId = navigation.view === 'whispers' ? navigation.activeWhisperId : navigation.activeRoomId
+      const activeRoom = rooms.rooms.find((room) => room.id === activeRoomId)
       void refreshForInvalidation(
         invalidation,
         {
           view: navigation.view,
-          activeRoomId: navigation.activeRoomId,
+          activeRoomId,
           activeRoomKind: activeRoom?.kind ?? null,
         },
         {

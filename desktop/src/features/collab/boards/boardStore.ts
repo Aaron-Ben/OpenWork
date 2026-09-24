@@ -10,9 +10,12 @@ import { resolveErrorMessage } from '@/lib/commandError'
 interface BoardStoreState {
   boards: CollabBoard[]
   selectedBoardId: string | null
+  /** 从房间“打开看板”时要选中的卡片（collaboration-desktop.md §7.5）。 */
+  focusedCardId: string | null
   loading: boolean
   error: string | null
   selectBoard: (boardId: string) => void
+  focusCard: (boardId: string, cardId: string) => void
   fetchAll: () => Promise<void>
   createBoard: (title: string, description: string | null) => Promise<void>
   updateBoard: (boardId: string, title: string, description: string | null) => Promise<void>
@@ -30,9 +33,11 @@ let fetchVersion = 0
 export const useBoardStore = create<BoardStoreState>((set, get) => ({
   boards: [],
   selectedBoardId: null,
+  focusedCardId: null,
   loading: false,
   error: null,
-  selectBoard: (selectedBoardId) => set({ selectedBoardId }),
+  selectBoard: (selectedBoardId) => set({ selectedBoardId, focusedCardId: null }),
+  focusCard: (selectedBoardId, focusedCardId) => set({ selectedBoardId, focusedCardId }),
   fetchAll: async () => {
     const version = ++fetchVersion
     set({ loading: true, error: null })

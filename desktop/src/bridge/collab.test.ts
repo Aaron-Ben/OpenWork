@@ -67,6 +67,14 @@ describe('R3 collaboration command bridge', () => {
     expect(invoke).toHaveBeenCalledWith('collab_room_viewed', { roomId: 'room-1', upToSeq: 7 })
   })
 
+  it('opens a room snapshot and pins rooms by id', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    await collabCommands.openRoom('room-1')
+    expect(invoke).toHaveBeenCalledWith('collab_room_open', { roomId: 'room-1' })
+    await collabCommands.pinRoom('room-1', true)
+    expect(invoke).toHaveBeenCalledWith('collab_room_pin', { roomId: 'room-1', pinned: true })
+  })
+
   it('sends the quoted message id with a quote reply', async () => {
     vi.mocked(invoke).mockResolvedValue(null)
     await collabCommands.sendMessage('general', 'Why partial?', 'msg-7')

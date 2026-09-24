@@ -1,20 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { CollabMessage } from '@/bridge/collab'
+import type { CollabRoomMessage, CollabRoomSnapshot } from '@/bridge/collab'
 
-const { markRoomViewed, listMessages } = vi.hoisted(() => ({
+const { markRoomViewed, openRoom, listRooms } = vi.hoisted(() => ({
+  listRooms: vi.fn(async () => []),
   markRoomViewed: vi.fn(async (_roomId: string, upToSeq: number) => upToSeq),
-  listMessages: vi.fn(async (): Promise<CollabMessage[]> => []),
+  openRoom: vi.fn(async (roomId: string): Promise<CollabRoomSnapshot> => ({ roomId, messages: [], notes: [] })),
 }))
 
 vi.mock('@/bridge/collab', () => ({
-  collabCommands: { markRoomViewed, listMessages },
+  collabCommands: { markRoomViewed, openRoom, listRooms },
 }))
 
 import { useMessageStore } from './messageStore'
 
-function message(sequence: number): CollabMessage {
-  return { id: `msg-${sequence}`, roomId: 'room-1', sequence, authorId: 'ada', body: 'hi', quoted: null }
+function message(sequence: number): CollabRoomMessage {
+  return {
+    id: `msg-${sequence}`, roomId: 'room-1', sequence, authorId: 'ada', body: 'hi', quoted: null,
+    authorName: 'Ada', authorKind: 'agent', authorRole: null, createdAt: '2026-09-25T10:00:00+08:00',
+  }
+}
+
+function snapshotWith(messages: CollabRoomMessage[]) {
+  return async (roomId: string): Promise<CollabRoomSnapshot> => ({ roomId, messages, notes: [] })
 }
 
 function setForeground(foreground: boolean) {
@@ -27,7 +35,7 @@ function setForeground(foreground: boolean) {
 describe('useMessageStore.markViewed', () => {
   beforeEach(() => {
     markRoomViewed.mockClear()
-    listMessages.mockResolvedValue([message(1), message(4)])
+    openRoom.mockImplementation(snapshotWith([message(1), message(4)]))
   })
 
   afterEach(() => {
@@ -40,8 +48,11 @@ describe('useMessageStore.markViewed', () => {
     expect(markRoomViewed).not.toHaveBeenCalled()
 
     setForeground(true)
+    listRooms.mockClear()
     await useMessageStore.getState().markViewed('room-1')
     expect(markRoomViewed).toHaveBeenCalledWith('room-1', 4)
+    // 未读数由 Server 计算，上报后重新取房间列表。
+    expect(listRooms).toHaveBeenCalledOnce()
 
     await useMessageStore.getState().markViewed('room-1')
     expect(markRoomViewed).toHaveBeenCalledTimes(1)
@@ -49,7 +60,7 @@ describe('useMessageStore.markViewed', () => {
 
   it('keeps retrying when the report fails', async () => {
     setForeground(true)
-    listMessages.mockResolvedValue([message(7)])
+    openRoom.mockImplementation(snapshotWith([message(7)]))
     markRoomViewed.mockRejectedValueOnce(new Error('offline'))
     await useMessageStore.getState().open('room-2').catch(() => undefined)
     markRoomViewed.mockClear()
@@ -72,13 +83,13 @@ describe('useMessageStore.open', () => {
     vi.unstubAllGlobals()
   })
 
-  // collaboration-desktop.md §4.1：“正在处理”来自 Agent 的 activity，房间窗口不再读取 Run 列表。
-  it('loads only the room messages', async () => {
+  // collaboration-desktop.md §4.2：打开房间只取一次快照，不再读 Run 列表。
+  it('keeps the room snapshot as returned by the Server', async () => {
     setForeground(false)
-    listMessages.mockResolvedValue([message(2)])
+    openRoom.mockImplementation(snapshotWith([message(2)]))
     await useMessageStore.getState().open('room-3')
     expect(useMessageStore.getState().byRoom['room-3']).toEqual({
-      messages: [message(2)],
+      snapshot: { roomId: 'room-3', messages: [message(2)], notes: [] },
       loading: false,
       error: null,
     })

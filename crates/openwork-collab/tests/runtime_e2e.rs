@@ -230,20 +230,21 @@ async fn run_smoke(
 
     tokio::time::timeout(reply_timeout, async {
         loop {
-            let DesktopCommandResult::Messages { messages } = runtime
-                .desktop(DesktopCommand::ListMessages {
+            let DesktopCommandResult::RoomSnapshot(snapshot) = runtime
+                .desktop(DesktopCommand::OpenRoom {
                     room_id: room.id.clone(),
                 })
                 .await
             else {
-                panic!("Message listing returned the wrong result")
+                panic!("OpenRoom returned the wrong result")
             };
+            let messages = &snapshot.messages;
             if messages.len() == 2 {
-                assert_eq!(messages[1].author_id, agent.id);
+                assert_eq!(messages[1].message.author_id, agent.id);
                 if exact_body {
-                    assert_eq!(messages[1].body, expected_body);
+                    assert_eq!(messages[1].message.body, expected_body);
                 } else {
-                    assert!(messages[1].body.contains(expected_body));
+                    assert!(messages[1].message.body.contains(expected_body));
                 }
                 break;
             }

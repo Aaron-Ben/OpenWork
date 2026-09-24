@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use super::{EngineInventoryView, EngineReadinessView, RunnerStatusView};
+use super::{
+    EngineInventoryView, EngineReadinessView, RoomSnapshotView, RoomSummaryView, RunnerStatusView,
+};
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,8 +103,14 @@ pub enum DesktopCommand {
         body: String,
         quoted_message_id: Option<String>,
     },
-    ListMessages {
+    /// 房间快照（collaboration-desktop.md §4.2）。
+    OpenRoom {
         room_id: String,
+    },
+    /// 置顶或取消置顶（collaboration-desktop.md §4.5）。
+    PinRoom {
+        room_id: String,
+        pinned: bool,
     },
     /// 用户在 Desktop 中看到了 `room_id` 到 `up_to_seq` 为止的消息（collaboration.md §8.3）。
     RoomViewed {
@@ -164,7 +172,7 @@ impl DesktopCommand {
                 | Self::ListAgents
                 | Self::ListRooms
                 | Self::ListRoomMembers { .. }
-                | Self::ListMessages { .. }
+                | Self::OpenRoom { .. }
                 // 只增不减的写入，天然幂等；Desktop 每次看到新消息都上报，不进幂等账本。
                 | Self::RoomViewed { .. }
                 | Self::ListBoards
@@ -188,15 +196,17 @@ pub enum DesktopCommandResult {
     },
     Room(RoomView),
     Rooms {
-        rooms: Vec<RoomView>,
+        rooms: Vec<RoomSummaryView>,
+    },
+    RoomSnapshot(Box<RoomSnapshotView>),
+    RoomPinned {
+        room_id: String,
+        pinned: bool,
     },
     Members {
         members: Vec<ParticipantView>,
     },
     Message(MessageView),
-    Messages {
-        messages: Vec<MessageView>,
-    },
     RoomViewed {
         room_id: String,
         user_viewed_seq: i64,

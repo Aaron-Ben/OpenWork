@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 
-import { collabCommands, type CollabParticipant, type CollabRoom } from '@/bridge/collab'
+import {
+  collabCommands,
+  type CollabParticipant,
+  type CollabRoom,
+  type CollabRoomSummary,
+} from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
 
 type RoomMembersState = Pick<RoomStoreState, 'membersByRoom'>
@@ -10,16 +15,14 @@ export function membersForRoom(state: RoomMembersState, roomId: string): CollabP
   return state.membersByRoom[roomId] ?? EMPTY_ROOM_MEMBERS
 }
 
-export function totalUnread(_rooms: CollabRoom[]): number {
-  return 0
-}
-
 interface RoomStoreState {
-  rooms: CollabRoom[]
+  rooms: CollabRoomSummary[]
   membersByRoom: Record<string, CollabParticipant[]>
   loading: boolean
   error: string | null
   fetchAll: () => Promise<void>
+  /** 置顶或取消置顶（collaboration-desktop.md §4.5），成功后重新取列表。 */
+  pin: (roomId: string, pinned: boolean) => Promise<void>
   createGroup: (title: string, agentIds: string[]) => Promise<CollabRoom | null>
   openDirect: (agentId: string) => Promise<CollabRoom | null>
   fetchMembers: (roomId: string) => Promise<void>
@@ -38,6 +41,15 @@ export const useRoomStore = create<RoomStoreState>((set, get) => ({
       set({ rooms: await collabCommands.listRooms(), loading: false })
     } catch (error) {
       set({ error: resolveErrorMessage(error), loading: false })
+    }
+  },
+  pin: async (roomId, pinned) => {
+    set({ error: null })
+    try {
+      await collabCommands.pinRoom(roomId, pinned)
+      await get().fetchAll()
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
     }
   },
   createGroup: async (title, agentIds) => {

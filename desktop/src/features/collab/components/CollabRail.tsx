@@ -1,4 +1,4 @@
-import { Activity, Bot, ClipboardList, LogOut, MessagesSquare } from 'lucide-react'
+import { Activity, Bot, ClipboardList, Eye, LogOut, MessagesSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { useModeStore } from '@/app/modeStore'
@@ -12,6 +12,7 @@ export function CollabRail({ view, macOS = isMacOS }: { view: CollabView; macOS?
   const setMode = useModeStore((state) => state.setMode)
   const items: Array<{ view: CollabView; label: string; icon: React.ReactNode }> = [
     { view: 'rooms', label: t('collab.nav.rooms'), icon: <MessagesSquare size={20} /> },
+    { view: 'whispers', label: t('collab.nav.whispers'), icon: <Eye size={20} /> },
     { view: 'agents', label: t('collab.nav.agents'), icon: <Bot size={20} /> },
     { view: 'boards', label: t('collab.nav.boards'), icon: <ClipboardList size={20} /> },
     { view: 'observability', label: t('collab.nav.observability'), icon: <Activity size={20} /> },

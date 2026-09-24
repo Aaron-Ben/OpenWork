@@ -102,26 +102,6 @@ impl Rooms {
         })
     }
 
-    pub(crate) async fn list(&self) -> Result<Vec<RoomView>, sqlx::Error> {
-        sqlx::query_as::<_, RoomRow>(
-            "SELECT room.id, room.kind,
-                    CASE WHEN room.kind = 'direct' THEN (
-                        SELECT participant.display_name
-                        FROM collab_room_members member
-                        JOIN collab_participants participant
-                          ON participant.id = member.participant_id
-                        WHERE member.room_id = room.id
-                          AND member.participant_id <> 'local-user'
-                        ORDER BY participant.id LIMIT 1
-                    ) ELSE room.title END AS title
-             FROM collab_rooms room
-             ORDER BY COALESCE(room.last_message_at, room.created_at) DESC",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map(|rows| rows.into_iter().map(RoomView::from).collect())
-    }
-
     /// 记录用户看到的最大 sequence：只增不减，也不超过房间已分配的最后一个 sequence。
     /// 返回记录后的值；房间不存在时返回 `NOT_FOUND`。
     pub(crate) async fn mark_viewed(

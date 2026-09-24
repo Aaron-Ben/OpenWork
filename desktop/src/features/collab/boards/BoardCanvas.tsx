@@ -1,9 +1,11 @@
 import { CheckCircle2, ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { CollabAgent, CollabBoard, CollabBoardColumn, CollabCard } from '@/bridge/collab'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 import { useBoardStore } from './boardStore'
 
 interface BoardCanvasProps {
@@ -21,6 +23,7 @@ export function BoardCanvas({ board, agents, onEditBoard, onAddColumn, onEditCol
   const { t } = useTranslation()
   const moveColumn = useBoardStore((state) => state.moveColumn)
   const assignCard = useBoardStore((state) => state.assignCard)
+  const focusedCardId = useBoardStore((state) => state.focusedCardId)
 
   async function move(index: number, direction: -1 | 1) {
     const column = board.columns[index]
@@ -73,6 +76,7 @@ export function BoardCanvas({ board, agents, onEditBoard, onAddColumn, onEditCol
                     key={card.id}
                     card={card}
                     agents={agents}
+                    focused={card.id === focusedCardId}
                     onAssign={(assigneeId) => void assignCard(card.id, assigneeId).catch(() => undefined)}
                     onDelete={() => onDelete('card', card.id, card.title)}
                   />
@@ -89,10 +93,15 @@ export function BoardCanvas({ board, agents, onEditBoard, onAddColumn, onEditCol
   )
 }
 
-function Card({ card, agents, onAssign, onDelete }: { card: CollabCard; agents: CollabAgent[]; onAssign: (assigneeId: string | null) => void; onDelete: () => void }) {
+function Card({ card, agents, focused, onAssign, onDelete }: { card: CollabCard; agents: CollabAgent[]; focused: boolean; onAssign: (assigneeId: string | null) => void; onDelete: () => void }) {
   const { t } = useTranslation()
+  const ref = useRef<HTMLElement>(null)
+  // 从房间“打开看板”进来时，把选中的卡片滚到可见处（collaboration-desktop.md §7.5）。
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [focused])
   return (
-    <article className="rounded-xl border border-line bg-paper p-3 shadow-sm">
+    <article ref={ref} data-focused={focused || undefined} className={cn('rounded-xl border bg-paper p-3 shadow-sm', focused ? 'border-clay ring-2 ring-clay/30' : 'border-line')}>
       <div className="flex items-start justify-between gap-2">
         <strong className="min-w-0 text-sm leading-5">{card.title}</strong>
         <IconButton label={t('collab.boards.deleteCard')} danger onClick={onDelete}><Trash2 size={13} /></IconButton>

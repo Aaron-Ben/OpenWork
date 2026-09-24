@@ -8,10 +8,11 @@ import { useCollabNavigationStore } from '@/features/collab/collabNavigationStor
 import { CollabRail } from '@/features/collab/components/CollabRail'
 import { ResizableSidebarLayout } from '@/features/collab/components/ResizableSidebarLayout'
 import { useCollabInvalidationCoordinator } from '@/features/collab/invalidationCoordinator'
-import { MessagePane } from '@/features/collab/rooms/MessagePane'
 import { ObservabilityPage } from '@/features/collab/observability/ObservabilityPage'
 import { RoomList } from '@/features/collab/rooms/RoomList'
+import { RoomPage } from '@/features/collab/rooms/RoomPage'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
+import { WhispersPage } from '@/features/collab/rooms/WhispersPage'
 import { useCollabRuntimeStore } from '@/features/collab/runtimeStore'
 
 export function CollabShell() {
@@ -32,7 +33,8 @@ export function CollabShell() {
   }, [fetchAgents, fetchRooms, fetchRuntime])
 
   useEffect(() => {
-    if (!activeRoomId && rooms[0]) selectRoom(rooms[0].id)
+    const first = rooms.find((room) => room.userIsMember)
+    if (!activeRoomId && first) selectRoom(first.id)
   }, [activeRoomId, rooms, selectRoom])
 
   return (
@@ -48,10 +50,12 @@ export function CollabShell() {
           resizeLabel={t('collab.rooms.resizeSidebar')}
           sidebar={<RoomList rooms={rooms} agents={agents} activeRoomId={activeRoomId} onSelect={selectRoom} />}
         >
-          {activeRoom ? <MessagePane room={activeRoom} agents={agents} /> : (
+          {activeRoom ? <RoomPage room={activeRoom} agents={agents} /> : (
             <section data-tauri-drag-region="deep" className="grid min-w-0 flex-1 place-items-center text-sm text-ink-faint">{t('collab.rooms.empty')}</section>
           )}
         </ResizableSidebarLayout>
+      ) : view === 'whispers' ? (
+        <WhispersPage rooms={rooms} agents={agents} />
       ) : view === 'agents' ? (
         <AgentManager />
       ) : view === 'boards' ? (

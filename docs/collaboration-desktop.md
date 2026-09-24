@@ -103,8 +103,8 @@ collab_message_send
 collab_room_viewed
 ```
 
-- `RoomView` 增加 `unreadCount`（sequence 大于 `user_viewed_seq`、作者不是 `local-user` 的 normal 消息数）、`lastMessage`（作者显示名与正文前 80 字）、`workingAgentIds`（在该房间有 running Run 的 Agent）、`userIsMember`、`memberIds`（群组头像拼图用）与 `pinned`。
-- `collab_room_open` 返回一个房间快照：消息、成员及其 `activity`、说明行（§7.3）。`MessageView` 增加 `authorName`、`authorKind`、`authorRole` 与可空的 `quoted { id, authorId, authorName, body }`（原文前 180 字）。
+- `collab_room_list` 返回 `RoomSummaryView`：`RoomView` 的字段，加上 `unreadCount`（sequence 大于 `user_viewed_seq`、作者不是 `local-user` 的 normal 消息数）、`lastMessage`（作者显示名与正文前 80 字）、`lastMessageAt`、`userIsMember`、`memberIds`（用户在前，群组头像拼图用）与 `pinned`。Agent 命令里的 `RoomView` 不变。房间里谁在工作不单独下发，由 Agent 列表的 `activity`（`working` 且 `roomId` 为该房间）得出。
+- `collab_room_open` 取代 `collab_message_list`，返回一个房间快照：消息与说明行（§7.3）。房间成员及其当前状态由 `memberIds` 与 Agent 列表的 `activity` 得出，不在快照里重复下发。消息是 `RoomMessageView`：`MessageView` 的字段（含可空的 `quoted { id, authorId, authorName, body }`，原文前 180 字），加上 `authorName`、`authorKind`、`authorRole` 与 `createdAt`。
 - `collab_message_send` 增加可选的 `quotedMessageId`。
 - `collab_room_viewed { roomId, upToSeq }`：用户看到了这个房间到 `upToSeq` 为止的消息。Server 只增不减地写入 `collab_rooms.user_viewed_seq`（collaboration.md §13.3.4）。
 - Desktop 用户可以创建 Group 并改变 Group audience。Direct Room 创建是“创建或返回已有 Room”。成员操作只接受 Agent ID；固定用户始终由 Server 管理。
@@ -177,6 +177,8 @@ event 只表示“某类 canonical view 可能变化”。前端不能把它直�
 - Runtime/Engine/Runner invalidation → 重新取 `status` 与 Agent 列表；
 - runtime-ready / agent-config → 同时重新取 Agent 列表；
 - message invalidation → 重新取房间列表；当前打开的房间由它自己的 poll 刷新。
+- board invalidation → 在看板、房间与 Agent 私聊页重新取 Board（房间里的卡片胶囊、摘要卡与预览要用）。
+- 上报 `collab_room_viewed` 成功后重新取房间列表：未读数由 Server 按 `user_viewed_seq` 计算，这个命令本身不发布 invalidation。
 - agent activity invalidation（Run 打开或结束、卡片唤醒写入时由 Server 发布）→ 重新取 Agent 列表；在看板页时同时重新取 Board（卡片的 `agentState` 随之变化）。runner status invalidation 同样重新取 Agent 列表，因为出错来自它。
 
 打开的房间每 2 秒调用一次 `collab_room_open`，看板页面每 5 秒读取一次 Board。这两个 poll 是 durable fallback，也避免 WebView 必须理解 Agent SSE 或 Redis wake。Desktop SSE 断线后由 Tauri host 独立指数退避重连；WebView 不参与 credential 或 connection 管理。
@@ -210,7 +212,7 @@ Store 只保存 UI snapshot 和 request 状态。权限、幂等、顺序、领�
 照 Cumora 的会话列表（`src/desktop/ConversationsPane.tsx`）：
 
 - 顶部：标题、新建群组按钮、搜索框（按房间名和成员名过滤）。
-- 搜索框下一排筛选：全部、未读、Agent 私聊（用户与某个 Agent 的 Direct Room）、群组。
+- 搜索框下一排筛选：全部、未读、Agent（用户与某个 Agent 的 Direct Room）、群组。“Agent 私聊”只指 Agent 之间的房间（§7.6），两者不同名（Cumora 分别叫 Agents 与 Whispers，`src/desktop/ConversationsPane.tsx`）。
 - 不按类型分组，一个平铺列表：置顶的房间在最前，带“置顶”小标题与分隔线；其余按最近消息时间排列。房间的类型由头像区分，不另设分组标题（Cumora 删掉分组标题的理由相同）。
 - Agent 之间的 Direct Room 不在这里，放在单独的“Agent 私聊”页（§7.6）。
 - 每行：

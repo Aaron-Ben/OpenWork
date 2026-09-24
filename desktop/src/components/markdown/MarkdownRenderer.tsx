@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,6 +9,8 @@ interface MarkdownRendererProps {
   variant?: MarkdownVariant
   className?: string
   streaming?: boolean
+  /** 渲染代码之外的纯文本片段，例如把 `@id` 或卡片 id 换成组件；不给时原样输出。 */
+  renderText?: (text: string) => ReactNode
 }
 
 type Block =
@@ -22,6 +24,7 @@ type Block =
 
 interface InlineContext {
   inTable?: boolean
+  renderText?: (text: string) => ReactNode
 }
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})\s*([\w+-]*)?.*$/
@@ -34,13 +37,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   variant = 'default',
   className,
   streaming = false,
+  renderText,
 }: MarkdownRendererProps) {
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content])
   const classes = getMarkdownClasses(variant, className)
 
   return (
     <div className={classes}>
-      {blocks.map((block, index) => renderBlock(block, index, variant))}
+      {blocks.map((block, index) => renderBlock(block, index, variant, { renderText }))}
       {streaming ? <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-clay align-text-bottom" /> : null}
     </div>
   )
@@ -152,17 +156,17 @@ function parseMarkdownBlocks(content: string): Block[] {
   return blocks
 }
 
-function renderBlock(block: Block, index: number, variant: MarkdownVariant): ReactNode {
+function renderBlock(block: Block, index: number, variant: MarkdownVariant, context: InlineContext): ReactNode {
   switch (block.type) {
     case 'heading': {
-      return renderHeading(block.level, block.text, index)
+      return renderHeading(block.level, block.text, index, context)
     }
     case 'paragraph':
-      return <p key={index} className={paragraphClass(variant)}>{renderInline(block.text)}</p>
+      return <p key={index} className={paragraphClass(variant)}>{renderInline(block.text, context)}</p>
     case 'blockquote':
       return (
         <blockquote key={index} className={blockquoteClass(variant)}>
-          {renderInline(block.text)}
+          {renderInline(block.text, context)}
         </blockquote>
       )
     case 'list': {
@@ -170,7 +174,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
       return (
         <Tag key={index} className={listClass(variant, block.ordered)}>
           {block.items.map((item, itemIndex) => (
-            <li key={itemIndex} className={listItemClass(variant)}>{renderInline(item)}</li>
+            <li key={itemIndex} className={listItemClass(variant)}>{renderInline(item, context)}</li>
           ))}
         </Tag>
       )
@@ -186,7 +190,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
               <tr>
                 {block.headers.map((header, cellIndex) => (
                   <th key={cellIndex} className={tableHeaderCellClass(cellIndex, block.headers.length)}>
-                    {renderInline(header, { inTable: true })}
+                    {renderInline(header, { ...context, inTable: true })}
                   </th>
                 ))}
               </tr>
@@ -196,7 +200,7 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
                 <tr key={rowIndex}>
                   {block.headers.map((_, cellIndex) => (
                     <td key={cellIndex} className={tableBodyCellClass(cellIndex, block.headers.length)}>
-                      {renderInline(row[cellIndex] ?? '', { inTable: true })}
+                      {renderInline(row[cellIndex] ?? '', { ...context, inTable: true })}
                     </td>
                   ))}
                 </tr>
@@ -210,20 +214,20 @@ function renderBlock(block: Block, index: number, variant: MarkdownVariant): Rea
   }
 }
 
-function renderHeading(level: number, text: string, key: number): ReactNode {
+function renderHeading(level: number, text: string, key: number, context: InlineContext): ReactNode {
   switch (level) {
     case 1:
-      return <h1 key={key} className={headingClass(1)}>{renderInline(text)}</h1>
+      return <h1 key={key} className={headingClass(1)}>{renderInline(text, context)}</h1>
     case 2:
-      return <h2 key={key} className={headingClass(2)}>{renderInline(text)}</h2>
+      return <h2 key={key} className={headingClass(2)}>{renderInline(text, context)}</h2>
     case 3:
-      return <h3 key={key} className={headingClass(3)}>{renderInline(text)}</h3>
+      return <h3 key={key} className={headingClass(3)}>{renderInline(text, context)}</h3>
     case 4:
-      return <h4 key={key} className={headingClass(4)}>{renderInline(text)}</h4>
+      return <h4 key={key} className={headingClass(4)}>{renderInline(text, context)}</h4>
     case 5:
-      return <h5 key={key} className={headingClass(5)}>{renderInline(text)}</h5>
+      return <h5 key={key} className={headingClass(5)}>{renderInline(text, context)}</h5>
     default:
-      return <h6 key={key} className={headingClass(6)}>{renderInline(text)}</h6>
+      return <h6 key={key} className={headingClass(6)}>{renderInline(text, context)}</h6>
   }
 }
 
@@ -249,7 +253,7 @@ function renderInline(text: string, context: InlineContext = {}): ReactNode[] {
 
   while ((match = tokenRe.exec(normalized))) {
     if (match.index > cursor) {
-      nodes.push(normalized.slice(cursor, match.index))
+      nodes.push(plainText(normalized.slice(cursor, match.index), context, nodes.length))
     }
 
     const token = match[0]
@@ -281,10 +285,14 @@ function renderInline(text: string, context: InlineContext = {}): ReactNode[] {
   }
 
   if (cursor < normalized.length) {
-    nodes.push(normalized.slice(cursor))
+    nodes.push(plainText(normalized.slice(cursor), context, nodes.length))
   }
 
   return nodes
+}
+
+function plainText(text: string, context: InlineContext, key: number): ReactNode {
+  return context.renderText ? <Fragment key={key}>{context.renderText(text)}</Fragment> : text
 }
 
 function inlineCodeClass(context: InlineContext): string {

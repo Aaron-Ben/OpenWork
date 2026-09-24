@@ -16,6 +16,9 @@ mod migration;
 mod observability;
 mod redis;
 mod room_mutes;
+mod room_notes;
+mod room_snapshot;
+mod room_summaries;
 mod rooms;
 mod routing;
 mod runs;
@@ -111,7 +114,6 @@ impl CollaborationServer {
             agents: agents.clone(),
             board,
             inventory: inventory.clone(),
-            messages: messages.clone(),
             rooms,
             observability: observability.clone(),
             scheduler: scheduler.clone(),

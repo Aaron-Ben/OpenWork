@@ -89,6 +89,40 @@ export interface CollabMessage {
   quoted: CollabQuotedMessage | null
 }
 
+/** 房间列表的一行（collaboration-desktop.md §4.2）；`memberIds` 中用户在最前。 */
+export interface CollabRoomSummary {
+  id: string
+  kind: 'direct' | 'group'
+  title: string | null
+  unreadCount: number
+  lastMessage: { authorName: string, body: string } | null
+  lastMessageAt: string | null
+  userIsMember: boolean
+  memberIds: string[]
+  pinned: boolean
+}
+
+/** 房间快照里的消息：带作者信息与时间。 */
+export interface CollabRoomMessage extends CollabMessage {
+  authorName: string
+  authorKind: 'user' | 'agent'
+  authorRole: string | null
+  createdAt: string
+}
+
+/** 说明行（collaboration-desktop.md §7.3），显示在 `afterSequence` 那条消息之后。 */
+export type CollabRoomNote =
+  | { kind: 'routing', afterSequence: number, skippedNames: string[], targetNames: string[] }
+  | { kind: 'lap_floor', afterSequence: number, speakerName: string }
+  | { kind: 'loop_cap', afterSequence: number }
+
+/** `collab_room_open` 的房间快照。 */
+export interface CollabRoomSnapshot {
+  roomId: string
+  messages: CollabRoomMessage[]
+  notes: CollabRoomNote[]
+}
+
 /** 被引用消息的摘要；`body` 最多 180 个字符（collaboration.md §9.3）。 */
 export interface CollabQuotedMessage {
   id: string
@@ -211,7 +245,9 @@ export const collabCommands = {
     invoke('collab_agent_archive', { agentId }),
   restoreAgent: (agentId: string): Promise<CollabAgent> =>
     invoke('collab_agent_restore', { agentId }),
-  listRooms: (): Promise<CollabRoom[]> => invoke('collab_room_list'),
+  listRooms: (): Promise<CollabRoomSummary[]> => invoke('collab_room_list'),
+  pinRoom: (roomId: string, pinned: boolean): Promise<void> =>
+    invoke('collab_room_pin', { roomId, pinned }),
   createDirectRoom: (agentId: string): Promise<CollabRoom> =>
     invoke('collab_direct_room_create', { agentId }),
   createGroupRoom: (title: string, agentIds: string[]): Promise<CollabRoom> =>
@@ -224,8 +260,8 @@ export const collabCommands = {
     invoke('collab_group_member_remove', { roomId, agentId }),
   sendMessage: (roomId: string, body: string, quotedMessageId: string | null): Promise<CollabMessage> =>
     invoke('collab_message_send', { roomId, body, quotedMessageId }),
-  listMessages: (roomId: string): Promise<CollabMessage[]> =>
-    invoke('collab_message_list', { roomId }),
+  openRoom: (roomId: string): Promise<CollabRoomSnapshot> =>
+    invoke('collab_room_open', { roomId }),
   markRoomViewed: (roomId: string, upToSeq: number): Promise<number> =>
     invoke('collab_room_viewed', { roomId, upToSeq }),
   listBoards: (): Promise<CollabBoard[]> => invoke('collab_board_list'),

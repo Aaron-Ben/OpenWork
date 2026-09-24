@@ -6,6 +6,7 @@ mod desktop;
 mod engine;
 mod error;
 mod events;
+mod room_views;
 pub mod sse;
 
 pub use agent::*;
@@ -14,6 +15,7 @@ pub use desktop::*;
 pub use engine::*;
 pub use error::*;
 pub use events::*;
+pub use room_views::*;
 
 pub const MESSAGE_BODY_MAX_BYTES: usize = 1024 * 1024;
 
