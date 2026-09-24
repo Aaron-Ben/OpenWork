@@ -299,7 +299,6 @@ fn owning_docs_and_product_sources_have_no_retired_collaboration_shape() {
         "docs/architecture.md",
         "docs/collaboration.md",
         "docs/collaboration-desktop.md",
-        "docs/collaboration-data-model.md",
     ] {
         current.push_str(&std::fs::read_to_string(workspace_root.join(document)).unwrap());
     }

@@ -386,7 +386,7 @@ impl Runs {
         let mut outcome = None;
         if terminal_status == "completed" {
             // 成功完成的 Run 结算全部 delivery；没有回复也没有 ack 的记为 `completed`，
-            // 否则沉默的 Agent 会被同一批消息反复唤醒（collaboration.md §7）。
+            // 否则沉默的 Agent 会被同一批消息反复唤醒（collaboration.md §8.4）。
             sqlx::query(
                 "UPDATE collab_run_deliveries
                  SET eligible_reason = 'completed',

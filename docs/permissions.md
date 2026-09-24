@@ -114,7 +114,7 @@ flowchart TD
 
 **硬保护只收"一次批准就变成沙箱外持久执行、且没有正当用途"的路径：**
 
-- `~/.openwork`：Agent home、runtime token、派生配置（[collaboration-data-model.md](collaboration-data-model.md)）。能写它就能改自己和其他 Agent 的运行环境；
+- `~/.openwork`：Agent home、runtime token、派生配置（[collaboration.md §13.5](collaboration.md)）。能写它就能改自己和其他 Agent 的运行环境；
 - skill 根：能改 skill 就能让一次提示注入变成跨 Session 的持久提权（[skills.md §5.2](skills.md)）；
 - `.git/hooks`：写进去的脚本会在用户下一次 `git commit` 时在沙箱外执行。编码 agent 的正常工作从不需要写它。越界请求里即使列出整个 `.git`，`hooks` 也仍被扣除。
 

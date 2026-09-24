@@ -11,7 +11,8 @@
 | C1 协作契约进入 OpenCode | 完成，已提交 `f68aede` | `EngineRuntimeConfig.instructions_file`；OpenCode 派生配置 `instructions` 引用受管 `AGENTS.md`，classify 用 `classify/` 配置目录 |
 | C2 需要用户处理的失败暂停 | 完成，已提交 `f68aede` | `runner.rs` `engine_backoff_after`：`Unauthenticated` 暂停 15 分钟，限流按 retry-after 或 60 秒 |
 | C3 OpenCode 进 Seatbelt | 完成，已提交 `757f4c8` | `openwork-sandbox::EngineConfinement` + `Seatbelt::confine`；HomeManager 为每个 Agent 构造围栏；OpenCode 经 `sandbox-exec` 启动，`XDG_DATA_HOME` 改为 `agents/<id>/engines/<engine>/data`，登录信息经 `OPENCODE_AUTH_CONTENT` 传入；沙箱不可用时 inventory 为 error |
-| C4–C7 | 未开始 | 排期待定 |
+| C4–C6 | 未开始 | 排期待定 |
+| C7 | 并入 collab-core K1 | 见 [collab-core-progress.md](collab-core-progress.md) |
 
 ## 2. 已定决策
 
@@ -43,7 +44,7 @@
   3. `XDG_CACHE_HOME` 每次 RuntimeSession 都是空目录：OpenCode 回落到自带快照，模型目录与 models.dev 不一致；Desktop 默认模型 `deepseek/deepseek-v4-flash` 在目录刷新后被 OpenCode 本地判为 deprecated 而拒绝（DeepSeek API 仍可调用）。
   4. `Model not found` 不触发暂停，每 20 秒重试。
 
-- 2026-09-24 D6 实现：迁移 `202609240001_settle_completed_runs.sql` 扩展 `eligible_reason`；`server/runs.rs` 在 completed 时把未 eligible 的 delivery 记为 `completed` 后统一结算。复现测试 `messaging::a_completed_silent_run_settles_its_delivery_so_the_agent_is_not_woken_again` 先失败（`last_read_seq` 为 0）后通过；`scripts/check.sh` 除已知不稳定测试外全部通过，该测试单独重跑通过。
+- 2026-09-24 D6 实现（已提交 `d9aa9dd`）：迁移 `202609240001_settle_completed_runs.sql` 扩展 `eligible_reason`；`server/runs.rs` 在 completed 时把未 eligible 的 delivery 记为 `completed` 后统一结算。复现测试 `messaging::a_completed_silent_run_settles_its_delivery_so_the_agent_is_not_woken_again` 先失败（`last_read_seq` 为 0）后通过；`scripts/check.sh` 除已知不稳定测试外全部通过，该测试单独重跑通过。
 - 2026-09-24 C7 第四次实测（真实 `deepseek/deepseek-flash`，预置新模型目录）：80 秒内安静，共 10 个 Run 全部 completed。按角色点名 → 只有 Bo 回复且正确；按名字点名 "Ada, ..." → 只有 Ada 回复且正确。可见日志中未再出现 `participants` / `members` 查询；Bo 仍调了 `openwork --help`。
 
 ## 4. 待定

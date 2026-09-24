@@ -1,6 +1,6 @@
 # 开发计划：协作 OpenCode 接入修正
 
-**这是一份执行计划，不是功能文档。** 设计的唯一权威是 [collaboration.md](../collaboration.md)、[collaboration-data-model.md](../collaboration-data-model.md) 与 [permissions.md](../permissions.md)；本文只回答按什么顺序做、怎样算完成。全部工作包完成后删除本文。
+**这是一份执行计划，不是功能文档。** 设计的唯一权威是 [collaboration.md](../collaboration.md) 与 [permissions.md](../permissions.md)；本文只回答按什么顺序做、怎样算完成。全部工作包完成后删除本文。
 
 ## 1. 来源
 
@@ -16,4 +16,4 @@
 | C4 | 上下文超长 / 坏字符导致的失败重置 Engine session | Cumora `daemon.ts` `mustResetSession` | 待定 |
 | C5 | inventory 上报 `opencode --version` | Cumora `cli-version.ts` | 待定 |
 | C6 | Desktop 从 `opencode models` 选择模型 | Cumora `model-catalog.ts` | 待定，涉及 protocol 与 `compat.ts` |
-| C7 | 每轮 prompt 补充房间类型、作者显示名与名单 | Cumora `daemon.ts` `chatDelta` | 待定 |
+| C7 | 并入 [collab-core.md](collab-core.md) 的 K1 | — | — |

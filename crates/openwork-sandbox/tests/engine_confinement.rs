@@ -1,4 +1,4 @@
-//! 协作 Engine 围栏的真机测试（collaboration.md §3.1、§12 #10）：在真实 Seatbelt 下运行
+//! 协作 Engine 围栏的真机测试（collaboration.md §3.1、§16 #17）：在真实 Seatbelt 下运行
 //! `/bin/sh`，确认 Engine 进程只能写本 Agent 的目录，读不到 `$HOME` 内的其他内容。
 //!
 //! `$HOME` 是建在 `CARGO_TARGET_TMPDIR` 下的假目录，不在系统临时根内，因此不会碰到真实主目录。
