@@ -12,7 +12,7 @@
 | WP1 结果有界与落盘 | 完成，已提交 | `f9db450` |
 | WP1b 旧结果修剪 + 先读后改 | 完成，已提交 | `f9db450`（与 WP1 同一提交）；含迁移 `202609240001_add_tool_result_pruning_watermark.sql` |
 | WP2 `openwork-sandbox` crate | 完成，已提交 | `6d9081f`；D4、D6、主目录工作区均已实现并有测试（§2）；`GOCACHE` 由 crate 给出，bash 启动时实际设置在 WP3 |
-| WP3 沙箱切换 | 进行中 | 提交一已提交 `4d65def`。提交二代码完成、未提交：模式指示器（Turn 运行中也可切换）、「沙箱不可用」常驻提示、Trace 按 §6.4 分类；`scripts/check.sh` 全绿（collab 已知不稳定用例重跑通过）；完成条件 3、4 的 grep 已为空。待：提交二的审查与提交；然后收尾（sandbox crate 注释中文化、文档待定项、完成报告） |
+| WP3 沙箱切换 | 完成（收尾待提交） | 提交一 `4d65def`、提交二 `c7a734f`；收尾：`openwork-sandbox` 注释改为中文，文档待定项已改（`nesting_too_deep` 入 §4.3、tools.md §12 #7 重写），验收对照见 §5，§4.2 手动场景用户确认通过（2026-09-24） |
 | WP4 工具 T1 | 未开始 | |
 | WP5 工具 T2 | 未开始 | |
 | WP6 后台任务 | 未开始 | 开始前先定 D8 |
@@ -57,8 +57,6 @@
 |---|---|---|
 | — | 工具改进（对照 ZCode 等得出，暂不做） | read 重复读取去重；grep 默认只列文件并支持 `-A/-B/-C`；按时间或空闲修剪旧结果；edit 行号前缀与弯引号容错（并入 WP4）；超限预览缩小；先看 Trace 缓存命中数据再决定 |
 | — | multi-agent.md 过时段落（与本计划无关，只记录） | 说 `last_real_user`"必须改"、"现在"会选中子 Agent 消息，并链接到已不存在的 `compaction/projection.rs`；代码已在 `compaction/compacted_view.rs:26` 按 kind 排除 contextual 消息。需要改写该段与链接 |
-| — | 危险命令嵌套超限的键名 | permissions.md §4.4 说"递归深度超过 8 层视为命中"，但没有给键名；实现用 `nesting_too_deep`，需在 §4.3 清单补一行（WP3 完成报告里提出） |
-| — | tools.md §12 #7 过时 | "指向工作区外的 symlink 被拒绝"写于旧设计；新设计读取处处允许（凭据目录除外），应改为"写入经 symlink 落到可写范围外被拒绝；读取经 symlink 进入凭据目录被拒绝" |
 | — | tools.md 出处错误 | "bash 保留头 2 KB + 尾 14 KB 来自 DSH"不对，DSH 只保留尾部。WP7 时改 |
 | — | `session_runtime.rs` 超出测试文件上限 | 5226 行（上限 1500，本次从 5362 行减少）。拆分需要共享夹具模块，而每个测试二进制只用其中一部分会触发 `dead_code`，与"禁止 `#[allow(dead_code)]`、禁止模块级抑制"冲突；需先定共享测试夹具的 lint 规则 |
 | — | `postgres_session_storage.rs` 超出测试文件上限 | 1529 行，本次为新迁移加了 5 行断言 |
@@ -74,3 +72,81 @@
 | WP1 之后 | 41,251 | 41,251（−4%） |
 
 WP1 的收益主要是正确性：不再从中间截断、总数准确、完整结果可取回。WP4 后重跑并补一行。
+
+## 5. WP3 验收对照
+
+测试名省略 crate 前缀：`sandbox` = `openwork-sandbox`，`tools` = `openwork-tools`，`core` = `openwork-core`，`desktop` = `desktop/src`。"手动" 指用户在真实 Desktop 中执行的 §4.2 场景（2026-09-24，用户确认无问题）。
+
+### permissions.md §9.2
+
+| # | 证据 |
+|---|---|
+| 1 | core `postgres_core_host_flow::acc_01_35_42_…`（新会话 `auto`）、`session_runtime::acc_01_13_…`；`SandboxMode` 只有两个变体（sandbox `policy::modes_order_from_narrow_to_wide`）；desktop `ChatInput.test`；常驻可见：手动 |
+| 2 | sandbox `matrix::auto_builds_and_reads_but_git_writes_need_an_escalation`（`cargo build/test`、`git status/log/diff` 在内核下成功）；core `approval::ordinary_calls_run_without_asking`（不出卡片）；`rg` / `ls` 与 `cat` 同属只读，未单独跑 |
+| 3 | sandbox `matrix::auto_builds_and_reads_…`（四条 git 写命令被拒且工作区不变；`.git` 越界后提交成功，`.git/hooks` 仍拒）、`matrix::accept_edits_denies_bash_workspace_writes_until_escalated`（工作区授权仍不开 `.git`） |
+| 4 | sandbox `matrix::accept_edits_denies_bash_workspace_writes_until_escalated`、`parity::bash_and_file_tools_differ_only_on_the_workspace_under_accept_edits`；tools `sandbox_calls::acc_10e_kernel_denials_are_marked_with_the_escalation_hint`；core `session_runtime::acc_38_44_…`（accept-edits 下 write 直接执行） |
+| 5 | sandbox `matrix::protected_locations_stay_closed_and_temp_stays_open`（bash）、`parity::acc_10_file_tool_fence_and_seatbelt_agree_on_every_path`（两侧一致） |
+| 6 | sandbox `parity::acc_10_…`；tools `skill_paths::read_can_open_an_agents_skill_outside_the_workspace` |
+| 7 | tools `sandbox_calls::acc_10b_credential_directories_are_unreadable_for_file_tools_and_bash`、`read::rejects_read_through_symlink_into_a_credential_directory`；sandbox `matrix::protected_locations_…` |
+| 8 | sandbox `parity::acc_10_…`、`parity::case_variants_of_protected_names_are_not_writable`、`policy::grants_unlock_what_they_name_but_never_hard_protected_paths` |
+| 9 | sandbox `policy::grants_unlock_…`、`policy::a_broad_grant_does_not_open_protected_paths_it_merely_contains`、`policy::escalation_requests_are_validated`；tools `sandbox_calls::acc_10_an_escalation_widens_only_this_call_and_never_hard_protected_paths`、`skill_paths::write_and_edit_are_denied_for_the_agents_skill_root_in_every_mode`、`skill_paths::an_alias_cannot_bypass_…`；core `session_runtime::acc_09_39_…`、`approval::protected_write_targets_are_rule_denials_without_a_card`、`session_tools::acc_26_spilled_output_is_readable_and_never_writable` |
+| 10 | sandbox `parity::acc_10_file_tool_fence_and_seatbelt_agree_on_every_path` |
+| 11 | tools `bash::acc_11_bash_output_makes_no_network_or_isolation_claim`；`rg -i "network\|网络\|網路\|isolat"` 在三份文案、notice.rs、sandbox_policy.rs 中无命中 |
+| 12 | sandbox `probe::acc_12_the_real_sandbox_passes_its_self_check`、`probe::a_sandbox_that_does_not_deny_fails_the_self_check` |
+| 13 | tools `sandbox_calls::acc_10d_bash_does_not_run_when_the_sandbox_is_unavailable`、`prepare::an_unavailable_sandbox_reports_no_dangerous_command`；core `session_runtime::acc_13_an_unavailable_sandbox_never_asks_about_a_dangerous_command`、`acc_13_38_…`、`sandbox_policy::an_unavailable_sandbox_says_bash_is_unavailable`；desktop `SandboxUnavailableNotice.test`；无不经 Seatbelt 的 bash：完成条件 3 的 grep 为空 |
+| 14 | tools `builtins::escalation_parameters_disappear_when_the_sandbox_is_unavailable` |
+| 15 | sandbox `probe::acc_15_denials_and_sandbox_failures_are_told_apart`；tools `sandbox_calls::acc_10e_a_runner_failure_is_unavailable_not_denied` |
+| 16 | 未自动化：只能在 Linux 上运行。代码检查：`probe.rs` 在非 macOS 上直接返回 `Unavailable`，与第 12 条的失败路径相同 |
+| 17 | tools `sandbox_calls::acc_10e_kernel_denials_are_marked_with_the_escalation_hint`、`notice::bash_denial_names_the_mode_and_offers_escalation_only_when_available` |
+| 18 | core `session_runtime::acc_18_19_…`、`approval::a_valid_escalation_asks_with_every_path_and_its_tier`；desktop `ApprovalDialog.test` |
+| 19 | core `session_runtime::acc_18_19_…`（第二次同样请求再次出卡片，第三次调用的策略没有授权）；tools `sandbox_calls::acc_10_…` |
+| 20 | 授权机制：sandbox `policy::grants_unlock_…`、`parity::acc_10_…`（被列出的路径可写，其他 `$HOME` 路径仍拒）；真实联网 `cargo build`：手动 |
+| 21 | 凭据读授权：sandbox `parity::acc_10_…`；`.git/hooks` 任何越界下不可写：sandbox `matrix::auto_builds_…`；真实 `git push`：手动 |
+| 22 | core `session_runtime::acc_22_…`（逐字：已可写、非绝对路径、理由为空；Turn 继续、无卡片）；sandbox `policy::escalation_requests_are_validated`（超过 16 条、硬保护、`/` 与 `$HOME` 子树） |
+| 23 | 类型保证：`SandboxPermissionsInput` 只有 `paths`（`deny_unknown_fields`）；tools `builtins::builtin_registry_exposes_each_tool_once_in_selected_order`（顶层参数逐一断言，没有其他越界参数） |
+| 24 | core `session_runtime::acc_24_a_user_denial_stops_the_turn_without_running_the_tool` |
+| 25 | 结构保证：授权只存在于单次调用的 `SandboxPolicy`，会话状态与数据库都没有授权字段；core `session_runtime::acc_18_19_…`（批准后的下一次调用没有授权） |
+| 26 | tools `danger::acc_26_27_28_29_the_listed_commands_hit_or_miss_as_specified`；core `session_runtime::acc_26_32_34_…`；desktop `ApprovalDialog.test`（高亮命中段与键） |
+| 27–30 | tools `danger::acc_26_27_28_29_…`（逐条原样）、`danger::syntax_errors_are_not_checked`、`danger::nesting_beyond_the_limit_counts_as_a_hit` |
+| 31 | core `approval::dangerous_commands_ask_only_in_auto`（批准不带授权）；sandbox `matrix::protected_locations_…`（`$HOME` 下写入被内核拒绝） |
+| 32 | core `session_runtime::acc_26_32_34_…`、`approval::acc_32_an_escalation_card_also_marks_a_dangerous_command`；desktop `ApprovalDialog.test`（合并卡片） |
+| 33 | core `approval::unattended_sessions_deny_what_would_need_a_card` |
+| 34 | core `session_runtime::acc_26_32_34_…`（`dangerMatch`） |
+| 35 | core `postgres_core_host_flow::acc_01_35_42_…`、`session_tools::a_sub_agent_never_gets_a_wider_mode_than_its_parent_or_role` |
+| 36 | core `postgres_core_host_flow::acc_01_35_42_…`、`session_runtime::acc_36_37_…`；agent `builder::explorer_cannot_change_the_workspace`；内核行为：sandbox `matrix::accept_edits_denies_bash_workspace_writes_until_escalated` |
+| 37 | core `session_runtime::acc_36_37_…`（越界直接拒绝、文本逐字）、`approval::unattended_sessions_deny_…`；目前没有上限为 `auto` 的子 Agent 角色，`auto` 子 Agent 跑 `cargo test` 由 `agent::builder::the_default_agent_may_use_the_widest_mode` 与第 2 条间接覆盖 |
+| 38 | core `session_runtime::acc_13_38_…`、`acc_38_44_…`、`sandbox_policy::*` |
+| 39 | core `session_runtime::acc_09_39_…`（逐字） |
+| 40 | desktop `ApprovalDialog.test`（只有两个按钮）；core `updates::a_resolved_permission_carries_only_the_decision`；`PermissionDecision` 只有两个变体 |
+| 41 | core `session_runtime::acc_41_multiple_permission_requests_are_presented_serially` |
+| 42 | core `postgres_core_host_flow::acc_01_35_42_…`（重启后恢复）、`postgres_sandbox_mode_migration::existing_sub_agents_get_their_role_ceiling_and_roots_get_auto` |
+| 43 | `rg -i "rules?\.(json\|toml)\|permission.*\.json\|allow_rules\|session_rules"` 在 crates 与 desktop/src 中无命中 |
+| 44 | core `session_runtime::acc_38_44_…`、`acc_18_19_…`、`acc_26_32_34_…`、`acc_09_39_…`；desktop `permissionCategory.test`、`TraceTimeline.test` |
+| 45 | `SandboxMode` 只有两个变体；`record_sandbox_mode` 只接受 `SandboxMode` |
+| 46 | desktop `TurnTraceDrawer.test`（`data-trace-completeness="partial"`，本改动前已有） |
+| 47 | 完成条件 4 的 grep 为空；`openwork-tools/src/permission/` 只剩 `danger.rs` 与 `mod.rs` |
+| 48 | `rg -l tree_sitter crates` 只命中 `openwork-tools/src/permission/danger.rs` |
+| 49 | sandbox `matrix::a_home_workspace_is_read_only_for_bash`、`policy::a_workspace_containing_home_is_read_only_for_bash_in_every_mode` |
+| 50 | sandbox `matrix::go_builds_and_tests_with_the_private_cache`、`policy::bash_environment_points_the_go_cache_at_a_private_temp_directory` |
+
+### tools.md §12 #7–10f
+
+| # | 证据 |
+|---|---|
+| 7 | tools `write::rejects_new_file_through_symlink_outside_workspace`、`write::rejects_protected_metadata_through_symlink_alias`、`read::rejects_read_through_symlink_into_a_credential_directory`、`read::allows_read_through_symlink_that_stays_inside_workspace` |
+| 8 | tools `write::rejects_new_file_through_symlink_outside_workspace`、`write::rejects_new_file_through_dangling_symlink`；sandbox `parity::acc_10_…`（不存在的新路径） |
+| 9 | 结构保证：`CheckedPath` 字段私有，只有 `resolve_path` 能构造 |
+| 10 | tools `sandbox_calls::acc_10_an_escalation_widens_only_this_call_and_never_hard_protected_paths` |
+| 10a | sandbox `parity::acc_10_…` |
+| 10b | tools `sandbox_calls::acc_10b_…` |
+| 10c | tools `sandbox_calls::acc_10c_bash_runs_under_the_policy_of_this_call` |
+| 10d | tools `sandbox_calls::acc_10d_…`；完成条件 3 的 grep 为空 |
+| 10e | tools `sandbox_calls::acc_10e_kernel_denials_…`、`acc_10e_a_runner_failure_is_unavailable_not_denied` |
+| 10f | tools `builtins::escalation_parameters_disappear_when_the_sandbox_is_unavailable` |
+
+### multi-agent.md §11 #15–16
+
+| # | 证据 |
+|---|---|
+| 15 | 内核拒绝写 `target/`：sandbox `matrix::accept_edits_denies_bash_workspace_writes_until_escalated`；拒绝标记：tools `sandbox_calls::acc_10e_…`；越界重试直接拒绝、文本可操作：core `session_runtime::acc_36_37_…` |
+| 16 | core `session_runtime::acc_36_37_…`（`git log` 执行、无审批卡片）、`postgres_core_host_flow::acc_01_35_42_…`（父会话 `auto` 时 explorer 为 `accept_edits`） |

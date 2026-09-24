@@ -1,10 +1,9 @@
-//! Startup self-check (permissions.md §3.2): the sandbox is available only
-//! once a write it forbids has actually failed with `EPERM`.
+//! 启动自检（permissions.md §3.2）：只有一次本应被禁止的写入真的以 `EPERM` 失败，
+//! 才认定沙箱可用。
 //!
-//! "The command ran" does not prove "the sandbox applied"; a broken setup
-//! still reports success. The probe therefore demands the refusal itself.
-//! It runs `sandbox-exec` directly because it is a one-off check at startup,
-//! not a tool call; tool processes are the `ProcessBackend`'s.
+//! "命令跑起来了"证明不了"沙箱生效了"：配置失效时照样报告成功，所以自检要拿到拒绝本身。
+//! 这里直接运行 `sandbox-exec`，因为它是启动时的一次性检查，不是工具调用；工具进程归
+//! `ProcessBackend` 管。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,7 +17,7 @@ use crate::denial::{RunOutcome, classify};
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SandboxStatus {
     Available,
-    /// `reason` is shown to the user as is.
+    /// `reason` 原样显示给用户。
     Unavailable {
         reason: String,
     },
@@ -32,7 +31,7 @@ impl SandboxStatus {
 
 const PROBE_PROFILE: &str = "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (literal \"/dev/null\"))\n";
 
-/// Runs the self-check with the `sandbox-exec` at `sandbox_exec`.
+/// 用位于 `sandbox_exec` 的 `sandbox-exec` 做自检。
 pub fn probe(sandbox_exec: &Path) -> SandboxStatus {
     if !cfg!(target_os = "macos") {
         return unavailable("the sandbox is only implemented for macOS");

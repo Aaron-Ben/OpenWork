@@ -318,6 +318,37 @@ mod tests {
         detect(command).map(|found| found.key)
     }
 
+    /// permissions.md §9.2 #26–#29 列出的写法，逐条原样。
+    #[test]
+    fn acc_26_27_28_29_the_listed_commands_hit_or_miss_as_specified() {
+        use DangerKey::{FindDelete, GitCleanForce, RmRecursiveOrForce};
+        for (command, expected) in [
+            ("rm -rf src", Some(RmRecursiveOrForce)),
+            ("rm -f a.log", Some(RmRecursiveOrForce)),
+            ("find . -name '*.o' -delete", Some(FindDelete)),
+            ("find . -exec rm {} +", Some(FindDelete)),
+            ("git clean -fdx", Some(GitCleanForce)),
+            ("cargo build && rm -rf target", Some(RmRecursiveOrForce)),
+            (
+                r#"for d in a b; do rm -rf "$d"; done"#,
+                Some(RmRecursiveOrForce),
+            ),
+            ("xargs rm -rf < list", Some(RmRecursiveOrForce)),
+            ("sudo rm -rf x", Some(RmRecursiveOrForce)),
+            ("env FOO=1 rm -rf x", Some(RmRecursiveOrForce)),
+            ("bash -c 'rm -rf src'", Some(RmRecursiveOrForce)),
+            ("rm -rf $DIR", Some(RmRecursiveOrForce)),
+            ("$CMD -rf x", None),
+            ("rm a.txt", None),
+            ("echo rm -rf x", None),
+            ("git reset --hard", None),
+            ("git restore src/lib.rs", None),
+            ("git checkout -- .", None),
+        ] {
+            assert_eq!(key(command), expected, "{command}");
+        }
+    }
+
     #[test]
     fn rm_needs_a_recursive_or_force_flag() {
         assert_eq!(key("rm -rf target"), Some(DangerKey::RmRecursiveOrForce));

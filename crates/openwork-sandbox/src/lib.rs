@@ -1,10 +1,8 @@
-//! What one tool call may read and write, and making the kernel enforce it
-//! (docs/permissions.md §2–§3).
+//! 一次工具调用能读写什么，以及让内核强制执行（docs/permissions.md §2–§3）。
 //!
-//! The only definition of the sandbox modes and the four path tiers. Bash's
-//! Seatbelt profile and the file tools' fence are both derived from a
-//! [`SandboxPolicy`], so the two cannot disagree. No other OpenWork crate is
-//! a dependency; approval decisions and tool processes live elsewhere.
+//! 沙箱模式与四档路径只在这里定义。bash 的 Seatbelt profile 与文件工具的围栏都由
+//! [`SandboxPolicy`] 推导，两者不会各说各话。本 crate 不依赖任何其他 OpenWork crate；
+//! 审批决定与工具进程都不在这里。
 
 mod backend;
 mod denial;

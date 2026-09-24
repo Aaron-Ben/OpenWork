@@ -546,7 +546,7 @@ T3 排在 [permissions.md](permissions.md) P1 之后：后台进程必须在沙�
 
 ### 路径安全
 
-7. 指向工作区外的 symlink 被拒绝；
+7. 写入经 symlink 落到当前策略的可写范围之外时被拒绝；读取经 symlink 进入凭据目录时被拒绝（读取其他位置不受限，[permissions.md §2.3](permissions.md)）；
 8. 新建文件时，父目录越界被拒绝；
 9. 工具无法绕过 `CheckedPath` 直接拿到 `PathBuf`；
 10. 越界批准只改变这一次调用的 `sandbox_policy`，不能解开硬保护路径；

@@ -1,22 +1,17 @@
-//! The four path tiers (permissions.md §2.3) — the only place that knows them.
+//! 路径的四档（permissions.md §2.3）——只有这里知道它们。
 //!
-//! Each rule has two renderings that must agree: a matcher over canonical
-//! paths for the in-process file-tool fence, and a Seatbelt filter for the
-//! kernel. The parity tests in `tests/parity.rs` pin the two together.
+//! 每条规则有两种表达，必须一致：给进程内文件工具围栏用的、作用于规范化路径的匹配函数，
+//! 以及给内核用的 Seatbelt 过滤器。`tests/parity.rs` 的对等测试把两者绑在一起。
 //!
-//! Workspace names match without regard to ASCII case. macOS volumes are
-//! case-insensitive by default: canonicalization restores the on-disk case
-//! of existing components, but a new `.ENV` keeps the caller's spelling and
-//! is still the file dotenv loaders read as `.env`.
+//! 工作区内的名字按 ASCII 大小写不敏感匹配。macOS 卷默认大小写不敏感：规范化会把已存在的
+//! 路径段还原成磁盘上的写法，但新建的 `.ENV` 保留调用方的拼写，dotenv 仍会把它当 `.env` 读。
 
 use std::path::{Component, Path, PathBuf};
 
-/// Directories whose whole subtree is sensitive wherever they appear inside
-/// the workspace.
+/// 在工作区内任意位置出现时，整个子树都属于敏感档的目录。
 pub(crate) const SENSITIVE_DIRECTORIES: &[&str] = &[".git", ".vscode", ".idea"];
 
-/// File names (the final path component) that are sensitive inside the
-/// workspace.
+/// 在工作区内属于敏感档的文件名（路径的最后一段）。
 pub(crate) const SENSITIVE_FILES: &[&str] = &[
     ".gitconfig",
     ".gitmodules",
@@ -27,11 +22,10 @@ pub(crate) const SENSITIVE_FILES: &[&str] = &[
     ".profile",
 ];
 
-/// Final components starting with this are sensitive: `.env`, `.env.local`,
-/// `.envrc`.
+/// 最后一段以它开头的都属于敏感档：`.env`、`.env.local`、`.envrc`。
 pub(crate) const SENSITIVE_FILE_PREFIX: &str = ".env";
 
-/// Credential locations under `$HOME`: unreadable unless a grant names them.
+/// `$HOME` 下的凭据位置：除非越界授权点名，否则不可读。
 pub(crate) const CREDENTIAL_PATHS: &[&str] = &[
     ".ssh",
     ".aws",
@@ -60,7 +54,7 @@ pub(crate) const CREDENTIAL_PATHS: &[&str] = &[
 /// 所以由下面的 `/dev/fd/<n>` 覆盖。
 pub(crate) const WRITABLE_DEVICES: &[&str] = &["/dev/null", "/dev/zero", "/dev/tty"];
 
-/// `/dev/fd/<n>` and `/dev/ttys<n>`.
+/// `/dev/fd/<n>` 与 `/dev/ttys<n>`。
 pub(crate) fn is_writable_device(path: &Path) -> bool {
     if WRITABLE_DEVICES
         .iter()
@@ -77,10 +71,10 @@ pub(crate) fn is_writable_device(path: &Path) -> bool {
     })
 }
 
-/// Seatbelt regexes for [`is_writable_device`]'s numbered devices.
+/// [`is_writable_device`] 中带编号设备对应的 Seatbelt 正则。
 pub(crate) const WRITABLE_DEVICE_REGEXES: &[&str] = &["^/dev/fd/[0-9]+$", "^/dev/ttys[0-9]+$"];
 
-/// Components of `path` below `root`, or `None` when it is not inside.
+/// `path` 在 `root` 之下时返回其下的各段；不在其下时返回 `None`。
 fn components_below<'a>(root: &Path, path: &'a Path) -> Option<Vec<&'a str>> {
     let relative = path.strip_prefix(root).ok()?;
     relative
@@ -92,8 +86,7 @@ fn components_below<'a>(root: &Path, path: &'a Path) -> Option<Vec<&'a str>> {
         .collect()
 }
 
-/// `.git/hooks/**` anywhere in the workspace: scripts there run outside the
-/// sandbox on the user's next `git commit`.
+/// 工作区内任意位置的 `.git/hooks/**`：那里的脚本会在用户下一次 `git commit` 时在沙箱外执行。
 pub(crate) fn is_workspace_hard_protected(workspace: &Path, path: &Path) -> bool {
     components_below(workspace, path).is_some_and(|components| {
         components.windows(2).any(|pair| {
@@ -126,7 +119,7 @@ pub(crate) fn is_workspace_sensitive(workspace: &Path, path: &Path) -> bool {
     })
 }
 
-/// Workspace-anchored Seatbelt regexes, rendered from the same lists.
+/// 以工作区为锚点的 Seatbelt 正则，由同一组清单生成。
 pub(crate) fn workspace_hard_protected_regex(workspace: &Path) -> String {
     format!(
         r"^{}/(.*/)?{}/{}(/.*)?$",
@@ -165,15 +158,14 @@ pub(crate) fn credential_paths(home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Escapes a path for embedding in a Seatbelt regex. Paths reach the profile
-/// as `-D` parameters, never as profile text, so escaping only has to make
-/// every character literal to the regex engine.
+/// 转义路径以嵌入 Seatbelt 正则。路径以 `-D` 参数进入 profile，从不出现在正文里，
+/// 所以转义只需让每个字符对正则引擎而言是字面量。
 pub(crate) fn escape_regex(path: &Path) -> String {
     escape_regex_str(&path.to_string_lossy())
 }
 
-/// A regex matching `name` in any ASCII case: `.env` → `\.[eE][nN][vV]`.
-/// Seatbelt's regex has no case-insensitive flag.
+/// 以任意 ASCII 大小写匹配 `name` 的正则：`.env` → `\.[eE][nN][vV]`。
+/// Seatbelt 的正则没有大小写不敏感的开关。
 fn case_insensitive(name: &str) -> String {
     name.chars()
         .map(|character| {

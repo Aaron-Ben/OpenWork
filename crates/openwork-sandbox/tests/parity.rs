@@ -1,11 +1,8 @@
-//! permissions.md §2.4 / §9.2 #10: the file-tool fence (`SandboxPolicy::check`)
-//! and the Seatbelt profile reach the same verdict for every tier, mode,
-//! actor and grant — checked against the real kernel.
+//! permissions.md §2.4、§9.2 #10：文件工具围栏（`SandboxPolicy::check`）与 Seatbelt profile
+//! 对每一档、每个模式、每个访问方和每种授权给出同样的结论——对照真实内核检查。
 //!
-//! The whole world (home, workspace, temp root) lives under
-//! `CARGO_TARGET_TMPDIR`: outside the machine's real temp roots, so "outside
-//! every writable root" can be tested, and with a space in the path on this
-//! repository's volume.
+//! 整个测试环境（主目录、工作区、临时根）都在 `CARGO_TARGET_TMPDIR` 下：它不在本机真实的
+//! 临时根内，因此能测"不在任何可写根内"；在本仓库所在的卷上，路径里还带空格。
 
 #![cfg(target_os = "macos")]
 
@@ -18,7 +15,7 @@ use openwork_sandbox::{
     SandboxPolicy, SeatbeltProfile,
 };
 
-/// Paths below the test world, one per tier and edge.
+/// 测试环境下的路径，每一档、每个边界情况一条。
 const PATHS: &[&str] = &[
     "home/project/src/main.rs",
     "home/project/target/debug/app",
@@ -48,8 +45,7 @@ const PATHS: &[&str] = &[
     "outside/elsewhere.txt",
 ];
 
-/// New files spelled in another case than what is on disk. macOS volumes
-/// are case-insensitive, so each of these lands in a protected place.
+/// 与磁盘上大小写不同的新文件。macOS 卷大小写不敏感，所以它们每一个都落在受保护的位置。
 const CASE_VARIANTS: &[&str] = &[
     "home/project/.GIT/HOOKS/new-hook",
     "home/project/.Git/new-file",
@@ -82,7 +78,7 @@ impl World {
         self.root.join(relative)
     }
 
-    /// Every path of the test, as given to the kernel.
+    /// 本测试的全部路径，与交给内核的形式一致。
     fn all_paths(&self) -> Vec<PathBuf> {
         PATHS
             .iter()
@@ -121,8 +117,7 @@ impl Drop for World {
     }
 }
 
-/// `(may_read, may_write)` per path, as the kernel sees it. Reading a path
-/// that still does not exist says nothing about permissions: `None`.
+/// 内核眼中每个路径的 `(may_read, may_write)`。读一个仍不存在的路径说明不了权限：记为 `None`。
 fn kernel_verdicts(profile: &SeatbeltProfile, paths: &[PathBuf]) -> Vec<(Option<bool>, bool)> {
     let script = r#"for p in "$@"; do
   if printf x >> "$p" 2>/dev/null; then w=1; else w=0; fi
@@ -172,8 +167,7 @@ fn policy_verdicts(policy: &SandboxPolicy, actor: Actor, paths: &[PathBuf]) -> V
         .collect()
 }
 
-/// What the file tools hand to `check`: the existing ancestor canonicalized
-/// (restoring its on-disk case), the new components as given.
+/// 文件工具交给 `check` 的形式：已存在的祖先规范化（还原磁盘上的大小写），新的路径段保持原样。
 fn resolve_like_the_fence(path: &Path) -> PathBuf {
     let mut existing = path.to_path_buf();
     let mut rest = Vec::new();
@@ -229,7 +223,7 @@ fn acc_10_file_tool_fence_and_seatbelt_agree_on_every_path() {
     }
 }
 
-/// The one intended difference between the two actors (permissions.md §2.2).
+/// 两个访问方之间唯一有意的差异（permissions.md §2.2）。
 #[test]
 fn bash_and_file_tools_differ_only_on_the_workspace_under_accept_edits() {
     let world = World::new("actors");
@@ -258,7 +252,7 @@ fn bash_and_file_tools_differ_only_on_the_workspace_under_accept_edits() {
     }
 }
 
-/// The case variants are protected on both sides, not merely consistent.
+/// 大小写变体在两侧都受保护，而不只是两侧一致。
 #[test]
 fn case_variants_of_protected_names_are_not_writable() {
     let world = World::new("case");

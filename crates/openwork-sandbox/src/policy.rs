@@ -1,4 +1,4 @@
-//! What one call may read and write (permissions.md §2.2–§2.4, §4.2).
+//! 一次调用能读写什么（permissions.md §2.2–§2.4、§4.2）。
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -8,15 +8,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::tiers;
 
-/// How much the workspace is open to a call. Ordered from narrow to wide, so
-/// the effective mode of a sub-agent is `parent.min(role_ceiling)`. Users
-/// and roles choose from the same two values (permissions.md §2.2).
+/// 工作区对一次调用开放到什么程度。按从窄到宽排序，所以子 Agent 的生效模式是
+/// `parent.min(role_ceiling)`。用户与角色从同样的两个取值里选（permissions.md §2.2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxMode {
-    /// `write` / `edit` may change the workspace; bash may not.
+    /// `write` / `edit` 能改工作区，bash 不能。
     AcceptEdits,
-    /// Both may change the workspace. The default.
+    /// 两者都能改工作区。默认模式。
     Auto,
 }
 
@@ -29,8 +28,7 @@ impl SandboxMode {
     }
 }
 
-/// Who is asking. The modes differ only in whether bash may write the
-/// workspace, so the rules need to know.
+/// 发起访问的一方。两个模式只在 bash 能否写工作区上不同，所以规则需要知道是谁。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Actor {
     Bash,
@@ -41,7 +39,7 @@ pub enum Actor {
 #[serde(rename_all = "snake_case")]
 pub enum Access {
     Read,
-    /// Implies read.
+    /// 蕴含读。
     Write,
 }
 
@@ -52,11 +50,10 @@ pub enum GrantScope {
     Subtree,
 }
 
-/// One path a single call may additionally read or write (permissions.md
-/// §4.1). Grants live only in that call's policy.
+/// 单次调用额外获得读或写的一个路径（permissions.md §4.1）。授权只存在于那次调用的策略里。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PathGrant {
-    /// Canonical absolute path.
+    /// 规范化后的绝对路径。
     pub path: PathBuf,
     pub access: Access,
     pub scope: GrantScope,
@@ -71,7 +68,7 @@ impl PathGrant {
     }
 }
 
-/// The tier a path belongs to (permissions.md §2.3), for cards and errors.
+/// 路径所属的档（permissions.md §2.3），供卡片与错误文本使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathTier {
@@ -81,23 +78,22 @@ pub enum PathTier {
     Normal,
 }
 
-/// Why an access was refused.
+/// 访问被拒绝的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Denial {
-    /// Never writable, in any mode, under any grant.
+    /// 任何模式、任何授权下都不可写。
     HardProtected,
-    /// Read-only until a grant names it.
+    /// 只读，直到授权点名它。
     Sensitive,
-    /// Unreadable (and unwritable) until a grant names it.
+    /// 不可读（也不可写），直到授权点名它。
     Credential,
-    /// Outside the writable roots of this mode and actor.
+    /// 不在这个模式与访问方的可写根之内。
     OutsideWritableRoots,
 }
 
-/// Machine facts every policy shares: where home, temp and the protected
-/// OpenWork directories are. Paths are canonical: Seatbelt matches real
-/// paths, and `/tmp` is really `/private/tmp`.
+/// 所有策略共享的主机事实：主目录、临时目录与受保护的 OpenWork 目录在哪里。路径都已规范化：
+/// Seatbelt 按真实路径匹配，`/tmp` 实际是 `/private/tmp`。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxEnvironment {
     home: PathBuf,
@@ -117,7 +113,7 @@ impl SandboxEnvironment {
         }
     }
 
-    /// Reads `$HOME` and `$TMPDIR` and canonicalizes everything.
+    /// 读取 `$HOME` 与 `$TMPDIR`，并把所有路径规范化。
     pub fn detect(skill_roots: impl IntoIterator<Item = PathBuf>) -> io::Result<Self> {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -162,7 +158,7 @@ impl SandboxEnvironment {
             .collect()
     }
 
-    /// `~/.openwork` and the skill roots.
+    /// `~/.openwork` 与各 skill 根。
     pub(crate) fn hard_protected_roots(&self) -> impl Iterator<Item = &Path> {
         std::iter::once(self.openwork_home.as_path())
             .chain(self.skill_roots.iter().map(PathBuf::as_path))
@@ -179,16 +175,15 @@ fn canonical_or_lexical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Most paths one escalation may name (permissions.md §4.2).
+/// 一次越界最多可列的路径数（permissions.md §4.2）。
 pub const MAX_GRANTS: usize = 16;
 
-/// The policy of one call: the session's mode, the workspace, and the grants
-/// the user approved for this call only. Bash's Seatbelt profile and the
-/// file tools' fence are both derived from it (permissions.md §2.4).
+/// 一次调用的策略：会话模式、工作区，以及用户只为这一次批准的授权。bash 的 Seatbelt profile
+/// 与文件工具的围栏都由它推导（permissions.md §2.4）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxPolicy {
     pub mode: SandboxMode,
-    /// Canonical.
+    /// 已规范化。
     pub workspace_root: PathBuf,
     pub path_grants: Vec<PathGrant>,
     environment: Arc<SandboxEnvironment>,
@@ -217,7 +212,7 @@ impl SandboxPolicy {
         &self.environment
     }
 
-    /// Whether `actor` may perform `access` on the canonical `path`.
+    /// `actor` 能否对规范化后的 `path` 执行 `access`。
     pub fn check(&self, path: &Path, access: Access, actor: Actor) -> Result<(), Denial> {
         match access {
             Access::Read => self.check_read(path),
@@ -243,8 +238,8 @@ impl SandboxPolicy {
     }
 
     fn check_read(&self, path: &Path) -> Result<(), Denial> {
-        // A grant of either kind unlocks reading what it covers; Seatbelt
-        // carves every grant out of the credential `deny file-read*`.
+        // 读、写两种授权都解开它覆盖范围的读取；Seatbelt 也把每条授权从凭据的
+        // `deny file-read*` 中扣除。
         if self.is_credential(path) && !self.path_grants.iter().any(|grant| grant.covers(path)) {
             return Err(Denial::Credential);
         }
@@ -284,8 +279,7 @@ impl SandboxPolicy {
         })
     }
 
-    /// A grant unlocks a sensitive or credential path only when it names one
-    /// itself: granting the whole workspace does not open `.git`.
+    /// 授权只有自己点名敏感或凭据路径时才解开它：授权整个工作区不会打开 `.git`。
     pub(crate) fn grant_unlocks(
         &self,
         grant: &PathGrant,
@@ -296,7 +290,7 @@ impl SandboxPolicy {
             && (!credential || self.is_credential(&grant.path))
     }
 
-    /// Temp roots, plus the workspace when this mode lets `actor` write it.
+    /// 临时根；这个模式允许 `actor` 写工作区时再加上工作区。
     pub(crate) fn base_writable_roots(&self, actor: Actor) -> Vec<&Path> {
         let workspace_writable = match actor {
             Actor::FileTool => true,
@@ -343,8 +337,7 @@ impl SandboxPolicy {
             .any(|credential| path.starts_with(credential))
     }
 
-    /// Checks the paths of an escalation request against the current policy
-    /// (permissions.md §4.2). Justification and approval are Core's.
+    /// 按当前策略校验越界请求里的路径（permissions.md §4.2）。理由与审批归 Core 管。
     pub fn validate_grants(&self, grants: &[PathGrant], actor: Actor) -> Result<(), GrantError> {
         if grants.is_empty() {
             return Err(GrantError::Empty);
@@ -374,8 +367,7 @@ impl SandboxPolicy {
         Ok(())
     }
 
-    /// `/`, `$HOME`, and their ancestors: a subtree that wide is the "write
-    /// anywhere" permission OpenWork does not offer.
+    /// `/`、`$HOME` 及其祖先：这么宽的子树等于 OpenWork 不提供的"哪里都能写"。
     fn is_too_broad(&self, path: &Path) -> bool {
         self.environment.home.starts_with(path)
     }
@@ -388,7 +380,7 @@ fn is_normalized_absolute(path: &Path) -> bool {
             .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
 }
 
-/// Why an escalation request is refused without asking the user.
+/// 越界请求不经询问用户就被拒绝的原因。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantError {
     Empty,

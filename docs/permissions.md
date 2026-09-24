@@ -338,6 +338,7 @@ bash、`write`、`edit` 三个工具都带这两个参数。文件工具在敏�
 | `rm_recursive_or_force` | `rm` 带 `-r` / `-R` / `-f` / `--recursive` / `--force`（含 `-rf` 等组合） |
 | `find_delete` | `find` 带 `-delete`，或 `-exec` / `-execdir` 的命令是 `rm` |
 | `git_clean_force` | `git clean` 带 `-f` / `--force`——删除未跟踪文件，不写 `.git` |
+| `nesting_too_deep` | `bash -c` / `sh -c` 嵌套超过 8 层（§4.4）——看不到内层命令，按命中处理 |
 
 **丢弃改动的其余 git 命令不在清单上，因为沙箱已经拦下它们。** 本仓库在开发机上验证过（2026-09-24）：`.git` 只读时，`git restore <file>`、`git checkout -- .`、`git reset --hard`、`git checkout -f`、`git stash` 都因拿不到 `.git/index.lock` 以 128 / 1 退出，**工作区一个字节都没有改**；只有 `git clean -fd` 成功删除了未跟踪文件。前者会走写 `.git` 的越界卡片，用户在卡片上看到的就是那条命令——再让危险命令检测问一遍只是重复。
 
@@ -354,7 +355,7 @@ bash、`write`、`edit` 三个工具都带这两个参数。文件工具在敏�
 | 语法错误、解析失败 | 不检测，直接在沙箱里执行（bash 自己会报语法错误） |
 | 包装器：`sudo` `env` `xargs` `timeout` `nice` `nohup` `time` `command` | 剥掉包装器及其选项、变量赋值后，对内层命令递归检测 |
 | `bash -c '<字面量>'` / `sh -c '<字面量>'` | 把字面量当脚本再解析一次，递归检测 |
-| 递归深度超过 8 层 | 视为命中（与 Codex 一致） |
+| 递归深度超过 8 层 | 视为命中，键为 `nesting_too_deep`（与 Codex 一致） |
 
 **看不懂就不问。** 这是刻意的：检测不是安全边界，边界是沙箱。看不懂就问，会把打断重新带回 `for f in *.rs; do ...; done` 这类最常见的形态上。
 

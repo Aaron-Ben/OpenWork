@@ -367,6 +367,35 @@ mod tests {
         assert!(card.previous_denial.is_some());
     }
 
+    /// permissions.md §9.2 #32：`accept-edits` 下 `rm -rf build` 带写工作区的越界重试时，
+    /// 越界卡片同时标注危险命令，一次批准覆盖两者。
+    #[test]
+    fn acc_32_an_escalation_card_also_marks_a_dangerous_command() {
+        let call = with_escalation(
+            bash("rm -rf build"),
+            vec![grant(
+                "/home/me/project/build",
+                Access::Write,
+                GrantScope::Subtree,
+            )],
+            "clean the build",
+        );
+        let Gate::Ask { card, grants } = gate(
+            &call,
+            &policy(SandboxMode::AcceptEdits),
+            SessionApproval::Interactive,
+            None,
+        ) else {
+            panic!("a valid escalation asks");
+        };
+        assert_eq!(grants.len(), 1);
+        assert_eq!(card.paths.len(), 1);
+        assert_eq!(
+            card.danger.map(|danger| danger.key),
+            Some(DangerKey::RmRecursiveOrForce)
+        );
+    }
+
     /// permissions.md §6.6：没有人可问时，越界与危险命令都直接拒绝。
     #[test]
     fn unattended_sessions_deny_what_would_need_a_card() {

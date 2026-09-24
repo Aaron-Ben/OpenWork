@@ -211,12 +211,10 @@ mod tests {
         crate::test_support::call_context(id, CancellationToken::new())
     }
 
-    /// permissions.md §1.4 / 验收 74: this project enforces no network or
-    /// sandbox boundary and must therefore make no claim about one. A
-    /// permanently-untrue "not enforced" disclaimer only trains users to
-    /// ignore the surrounding text.
+    /// permissions.md §9.2 #11：结果里不出现网络限制或隔离的表述；沙箱标记只在被内核拒绝时追加。
+    /// 一个恒为"未强制"的免责声明只会训练用户忽略周围的文字（§1.4）。
     #[tokio::test]
-    async fn acc_74_bash_output_makes_no_network_or_sandbox_claim() {
+    async fn acc_11_bash_output_makes_no_network_or_isolation_claim() {
         let result = BashTool
             .execute(
                 &session(),

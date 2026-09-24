@@ -1,4 +1,4 @@
-//! The sandbox as the tools see it: a probed status and a way to wrap argv.
+//! 工具眼中的沙箱：一个自检结论，加上一个包装 argv 的方法。
 
 use std::path::{Path, PathBuf};
 
@@ -6,13 +6,12 @@ use crate::policy::{Actor, SandboxPolicy};
 use crate::probe::{SandboxStatus, probe};
 use crate::seatbelt::SeatbeltProfile;
 
-/// Wraps a command so the kernel confines it to a policy. It only builds
-/// argv; the `ProcessBackend` starts the process.
+/// 把命令包装成由内核按策略约束的形式。只生成 argv，进程由 `ProcessBackend` 启动。
 pub trait SandboxBackend: Send + Sync + std::fmt::Debug {
-    /// The startup self-check's verdict, fixed for the process lifetime.
+    /// 启动自检的结论，在进程生命周期内不变。
     fn status(&self) -> &SandboxStatus;
 
-    /// The argv that runs `command` under `policy`, or why it cannot.
+    /// 在 `policy` 下运行 `command` 的 argv；不能运行时返回原因。
     fn wrap(
         &self,
         policy: &SandboxPolicy,
@@ -20,7 +19,7 @@ pub trait SandboxBackend: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<String>, SandboxUnavailable>;
 }
 
-/// Bash cannot run: the self-check failed (permissions.md §3.2).
+/// bash 不能运行：自检失败（permissions.md §3.2）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxUnavailable {
     pub reason: String,
@@ -34,7 +33,7 @@ impl std::fmt::Display for SandboxUnavailable {
 
 impl std::error::Error for SandboxUnavailable {}
 
-/// macOS Seatbelt through `sandbox-exec`.
+/// 经 `sandbox-exec` 使用的 macOS Seatbelt。
 #[derive(Debug, Clone)]
 pub struct Seatbelt {
     sandbox_exec: PathBuf,
@@ -42,7 +41,7 @@ pub struct Seatbelt {
 }
 
 impl Seatbelt {
-    /// Runs the self-check once; the result holds for the process lifetime.
+    /// 只做一次自检，结论在进程生命周期内有效。
     pub fn probe(sandbox_exec: impl Into<PathBuf>) -> Self {
         let sandbox_exec = sandbox_exec.into();
         let status = probe(&sandbox_exec);

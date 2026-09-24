@@ -1,8 +1,7 @@
-//! Seatbelt profile generation and `sandbox-exec` argv (permissions.md §3.1).
+//! 生成 Seatbelt profile 与 `sandbox-exec` 的 argv（permissions.md §3.1）。
 //!
-//! The profile text never contains a path. Every path and every regex
-//! reaches `sandbox-exec` as a `-D NAME=value` parameter that the text refers
-//! to by name, so a directory called `x")(allow default` is just a string.
+//! profile 正文里从不出现路径。每个路径和正则都以 `-D NAME=value` 参数传给 `sandbox-exec`，
+//! 正文只按名字引用，因此名叫 `x")(allow default` 的目录也只是一个字符串。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +11,7 @@ use crate::tiers;
 
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 
-/// A profile and the parameters its text refers to.
+/// 一份 profile，以及它的正文引用的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatbeltProfile {
     pub text: String,
@@ -20,9 +19,8 @@ pub struct SeatbeltProfile {
 }
 
 impl SeatbeltProfile {
-    /// Builds the profile that confines `actor` to `policy`. Only bash runs
-    /// under Seatbelt today; the actor is explicit so tests can build the
-    /// file-tool view of the same policy.
+    /// 生成把 `actor` 约束在 `policy` 内的 profile。目前只有 bash 在 Seatbelt 下运行；
+    /// actor 显式传入，是为了测试能生成同一策略下文件工具的视角。
     pub fn new(policy: &SandboxPolicy, actor: Actor) -> Self {
         let mut builder = Builder::default();
         builder.line("(version 1)");
@@ -62,7 +60,7 @@ impl SeatbeltProfile {
         builder.finish()
     }
 
-    /// `sandbox-exec -p <text> -D ... -- <command...>`.
+    /// `sandbox-exec -p <正文> -D ... -- <命令...>`。
     pub fn wrap(&self, sandbox_exec: &Path, command: &[String]) -> Vec<String> {
         let mut argv = Vec::with_capacity(4 + self.parameters.len() * 2 + command.len());
         argv.push(sandbox_exec.to_string_lossy().into_owned());
@@ -91,7 +89,7 @@ impl Builder {
         self.text.push('\n');
     }
 
-    /// The same value always gets the same parameter name.
+    /// 同一个值总是得到同一个参数名。
     fn param(&mut self, value: String) -> String {
         if let Some(name) = self.names.get(&value) {
             return format!("(param \"{name}\")");
@@ -140,9 +138,8 @@ impl Builder {
         self.line(&format!("(allow file-write* {})", filters.join(" ")));
     }
 
-    /// Hard-protected paths are carved out of every writable root and every
-    /// grant; sensitive and credential paths out of everything that does not
-    /// name them (permissions.md §3.1).
+    /// 硬保护路径从每个可写根和每条授权中扣除；敏感与凭据路径从所有没有点名它们的
+    /// 可写范围中扣除（permissions.md §3.1）。
     fn carve_outs(
         &mut self,
         policy: &SandboxPolicy,

@@ -1,4 +1,4 @@
-//! permissions.md §3.2–§3.3 against the real `sandbox-exec`.
+//! 用真实的 `sandbox-exec` 验证 permissions.md §3.2–§3.3。
 
 #![cfg(target_os = "macos")]
 
@@ -61,8 +61,7 @@ fn a_missing_sandbox_exec_is_unavailable_with_a_reason() {
     assert!(reason.contains("/nonexistent/sandbox-exec"), "{reason}");
 }
 
-/// A stand-in that runs the command without confining it: "the command
-/// ran" must not be mistaken for "the sandbox works".
+/// 不加约束直接运行命令的替身："命令跑起来了"不能被当成"沙箱在工作"。
 #[test]
 fn a_sandbox_that_does_not_deny_fails_the_self_check() {
     let directory = scratch("fake");
@@ -101,8 +100,7 @@ fn run(argv: &[String], directory: &Path) -> (i32, String) {
     (output.status.code().unwrap_or(-1), text)
 }
 
-/// §9.2 #15 and §3.3: a kernel refusal is `Denied`; `sandbox-exec` failing
-/// to start the command is not.
+/// §9.2 #15、§3.3：内核拒绝是 `Denied`；`sandbox-exec` 没能启动命令则不是。
 #[test]
 fn acc_15_denials_and_sandbox_failures_are_told_apart() {
     let workspace = scratch("denial");

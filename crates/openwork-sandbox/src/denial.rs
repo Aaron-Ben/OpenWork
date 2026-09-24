@@ -1,24 +1,20 @@
-//! Telling "the kernel refused the command" from "the sandbox never started"
-//! (permissions.md §3.3).
+//! 区分"内核拒绝了命令里的操作"与"沙箱根本没有启动"（permissions.md §3.3）。
 
-/// What a finished `sandbox-exec` run means for the tool result.
+/// 一次结束的 `sandbox-exec` 运行对工具结果意味着什么。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunOutcome {
-    /// The command ran; its exit code is its own.
+    /// 命令执行了，退出码就是它自己的。
     Completed,
-    /// The command ran and hit a Seatbelt denial. This is an inference: other
-    /// sources of `EPERM` are marked too, which costs one extra escalation
-    /// hint at worst.
+    /// 命令执行了，并碰到了 Seatbelt 的拒绝。这是推断：其他来源的 `EPERM` 也会被标记，
+    /// 最坏情况只是多给一次越界提示。
     Denied,
-    /// `sandbox-exec` itself failed before running the command. Nothing ran;
-    /// the sandbox is unavailable, not the command denied.
+    /// `sandbox-exec` 在运行命令之前就失败了。什么都没执行：这是沙箱不可用，不是命令被拒。
     SandboxFailed { message: String },
 }
 
-/// `sandbox-exec`'s own exit codes: usage (64), profile error (65), exec of
-/// the command failed (71). Commands can exit with these too, so the code is
-/// only trusted together with `sandbox-exec`'s own message at the start of
-/// the output — it prints before the command starts.
+/// `sandbox-exec` 自己的退出码：用法错误（64）、profile 错误（65）、exec 命令失败（71）。
+/// 命令本身也可能以这些码退出，所以只有输出开头同时出现 `sandbox-exec` 自己的消息时才采信——
+/// 它在命令启动之前打印。
 const SANDBOX_EXEC_FAILURES: &[i32] = &[64, 65, 71];
 
 pub fn classify(exit_code: i32, output: &str) -> RunOutcome {
@@ -36,8 +32,8 @@ pub fn classify(exit_code: i32, output: &str) -> RunOutcome {
     RunOutcome::Completed
 }
 
-/// `EPERM` as runtimes spell it: C and Rust write "Operation not permitted",
-/// Go and Node "operation not permitted".
+/// 各运行时对 `EPERM` 的写法：C 与 Rust 写 "Operation not permitted"，Go 与 Node 写
+/// "operation not permitted"。
 fn mentions_eperm(output: &str) -> bool {
     const EPERM: &str = "operation not permitted";
     output

@@ -1,9 +1,8 @@
-//! The real-machine matrix (docs/plans/sandbox-and-tools.md WP2): everyday
-//! commands under the real `$HOME` and the real Seatbelt.
+//! 真机矩阵（docs/plans/sandbox-and-tools.md WP2）：在真实的 `$HOME` 与真实的 Seatbelt 下
+//! 运行日常命令。
 //!
-//! Workspaces live under `CARGO_TARGET_TMPDIR`, outside the system temp
-//! roots. Every probe of a protected location uses a unique name and is
-//! removed afterwards, so a regression cannot leave files behind.
+//! 工作区建在 `CARGO_TARGET_TMPDIR` 下，不在系统临时根内。对受保护位置的每次探测都用唯一的
+//! 名字，事后删除，回归时也不会留下文件。
 
 #![cfg(target_os = "macos")]
 
@@ -46,7 +45,7 @@ impl Workspace {
         std::fs::read_to_string(self.path(relative)).expect("read")
     }
 
-    /// Runs `script` unsandboxed: fixture setup only.
+    /// 不经沙箱运行 `script`，只用于准备测试环境。
     fn setup(&self, script: &str) {
         let output = Command::new("/bin/bash")
             .args(["-c", script])
@@ -101,7 +100,7 @@ impl Sandbox {
         SandboxPolicy::new(mode, workspace.root.clone(), Arc::clone(&self.environment))
     }
 
-    /// `(exit code, stdout + stderr)` of `script` under `policy`.
+    /// `script` 在 `policy` 下运行的 `(退出码, stdout + stderr)`。
     fn run(&self, policy: &SandboxPolicy, workspace: &Workspace, script: &str) -> (i32, String) {
         let argv = self
             .backend
@@ -257,9 +256,8 @@ fn accept_edits_denies_bash_workspace_writes_until_escalated() {
     sandbox.denied(&accept, &workspace, "touch src/x.rs");
     sandbox.succeeds(&accept, &workspace, "cat src/main.rs && git status");
 
-    // Cargo creates `target` through a temporary sibling and writes
-    // Cargo.lock, so the build needs the workspace itself; a workspace grant
-    // still leaves `.git` and `.env` closed (tests/parity.rs).
+    // Cargo 经同级的临时目录创建 `target` 并写 Cargo.lock，所以构建需要写工作区本身；
+    // 整个工作区的授权仍不打开 `.git` 与 `.env`（tests/parity.rs）。
     let build = accept.clone().with_grants(vec![write_grant(
         workspace.root.clone(),
         GrantScope::Subtree,
@@ -343,7 +341,7 @@ fn go_builds_and_tests_with_the_private_cache() {
     sandbox.succeeds(&policy, &workspace, "go build ./... && go test ./...");
 }
 
-/// `(label, files to create, script)`.
+/// `(标签, 要创建的文件, 脚本)`。
 type Probe = (
     &'static str,
     &'static [(&'static str, &'static str)],
