@@ -385,6 +385,17 @@ impl Runs {
         }
         let mut outcome = None;
         if terminal_status == "completed" {
+            // 成功完成的 Run 结算全部 delivery；没有回复也没有 ack 的记为 `completed`，
+            // 否则沉默的 Agent 会被同一批消息反复唤醒（collaboration.md §7）。
+            sqlx::query(
+                "UPDATE collab_run_deliveries
+                 SET eligible_reason = 'completed',
+                     eligible_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+                 WHERE run_id = $1 AND eligible_reason IS NULL",
+            )
+            .bind(run_id)
+            .execute(&mut *transaction)
+            .await?;
             let deliveries: Vec<(String, i64, Option<String>)> = sqlx::query_as(
                 "SELECT room_id, up_to_seq, eligible_reason
                  FROM collab_run_deliveries WHERE run_id = $1",

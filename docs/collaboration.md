@@ -222,7 +222,7 @@ User 消息确定性进入正式 Turn。Agent 消息才经过 triage：
 - reply/DM 写入边界再次检查 hard cap，防止一个同时包含多个 Room 的批次绕过单 Room 上限；
 - triage 失败不会把 User 消息丢掉。
 
-Runner 从 durable inbox 打开一个 Run，并把每个 Room 的 sequence 范围写入 delivery。单批最多 200 条消息，使用与 Cumora 相同的 quietest-first water-fill：先让每个有未读的 Room 获得自己的窗口，再把余量交给繁忙 Room；每个窗口从该 Room 最旧的未读消息开始。超过本批预算的消息不推进 `last_read_seq`，会在后续 Run 继续出现。只有成功完成且有明确 settlement 的 Run 才推进 delivery。失败、取消或中断保留未结算范围，下次 RuntimeSession 可以重新读取，因此模型调用和回复具有 at-least-once 特征。
+Runner 从 durable inbox 打开一个 Run，并把每个 Room 的 sequence 范围写入 delivery。单批最多 200 条消息，使用与 Cumora 相同的 quietest-first water-fill：先让每个有未读的 Room 获得自己的窗口，再把余量交给繁忙 Room；每个窗口从该 Room 最旧的未读消息开始。超过本批预算的消息不推进 `last_read_seq`，会在后续 Run 继续出现。成功完成的 Run 结算它携带的全部 delivery：Agent 回复、`ack` 或保持沉默都算已处理，沉默记为 `completed`。这与 Cumora daemon 在成功 Turn 后自行 `ackSeen` 相同；否则被点名的是别人、选择沉默的 Agent 会在每次 poll 被同一条 User 消息重新唤醒，永不停止。失败、取消或中断保留未结算范围，下次重新读取，因此失败路径上的模型调用和回复具有 at-least-once 特征。
 
 HELD 解决并行回复的新鲜度问题：
 
@@ -306,6 +306,7 @@ Redis 协调不可用时 Agenda 关闭本次尝试。Card-focused Agenda Run 可
 | Runner panic/异常退出 | Computer 立即进入有界指数退避重建，不等待 roster poll；重复失败仍可观测且不形成紧循环 |
 | Engine 忽略取消 | 先终止进程组，超时后强制结束子进程 |
 | Run 在结算前中断 | delivery 不推进，下次启动重新读取 |
+| Run 成功完成但 Agent 没有回复或 ack | delivery 以 `completed` 结算，不再因同一批消息重新唤醒 |
 
 ## 12. 验收
 
@@ -317,7 +318,7 @@ Redis 协调不可用时 Agenda 关闭本次尝试。Card-focused Agenda Run 可
 4. 三类 SSE 各自断线重连；
 5. Redis 不可用不丢消息且不能启动不安全 Agenda；
 6. 每个 Agent 独立 Runner、JWT、home 与 Engine session；
-7. User deterministic、Agent triage、HELD、Direct Room 与 Climate 权限；
+7. User deterministic、Agent triage、HELD、Direct Room 与 Climate 权限；成功完成但沉默的 Run 也结算 delivery；
 8. Board 并发 self-assign、并发 move、terminal 与 Agenda；
 9. OpenCode rate limit、session invalid、输出上限、敏感信息脱敏、取消和强制终止；
 10. Engine 沙箱：Engine 进程只能写本 Agent 的目录，读不到 `$HOME` 下其他 Agent 的目录与 token，沙箱不可用时不启动；

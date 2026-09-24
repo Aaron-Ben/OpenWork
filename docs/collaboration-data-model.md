@@ -209,9 +209,10 @@ Run 保存一次正式 Agent 工作：
 
 主键为 `(run_id, room_id)`，记录本次 Run 携带的 `[from_seq, up_to_seq]`。
 
-- `eligible_reason` 只能是 `action`、`ack` 或 `triage_false`；
+- `eligible_reason` 只能是 `action`、`ack`、`triage_false` 或 `completed`（Run 成功完成，Agent 没有回复也没有 ack）；
 - eligible 与时间必须同时出现；
 - settled 只能发生在 eligible 之后；
+- 成功完成的 Run 结算全部 delivery，尚未 eligible 的记为 `completed`；
 - 失败、取消和中断不结算。
 
 成功结算时 Server 依据 delivery 最大 sequence 推进对应成员的 `last_read_seq`。
@@ -298,7 +299,7 @@ OpenCode 以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，不会自动读取 cwd
 5. Column/Card 重排使用可延迟唯一约束并重新写成连续整数；
 6. 每 Agent running Run 依靠部分唯一索引兜底；
 7. 命令幂等结果与业务写入位于同一事务；HELD 先按同一 `request_id` 预留，事务提交后才消费，同一请求可幂等恢复；
-8. delivery 只在成功终态按明确效果结算；
+8. delivery 只在成功终态结算，没有明确效果的记为 `completed`；
 9. Climate owner 来自 Agent JWT，而不是客户端字段；
 10. Redis 协调错误永远不能伪装成 PostgreSQL 事务成功。
 

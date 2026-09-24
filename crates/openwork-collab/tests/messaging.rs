@@ -354,6 +354,51 @@ async fn failed_run_keeps_the_durable_delivery_and_human_triage_is_deterministic
     fixture.stop().await;
 }
 
+/// collaboration.md §7、§12 #7：被点名的是别人时，Agent 完成 Turn 后既不回复也不 ack。
+/// 这批 delivery 仍要结算，否则同一条 User 消息会在每次 poll 重新触发完整 Turn。
+#[tokio::test]
+async fn a_completed_silent_run_settles_its_delivery_so_the_agent_is_not_woken_again() {
+    let Some(fixture) = Fixture::start().await else {
+        return;
+    };
+    let alpha = fixture.create_agent("Alpha").await;
+    let room = fixture.create_direct(&alpha.id).await;
+    fixture
+        .send_user(&room.id, "Bo, this one is for you.")
+        .await;
+    let token = fixture.token(&alpha.id).await;
+    let inbox = fixture.inbox(&token).await;
+    let run = fixture.open_run(&token, &inbox).await;
+    fixture.triage(&token, &run.id).await;
+
+    let finished = fixture.finish(&token, &run.id, "completed").await;
+
+    assert_eq!(finished.outcome.as_deref(), Some("silent"));
+    let last_read: i64 = sqlx::query_scalar(
+        "SELECT last_read_seq FROM collab_room_members
+         WHERE room_id = $1 AND participant_id = $2",
+    )
+    .bind(&room.id)
+    .bind(&alpha.id)
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(last_read, 1);
+    let (reason, settled): (Option<String>, bool) = sqlx::query_as(
+        "SELECT eligible_reason, settled_at IS NOT NULL
+         FROM collab_run_deliveries WHERE run_id = $1",
+    )
+    .bind(&run.id)
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(reason.as_deref(), Some("completed"));
+    assert!(settled);
+    let next = fixture.inbox(&token).await;
+    assert!(next.messages.is_empty());
+    assert!(next.trigger.is_none());
+}
+
 #[tokio::test]
 async fn per_agent_sse_is_isolated_and_the_durable_inbox_does_not_depend_on_it() {
     let Some(fixture) = Fixture::start().await else {

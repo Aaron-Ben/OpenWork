@@ -11,6 +11,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "run observability",
         include_str!("../../migrations/202609010001_run_observability.sql"),
     ),
+    (
+        202_609_240_001,
+        "settle completed runs",
+        include_str!("../../migrations/202609240001_settle_completed_runs.sql"),
+    ),
 ];
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
