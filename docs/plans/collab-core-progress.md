@@ -14,7 +14,8 @@
 | U2a | 完成（4fbd458） | `server/activity.rs` 计算 `AgentView.activity`（五种）与 `CardView.agentState`（两种，只在 Desktop 读取看板时计算）；Run 打开/结束、卡片唤醒写入时发布 `agent_activity`；`server/agents.rs` 改为返回 `AgentRecord`，Desktop 的 Agent 列表与创建、更新、归档等命令的返回值经 `Activities` 补上 `activity`。前端：bridge 类型与 `agent_activity` 事件；`agent_activity` 刷新 Agent 列表（在看板页时同时刷新看板），`runner_status` 刷新 Runtime 与 Agent 列表；房间里“正在处理”改由 `rooms/roomWorking.ts` 从 activity 算出（替换 `roomRunState.ts`），`messageStore` 不再读 Run 列表；三种语言文案 `workingOne/Two/Many`。按 E31 撤回了 Computer 端的暂停上报 |
 | U2b | 完成 | 后端：迁移 `202609250001_room_pin.sql`（`user_pinned_at`，已登记到 `server/migration.rs`）；`server/room_summaries.rs`（`RoomSummaryView` 列表与 `PinRoom`）、`server/room_snapshot.rs`（`OpenRoom` 快照：带作者与时间的消息、说明行）、`server/room_notes.rs`（说明行规则）；删除 `ListMessages`、`Messages::list`、`Rooms::list`。Tauri：`collab_room_open`、`collab_room_pin`，删除 `collab_message_list`。前端：`RoomList`（搜索、四个筛选、置顶、群组头像拼图、“正在处理”行、右键菜单）、`RoomPage`（标题栏、`MessageStream`、`WorkBar`、`Composer`）、`MessageItem`（引用跳回并高亮、提及标签、卡片胶囊与摘要卡、悬停引用回复与复制）、`RoomSidebar`（房间信息、卡片预览、Agent 资料）、`WhispersPage` 与导航项；`MarkdownRenderer` 增加 `renderText` 钩子；看板页选中从房间打开的卡片；上报已看到后刷新房间列表；看板 invalidation 在房间页也刷新看板 |
 | U2c | 完成 | 只改前端：`AgentManager`（标题栏计数与 Engine 标签、活跃/已归档标签页、三列网格与“新建”格）、`AgentCard`（状态点与外圈、状态标签、状态行或出错提示框、persona 三行、两个模型、Agenda 复选框与私聊、悬停编辑/归档/恢复）、`AgentFormDialog`（加 Engine 下拉，只有 OpenCode）、`agentPageModel.ts`；删除 `agentRuntimeState.ts`（状态改由 `activity` 给出） |
-| U2d–U2e | 未开始 | 拆分见计划 §2 |
+| U2d | 完成 | 后端：Desktop 命令 `CreateCard`、`UpdateCard`（标题与描述至少给一个）、`MoveCard`，与 `AssignCard`、`DeleteCard` 一起移到 `server/desktop_cards.rs`（`desktop_commands.rs` 623→522 行）；卡片命令返回 `CardChangeView { card, wokenAgentIds }`；`CardView.updatedAt` 只在 Desktop 的 `Board::list` 里查询，Agent 的查询给 `NULL`。Tauri：`collab_card_create/update/move`。前端：`BoardCanvas`（标题栏“N 张卡片 · N 位 Agent 在做”、拖动状态、右侧详情）、`BoardColumn`（类型标记、拖放与放置线、`AddCardInline`）、`BoardCardTile`（描述里的 `@`、四种底部状态、done 列降低不透明度）、`CardDetailPanel`（直接编辑标题与描述、`@` 补全、所在列与负责人、接手规则、“已通知”、删除、“在房间中讨论”预填）；`MentionTextarea` 从输入框抽出共用；导航的 `pendingDraft`；房间卡片摘要卡补上“多久前更新” |
+| U2e | 未开始 | 拆分见计划 §2 |
 | K1 | 完成 | `computer/prompt.rs` 渲染增量（从 `runner.rs` 移出，runner.rs 879→795 行）；inbox 增加 `rooms` 与 `team`；`AGENTS.md` 契约增加 Addressing 一节；fake OpenCode 改为从 `# room-…` 标题行取房间 |
 | K5 | 完成（后端、CLI、Agent 提示与 Desktop bridge；Desktop 界面在 U2） | 迁移 `202609240002_message_quotes.sql`（`(room_id, id)` 唯一约束 + 同房间复合外键）；`MessageView.quoted`；`reply --quote`；Desktop `collab_message_send` 增加 `quotedMessageId`；引用穿透 mute（inbox 与唤醒）；inbox/glance/messages 与增量显示消息 id 和引用行；`AGENTS.md` 补 `--quote`；`Messages::views` 统一补齐引用摘要，`insert` 改用 `NewMessage` 结构（原 6 个参数） |
 | K2 | 完成 | `server/routing.rs`（点名对象、`@all`、路由题）；triage payload 增加 `routing` 与 `routed` 参数，人类消息那一步拆成 `human_step`；`collab_triages.source` 增加 `routing`（迁移 `202609240003`），最终结论写入 `response_mode`；Computer 端 `runner.rs` 改为 `runner/mod.rs` + `runner/routing.rs`，`parse_route` 只认明确的 `me` |
@@ -127,9 +128,12 @@
 
 - 2026-09-25 U2c：验收 collaboration-desktop.md §13 #13 的 Agent 部分 → `agentCard.render.test.tsx`（工作中带卡片与用时、排队、空闲带上次回复、出错提示框、已归档只可恢复且私聊与 Agenda 不可用，persona 与两个模型）、`agentPageModel.test.ts`（标签页、状态计数、Engine 标签四种情况）；#13 的卡片 `agentState` 渲染在 U2d。写完后临时改坏：出错不走提示框、计数只算工作中，对应测试都失败，恢复后通过。`scripts/check.sh` 全部通过（前端 486 个测试）。
 
+- 2026-09-25 U2d：验收 collaboration-desktop.md §13 #14 → `desktop_cards::acc_14_desktop_creates_edits_and_moves_cards_and_wakes_who_it_names`（新建指定负责人叫醒并出现在 `wokenAgentIds`、只改描述新增 `@` 叫醒、再改标题不重复叫醒、都不给时 400、同列重排与换列、Desktop 看板带 `updatedAt` 而 Agent 的 `board show` 不带）、`boardModel.test.ts`（放置位置、原地放下不发命令、放置序号、标题栏计数、卡片底部状态）、`boardPage.render.test.tsx`（四种类型标记、处理中带用时、已唤醒排队、未分配、多久前更新、done 列降低不透明度、描述里的 `@`、接手规则、未分配时不能“在房间中讨论”）、`collabNavigationStore.test.ts`（预填只交给目标房间一次）、`bridge/collab.test.ts`；#13 的卡片 `agentState` 两种状态也由 `boardPage.render.test.tsx` 覆盖。拖放与保存后“已通知”的交互没有 DOM 测试，逻辑在 `boardModel.ts` 与 `CardDetailPanel` 的 `apply`。写完后临时改坏：新建卡片按“已有负责人”比较（不叫醒）、放置位置不跳过被拖的卡片、done 列不降低不透明度，对应测试都失败，恢复后通过。`scripts/check.sh` 只有 `reported_rate_limit_terminates_a_still_running_opencode_process` 失败，单独重跑通过；前端 503 个测试通过。
+
 ## 5. 待定
 
-- 卡片摘要卡的“多久前更新”没有做：`CardView` 没有 `updatedAt`。看板卡片也要显示最近更新时间（§9），计划在 U2d 给 `CardView` 加 `updatedAt` 时一起补上。
+- 卡片详情正在编辑描述时，若同一张卡片被 Agent 改了（看板刷新），未保存的输入会被新内容覆盖（U2d 审查时记下，未处理）。
+
 - collaboration-desktop.md §5 写“打开的房间每 2 秒调用一次 `collab_room_open`”，但现有前端没有这个轮询（U2b 之前就没有）；房间靠 invalidation 刷新。
 
 - 重写 collaboration-desktop.md 时新定的界面细节（2026-09-24 用户已确认）：Agent 之间的房间只读并显示提示；卡片详情的“在房间中讨论”打开与负责人的私聊并预填卡片引用；识别色按 Agent ID 稳定哈希取 6 档；协作界面的小号说明文字用 `ink-soft`；新增 `collab_room_open` 返回房间快照，取代 `collab_message_list`。

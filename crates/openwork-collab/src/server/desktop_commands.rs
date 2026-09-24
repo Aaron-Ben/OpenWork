@@ -10,8 +10,8 @@ use crate::protocol::{
 use super::{
     activity::Activities,
     agents::{AgentFields, AgentRecord, Agents},
-    board::{Board, BoardOperationError, CardEdit},
-    card_wakes::CardWakes,
+    board::{Board, BoardOperationError},
+    desktop_cards::card_command_in,
     inventory::EngineInventory,
     messages::Messages,
     observability::Observability,
@@ -35,7 +35,7 @@ pub(crate) struct DesktopCommands {
     pub(super) session: RuntimeSession,
 }
 
-enum PostCommitEffect {
+pub(super) enum PostCommitEffect {
     AgentConfig {
         agent_id: String,
         revision: i64,
@@ -328,24 +328,11 @@ impl DesktopCommands {
                     .map_err(board_error)?;
                 board_result(board)
             }
-            DesktopCommand::AssignCard {
-                card_id,
-                assignee_id,
-            } => {
-                let edit = Board::assign_card_in(transaction, &card_id, assignee_id.as_deref())
-                    .await
-                    .map_err(board_error)?;
-                assigned_card_result(transaction, edit).await?
-            }
-            DesktopCommand::DeleteCard { card_id } => {
-                let board_id = Board::delete_card_in(transaction, &card_id)
-                    .await
-                    .map_err(board_error)?;
-                (
-                    DesktopCommandResult::Deleted { entity_id: card_id },
-                    vec![board_effect(Some(board_id))],
-                )
-            }
+            command @ (DesktopCommand::CreateCard { .. }
+            | DesktopCommand::UpdateCard { .. }
+            | DesktopCommand::MoveCard { .. }
+            | DesktopCommand::AssignCard { .. }
+            | DesktopCommand::DeleteCard { .. }) => card_command_in(transaction, command).await?,
             _ => {
                 return Err(protocol_error(
                     "INVALID_ARGUMENT: read-only Desktop command reached mutation dispatcher",
@@ -498,35 +485,11 @@ fn board_result(
     (DesktopCommandResult::Board(board), vec![effect])
 }
 
-fn card_result(card: crate::protocol::CardView) -> (DesktopCommandResult, Vec<PostCommitEffect>) {
-    let effect = board_effect(Some(card.board_id.clone()));
-    (DesktopCommandResult::Card(card), vec![effect])
-}
-
-/// Desktop 改派后写入卡片唤醒；Desktop 用户触发的唤醒不受限额约束（collaboration.md §11.4）。
-async fn assigned_card_result(
-    transaction: &mut Transaction<'_, Postgres>,
-    edit: CardEdit,
-) -> Result<(DesktopCommandResult, Vec<PostCommitEffect>), sqlx::Error> {
-    let CardEdit { before, after } = edit;
-    let (result, mut effects) = card_result(after.clone());
-    for (agent_id, reason) in
-        CardWakes::targets_in(transaction, Some(&before), &after, "local-user").await?
-    {
-        CardWakes::record_in(transaction, &after.id, &agent_id, reason).await?;
-        effects.push(PostCommitEffect::CardWakeQueued {
-            agent_id,
-            card_id: after.id.clone(),
-        });
-    }
-    Ok((result, effects))
-}
-
-fn board_effect(board_id: Option<String>) -> PostCommitEffect {
+pub(super) fn board_effect(board_id: Option<String>) -> PostCommitEffect {
     PostCommitEffect::BoardChanged { board_id }
 }
 
-fn board_error(error: BoardOperationError) -> sqlx::Error {
+pub(super) fn board_error(error: BoardOperationError) -> sqlx::Error {
     match error {
         BoardOperationError::Domain { code, message } => {
             protocol_error(&format!("{code}: {message}"))
@@ -553,6 +516,6 @@ fn digest(bytes: &[u8]) -> String {
     encoded
 }
 
-fn protocol_error(message: &str) -> sqlx::Error {
+pub(super) fn protocol_error(message: &str) -> sqlx::Error {
     sqlx::Error::Protocol(message.to_string())
 }

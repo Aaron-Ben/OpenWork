@@ -1,11 +1,21 @@
 use openwork_collab::protocol::{
-    AgentView, BoardView, CardView, ColumnKind, DesktopCommand, DesktopCommandResult, MessageView,
-    ParticipantView, RoomSnapshotView, RoomSummaryView, RoomView, RunSummaryView, RunTraceView,
-    RuntimeStatusView,
+    AgentView, BoardView, CardChangeView, ColumnKind, DesktopCommand, DesktopCommandResult,
+    MessageView, ParticipantView, RoomSnapshotView, RoomSummaryView, RoomView, RunSummaryView,
+    RunTraceView, RuntimeStatusView,
 };
 use serde::Deserialize;
 
 use crate::{collab_client::CollabDaemonClient, CommandError};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollabCardCreateInput {
+    board_id: String,
+    column_id: String,
+    title: String,
+    description: Option<String>,
+    assignee_id: Option<String>,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -414,15 +424,87 @@ pub async fn collab_card_assign(
     client: tauri::State<'_, CollabDaemonClient>,
     card_id: String,
     assignee_id: Option<String>,
-) -> Result<CardView, CommandError> {
-    match client
-        .call(DesktopCommand::AssignCard {
+) -> Result<CardChangeView, CommandError> {
+    card_change(
+        &client,
+        DesktopCommand::AssignCard {
             card_id,
             assignee_id,
-        })
-        .await?
-    {
-        DesktopCommandResult::Card(card) => Ok(card),
+        },
+    )
+    .await
+}
+
+/// Desktop 用户建卡（collaboration.md §11.2）；指定负责人与描述里的 `@` 会叫醒对应的 Agent。
+#[tauri::command]
+pub async fn collab_card_create(
+    client: tauri::State<'_, CollabDaemonClient>,
+    input: CollabCardCreateInput,
+) -> Result<CardChangeView, CommandError> {
+    let CollabCardCreateInput {
+        board_id,
+        column_id,
+        title,
+        description,
+        assignee_id,
+    } = input;
+    card_change(
+        &client,
+        DesktopCommand::CreateCard {
+            board_id,
+            column_id,
+            title,
+            description,
+            assignee_id,
+        },
+    )
+    .await
+}
+
+/// 标题与描述都可选、至少给一个；描述写空字符串即清空。
+#[tauri::command]
+pub async fn collab_card_update(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card_id: String,
+    title: Option<String>,
+    description: Option<String>,
+) -> Result<CardChangeView, CommandError> {
+    card_change(
+        &client,
+        DesktopCommand::UpdateCard {
+            card_id,
+            title,
+            description,
+        },
+    )
+    .await
+}
+
+/// 移到 `column_id`，放在 `before_card_id` 之前；不给时放到末尾。
+#[tauri::command]
+pub async fn collab_card_move(
+    client: tauri::State<'_, CollabDaemonClient>,
+    card_id: String,
+    column_id: String,
+    before_card_id: Option<String>,
+) -> Result<CardChangeView, CommandError> {
+    card_change(
+        &client,
+        DesktopCommand::MoveCard {
+            card_id,
+            column_id,
+            before_card_id,
+        },
+    )
+    .await
+}
+
+async fn card_change(
+    client: &CollabDaemonClient,
+    command: DesktopCommand,
+) -> Result<CardChangeView, CommandError> {
+    match client.call(command).await? {
+        DesktopCommandResult::Card(change) => Ok(change),
         response => Err(unexpected(response)),
     }
 }

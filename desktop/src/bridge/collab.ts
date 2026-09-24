@@ -142,6 +142,22 @@ export interface CollabCard {
   createdBy: string
   /** 负责人对这张卡片的当前状态（collaboration-desktop.md §4.3）；没有时 Rust 不发这个字段。 */
   agentState?: CollabCardAgentState
+  /** 最近更新时间（带 `+08:00`），只在 Desktop 读取看板时有。 */
+  updatedAt?: string
+}
+
+/** Desktop 卡片命令的结果：修改后的卡片与这次被叫醒的 Agent。 */
+export interface CollabCardChange {
+  card: CollabCard
+  wokenAgentIds: string[]
+}
+
+export interface CollabCardInput {
+  boardId: string
+  columnId: string
+  title: string
+  description: string | null
+  assigneeId: string | null
 }
 
 export type CollabCardAgentState = 'working' | 'queued'
@@ -293,7 +309,14 @@ export const collabCommands = {
     invoke('collab_board_column_move', { columnId, beforeColumnId }),
   deleteBoardColumn: (columnId: string): Promise<CollabBoard> =>
     invoke('collab_board_column_delete', { columnId }),
-  assignCard: (cardId: string, assigneeId: string | null): Promise<CollabCard> =>
+  createCard: (input: CollabCardInput): Promise<CollabCardChange> =>
+    invoke('collab_card_create', { input }),
+  /** `title` 与 `description` 至少给一个；`null` 表示保持原值，描述写空字符串即清空。 */
+  updateCard: (cardId: string, title: string | null, description: string | null): Promise<CollabCardChange> =>
+    invoke('collab_card_update', { cardId, title, description }),
+  moveCard: (cardId: string, columnId: string, beforeCardId: string | null): Promise<CollabCardChange> =>
+    invoke('collab_card_move', { cardId, columnId, beforeCardId }),
+  assignCard: (cardId: string, assigneeId: string | null): Promise<CollabCardChange> =>
     invoke('collab_card_assign', { cardId, assigneeId }),
   deleteCard: (cardId: string): Promise<string> =>
     invoke('collab_card_delete', { cardId }),

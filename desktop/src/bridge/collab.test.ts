@@ -75,6 +75,18 @@ describe('R3 collaboration command bridge', () => {
     expect(invoke).toHaveBeenCalledWith('collab_room_pin', { roomId: 'room-1', pinned: true })
   })
 
+  it('maps Desktop card edits to explicit card commands', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    await collabCommands.createCard({ boardId: 'board-1', columnId: 'col-1', title: 'Fix', description: null, assigneeId: 'ada' })
+    expect(invoke).toHaveBeenCalledWith('collab_card_create', {
+      input: { boardId: 'board-1', columnId: 'col-1', title: 'Fix', description: null, assigneeId: 'ada' },
+    })
+    await collabCommands.updateCard('card-1', null, '')
+    expect(invoke).toHaveBeenCalledWith('collab_card_update', { cardId: 'card-1', title: null, description: '' })
+    await collabCommands.moveCard('card-1', 'col-2', 'card-2')
+    expect(invoke).toHaveBeenCalledWith('collab_card_move', { cardId: 'card-1', columnId: 'col-2', beforeCardId: 'card-2' })
+  })
+
   it('sends the quoted message id with a quote reply', async () => {
     vi.mocked(invoke).mockResolvedValue(null)
     await collabCommands.sendMessage('general', 'Why partial?', 'msg-7')

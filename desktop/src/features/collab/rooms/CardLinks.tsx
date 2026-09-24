@@ -1,6 +1,9 @@
 import { SquareKanban } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { agoText } from '@/features/collab/components/timeText'
+import { useNow } from '@/features/collab/components/useNow'
+import { elapsedSeconds } from '@/lib/dateTime'
 import { cn } from '@/lib/utils'
 import type { FoundCard } from './roomTimeline'
 
@@ -31,7 +34,10 @@ export function CardChip({ cardId, found, selected, onOpen }: {
   )
 }
 
-/** 消息下方的卡片摘要卡：看板图标、id 前 8 位、标题、“看板 → 列”、负责人。 */
+/** “多久前更新”的刷新间隔。 */
+const AGO_REFRESH_MS = 60_000
+
+/** 消息下方的卡片摘要卡：看板图标、id 前 8 位、标题、“看板 → 列”、负责人、多久前更新。 */
 export function CardSummary({ cardId, found, assigneeName, selected, onOpen }: {
   cardId: string
   found: FoundCard
@@ -40,7 +46,9 @@ export function CardSummary({ cardId, found, assigneeName, selected, onOpen }: {
   onOpen: (cardId: string) => void
 }) {
   const { t } = useTranslation()
+  const now = useNow(AGO_REFRESH_MS)
   const location = t('collab.rooms.cardLocation', { board: found.board.title, column: found.column.title })
+  const ago = found.card.updatedAt ? agoText(elapsedSeconds(found.card.updatedAt, now)) : null
   return (
     <button
       type="button"
@@ -62,7 +70,11 @@ export function CardSummary({ cardId, found, assigneeName, selected, onOpen }: {
         </span>
         <span className="truncate text-sm font-semibold">{found.card.title}</span>
         <span className="truncate text-xs text-ink-soft">
-          {[location, assigneeName ?? t('collab.rooms.unassigned')].join(' · ')}
+          {[
+            location,
+            assigneeName ?? t('collab.rooms.unassigned'),
+            ...(ago ? [t('collab.boards.updatedAgo', { ago: t(ago.key, ago.values) })] : []),
+          ].join(' · ')}
         </span>
       </span>
     </button>

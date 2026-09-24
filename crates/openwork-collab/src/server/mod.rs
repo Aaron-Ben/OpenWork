@@ -9,6 +9,7 @@ mod climate;
 mod command_requests;
 mod coordination;
 mod db;
+mod desktop_cards;
 mod desktop_commands;
 mod inventory;
 mod messages;

@@ -106,7 +106,7 @@ impl Board {
                     card.id AS card_id, card.column_id AS card_column_id,
                     card.title AS card_title, card.description AS card_description,
                     card.position AS card_position, card.assignee_id,
-                    card.created_by AS card_created_by
+                    card.created_by AS card_created_by, NULL::TEXT AS card_updated_at
              FROM collab_boards board
              LEFT JOIN collab_board_columns board_column ON board_column.board_id = board.id
              LEFT JOIN collab_cards card ON card.column_id = board_column.id
@@ -183,7 +183,7 @@ impl Board {
                     card.id AS card_id, card.column_id AS card_column_id,
                     card.title AS card_title, card.description AS card_description,
                     card.position AS card_position, card.assignee_id,
-                    card.created_by AS card_created_by
+                    card.created_by AS card_created_by, NULL::TEXT AS card_updated_at
              FROM collab_boards board
              LEFT JOIN collab_board_columns board_column ON board_column.board_id = board.id
              LEFT JOIN collab_cards card ON card.column_id = board_column.id
@@ -204,7 +204,9 @@ impl Board {
                     card.id AS card_id, card.column_id AS card_column_id,
                     card.title AS card_title, card.description AS card_description,
                     card.position AS card_position, card.assignee_id,
-                    card.created_by AS card_created_by
+                    card.created_by AS card_created_by,
+                    to_char(card.updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') || '+08:00'
+                        AS card_updated_at
              FROM collab_boards board
              LEFT JOIN collab_board_columns board_column ON board_column.board_id = board.id
              LEFT JOIN collab_cards card ON card.column_id = board_column.id
@@ -625,6 +627,8 @@ struct BoardRow {
     card_position: Option<i32>,
     assignee_id: Option<String>,
     card_created_by: Option<String>,
+    /// 只有 Desktop 读取看板时查询；Agent 命令的查询给 `NULL`，输出里不带这个字段。
+    card_updated_at: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -651,6 +655,7 @@ impl From<CardRow> for CardView {
             assignee_id: row.assignee_id,
             created_by: row.created_by,
             agent_state: None,
+            updated_at: None,
         }
     }
 }
@@ -705,6 +710,7 @@ fn assemble(rows: Vec<BoardRow>) -> Vec<BoardView> {
                     assignee_id: row.assignee_id,
                     created_by,
                     agent_state: None,
+                    updated_at: row.card_updated_at,
                 });
         }
     }

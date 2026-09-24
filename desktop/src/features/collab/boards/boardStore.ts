@@ -3,6 +3,8 @@ import { create } from 'zustand'
 import {
   collabCommands,
   type CollabBoard,
+  type CollabCardChange,
+  type CollabCardInput,
   type CollabColumnKind,
 } from '@/bridge/collab'
 import { resolveErrorMessage } from '@/lib/commandError'
@@ -10,12 +12,13 @@ import { resolveErrorMessage } from '@/lib/commandError'
 interface BoardStoreState {
   boards: CollabBoard[]
   selectedBoardId: string | null
-  /** 从房间“打开看板”时要选中的卡片（collaboration-desktop.md §7.5）。 */
-  focusedCardId: string | null
+  /** 右侧详情里打开的卡片；从房间“打开看板”时也选中它（collaboration-desktop.md §7.5、§9）。 */
+  selectedCardId: string | null
   loading: boolean
   error: string | null
   selectBoard: (boardId: string) => void
   focusCard: (boardId: string, cardId: string) => void
+  selectCard: (cardId: string | null) => void
   fetchAll: () => Promise<void>
   createBoard: (title: string, description: string | null) => Promise<void>
   updateBoard: (boardId: string, title: string, description: string | null) => Promise<void>
@@ -24,7 +27,10 @@ interface BoardStoreState {
   updateColumn: (columnId: string, title: string, kind: CollabColumnKind | null) => Promise<void>
   moveColumn: (columnId: string, beforeColumnId: string | null) => Promise<void>
   deleteColumn: (columnId: string) => Promise<void>
-  assignCard: (cardId: string, assigneeId: string | null) => Promise<void>
+  createCard: (input: CollabCardInput) => Promise<CollabCardChange>
+  updateCard: (cardId: string, title: string | null, description: string | null) => Promise<CollabCardChange>
+  moveCard: (cardId: string, columnId: string, beforeCardId: string | null) => Promise<CollabCardChange>
+  assignCard: (cardId: string, assigneeId: string | null) => Promise<CollabCardChange>
   deleteCard: (cardId: string) => Promise<void>
 }
 
@@ -33,11 +39,12 @@ let fetchVersion = 0
 export const useBoardStore = create<BoardStoreState>((set, get) => ({
   boards: [],
   selectedBoardId: null,
-  focusedCardId: null,
+  selectedCardId: null,
   loading: false,
   error: null,
-  selectBoard: (selectedBoardId) => set({ selectedBoardId, focusedCardId: null }),
-  focusCard: (selectedBoardId, focusedCardId) => set({ selectedBoardId, focusedCardId }),
+  selectBoard: (selectedBoardId) => set({ selectedBoardId, selectedCardId: null }),
+  focusCard: (selectedBoardId, selectedCardId) => set({ selectedBoardId, selectedCardId }),
+  selectCard: (selectedCardId) => set({ selectedCardId }),
   fetchAll: async () => {
     const version = ++fetchVersion
     set({ loading: true, error: null })
@@ -63,33 +70,49 @@ export const useBoardStore = create<BoardStoreState>((set, get) => ({
       throw error
     }
   },
-  updateBoard: async (boardId, title, description) => mutate(set, get, () =>
+  updateBoard: async (boardId, title, description) => settle(set, get, () =>
     collabCommands.updateBoard(boardId, title, description)),
-  deleteBoard: async (boardId) => mutate(set, get, () =>
+  deleteBoard: async (boardId) => settle(set, get, () =>
     collabCommands.deleteBoard(boardId)),
-  createColumn: async (boardId, title, kind) => mutate(set, get, () =>
+  createColumn: async (boardId, title, kind) => settle(set, get, () =>
     collabCommands.createBoardColumn(boardId, title, kind)),
-  updateColumn: async (columnId, title, kind) => mutate(set, get, () =>
+  updateColumn: async (columnId, title, kind) => settle(set, get, () =>
     collabCommands.updateBoardColumn(columnId, title, kind)),
-  moveColumn: async (columnId, beforeColumnId) => mutate(set, get, () =>
+  moveColumn: async (columnId, beforeColumnId) => settle(set, get, () =>
     collabCommands.moveBoardColumn(columnId, beforeColumnId)),
-  deleteColumn: async (columnId) => mutate(set, get, () =>
+  deleteColumn: async (columnId) => settle(set, get, () =>
     collabCommands.deleteBoardColumn(columnId)),
+  createCard: async (input) => mutate(set, get, () => collabCommands.createCard(input)),
+  updateCard: async (cardId, title, description) => mutate(set, get, () =>
+    collabCommands.updateCard(cardId, title, description)),
+  moveCard: async (cardId, columnId, beforeCardId) => mutate(set, get, () =>
+    collabCommands.moveCard(cardId, columnId, beforeCardId)),
   assignCard: async (cardId, assigneeId) => mutate(set, get, () =>
     collabCommands.assignCard(cardId, assigneeId)),
-  deleteCard: async (cardId) => mutate(set, get, () =>
+  deleteCard: async (cardId) => settle(set, get, () =>
     collabCommands.deleteCard(cardId)),
 }))
 
-async function mutate(
+/** 同 `mutate`，不需要结果时用。 */
+async function settle(
   set: (state: Partial<BoardStoreState>) => void,
   get: () => BoardStoreState,
   operation: () => Promise<unknown>,
-) {
+): Promise<void> {
+  await mutate(set, get, operation)
+}
+
+/** 执行一次修改并重新取看板，界面以 Server 返回的结果为准；失败时记下错误并继续抛出。 */
+async function mutate<T>(
+  set: (state: Partial<BoardStoreState>) => void,
+  get: () => BoardStoreState,
+  operation: () => Promise<T>,
+): Promise<T> {
   set({ error: null })
   try {
-    await operation()
+    const result = await operation()
     await get().fetchAll()
+    return result
   } catch (error) {
     set({ error: resolveErrorMessage(error) })
     throw error

@@ -147,6 +147,26 @@ pub enum DesktopCommand {
     DeleteBoardColumn {
         column_id: String,
     },
+    /// Desktop 用户建卡（collaboration.md §11.2）；指定负责人与描述里的 `@` 产生卡片唤醒。
+    CreateCard {
+        board_id: String,
+        column_id: String,
+        title: String,
+        description: Option<String>,
+        assignee_id: Option<String>,
+    },
+    /// 标题与描述都可选、至少给一个；描述写空字符串即清空。
+    UpdateCard {
+        card_id: String,
+        title: Option<String>,
+        description: Option<String>,
+    },
+    /// 移到 `column_id`（可以是原列），放在 `before_card_id` 之前；不给时放到末尾。
+    MoveCard {
+        card_id: String,
+        column_id: String,
+        before_card_id: Option<String>,
+    },
     AssignCard {
         card_id: String,
         assignee_id: Option<String>,
@@ -215,7 +235,7 @@ pub enum DesktopCommandResult {
     Boards {
         boards: Vec<BoardView>,
     },
-    Card(CardView),
+    Card(CardChangeView),
     Deleted {
         entity_id: String,
     },
@@ -386,6 +406,17 @@ pub struct CardView {
     /// （collaboration-desktop.md §4.3）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_state: Option<CardAgentState>,
+    /// 最近更新时间（带 `+08:00` 的 RFC 3339），同样只在 Desktop 读取看板时填写。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// Desktop 卡片命令的结果：修改后的卡片，以及这次被叫醒的 Agent（collaboration.md §11.4）。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardChangeView {
+    pub card: CardView,
+    pub woken_agent_ids: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -516,6 +547,7 @@ mod tests {
             assignee_id: Some("bo".to_string()),
             created_by: "local-user".to_string(),
             agent_state: None,
+            updated_at: None,
         };
         let plain = serde_json::to_value(&card).unwrap();
         assert!(plain.get("agentState").is_none(), "{plain}");

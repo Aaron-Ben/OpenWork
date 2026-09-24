@@ -131,6 +131,8 @@ collab_card_delete
 
 - `BoardColumnView` 用 `kind`（`todo` / `doing` / `done` / `null`）替换 `isTerminal`。
 - `CardView` 增加当前状态 `agentState`：`working`（负责人的 running Run 正在处理这张卡片）、`queued`（负责人对这张卡片有未结算的卡片唤醒）或 `null`。只有 Desktop 读取看板时计算；Agent 命令返回的卡片不带这个字段，模型看到的输出不变。
+- `CardView` 增加 `updatedAt`（最近更新时间），同样只在 Desktop 读取看板时填写，Agent 命令的卡片不带。
+- Desktop 的卡片命令（create、update、move、assign）返回 `{ card, wokenAgentIds }`：修改后的卡片，以及这次被叫醒的 Agent，界面据此提示“已通知 <名字>”。
 
 Agent 创建、领取、更新、移动 Card 走 Agent command，不经过这些 Desktop command。Desktop 创建与编辑卡片同样产生卡片唤醒（collaboration.md §11.2、§11.4）。
 

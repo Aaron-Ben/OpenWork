@@ -525,7 +525,7 @@ async fn desktop_owns_board_structure_while_agent_owns_the_card_workflow() {
         .await;
     assert!(matches!(
         assigned,
-        DesktopCommandResult::Card(ref card) if card.assignee_id.as_deref() == Some("local-user")
+        DesktopCommandResult::Card(ref change) if change.card.assignee_id.as_deref() == Some("local-user")
     ));
     assert!(matches!(
         fixture
