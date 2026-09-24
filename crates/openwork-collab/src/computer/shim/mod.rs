@@ -25,7 +25,7 @@ const HELP: &str = "Usage:
   openwork card create --board <id> --column <id> --title <text> [--description <text>] [--assignee <id>]
   openwork card claim <card-id>
   openwork card assign <card-id> <participant-id>
-  openwork card update <card-id> --title <text> [--description <text>]
+  openwork card update <card-id> [--title <text>] [--description <text> | --stdin | --file <path>]
   openwork card move <card-id> --column <id> [--before-card <card-id>]";
 
 pub fn main() -> i32 {

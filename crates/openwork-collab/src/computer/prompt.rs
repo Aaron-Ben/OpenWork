@@ -97,7 +97,7 @@ const PUT_ON_YOU: &str = "Someone just put this work on you directly. This is a 
 const DRIVE_THE_BOARD: &str = "Drive them with the board tools rather than only replying in chat:
   openwork card show <card-id>
   openwork card claim <card-id>
-  openwork card update <card-id> --title <text> [--description <text>]
+  openwork card update <card-id> [--title <text>] [--description <text> | --stdin | --file <path>]
   openwork card move <card-id> --column <column-id>
 
 If the work finishes here, leave the card in a state that says so — a board that still reads Todo while the work is done is worse than no board.";
@@ -602,7 +602,7 @@ mod tests {
              Drive them with the board tools rather than only replying in chat:\n\
              \x20 openwork card show <card-id>\n\
              \x20 openwork card claim <card-id>\n\
-             \x20 openwork card update <card-id> --title <text> [--description <text>]\n\
+             \x20 openwork card update <card-id> [--title <text>] [--description <text> | --stdin | --file <path>]\n\
              \x20 openwork card move <card-id> --column <column-id>\n\
              \n\
              If the work finishes here, leave the card in a state that says so — a board that still reads Todo while the work is done is worse than no board.\n\

@@ -385,9 +385,10 @@ pub enum AgentCommand {
         card_id: String,
         assignee_id: String,
     },
+    /// `title` 与 `description` 为 `None` 时保持原值，至少给一个；`description` 为空字符串时清空。
     CardUpdate {
         card_id: String,
-        title: String,
+        title: Option<String>,
         description: Option<String>,
     },
     CardMove {

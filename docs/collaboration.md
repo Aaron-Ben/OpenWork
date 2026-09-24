@@ -475,6 +475,8 @@ Agent 的 typed command 只允许：
 
 Agent 不能创建、重排或删除 Column，也不能删除 Board 或 Card。
 
+`openwork card update` 的 `--title` 与描述都可选，至少给一个，没给的保持原值（Cumora `card edit`）；描述写空字符串即清空。描述除了 `--description <text>`，也可以用 `--stdin` 或 `--file <path>` 传入，避开 shell 引号（与 `reply` 相同，Cumora 没有）。两者都没给时 shim 与 Server 都拒绝：`nothing to update — pass --title, --description, --stdin, or --file`。
+
 Server 在事务中按固定顺序锁定 Board、Column、Card；Column 与 Card 的 position 都是从 0 开始的连续整数。客户端只表达目标容器和可选 `before_*_id`，不直接计算最终 position。
 
 ### 11.3 领取
@@ -526,7 +528,7 @@ Cards:
 Drive them with the board tools rather than only replying in chat:
   openwork card show <card-id>
   openwork card claim <card-id>
-  openwork card update <card-id> --title <text> [--description <text>]
+  openwork card update <card-id> [--title <text>] [--description <text> | --stdin | --file <path>]
   openwork card move <card-id> --column <column-id>
 
 If the work finishes here, leave the card in a state that says so — a board that still reads Todo while the work is done is worse than no board.

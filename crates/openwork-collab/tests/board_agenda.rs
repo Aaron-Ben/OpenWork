@@ -430,23 +430,57 @@ async fn desktop_owns_board_structure_while_agent_owns_the_card_workflow() {
         .await;
     assert_eq!(card.created_by, alpha.id);
 
-    let card = match fixture
-        .command(
-            &alpha_token,
-            AgentCommand::CardUpdate {
-                card_id: card.id.clone(),
-                title: "Implement and verify R6".to_string(),
-                description: None,
-            },
-        )
-        .await
-        .result
-    {
+    let update = |title: Option<&str>, description: Option<&str>| AgentCommand::CardUpdate {
+        card_id: card.id.clone(),
+        title: title.map(str::to_string),
+        description: description.map(str::to_string),
+    };
+    let updated = |response: AgentCommandResponse| match response.result {
         AgentCommandResult::Card { card } => card,
         result => panic!("update Card returned {result:?}"),
     };
-    assert_eq!(card.created_by, alpha.id);
-    assert_eq!(card.description, None);
+    // 描述写空字符串即清空。
+    let renamed = updated(
+        fixture
+            .command(
+                &alpha_token,
+                update(Some("Implement and verify R6"), Some("")),
+            )
+            .await,
+    );
+    assert_eq!(renamed.created_by, alpha.id);
+    assert_eq!(renamed.description, None);
+    // collaboration.md §11.2：只给描述时标题不变，只给标题时描述不变，都不给时拒绝且不写入。
+    let described = updated(
+        fixture
+            .command(&alpha_token, update(None, Some("Only the description")))
+            .await,
+    );
+    assert_eq!(
+        (described.title.as_str(), described.description.as_deref()),
+        ("Implement and verify R6", Some("Only the description"))
+    );
+    let retitled = updated(
+        fixture
+            .command(&alpha_token, update(Some("Verify R6"), None))
+            .await,
+    );
+    assert_eq!(
+        (retitled.title.as_str(), retitled.description.as_deref()),
+        ("Verify R6", Some("Only the description"))
+    );
+    assert_eq!(
+        fixture
+            .command(&alpha_token, update(None, None))
+            .await
+            .result,
+        AgentCommandResult::Error {
+            code: "INVALID_ARGUMENT".to_string(),
+            message: "nothing to update — pass --title, --description, --stdin, or --file"
+                .to_string(),
+        }
+    );
+    let card = retitled;
     let assigned = fixture
         .command(
             &alpha_token,

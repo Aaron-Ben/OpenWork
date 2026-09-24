@@ -155,11 +155,17 @@ pub(super) async fn parse_command(arguments: Vec<String>) -> Result<AgentCommand
             })
         }
         [card, action, card_id, tail @ ..] if card == "card" && action == "update" => {
-            let flags = parse_flags(tail, &["--title", "--description"])?;
+            let CardUpdateArgs { title, description } = card_update_args(tail)?;
+            let description = match description {
+                DescriptionSource::Keep => None,
+                DescriptionSource::Text(text) => Some(text),
+                DescriptionSource::Stdin => Some(read_stdin_body()?),
+                DescriptionSource::File(path) => Some(read_file_body(&path).await?),
+            };
             Ok(AgentCommand::CardUpdate {
                 card_id: card_id.clone(),
-                title: required_flag(&flags, "--title")?.to_string(),
-                description: flags.get("--description").cloned(),
+                title,
+                description,
             })
         }
         [card, action, card_id, tail @ ..] if card == "card" && action == "move" => {
@@ -204,6 +210,70 @@ fn extract_options(
         }
     }
     Ok((options, rest))
+}
+
+/// `card update` 的描述从哪里来；`Keep` 表示不改描述。
+#[derive(Debug, PartialEq, Eq)]
+enum DescriptionSource {
+    Keep,
+    Text(String),
+    Stdin,
+    File(String),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CardUpdateArgs {
+    title: Option<String>,
+    description: DescriptionSource,
+}
+
+/// 解析 `card update <card-id>` 之后的选项（collaboration.md §11.2）：`--title` 与描述都可选、至少
+/// 给一个，描述只能有一个来源，顺序不限。`--description ""` 表示清空描述，所以它允许空值。
+fn card_update_args(arguments: &[String]) -> Result<CardUpdateArgs, ShimError> {
+    let mut title = None;
+    let mut description = DescriptionSource::Keep;
+    let mut remaining = arguments.iter();
+    while let Some(option) = remaining.next() {
+        let source = match option.as_str() {
+            "--title" => {
+                let value = option_value(option, remaining.next())?;
+                if value.trim().is_empty() {
+                    return Err(ShimError::Arguments(format!(
+                        "{option} requires a non-empty value"
+                    )));
+                }
+                if title.replace(value).is_some() {
+                    return Err(ShimError::Arguments(format!(
+                        "option {option} must appear once"
+                    )));
+                }
+                continue;
+            }
+            "--description" => DescriptionSource::Text(option_value(option, remaining.next())?),
+            "--file" => DescriptionSource::File(option_value(option, remaining.next())?),
+            "--stdin" => DescriptionSource::Stdin,
+            _ => return Err(ShimError::Arguments(format!("unknown option {option}"))),
+        };
+        if description != DescriptionSource::Keep {
+            return Err(ShimError::Arguments(
+                "pass only one of --description, --stdin, or --file".to_string(),
+            ));
+        }
+        description = source;
+    }
+    if title.is_none() && description == DescriptionSource::Keep {
+        return Err(ShimError::Arguments(
+            "nothing to update — pass --title, --description, --stdin, or --file".to_string(),
+        ));
+    }
+    Ok(CardUpdateArgs { title, description })
+}
+
+fn option_value(option: &str, value: Option<&String>) -> Result<String, ShimError> {
+    value
+        .filter(|value| !value.starts_with("--"))
+        .cloned()
+        .ok_or_else(|| ShimError::Arguments(format!("{option} requires a value")))
 }
 
 fn parse_tail(value: &str) -> Result<u32, ShimError> {
@@ -324,7 +394,10 @@ async fn read_file_body(path: &str) -> Result<String, ShimError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{output_format, parse_command, parse_score, parse_tail};
+    use super::{
+        CardUpdateArgs, DescriptionSource, card_update_args, output_format, parse_command,
+        parse_score, parse_tail,
+    };
     use crate::{computer::shim::render::Format, protocol::AgentCommand};
 
     #[tokio::test]
@@ -625,7 +698,7 @@ mod tests {
             .unwrap(),
             AgentCommand::CardUpdate {
                 card_id: "card-1".to_string(),
-                title: "Revised".to_string(),
+                title: Some("Revised".to_string()),
                 description: None,
             }
         );
@@ -652,5 +725,67 @@ mod tests {
         assert_eq!(parse_score("1", "trust").unwrap(), 1.0);
         assert!(parse_score("NaN", "trust").is_err());
         assert!(parse_score("1.1", "trust").is_err());
+    }
+
+    fn update_args(arguments: &[&str]) -> Result<CardUpdateArgs, String> {
+        card_update_args(
+            &arguments
+                .iter()
+                .map(|argument| argument.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    /// collaboration.md §11.2：`card update` 的标题与描述都可选、至少给一个，描述可以来自
+    /// `--description`、`--stdin` 或 `--file`，选项顺序不限。
+    #[test]
+    fn card_update_takes_either_field_and_one_description_source() {
+        let args = |title: Option<&str>, description: DescriptionSource| CardUpdateArgs {
+            title: title.map(str::to_string),
+            description,
+        };
+        assert_eq!(
+            update_args(&["--description", "Only this"]),
+            Ok(args(None, DescriptionSource::Text("Only this".to_string())))
+        );
+        assert_eq!(
+            update_args(&["--title", "Renamed"]),
+            Ok(args(Some("Renamed"), DescriptionSource::Keep))
+        );
+        assert_eq!(
+            update_args(&["--stdin", "--title", "Renamed"]),
+            Ok(args(Some("Renamed"), DescriptionSource::Stdin))
+        );
+        assert_eq!(
+            update_args(&["--file", "notes.md"]),
+            Ok(args(None, DescriptionSource::File("notes.md".to_string())))
+        );
+        assert_eq!(
+            update_args(&["--description", ""]),
+            Ok(args(None, DescriptionSource::Text(String::new())))
+        );
+        assert_eq!(
+            update_args(&[]),
+            Err("invalid arguments: nothing to update — pass --title, --description, --stdin, or --file".to_string())
+        );
+        assert_eq!(
+            update_args(&["--description", "x", "--stdin"]),
+            Err(
+                "invalid arguments: pass only one of --description, --stdin, or --file".to_string()
+            )
+        );
+        assert_eq!(
+            update_args(&["--title"]),
+            Err("invalid arguments: --title requires a value".to_string())
+        );
+        assert_eq!(
+            update_args(&["--title", "A", "--title", "B"]),
+            Err("invalid arguments: option --title must appear once".to_string())
+        );
+        assert_eq!(
+            update_args(&["--bogus", "x"]),
+            Err("invalid arguments: unknown option --bogus".to_string())
+        );
     }
 }

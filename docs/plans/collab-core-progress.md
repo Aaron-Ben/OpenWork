@@ -48,6 +48,7 @@
 | E23 | 卡片的“更新时间”只在这张卡片本身被创建、修改、改派、领取或移动时刷新；`renumber` 重排同列其他卡片只改 position。起因是 K6 发现旁边卡片进出会清零整列的 20 分钟接手计时；Cumora 的 position 留空档（`cli.ts` `card move` 取 `MAX(position) + 1000`），移动只改被移动的那一张（2026-09-24） |
 | E24 | K7 实现时补全的三处（已写入 collaboration.md §11.4、§13.3.6）：trigger 携带卡片唤醒的 id 与 `revision`，Run 打开时只认领版本号未变的记录，合并时版本号加 1 并清空 `run_id`，所以读收件箱之后、或 Run 进行中才合并进来的变化不会被一个没看到它的 Run 结算；新建卡片时直接指定负责人算改派；超过限额的 Agent 卡片唤醒不写入，Redis 不可用时放行。模块表新增 `CardWakes`，唤醒不再归 `Board` 与 `Runs`（2026-09-24） |
 | E25 | 卡片 Turn 一轮最多列 10 张卡片（按首次写入的先后），其余仍待处理、留给下一轮，prompt 写明还有几张在排队。Cumora 不限张数，只把合并后的 brief 截到 12,000 字（`wake-options.ts` 的 `MAX_BRIEF_BODY_CHARS`），截掉的卡片直接丢失且不告诉模型（2026-09-25） |
+| E26 | `openwork card update` 的 `--title` 与描述都可选、至少给一个，没给的保持原值，描述写空字符串即清空（Cumora `card edit`，`cli.ts` 约 5845 行）；描述另可用 `--stdin` / `--file`（Cumora 没有，与 `reply` 一致）。起因是 K7 实测中 Ada 只想改描述，因缺 `--title` 与不支持 `--stdin` 多走两步（2026-09-25） |
 | E11 | 协作模式不要运行记录：删除运行记录页与其专用后端（`observability`、`collab_run_events`、事件上报、`collab_run_list`/`collab_run_trace`）；界面只展示当前状态和房间说明行；`collab_runs` 与 `collab_triages` 保留为内部状态（2026-09-24） |
 
 ## 3. 写文档时新定的实现细节（2026-09-24 用户已确认）
@@ -105,8 +106,12 @@
   - 场景 3（同一张卡片连续改派 5 次，3 次落在 Bo）：合并成一条（`revision` 3），Bo 只跑 1 轮，领取、移到 Done、汇报。
   - 场景 4（12 张卡片一次积压给 Ada，直接写库）：第一轮认领 10 条；Ada 做完 10 张后看了一眼看板，把另外 2 张也做了；第二轮带剩下 2 条，4.5 秒、没有动作（`unpublished`）。12 张全部在 Done。测试里 12 条唤醒同一事务写入、`created_at` 相同，所以“最早的 10 张”按 id 随机，不代表先后。
   - 8 个 Run 全部 completed，没有 HELD、DUPLICATE、MONOLOGUE 或失败。
+- 2026-09-25 E26（`card update` 可选字段与 `--stdin`）：`computer::shim::parse::tests::card_update_takes_either_field_and_one_description_source`（只给描述、只给标题、`--stdin` / `--file`、空描述清空、都不给、两个描述来源、缺值、重复、未知选项，错误文本逐字）；`board_agenda::desktop_owns_board_structure_while_agent_owns_the_card_workflow` 增加只改描述保持标题、只改标题保持描述、都不给时 `INVALID_ARGUMENT` 且原文逐字；`runtime_e2e::desktop_card_assignment_runs_a_card_turn_that_skips_triage` 的 fake OpenCode 领取后用 `card update --stdin` 改描述（含引号），断言标题不变、描述逐字；`acc_14_card_turn_prompt_lists_the_cards_and_the_board_commands` 的用法行同步。测试与实现同时写成；写完后临时改回“没给描述就清空”、忽略 `--stdin`，对应测试都失败，恢复后通过。`scripts/check.sh` 全部通过（`reported_rate_limit_terminates_a_still_running_opencode_process` 本次也通过）。
 ## 5. 待定
 
-- K7 实测发现（待用户决定）：`openwork card update` 必须同时给 `--title`，也不支持 `--stdin` / `--file`，Agent 只想改描述时要多走几步（场景 1 多了 3 步）。Cumora `card rename` / `card edit`（`cli.ts` 约 5845 行）：`--title` 与 `--description` 都可选，都不给时报 `nothing to update — pass --title or --description`；没给的字段保持原值；只收命令行参数（经 `unescapeChat` 处理转义），没有 stdin；标题截到 200 字、描述截到 8000 字。建议照 Cumora 改成两者可选、至少给一个；另加描述的 `--stdin` / `--file`（Cumora 没有，与本仓库 `reply` 一致）。需要改 collaboration.md 的 CLI 说明。
+- 2026-09-25 对照 Cumora 核心功能盘点后新出现（待用户决定）：
+  - mute：`collab_room_members.muted` 与收件箱、唤醒的 mute 例外都已实现，但没有任何入口能把它设为真（Agent 没有 Cumora 的 `mute` / `follow` / `mute list`，Desktop 也没有），现在是走不到的代码。要么补入口，要么删掉字段与相关判断。
+  - 常驻契约缺 Cumora `standingPrompt`（`computer/daemon.ts` 约 2646 行）的两段：第一句“You are a Cumora teammate — a first-class member of this team with your own voice … respond appropriately, in your own voice”；“Drive what you own forward — see a task through … Stop only when the work is truly done or it's someone else's move”（其中安排日历回访的部分依赖 Calendar，不在范围内）。E22 写的“开头一段照搬”实际只照搬了其后的 “If a human addressed the whole team …” 一段。
+  - 卡片评论：Cumora 有 `card comment` / `card delete-comment`，评论里的 `@` 也会唤醒，卡片 brief 让 Agent 用评论汇报进度；OpenWork 没有，也不在 collaboration.md 开头的不做清单里。
 
 - 重写 collaboration-desktop.md 时新定的界面细节（2026-09-24 用户已确认）：Agent 之间的房间只读并显示提示；卡片详情的“在房间中讨论”打开与负责人的私聊并预填卡片引用；识别色按 Agent ID 稳定哈希取 6 档；协作界面的小号说明文字用 `ink-soft`；新增 `collab_room_open` 返回房间快照，取代 `collab_message_list`。

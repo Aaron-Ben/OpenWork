@@ -300,15 +300,23 @@ impl Board {
         card(transaction, &card_id).await.map_err(Into::into)
     }
 
-    /// 改写卡片标题与描述，返回修改前后的卡片；卡片不存在时返回 `NOT_FOUND`。
+    /// 改写卡片标题与描述，返回修改前后的卡片。`None` 的字段保持原值；描述为空白时清空。
+    /// 标题不合法时返回 `INVALID_ARGUMENT`，卡片不存在时返回 `NOT_FOUND`。
     pub(crate) async fn update_card_in(
         transaction: &mut Transaction<'_, Postgres>,
         card_id: &str,
-        title: &str,
+        title: Option<&str>,
         description: Option<&str>,
     ) -> Result<CardEdit, BoardOperationError> {
-        let title = valid_title(title, 500, "card title must be 1..500 bytes")?;
+        let title = title
+            .map(|title| valid_title(title, 500, "card title must be 1..500 bytes"))
+            .transpose()?;
         let before = locked_card(transaction, card_id).await?;
+        let title = title.unwrap_or(&before.title);
+        let description = match description {
+            Some(description) => normalize_optional(Some(description)),
+            None => before.description.as_deref(),
+        };
         sqlx::query(
             "UPDATE collab_cards
              SET title = $2, description = $3,
@@ -317,7 +325,7 @@ impl Board {
         )
         .bind(card_id)
         .bind(title)
-        .bind(normalize_optional(description))
+        .bind(description)
         .execute(&mut **transaction)
         .await?;
         let after = card(transaction, card_id).await?;

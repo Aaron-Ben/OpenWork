@@ -298,15 +298,32 @@ async fn desktop_card_assignment_runs_a_card_turn_that_skips_triage() {
     runtime
         .wait_for_completed_runs(1, Duration::from_secs(12))
         .await;
-    let (column_id, assignee_id): (String, Option<String>) =
-        sqlx::query_as("SELECT column_id, assignee_id FROM collab_cards WHERE id = $1")
-            .bind(&card_id)
-            .fetch_one(&runtime.pool)
-            .await
-            .unwrap();
+    // fake OpenCode 领取后用 `card update --stdin` 只改描述（collaboration.md §11.2）。
+    let (column_id, assignee_id, title, description): (
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT column_id, assignee_id, title, description FROM collab_cards WHERE id = $1",
+    )
+    .bind(&card_id)
+    .fetch_one(&runtime.pool)
+    .await
+    .unwrap();
     assert_eq!(
-        (column_id, assignee_id),
-        (board.columns[1].id.clone(), Some(agent_id.clone()))
+        (
+            column_id,
+            assignee_id,
+            title.as_str(),
+            description.as_deref()
+        ),
+        (
+            board.columns[1].id.clone(),
+            Some(agent_id.clone()),
+            "Ship the login fix",
+            Some("Claimed by the card turn; see \"notes\".")
+        )
     );
     let (trigger, outcome, triages): (String, Option<String>, i64) = sqlx::query_as(
         "SELECT run.trigger, run.outcome,

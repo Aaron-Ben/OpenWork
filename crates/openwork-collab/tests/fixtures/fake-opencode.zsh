@@ -19,6 +19,7 @@ fi
 if [[ "$prompt" == *"Someone just put this work on you directly."* ]]; then
   card_id="$(print -r -- "$prompt" | sed -n 's/^- \(card-[0-9a-f]*\) .*/\1/p' | head -n 1)"
   openwork card claim "$card_id" >/dev/null || exit $?
+  print -r -- 'Claimed by the card turn; see "notes".' | openwork card update "$card_id" --stdin >/dev/null || exit $?
   print -r -- '{"type":"text","sessionID":"ses_helper","part":{"text":"claimed"}}'
   print -r -- '{"type":"step_finish","sessionID":"ses_helper","part":{"tokens":{"input":8,"output":3,"cache":{"read":1,"write":0}}}}'
   exit 0

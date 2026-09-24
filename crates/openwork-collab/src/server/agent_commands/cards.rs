@@ -13,6 +13,10 @@ use crate::server::{
     card_wakes::CardWakes,
 };
 
+/// `card update` 既没有标题也没有描述时给模型的说明（collaboration.md §11.2）。
+const NOTHING_TO_UPDATE: &str =
+    "nothing to update — pass --title, --description, --stdin, or --file";
+
 impl AgentCommands {
     /// 执行一条 Board 或 Card 命令。`execute` 只把这些变体分派到这里。
     pub(super) async fn card_command(
@@ -66,9 +70,16 @@ impl AgentCommands {
                 title,
                 description,
             } => {
-                let edit =
-                    Board::update_card_in(transaction, &card_id, &title, description.as_deref())
-                        .await;
+                if title.is_none() && description.is_none() {
+                    return Ok(error("INVALID_ARGUMENT", NOTHING_TO_UPDATE));
+                }
+                let edit = Board::update_card_in(
+                    transaction,
+                    &card_id,
+                    title.as_deref(),
+                    description.as_deref(),
+                )
+                .await;
                 let effect = AgentCommandEffect::CardUpdated { card_id };
                 self.edited(transaction, edit, effect, actor_id).await
             }

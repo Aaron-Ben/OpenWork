@@ -77,7 +77,7 @@ fn create(board: &BoardView, title: &str, assignee_id: Option<&str>) -> AgentCom
 fn update(card_id: &str, description: &str) -> AgentCommand {
     AgentCommand::CardUpdate {
         card_id: card_id.to_string(),
-        title: "Fix the login redirect".to_string(),
+        title: None,
         description: Some(description.to_string()),
     }
 }
