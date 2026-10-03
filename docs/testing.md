@@ -1,6 +1,6 @@
 # 测试
 
-本文规定测试的分层、原则、写法与运行方式。做法参照 DSH 的 `docs/testing.md`。完成的标准见根 [CLAUDE.md](../CLAUDE.md)。
+本文规定测试的分层、原则、写法与运行方式。做法参照 DSH 的 `docs/testing.md`。完成的标准见根 [AGENTS.md](../AGENTS.md)。
 
 ## 1. 分层
 
