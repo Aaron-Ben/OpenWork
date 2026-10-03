@@ -5,8 +5,8 @@
     <img src="docs/assets/openwork-wordmark-light.svg" alt="OpenWork" width="420">
   </picture>
 
-  <p><strong>One Desktop, two ways to work with local agents</strong></p>
-  <p>Do reviewable coding tasks in the workbench, or let multiple local OpenCode agents<br>work together continuously through rooms, boards, and agendas.</p>
+  <p><strong>A local multi-agent collaboration workspace</strong></p>
+  <p>Let multiple local OpenCode agents work with you<br>continuously through rooms, boards, and agendas.</p>
 
   <p>
     <img alt="Target" src="https://img.shields.io/badge/target-0.1.0-2563eb">
@@ -26,33 +26,20 @@
 </div>
 
 > [!IMPORTANT]
-> OpenWork is not released yet. The development target is `0.1.0`, and you can run OpenWork only from source. Collaboration supports only macOS and local OpenCode. OpenWork permission rules, agent homes, and runtime JWTs are not an OS security sandbox. Model and tool processes keep the host capabilities that the current macOS user gives them.
+> OpenWork is not released yet. The development target is `0.1.0`, and you can run OpenWork only from source. Collaboration supports only macOS and local OpenCode. Engine processes run under Seatbelt, but the network is not restricted. Use OpenWork only in a trusted local environment.
 
 ## What is OpenWork?
 
-OpenWork is a local-first desktop agent workspace. The Desktop currently has two independent runtime paths:
+OpenWork is a local-first multi-agent collaboration workspace. You create persistent agents and work with them in direct rooms, group rooms, and boards. A local Engine executes each agent; today the Engine is OpenCode.
 
-| Mode | Best for | Who executes model work | Core objects |
-|---|---|---|---|
-| **Workbench** | Reviewable code and file tasks that the user starts, one at a time, in a selected project directory | OpenWork's own agent loop and model-provider adapters | Session, Turn, Tool Call, Permission, Trace |
-| **Collaboration** | A persistent roster of local agents that work proactively on messages and tasks | One local OpenCode runner per collaboration agent | Agent, Room, Message, Board, Card, Run |
-
-The two modes share the Tauri Desktop, theme, i18n, and PostgreSQL instance. They do not share a runtime state machine. A read-only workbench sub-agent is not a persistent collaboration agent. A workbench session is not a collaboration room.
+| Object | Meaning |
+|---|---|
+| Agent | A persistent teammate: persona, main model, triage model, agenda, and Engine |
+| Room | A direct or group room where people and agents talk |
+| Board / Card | Boards and task cards; agents can claim cards |
+| Run | The record of one agent wake-up |
 
 ## Current capabilities
-
-### Workbench
-
-- **Explicit model selection**: built-in presets for OpenAI, DeepSeek, Kimi, and GLM, all on the Responses protocol. Each session uses one specific model and reasoning effort. There is no silent fallback to a different model;
-- **Agent loop**: advances Model → Tool/Permission → Model inside one turn until completion, failure, cancellation, or a safety guard;
-- **Seven built-in tools**: `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash`. All file tools go through one path-authorization boundary. `bash` starts the host POSIX shell in the working directory;
-- **Two permission modes**: `default` automatically allows workspace reads and commands that are proven read-only. `acceptEdits` also allows changes to non-sensitive workspace files;
-- **Reviewable file changes**: `write` and `edit` make structured diffs. Undo / Reapply checks for conflicts first;
-- **Context engineering**: supports `AGENTS.md`, skills, context-composition inspection, automatic or manual `/compact`, checkpoints, replay, and rewind;
-- **Task tracking and read-only sub-agents**: a complex turn can keep a task list. It can also delegate codebase exploration to one level of read-only sub-agents;
-- **Quality traces**: record the model requests as sent, the system context, tool definitions, tokens, permission decisions, timing, and failure phases.
-
-### Collaboration
 
 - **Persistent agent roster**: create, edit, archive, and restore agents. Each agent stores a persona, main model, triage model, agenda setting, and `engine_id`;
 - **Per-agent Engine selection**: the domain model stores one Engine for each agent. Today, the only production adapter is local `OpenCode`. OpenWork sends model IDs directly to OpenCode, so models that the user configures in OpenCode also work;
@@ -63,7 +50,7 @@ The two modes share the Tauri Desktop, theme, i18n, and PostgreSQL instance. The
 - **Run observability**: inspect each agent turn by agent and status. The view shows the model, tokens, duration, errors, and a structured event timeline;
 - **Event-driven Desktop**: room, message, board, agent, and runner changes publish invalidations. The UI always reloads canonical projections from the Server.
 
-## Collaboration runtime boundary
+## Runtime boundary
 
 Today, collaboration is deliberately a single-machine product:
 
@@ -91,21 +78,16 @@ Agent `work/` directories are independent. They are not a shared checkout of a r
 flowchart TB
     UI["React Desktop"] -->|"Tauri Command / Event"| Host["Tauri Host"]
 
-    Host --> Core["OpenWorkCore<br/>workbench runtime"]
-    Core --> Models["Model adapters"]
-    Core --> Tools["Tool + Permission Runtime"]
-    Core --> PG[(PostgreSQL)]
-
     Host -->|"supervises"| Server["Collaboration Server"]
     Host -->|"supervises"| Computer["Local Computer daemon"]
     Computer -->|"HTTP + management SSE"| Server
     Computer --> Runners["per-Agent Runner"]
-    Runners --> OpenCode["local OpenCode"]
+    Runners --> OpenCode["local OpenCode<br/>(Seatbelt)"]
     Server --> PG
     Server --> Redis[(Redis<br/>expiring coordination)]
 ```
 
-The collaboration dependency boundaries are intentional:
+The dependency boundaries are intentional:
 
 - **Server** is the only writer of collaboration facts. It owns PostgreSQL, Redis, rooms, boards, runs, triage, and agenda. It never starts an Engine;
 - **Computer** reconciles desired and actual agent state. It owns agent homes, Engine adapters, and child processes. It has no database credentials;
@@ -116,7 +98,7 @@ The collaboration dependency boundaries are intentional:
 
 | Location | Contents | Lifetime |
 |---|---|---|
-| PostgreSQL | Providers, sessions, messages, traces, plus collaboration agents, rooms, boards, runs, and command-idempotency results | Durable |
+| PostgreSQL | Collaboration agents, rooms, messages, boards, runs, and command-idempotency results | Durable |
 | Redis | wake, seen, HELD, rate-limit, and cooldown state | Expiring and reconstructable |
 | `~/.openwork/agents/` | Collaboration personas, private work files, and minimal Engine continuity | Durable |
 | `~/.openwork/runtime/` | Current RuntimeSession shim, temporary credentials, and derived Engine configuration | Temporary |
@@ -175,24 +157,14 @@ pnpm install
 pnpm tauri dev
 ```
 
-Run Desktop commands inside `desktop/`. The repository root has no `package.json`. Debug Desktop looks in parent directories for the root `.env`. During startup, it applies the workbench and collaboration database migrations. Release builds do not load the development `.env`. For a Release build, set these variables explicitly in the launch environment.
+Run Desktop commands inside `desktop/`. The repository root has no `package.json`. Debug Desktop looks in parent directories for the root `.env`. During startup, it applies the collaboration database migrations. Release builds do not load the development `.env`. For a Release build, set these variables explicitly in the launch environment.
 
 ## First use
 
-### Workbench
-
-1. Create a provider and save its API key in Settings. OpenWork writes providers to `~/.openwork/config.json`. The API key is plain text, and the file mode is `0600`;
-2. create a session and choose a model and working directory;
-3. submit a task and resolve permission requests when necessary;
-4. inspect messages, file diffs, the context window, and traces.
-
-### Collaboration
-
-1. Open Collaboration from the workbench sidebar;
-2. create an agent and provide its persona, OpenCode main model, and triage model;
-3. open the agent's direct room, or create a group room and choose its members;
-4. create boards, columns, and cards. To get proactive work from an agent, enable Agenda for it;
-5. inspect each agent turn from Run Observability.
+1. Create an agent on the Colleagues page and provide its persona, OpenCode main model, and triage model;
+2. open the agent's direct room, or create a group room and choose its members;
+3. create boards, columns, and cards. To get proactive work from an agent, enable Agenda for it;
+4. inspect each agent turn from Run Observability.
 
 Collaboration agents use the current OpenCode login state. Collaboration Server never stores OpenCode provider API keys.
 
@@ -200,27 +172,19 @@ Collaboration agents use the current OpenCode login state. Collaboration Server 
 
 | Boundary | Current behavior |
 |---|---|
-| Workbench file tools | Resolve real paths and enforce workspace authorization. Explicit access outside the workspace needs a permit for the current execution |
-| Workbench `bash` | Syntax analysis only informs permission decisions. It gives no runtime isolation. If you approve a command, you trust it and its child processes |
 | Collaboration agent home / JWT | Give application identity, API authorization, and state separation. They do not stop trusted processes under the same macOS user from access to other host files |
-| OpenCode | Runs as a local child process with the file and network access that the current user permits. OpenWork gives no OS sandbox |
-| Network | OpenWork does not enforce network isolation. Model requests go to the user-configured provider or OpenCode provider |
-| Provider credentials | OpenWork encrypts workbench API keys with AES-256-GCM and stores them in PostgreSQL. OpenCode manages its own credentials |
-| Trace | Can contain private code, model requests, commands, and error details. Handle traces as sensitive development data |
+| OpenCode | Runs as a local child process under macOS Seatbelt. It can write only to that agent's home and a few other directories ([collaboration.md §3.1](docs/subsystems/collaboration.md)). If the sandbox self-check fails, OpenCode does not start |
+| Network | OpenWork does not enforce network isolation. Model requests go to the provider that OpenCode configures |
+| Provider credentials | OpenCode manages them. OpenWork stores no provider API keys |
 
-Use OpenWork only with trusted projects and trusted local agent configurations. Before you use it, make sure that you understand their host permissions.
+Use OpenWork only with trusted local agent configurations. Before you use it, make sure that you understand their host permissions.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
 - [System architecture](docs/architecture.md)
-- [Workbench session runtime](docs/subsystems/session-runtime.md)
-- [Tools and permissions](docs/subsystems/tools.md) · [Permission model](docs/subsystems/permissions.md)
-- [Context window](docs/subsystems/context-window.md) · [Compaction](docs/subsystems/compaction.md) · [Trace](docs/subsystems/trace.md)
-- [Skills](docs/subsystems/skills.md) · [Read-only sub-agents](docs/subsystems/multi-agent.md)
-- [Collaboration runtime](docs/subsystems/collaboration.md)
+- [Collaboration runtime and data model](docs/subsystems/collaboration.md)
 - [Collaboration Desktop](docs/subsystems/collaboration-desktop.md)
-- [Collaboration data model](docs/subsystems/collaboration.md)
 
 ## License
 

@@ -1,16 +1,13 @@
 # openwork-sandbox
 
-本 crate 定义一次工具调用能读写什么，并把同一份策略交给内核强制执行。规则见 [docs/subsystems/permissions.md](../../docs/subsystems/permissions.md)。
+本 crate 定义一个进程能读写什么，并用 Seatbelt 在内核中强制执行。路径分档的理由见 [Agent Note：路径四档](../../.agents/notes/implemented/architecture/2026-08-01-path-tiers-and-credential-read-deny.md)。
 
-本 crate 不依赖其他 OpenWork crate。它不启动工具进程（启动自检除外），也不做审批决定。审批与卡片归 `openwork-core`，执行归 `openwork-tools`。
+本 crate 不依赖其他 OpenWork crate。它不启动被限制的进程（启动自检除外）。
 
 ## 使用方
 
 | crate | 用途 |
 |---|---|
-| `openwork-tools` | bash 经 `SandboxBackend::wrap` 在 Seatbelt 内启动；文件工具用 `SandboxPolicy::check` 判断路径 |
-| `openwork-core` | 按会话模式与越界请求构造 `SandboxPolicy`；用 `validate_grants` 校验越界请求 |
-| `openwork-agent` | 子 Agent 角色声明 `SandboxMode` 上限 |
 | `openwork-collab` | 用 `EngineConfinement` 约束协作 Engine 进程 |
 
 ## 公开接口

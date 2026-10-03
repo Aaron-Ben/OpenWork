@@ -2,25 +2,13 @@
 
 本文规定 crate README 的结构与写法。每个 crate 在根目录有一份 `README.md`。
 
-做法来自 DSH：模板见 `.agents/skills/dsh-doc/templates/package-reference.md` 与 `package-library.md`，模型体验的规定见 `docs/cookbook/adding-a-package.md` 第 4 节。与 DSH 的不同：只写中文；装配方式是编译期 `install`，不是 `cordis.yml`。
+做法来自 DSH：模板见 `.agents/skills/dsh-doc/templates/package-reference.md` 与 `package-library.md`，模型体验的规定见 `docs/cookbook/adding-a-package.md` 第 4 节。与 DSH 的不同：只写中文；没有 `cordis.yml` 装配，“使用本 crate”写对外的入口。
 
-## 1. 类型
-
-`kind` 决定用哪一种“使用本 crate”小节。按这个顺序判定：
-
-| `kind` | 判定 | “使用本 crate”写什么 |
-|---|---|---|
-| `crate-plugin` | crate 提供 `install`，向内核注册表登记 | 宿主怎样安装它，配置项表 |
-| `crate-library` | 其他 crate | 对外的入口类型与函数。不写安装 |
-
-插件的定义见 [内核加插件的提议](../../.agents/notes/proposed/architecture/2026-10-03-kernel-and-plugins.md)。
-
-## 2. 骨架
+## 1. 骨架
 
 ````markdown
 ---
 description: "读者能用这个 crate 做什么。一到两句，带可搜索的领域词。"
-kind: "crate-plugin"
 ---
 
 # openwork-<name>
@@ -46,10 +34,9 @@ kind: "crate-plugin"
 
 一段：选它或不选它的条件，以及不选时用什么。
 
-### 装配与配置
+### 入口与配置
 
-crate-plugin：宿主中最小的 `install` 调用，加配置项表。
-crate-library：把本小节改名为“入口”，列出对外的类型与函数，每个一句。
+列出对外的类型与函数，每个一句。有配置项时，加配置项表：
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
@@ -108,7 +95,7 @@ crate-library：把本小节改名为“入口”，列出对外的类型与函�
 </details>
 ````
 
-## 3. 规则
+## 2. 规则
 
 - **先核实，再写。** 每个配置项、默认值与行为，都要能在代码或测试中找到。找不到的内容删掉。
 - 每一项进入模型上下文的内容写一个 H3。H3 下按顺序写三个 H4，每个 H4 一段。

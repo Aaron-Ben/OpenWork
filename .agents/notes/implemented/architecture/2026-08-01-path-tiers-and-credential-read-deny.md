@@ -18,7 +18,7 @@ Status: implemented
 - profile 从 `(allow default)` 与 `(deny file-write*)` 开始，只对凭据路径加 `deny file-read*`（`seatbelt.rs` 的 `SeatbeltProfile::new`）。
 - 名字按 ASCII 大小写不敏感匹配，见 [工作区内的档位名按 ASCII 大小写不敏感匹配](2026-09-24-case-insensitive-protected-names.md)。
 
-设计见 [permissions.md](../../../../docs/subsystems/permissions.md)。
+公开接口见 [openwork-sandbox README](../../../../crates/openwork-sandbox/README.md)。
 
 ## 考虑过的方案
 

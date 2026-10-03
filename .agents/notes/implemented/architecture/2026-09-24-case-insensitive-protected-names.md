@@ -15,7 +15,7 @@ macOS 的默认文件系统 APFS 不区分大小写。`.ENV` 与 `.env` 是同�
 - 规则只作用于工作区内的档位名。`~/.openwork`、skill 根与凭据目录按规范化后的路径匹配。
 - `crates/openwork-sandbox/tests/parity.rs` 的 `case_variants_of_protected_names_are_not_writable` 在真实内核上检查大小写变体：内核与围栏都拒绝写入。
 
-设计见 [permissions.md §3](../../../../docs/subsystems/permissions.md)。
+公开接口见 [openwork-sandbox README](../../../../crates/openwork-sandbox/README.md)。
 
 ## 考虑过的方案
 

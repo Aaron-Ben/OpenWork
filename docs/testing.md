@@ -9,8 +9,8 @@
 | 单元 | 源文件内 `#[cfg(test)] mod tests`；前端 `desktop/src/**/*.test.ts(x)` | `cargo test`、`pnpm --dir desktop test` | 无 |
 | 集成 | `crates/<crate>/tests/*.rs` | `cargo test -p <crate> --test <文件>` | 无 |
 | 契约 | 外部协议的请求与响应，由本地 mock 服务器回放 | 同集成 | 无，不需要 API key |
-| PostgreSQL | `crates/openwork-core/tests/postgres_*.rs` 与协作测试 | 同集成 | `TEST_DATABASE_URL`；协作另需 `TEST_REDIS_URL` |
-| 真机沙箱 | `crates/openwork-sandbox/tests/`、`crates/openwork-tools/tests/sandbox_calls.rs` | 同集成 | macOS 的 `sandbox-exec` |
+| PostgreSQL | 协作测试 | 同集成 | `TEST_DATABASE_URL` 与 `TEST_REDIS_URL` |
+| 真机沙箱 | `crates/openwork-sandbox/tests/` | 同集成 | macOS 的 `sandbox-exec` |
 | 真实 API | 标 `#[ignore = "requires …"]` 的测试 | `cargo test -p <crate> --test <文件> -- --ignored` | API key 与网络 |
 
 - PostgreSQL 测试在缺少 `TEST_DATABASE_URL` 时静默返回。所以必须用 `scripts/check.sh` 运行全量测试，它在变量缺失时直接失败。
@@ -27,7 +27,7 @@
 ## 3. 写法
 
 - 测试名写行为与结果，读起来是一句话，例如 `spilled_output_is_readable_without_approval_and_not_writable`。禁止 `test_1`、`it_works`、`basic`。
-- 对应子系统页验收条目的测试以 `acc_NN_` 开头，并在文档注释中写出条目来源，例如 `/// tools.md §10 #24: …`。
+- 对应子系统页验收条目的测试以 `acc_NN_` 开头，并在文档注释中写出条目来源，例如 `/// collaboration.md §10 #24: …`。
 - 断言具体结果，不只断言 `is_ok()`。模型可见的文本逐字断言，因为它就是契约。
 - 禁止为了通过而放宽断言，例如把 `==` 改成 `>=`、删掉一条断言。因共享环境确实需要放宽时，写注释说明原因，并优先改为只断言本测试自己的数据。
 
@@ -49,9 +49,9 @@
 
 ```bash
 TEST_DATABASE_URL=postgres://openwork:openwork@127.0.0.1:5432/openwork_test scripts/check.sh   # 全量检查
-cargo test -p openwork-tools --test read_before_edit                                          # 单个集成测试文件
+cargo test -p openwork-collab --test architecture                                             # 单个集成测试文件
 cargo test -p openwork-sandbox tiers::tests                                                   # 单个模块的单元测试
-pnpm --dir desktop test -- transcript                                                         # 单个前端测试
+pnpm --dir desktop test -- roomListModel                                                       # 单个前端测试
 ```
 
 开发时先运行改动相关的测试；完成时运行 `scripts/check.sh`。

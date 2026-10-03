@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type CollabView = 'rooms' | 'whispers' | 'agents' | 'boards' | 'observability'
+export type CollabView = 'rooms' | 'whispers' | 'agents' | 'boards' | 'observability' | 'settings'
 
 /** 打开房间时预填到输入框的文字（卡片详情的“在房间中讨论”，collaboration-desktop.md §9）。 */
 export interface PendingDraft {

@@ -51,17 +51,8 @@ OpenWork 是本地 Agent 工作台：Rust workspace 加 Tauri 2 / React 桌面�
 
 | 名称 | 路径 |
 |---|---|
-| Codex | `/Volumes/Extreme SSD/Code/codex` |
 | Cumora | `/Volumes/Extreme SSD/Code/cumora` |
-| DSH | `/Volumes/Extreme SSD/Code/deepseek-harness` |
-| maka | `/Volumes/Extreme SSD/Code/maka` |
-| opencode | `/Volumes/Extreme SSD/Code/opencode` |
-| ZCode | `/Volumes/Extreme SSD/Code/ZCode` |
 
-- 不要相信 maka 中未提交的文档和 html 文件。只以已提交的源码为准。
-- 引用参考项目的做法时，给出文件路径。
-- 如果你没有读过源码，只凭印象或文档写出某个内容，把它标为"未确认"。
-- 文档里写"来自 X"的内容，必须能在 X 的源码里找到。
 
 ## 汇报格式
 

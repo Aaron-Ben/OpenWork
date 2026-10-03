@@ -4,12 +4,10 @@ use std::path::{Path, PathBuf};
 fn one_local_engine_path_keeps_separate_server_and_computer_facades() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(crate_root.join("Cargo.toml")).unwrap();
-    for dependency in ["rmcp", "openwork-core", "openwork-models"] {
-        assert!(
-            !manifest.contains(dependency),
-            "legacy collaboration dependency survived: {dependency}"
-        );
-    }
+    assert!(
+        !manifest.contains("rmcp"),
+        "legacy collaboration dependency survived: rmcp"
+    );
 
     let computer = source_text(&crate_root.join("src/computer"));
     assert!(!computer.contains("sqlx::"));

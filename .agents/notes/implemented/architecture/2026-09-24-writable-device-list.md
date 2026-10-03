@@ -15,7 +15,7 @@ Seatbelt profile 先 `(deny file-write*)`，再逐条放行。脚本常按路径
 - 这些设备在两个模式下都可写。`/dev` 下仍不能创建文件。
 - 测试：`matrix::stream_devices_are_writable_in_every_mode`。五种写法在两个模式下都成功，`touch /dev/openwork-matrix-probe` 被拒。另有单元测试 `tiers::numbered_devices_are_writable_but_other_dev_paths_are_not`。
 
-设计见 [permissions.md §5](../../../../docs/subsystems/permissions.md)。
+公开接口见 [openwork-sandbox README](../../../../crates/openwork-sandbox/README.md)。
 
 ## 考虑过的方案
 

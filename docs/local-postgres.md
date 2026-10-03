@@ -1,34 +1,14 @@
 # Local PostgreSQL
 
-Last reviewed: 2026-07-18
-
-> Status: current development setup. At this time, OpenWork supports only PostgreSQL. SQLx migrations are the source of truth for the schema.
+The Collaboration Server stores durable facts in PostgreSQL. All its tables use the `collab_` prefix.
 
 ## Database ownership
 
-The migration baseline is at:
+The migration files are in `crates/openwork-collab/migrations/`. The ordered list that the Server applies is `MIGRATIONS` in `crates/openwork-collab/src/server/migration.rs`.
 
-```text
-crates/openwork-core/migrations/<initial schema>.sql
-```
+When the Server connects (`server/db.rs`), it applies each pending migration in one transaction. It records the applied versions in `collab_schema_migrations`. Do not edit a migration after a database applies it. For each schema change, add a new file and append it to `MIGRATIONS`.
 
-SQLx records the applied versions and checksums in `_sqlx_migrations`. Do not edit a migration after SQLx applies it. For each later schema change, add a new migration file.
-
-When the directory changes, `crates/openwork-core/build.rs` tells Cargo to rebuild the embedded migration set.
-
-The clean baseline creates:
-
-| Table | Purpose |
-| --- | --- |
-| `_sqlx_migrations` | SQLx migration version, checksum, status, and execution time |
-| `sessions` | Session metadata |
-| `turns` | Turn lifecycle and token/tool summaries |
-| `messages` | Complete model conversation messages |
-| `trace_spans` | Best-effort diagnostics for Model Calls and Tool Calls |
-
-Migration `202610030001_models_from_config.sql` drops `provider_credentials` and `models`. Providers are in `~/.openwork/config.json`.
-
-This baseline has no backfill for a legacy schema. It is for the current pre-production stage, when you can rebuild the development database.
+A database that an older OpenWork build used can also contain tables without the `collab_` prefix, such as `sessions` and `_sqlx_migrations`. The current code does not read them. To remove them, reset the database (see below).
 
 ## Configuration
 
@@ -44,35 +24,22 @@ Copy the development environment template:
 cp .env.example .env
 ```
 
-## Start and migrate
+## Start
 
 From the repository root, run:
 
 ```bash
 docker compose up -d postgres
-cargo run -p openwork-core --bin openwork-migrate
 ```
 
-`OpenWorkCore::bootstrap` also applies pending migrations before it serves commands. You can use the migration binary to provision and diagnose the database without the desktop application.
-
-You can safely run the migration command many times. SQLx applies only the pending versions.
-
-## Create a new migration
-
-Install `sqlx-cli`. Then run:
-
-```bash
-sqlx migrate add --source crates/openwork-core/migrations <description>
-```
-
-Use separate migration files for schema changes and data changes. During the pre-production stage, do a destructive reset only when you explicitly choose it. Application startup must not silently delete unknown data.
+The Desktop starts the Collaboration Server, and the Server applies the migrations. No separate migration command exists.
 
 ## Inspect
 
 ```bash
 docker compose ps postgres
 docker compose logs postgres
-docker exec openwork-postgres psql -U openwork -d openwork -c "SELECT version, description, success FROM _sqlx_migrations ORDER BY version"
+docker exec openwork-postgres psql -U openwork -d openwork -c "SELECT version, description FROM collab_schema_migrations ORDER BY version"
 ```
 
 ## Stop or reset
@@ -83,12 +50,11 @@ Stop PostgreSQL and keep the local volume:
 docker compose stop postgres
 ```
 
-Delete all local database contents and rebuild from the clean baseline:
+Delete all local database contents:
 
 ```bash
 docker compose down -v
 docker compose up -d postgres
-cargo run -p openwork-core --bin openwork-migrate
 ```
 
-`down -v` permanently deletes the local sessions, traces, model settings, and encrypted provider API keys.
+`down -v` permanently deletes the local agents, rooms, messages, boards, and runs. The next Server start creates the schema again.

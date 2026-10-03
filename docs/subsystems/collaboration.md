@@ -2,7 +2,7 @@
 
 本页描述协作模式的运行时与存储：多个持久 Agent 通过房间、消息与共享看板协作。`openwork-collab` 负责 protocol、Collaboration Server 与 Local Computer；Desktop 的 supervisor 在 `desktop/src-tauri/src/collab_client.rs`；Engine 沙箱规则由 `openwork-sandbox::EngineConfinement` 生成。
 
-协作运行时与工作台的 `SessionActor` 运行时彼此独立。界面、Tauri command 与 SSE 到 WebView 的转发见 [collaboration-desktop.md](collaboration-desktop.md)。工作台的权限见 [permissions.md](permissions.md)。命令清单见 [crate README](../../crates/openwork-collab/README.md)。
+界面、Tauri command 与 SSE 到 WebView 的转发见 [collaboration-desktop.md](collaboration-desktop.md)。Engine 的沙箱见 [openwork-sandbox README](../../crates/openwork-sandbox/README.md)。命令清单见 [crate README](../../crates/openwork-collab/README.md)。
 
 ## 1. 范围、进程与模块
 
@@ -49,7 +49,7 @@ Agent shim        → protocol
 3. Server 不创建 Engine 子进程，也不调用模型。Computer 经 Engine adapter 执行全部模型调用。
 4. WebView 只调用 Tauri command，不接触 Runtime URL 或凭证。
 5. Server 与 Computer 只经 loopback HTTP/SSE DTO 通信。
-6. 协作 crate 不依赖 `openwork-core`、`openwork-credentials` 或工作台 Provider adapter。
+6. 协作 crate 只依赖 `openwork-sandbox` 这一个 OpenWork crate。
 7. `server` 与 `computer` 不引用对方的实现类型，只共享 `protocol`。
 
 Server 内的各领域模块直接拥有自己的业务 SQL，没有集中式的 Storage、Repository 或 Manager 转发层：

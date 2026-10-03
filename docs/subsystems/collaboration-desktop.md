@@ -22,11 +22,11 @@
 
 ## 2. Shell 与导航
 
-`desktop/src/App.tsx` 按 `modeStore` 的 mode 选择 `AppShell`（工作台）或 `CollabShell`（协作）。mode 写入 `localStorage` 的 `openwork-mode`，无法识别的值按 `workbench` 处理。切换 mode 只替换 React 组件树，不重启 Tauri host 或 Collaboration Runtime。
+`desktop/src/App.tsx` 应用主题后直接渲染 `CollabShell`。
 
 `CollabShell` 挂载时读取房间列表、Agent 列表与 Runtime 状态，并订阅 invalidation（§5）。没有选中的房间时，它选中列表中第一个用户所在的房间。
 
-`CollabRail` 宽 80px（`w-20`），有五个目的地，底部是返回工作台：
+`CollabRail` 宽 80px（`w-20`），上方有五个目的地，底部是设置：
 
 | view | 标签（zh-CN） | 页面 |
 |---|---|---|
@@ -35,10 +35,11 @@
 | `agents` | 同事 | §8 |
 | `boards` | 看板 | §9 |
 | `observability` | 观测 | §10 |
+| `settings` | 设置 | 主题与界面语言（`features/collab/settings/GeneralSettings.tsx`） |
 
-Rail 上没有未读数。未读总数显示在工作台侧栏的“协作”入口上（`app/Sidebar.tsx` 的 `WorkbenchFooter`）。它是用户所在房间的 `unreadCount` 之和，取自 `roomStore`。`roomStore` 只在协作模式中读取与刷新。
+Rail 上没有未读数。未读只显示在房间列表中（§7.1）。
 
-macOS 上，Rail 顶部有 28px（`h-7`）的窗口拖拽区。协作 feature 不 import 工作台的 chat、sessions 与 traces feature。两者只共享 UI primitive、主题、i18n 与通用错误处理。
+macOS 上，Rail 顶部有 28px（`h-7`）的窗口拖拽区。
 
 ## 3. Tauri 监督进程
 
@@ -47,15 +48,13 @@ macOS 上，Rail 顶部有 28px（`h-7`）的窗口拖拽区。协作 feature �
 应用 setup 的顺序（`desktop/src-tauri/src/lib.rs`）：
 
 ```text
-OpenWorkCore::bootstrap
-  → Core 事件桥
-  → CollabDaemonClient::discover_or_start
-      → 启动 Server，校验 ready
-      → 启动 Computer，校验 ready
-      → 等待 Computer 的第一次 heartbeat
-      → 启动 Desktop SSE 任务
-  → 协作 invalidation 桥
-  → manage(CollabDaemonClient)，manage(OpenWorkCore)
+CollabDaemonClient::discover_or_start
+  → 启动 Server，校验 ready
+  → 启动 Computer，校验 ready
+  → 等待 Computer 的第一次 heartbeat
+  → 启动 Desktop SSE 任务
+协作 invalidation 桥
+manage(CollabDaemonClient)
 ```
 
 - 状态目录取 `OPENWORK_COLLAB_HOME`，没有时取 `~/.openwork`，权限 0700。
@@ -252,7 +251,6 @@ Desktop SSE 断开后，Tauri host 自己重连。间隔从 1 秒起翻倍，上
 
 | store | 文件 | 拥有 |
 |---|---|---|
-| `modeStore` | `app/modeStore.ts` | workbench/collab mode |
 | `collabNavigationStore` | `features/collab/collabNavigationStore.ts` | Rail view、当前房间、当前私聊、要预填到输入框的文字 |
 | `roomViewStore` | `rooms/roomViewStore.ts` | 房间右侧栏的内容与开关、正在引用的消息、高亮的消息、成员管理对话框、滚到最新的信号 |
 | `roomStore` | `rooms/roomStore.ts` | 房间列表、各房间成员、建群、打开私聊、置顶与成员操作 |
@@ -456,7 +454,7 @@ Agent 资料：64px 头像与识别色、显示名与 `@id`、role、状态标�
 
 ## 11. 视觉
 
-- 沿用工作台的设计令牌（`desktop/src/app/theme/globals.css`）：`paper` / `paper-hover` / `surface` 三层面、`ink` 系文字、`line` 边框、`clay` 唯一强调色、`status-*` 状态色。标题用衬线字体。亮色与暗色由同一组令牌驱动。
+- 使用应用的设计令牌（`desktop/src/app/theme/globals.css`）：`paper` / `paper-hover` / `surface` 三层面、`ink` 系文字、`line` 边框、`clay` 唯一强调色、`status-*` 状态色。标题用衬线字体。亮色与暗色由同一组令牌驱动。
 - Agent 识别色令牌 `--agent-1` … `--agent-6` 只用于头像、名字、提及标签和工作中外圈。
   - 亮色与暗色各 6 档。亮色的相对亮度为 0.07–0.14，暗色为 0.35–0.57。
   - 各档在 `paper` 与 `paper-hover` 上的对比度都不低于 4.5:1。

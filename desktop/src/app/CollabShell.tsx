@@ -9,6 +9,7 @@ import { CollabRail } from '@/features/collab/components/CollabRail'
 import { ResizableSidebarLayout } from '@/features/collab/components/ResizableSidebarLayout'
 import { useCollabInvalidationCoordinator } from '@/features/collab/invalidationCoordinator'
 import { ObservabilityPage } from '@/features/collab/observability/ObservabilityPage'
+import { GeneralSettings } from '@/features/collab/settings/GeneralSettings'
 import { RoomList } from '@/features/collab/rooms/RoomList'
 import { RoomPage } from '@/features/collab/rooms/RoomPage'
 import { useRoomStore } from '@/features/collab/rooms/roomStore'
@@ -60,8 +61,10 @@ export function CollabShell() {
         <AgentManager />
       ) : view === 'boards' ? (
         <BoardPage />
-      ) : (
+      ) : view === 'observability' ? (
         <ObservabilityPage />
+      ) : (
+        <section className="min-w-0 flex-1 overflow-y-auto"><GeneralSettings /></section>
       )}
     </main>
   )

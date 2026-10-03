@@ -2,9 +2,7 @@ mod collab_client;
 mod collab_event_bridge;
 mod commands;
 mod error;
-mod event_bridge;
 
-use openwork_core::{OpenWorkCore, OpenWorkCoreConfig};
 use tauri::Manager;
 
 pub use collab_client::{CollabClientError, CollabDaemonClient};
@@ -16,21 +14,12 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let core = tauri::async_runtime::block_on(OpenWorkCore::bootstrap(
-                OpenWorkCoreConfig::from_env_or_local(),
-            ))?;
-            event_bridge::spawn_session_update_bridge(
-                app.handle().clone(),
-                core.subscribe_updates(),
-            );
             let collab = tauri::async_runtime::block_on(
                 collab_client::CollabDaemonClient::discover_or_start(),
             )?;
             collab_event_bridge::spawn(app.handle().clone(), collab.subscribe_invalidations());
             app.manage(collab);
-            app.manage(core);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -66,41 +55,6 @@ pub fn run() {
             commands::collab::collab_card_delete,
             commands::collab::collab_run_list,
             commands::collab::collab_run_trace,
-            commands::skills::list_skills,
-            commands::skills::set_skill_disabled,
-            commands::skills::read_skill,
-            commands::provider::provider_list,
-            commands::provider::provider_presets,
-            commands::provider::provider_create,
-            commands::provider::provider_update,
-            commands::provider::provider_delete,
-            commands::provider::provider_test,
-            commands::runtime::runtime_session_list,
-            commands::runtime::runtime_sub_agent_list,
-            commands::runtime::runtime_session_create,
-            commands::runtime::runtime_session_load,
-            commands::runtime::runtime_context_window_inspect,
-            commands::runtime::runtime_session_compact,
-            commands::runtime::runtime_session_rewind,
-            commands::runtime::runtime_compaction_list,
-            commands::runtime::runtime_conversation_replay,
-            commands::runtime::runtime_compaction_transcript_read,
-            commands::runtime::runtime_session_rename,
-            commands::runtime::runtime_session_set_model,
-            commands::runtime::runtime_session_delete,
-            commands::runtime::runtime_turn_start,
-            commands::runtime::runtime_turn_cancel,
-            commands::runtime::runtime_file_changes_undo,
-            commands::runtime::runtime_file_changes_reapply,
-            commands::runtime::runtime_permission_resolve,
-            commands::runtime::runtime_permission_mode_set,
-            commands::runtime::runtime_session_snapshot,
-            commands::runtime::runtime_update_replay,
-            commands::runtime::runtime_trace_list,
-            commands::runtime::runtime_trace_get,
-            commands::runtime::runtime_trace_get_by_id,
-            commands::runtime::runtime_trace_payload_get,
-            commands::runtime::runtime_trace_compactions,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

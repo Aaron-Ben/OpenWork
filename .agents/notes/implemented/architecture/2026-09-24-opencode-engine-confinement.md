@@ -18,7 +18,7 @@ Engine 又有两个必须满足的需要：连模型服务商；通过 `openwork
 - JWT 仍以 token 文件交给 shim（`OPENWORK_RUNTIME_TOKEN_FILE`），模型能读到它。
 - 沙箱自检失败时，`probe` 返回错误，inventory 为 error，不启动 Runner。
 
-规则见 [collaboration.md §3.1](../../../../docs/subsystems/collaboration.md)。网络的立场见 [Agent Note：不做网络管控](2026-08-01-no-network-control-and-no-claim.md)。
+规则见 [collaboration.md §3.1](../../../../docs/subsystems/collaboration.md)。
 
 ## 考虑过的方案
 

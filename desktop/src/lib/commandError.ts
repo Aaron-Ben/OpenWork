@@ -1,38 +1,11 @@
-export type CommandErrorCode =
-  | 'invalid_request'
-  | 'provider_not_found'
-  | 'session_not_found'
-  | 'turn_not_found'
-  | 'approval_not_found'
-  | 'database_unavailable'
-  | 'schema_not_ready'
-  | 'configuration_invalid'
-  | 'operation_conflict'
-  | 'skill_unavailable'
-  | 'model_request_failed'
-  | 'collaboration_unavailable'
-  | 'internal_error'
+export type CommandErrorCode = 'collaboration_unavailable' | 'internal_error'
 
 export interface CommandError {
   code: CommandErrorCode
   message: string
 }
 
-const COMMAND_ERROR_CODES = new Set<CommandErrorCode>([
-  'invalid_request',
-  'provider_not_found',
-  'session_not_found',
-  'turn_not_found',
-  'approval_not_found',
-  'database_unavailable',
-  'schema_not_ready',
-  'configuration_invalid',
-  'operation_conflict',
-  'skill_unavailable',
-  'model_request_failed',
-  'collaboration_unavailable',
-  'internal_error',
-])
+const COMMAND_ERROR_CODES = new Set<CommandErrorCode>(['collaboration_unavailable', 'internal_error'])
 
 export function resolveCommandError(error: unknown): CommandError {
   if (isCommandError(error)) return error

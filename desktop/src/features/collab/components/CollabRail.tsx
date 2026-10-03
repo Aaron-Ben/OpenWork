@@ -1,7 +1,6 @@
-import { Activity, Bot, ClipboardList, Eye, LogOut, MessagesSquare } from 'lucide-react'
+import { Activity, Bot, ClipboardList, Eye, MessagesSquare, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { useModeStore } from '@/app/modeStore'
 import { Button } from '@/components/ui/button'
 import { isMacOS } from '@/lib/platform'
 import { useCollabNavigationStore, type CollabView } from '@/features/collab/collabNavigationStore'
@@ -9,7 +8,6 @@ import { useCollabNavigationStore, type CollabView } from '@/features/collab/col
 export function CollabRail({ view, macOS = isMacOS }: { view: CollabView; macOS?: boolean }) {
   const { t } = useTranslation()
   const navigate = useCollabNavigationStore((state) => state.navigate)
-  const setMode = useModeStore((state) => state.setMode)
   const items: Array<{ view: CollabView; label: string; icon: React.ReactNode }> = [
     { view: 'rooms', label: t('collab.nav.rooms'), icon: <MessagesSquare size={20} /> },
     { view: 'whispers', label: t('collab.nav.whispers'), icon: <Eye size={20} /> },
@@ -28,7 +26,7 @@ export function CollabRail({ view, macOS = isMacOS }: { view: CollabView; macOS?
         ))}
       </div>
       <div className="flex justify-center border-t border-line p-2">
-        <Button type="button" variant="ghost" size="icon" className="size-11 rounded-2xl" aria-label={t('collab.backToWorkbench')} onClick={() => setMode('workbench')}><LogOut size={20} /></Button>
+        <Button type="button" variant="ghost" size="icon" className={`size-11 rounded-2xl ${view === 'settings' ? 'bg-paper text-clay-ink shadow-sm' : ''}`} aria-label={t('collab.nav.settings')} onClick={() => navigate('settings')}><Settings size={20} /></Button>
       </div>
     </aside>
   )

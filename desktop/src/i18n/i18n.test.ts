@@ -4,7 +4,6 @@ import i18n, { supportedLanguages } from './index'
 import { enUS } from './locales/en-US'
 import { zhCN } from './locales/zh-CN'
 import { zhTW } from './locales/zh-TW'
-import { TRACE_ATTRIBUTE_KEYS } from '@/features/traces/traceViewModel'
 
 function keyPaths(value: object, prefix = ''): string[] {
   return Object.entries(value).flatMap(([key, child]) => {
@@ -19,17 +18,9 @@ describe('i18n', () => {
     expect(i18n.resolvedLanguage).toBe('zh-CN')
   })
 
-  it('loads the shell and settings translations', () => {
-    expect(i18n.t('sidebar.newSession')).toBe('创建会话')
-    expect(i18n.t('settings.models.title')).toBe('模型配置')
+  it('loads the settings translations', () => {
     expect(i18n.t('settings.general.title')).toBe('通用')
     expect(i18n.t('settings.appearance.system')).toBe('跟随系统')
-    expect(i18n.t('activity.title')).toBe('运行记录')
-  })
-
-  it('provides complete navigation labels in every supported language', () => {
-    expect(i18n.getFixedT('zh-TW')('sidebar.newSession')).toBe('建立對話')
-    expect(i18n.getFixedT('en-US')('sidebar.newSession')).toBe('New conversation')
     expect(i18n.getFixedT('en-US')('settings.appearance.language')).toBe('Language')
   })
 
@@ -45,6 +36,7 @@ describe('i18n', () => {
       'collab.nav.agents',
       'collab.nav.boards',
       'collab.nav.observability',
+      'collab.nav.settings',
       'collab.rooms.title',
       'collab.rooms.messagePlaceholder',
       'collab.rooms.createGroup',
@@ -62,61 +54,6 @@ describe('i18n', () => {
     for (const language of supportedLanguages) {
       const translate = i18n.getFixedT(language)
       for (const path of paths) expect(translate(path)).not.toBe(path)
-    }
-  })
-
-  it('localizes every trace attribute and detail section in all supported languages', () => {
-    for (const language of supportedLanguages) {
-      const translate = i18n.getFixedT(language)
-      for (const key of TRACE_ATTRIBUTE_KEYS) {
-        const path = `activity.traceFields.${key}`
-        expect(translate(path)).not.toBe(path)
-      }
-      for (const value of [
-        'started', 'failed', 'succeeded', 'tool_use', 'stream_decode',
-        'semantic_output_emitted', 'allow', 'sandbox', 'sandbox_unavailable', 'non_interactive',
-        'control_tool', 'inherited', 'rm_recursive_or_force', 'auto', 'accept_edits', 'enabled', 'true', 'false',
-        'degenerate', 'deterministic', 'input_overflow', 'transient', 'timeout',
-      ] as const) {
-        const path = `activity.traceValues.${value}`
-        expect(translate(path)).not.toBe(path)
-      }
-      for (const category of [
-        'sandbox_auto', 'sandbox_denied', 'user_approved_escalation', 'user_approved_danger',
-        'sandbox_unavailable', 'rule_denied', 'user_denied', 'control_tool', 'cancelled', 'unknown',
-      ] as const) {
-        const path = `activity.permissionCategory.${category}`
-        expect(translate(path)).not.toBe(path)
-      }
-      for (const path of [
-        'activity.totalDuration',
-        'activity.completenessLabel',
-        'activity.tokenComposition',
-        'activity.expandAllProperties',
-        'activity.completenessState.partial',
-      ] as const) {
-        expect(translate(path)).not.toBe(path)
-      }
-      for (const slot of ['request', 'system_context', 'tool_definitions', 'response'] as const) {
-        const path = `activity.payloads.slots.${slot}`
-        expect(translate(path)).not.toBe(path)
-      }
-      expect(translate('activity.payloads.truncated')).not.toBe('activity.payloads.truncated')
-      expect(translate('activity.payloads.missing')).not.toBe('activity.payloads.missing')
-    }
-
-    expect(i18n.getFixedT('zh-CN')('activity.traceFields.requestBuildMs')).toBe('请求构建耗时')
-    expect(i18n.getFixedT('zh-TW')('activity.traceFields.requestBuildMs')).toBe('請求建置耗時')
-    expect(i18n.getFixedT('en-US')('activity.traceFields.requestBuildMs')).toBe('Request build time')
-  })
-
-  it('does not keep trace field labels outside the frontend attribute whitelist', () => {
-    const allowed = new Set<string>(TRACE_ATTRIBUTE_KEYS)
-    for (const resource of [zhCN, zhTW, enUS]) {
-      const extras = Object.keys(resource.activity.traceFields)
-        .filter((key) => !allowed.has(key))
-        .sort()
-      expect(extras).toEqual([])
     }
   })
 })
