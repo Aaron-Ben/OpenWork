@@ -15,6 +15,7 @@
 
 - PostgreSQL 测试在缺少 `TEST_DATABASE_URL` 时静默返回。所以必须用 `scripts/check.sh` 运行全量测试，它在变量缺失时直接失败。
 - 真机沙箱测试用 `#[cfg(target_os = "macos")]`，不得标 `#[ignore]`。它们是沙箱行为的证据。
+- 已知不稳定的测试：`crates/openwork-collab/tests/opencode_adapter.rs` 的 `reported_rate_limit_terminates_a_still_running_opencode_process`。重跑后通过就可以，但要在汇报中写明。
 - 真实 API 测试不进 `scripts/check.sh`。改动模型调用、Provider 预设或模型可见的行为时，手动运行相关的真实 API 测试，并在汇报中写明结果。
 
 ## 2. 原则

@@ -1,6 +1,6 @@
 # OpenWork 文档
 
-`docs/subsystems/` 每页描述一个子系统已经实现的行为、边界与验收。决策理由与还没实现的设计写在 [Agent Notes](../.agents/notes/README.md)。文档分层、写作规则与字数上限见 [AGENTS.md](AGENTS.md)。
+`docs/subsystems/` 每页描述一个子系统已经实现的行为、边界与验收。决策理由与还没实现的设计写在 [Agent Notes](../.agents/notes/README.md)。文档分层与写作规则见 [AGENTS.md](AGENTS.md)。
 
 跨功能的领域术语以 [architecture.md](architecture.md) 为准。
 
