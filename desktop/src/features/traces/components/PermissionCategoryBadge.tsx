@@ -18,7 +18,7 @@ const STYLES: Record<PermissionCategory, string> = {
   unknown: 'bg-paper-hover text-ink-faint',
 }
 
-/** Tool Span 的权限类别（permissions.md §6.4）；其他 Span 不渲染。 */
+/** Tool Span 的权限类别（permissions.md §14.1）；其他 Span 不渲染。 */
 export function PermissionCategoryBadge({ span, className }: { span: RuntimeTraceSpan; className?: string }) {
   const { t } = useTranslation()
   const category = permissionCategory(span)

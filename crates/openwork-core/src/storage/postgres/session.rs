@@ -73,7 +73,7 @@ impl PostgresStorage {
             .ok_or_else(|| StorageError::SessionNotFound(input.id.to_string()))
     }
 
-    /// 写入会话的沙箱模式（permissions.md §6.3）。会话不存在时报错。
+    /// 写入会话的沙箱模式（permissions.md §13.1）。会话不存在时报错。
     pub async fn set_session_sandbox_mode(
         &self,
         session_id: &SessionId,
@@ -228,7 +228,7 @@ impl PostgresStorage {
         Ok(session)
     }
 
-    /// The tool-result pruning watermark (compaction.md §1.1); `None` when
+    /// The tool-result pruning watermark (compaction.md §2); `None` when
     /// nothing has been pruned.
     pub async fn load_tool_result_pruned_through(
         &self,

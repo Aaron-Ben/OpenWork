@@ -1,4 +1,4 @@
-//! Tool Span 的属性（trace.md、permissions.md §7）。
+//! Tool Span 的属性（trace.md、permissions.md §14.2）。
 //!
 //! 权限部分回答事故复盘时的两个问题：这条命令在什么约束下跑的？为什么问了 / 没问？
 
@@ -28,7 +28,7 @@ pub struct ToolTraceAttributesV1 {
     /// 命中的危险命令清单键，如 `rm_recursive_or_force`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub danger_match: Option<String>,
-    /// 是否被内核或文件工具围栏拒绝（permissions.md §3.3）。
+    /// 是否被内核或文件工具围栏拒绝（permissions.md §7）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_denied: Option<bool>,
     /// `allow` / `ask` / `deny` / `cancelled`。
@@ -51,7 +51,7 @@ pub struct ToolTraceAttributesV1 {
     pub artifact_types: Vec<String>,
 }
 
-/// 一条越界路径，按 P3 的需要可以直接按路径聚合（permissions.md §7）。
+/// 一条越界路径，按 P3 的需要可以直接按路径聚合（permissions.md §14.2）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EscalationPathTrace {

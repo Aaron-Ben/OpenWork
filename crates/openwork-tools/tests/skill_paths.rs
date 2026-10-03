@@ -1,4 +1,4 @@
-//! skill 根（skills.md §5.2、permissions.md §2.3）：可读，任何模式、任何越界下都不可写。
+//! skill 根（skills.md §5.2、permissions.md §3）：可读，任何模式、任何越界下都不可写。
 
 use std::fs;
 use std::path::Path;

@@ -143,7 +143,7 @@ mod tests {
         }
     }
 
-    /// collaboration.md §8.2、§16 #9：精确 `@<id>` 与引用都算点名；被点名者、`@all`、私聊、
+    /// collaboration.md §8.2、§15 #9：精确 `@<id>` 与引用都算点名；被点名者、`@all`、私聊、
     /// 没有点名、点名覆盖全员时都直接参与。
     #[test]
     fn acc_09_only_messages_naming_other_agents_are_routed() {

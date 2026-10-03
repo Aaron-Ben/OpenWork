@@ -20,7 +20,7 @@ use crate::{
 };
 use openwork_sandbox::Access;
 
-/// Paths returned (tools.md §9 glob).
+/// Paths returned (tools.md §7 glob).
 const MAX_RESULTS: usize = 100;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -240,7 +240,7 @@ mod tests {
             .expect("set mtime");
     }
 
-    /// tools.md §12 #24: at most 100 paths, newest first, exact total, full
+    /// tools.md §10 #24: at most 100 paths, newest first, exact total, full
     /// list on disk.
     #[tokio::test]
     async fn acc_24_returns_the_newest_hundred_with_an_exact_total() {

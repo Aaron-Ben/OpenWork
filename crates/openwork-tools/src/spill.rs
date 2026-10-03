@@ -1,4 +1,4 @@
-//! Bounded tool results and their spill files (tools.md §10 "大结果落盘").
+//! Bounded tool results and their spill files (tools.md §8 "大结果落盘").
 //!
 //! Every model-visible result fits in [`MAX_RESULT_BYTES`]. When a tool has to
 //! leave something out, the complete text goes to a per-session spill file and

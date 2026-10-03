@@ -88,7 +88,7 @@ pub(crate) fn estimate_serialized_tokens(
 }
 
 /// Bytes of `content` as the model sees it. Tool-result Artifacts exist for
-/// the interface only and never reach a provider (tools.md §10), so they are
+/// the interface only and never reach a provider (tools.md §8), so they are
 /// left out; a file-change Artifact alone can hold two copies of a file.
 fn model_visible_bytes(content: &[ContentBlock]) -> Result<u64, ContextBudgetError> {
     let has_artifacts = content.iter().any(
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(tools.len(), 1);
     }
 
-    /// tools.md §12 #38: Artifacts never reach the model, so they must not
+    /// tools.md §10 #38: Artifacts never reach the model, so they must not
     /// count toward the budget either. A file-change Artifact carries the
     /// whole file before and after the edit; counting it would trigger
     /// compaction for content the model never sees.

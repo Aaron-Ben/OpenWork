@@ -36,7 +36,7 @@ function toolSpan(attributes: Record<string, unknown>): RuntimeTraceSpan {
 }
 
 describe('permissionCategory', () => {
-  /** permissions.md §6.4 的七类，外加控制工具、取消与来源未知。 */
+  /** permissions.md §14.1 的七类，外加控制工具、取消与来源未知。 */
   it.each([
     [{ permissionDecision: 'allow', permissionDecisionSource: 'sandbox' }, 'sandbox_auto'],
     [{ permissionDecision: 'allow', permissionDecisionSource: 'sandbox', sandboxDenied: true }, 'sandbox_denied'],

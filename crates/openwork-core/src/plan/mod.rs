@@ -1,7 +1,7 @@
 //! Turn 级任务清单（`update_plan`）的领域类型与校验。
 //!
 //! 这里回答的是"这次任务现在做到哪一步"，不是"先与用户讨论出一份方案"。后者属于未来的
-//! Plan mode，两者不共享状态机。见 `docs/update-plan.md`。
+//! Plan mode，两者不共享状态机。见 `docs/subsystems/update-plan.md`。
 //!
 //! 校验必须发生在 Core 运行时，不能只靠 Tool description 里的自然语言约束——"最多一个
 //! `in_progress`"是跨数组元素的条件，JSON Schema 表达不了，而模型提示不是数据完整性边界。
@@ -93,7 +93,7 @@ impl TurnPlan {
     /// 是正确的记录，强制全部 completed 等于要求一个崩溃的 Turn 谎报自己干完了。
     ///
     /// 但它必须可观测，否则 Prompt 里"结束前把所有步骤置为 completed"这条规则是否生效
-    /// 永远无法证伪 —— 只能靠人翻聊天记录。见 `docs/update-plan.md` §15.1。
+    /// 永远无法证伪 —— 只能靠人翻聊天记录。见 `docs/subsystems/update-plan.md` §15.1。
     pub fn unfinished_step_count(&self) -> usize {
         self.steps
             .iter()

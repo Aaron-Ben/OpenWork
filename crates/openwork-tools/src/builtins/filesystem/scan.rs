@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ToolExecutionError;
 
-/// A traversal returns what it has found after this long (tools.md §9).
+/// A traversal returns what it has found after this long (tools.md §7).
 pub(super) const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Why a traversal stopped before visiting every file.

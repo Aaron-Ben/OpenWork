@@ -282,7 +282,7 @@ pub async fn collab_room_open(
     }
 }
 
-/// 置顶或取消置顶一个房间（collaboration-desktop.md §4.5）。
+/// 置顶或取消置顶一个房间（collaboration-desktop.md §4.2）。
 #[tauri::command]
 pub async fn collab_room_pin(
     client: tauri::State<'_, CollabDaemonClient>,

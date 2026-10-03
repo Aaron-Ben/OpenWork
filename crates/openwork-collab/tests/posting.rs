@@ -79,7 +79,7 @@ fn assert_monologue(result: &AgentCommandResult, room_id: &str) {
     );
 }
 
-/// collaboration.md §9.2、§16 #11：两个 Agent 同时在群里发同一句（`--continue` 跳过 HELD，只剩逐字重复
+/// collaboration.md §9.2、§15 #11：两个 Agent 同时在群里发同一句（`--continue` 跳过 HELD，只剩逐字重复
 /// 这道检查），锁住房间行后比较，只有先提交的一条发出。
 #[tokio::test]
 async fn acc_11_concurrent_identical_group_posts_publish_only_once() {
@@ -118,7 +118,7 @@ async fn acc_11_concurrent_identical_group_posts_publish_only_once() {
     fixture.stop().await;
 }
 
-/// collaboration.md §9.4、§16 #20：自己的上一条是房间最后一条且不到 10 分钟时拒绝；同一 Run 的第 2 条
+/// collaboration.md §9.4、§15 #20：自己的上一条是房间最后一条且不到 10 分钟时拒绝；同一 Run 的第 2 条
 /// 放行、第 3 条拒绝；`--continue` 放行；新 Run 里第一条就连发也拒绝，且 delivery 不推进；私聊不检查。
 #[tokio::test]
 async fn acc_20_an_agent_cannot_post_twice_in_a_row_until_someone_else_speaks() {
@@ -197,7 +197,7 @@ async fn acc_20_an_agent_cannot_post_twice_in_a_row_until_someone_else_speaks() 
     fixture.stop().await;
 }
 
-/// collaboration.md §7.3、§9.1、§16 #21：HELD 一次最多列 8 条没看过的消息，重发时再列剩下的；
+/// collaboration.md §7.3、§9.1、§15 #21：HELD 一次最多列 8 条没看过的消息，重发时再列剩下的；
 /// `messages` 列出过的消息算作看过，之后的 `reply` 不再因为它们被 HELD。
 #[tokio::test]
 async fn acc_21_held_lists_eight_messages_and_listing_counts_as_seen() {
@@ -285,7 +285,7 @@ async fn acc_21_held_lists_eight_messages_and_listing_counts_as_seen() {
     fixture.stop().await;
 }
 
-/// collaboration.md §8.3、§16 #22：只含 Agent 消息的批次走到 triage 模型；模型失败时 fail closed，
+/// collaboration.md §8.3、§15 #22：只含 Agent 消息的批次走到 triage 模型；模型失败时 fail closed，
 /// 结论记为 `fail_closed`、delivery 以 `triage_false` 结算，之后不会再为这条消息唤醒；
 /// `fail_closed` 不能是 actionable。
 #[tokio::test]
@@ -358,7 +358,7 @@ async fn acc_22_a_failed_triage_model_fails_closed_for_agent_only_messages() {
     fixture.stop().await;
 }
 
-/// collaboration.md §9.2、§16 #11：成员超过 2 人的房间里，与上一条别人的消息逐字相同（去掉首尾
+/// collaboration.md §9.2、§15 #11：成员超过 2 人的房间里，与上一条别人的消息逐字相同（去掉首尾
 /// 空白）时拒绝，带 HELD token 或 `--continue` 重试也拒绝，被拒的消息不写入、delivery 不推进；
 /// 私聊不拦：两个 Agent 同时私聊对方同一句话都能发出（Cumora 以 `member_count > 2` 为条件）。
 #[tokio::test]

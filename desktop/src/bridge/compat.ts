@@ -32,7 +32,7 @@ export interface RuntimeSessionRecord {
   taskName: string | null
   agentRole: string | null
   spawnSpanId: string | null
-  /** 会话持久化的沙箱模式（permissions.md §6.3）；运行中的模式以快照为准。 */
+  /** 会话持久化的沙箱模式（permissions.md §13.1）；运行中的模式以快照为准。 */
   sandboxMode: RuntimePermissionMode
 }
 
@@ -231,12 +231,12 @@ export interface RuntimeTurnAccepted {
   clientRequestId: string
 }
 
-/** permissions.md §2.2：只有两个模式。 */
+/** permissions.md §2：只有两个模式。 */
 export type RuntimePermissionMode = 'auto' | 'accept_edits'
-/** 卡片上只有两个按钮（permissions.md §5.2）。 */
+/** 卡片上只有两个按钮（permissions.md §12.2）。 */
 export type RuntimePermissionDecision = 'allow_once' | 'deny'
 
-/** 启动自检的结论（permissions.md §3.2）。 */
+/** 启动自检的结论（permissions.md §6）。 */
 export type RuntimeSandboxStatus =
   | { state: 'available' }
   | { state: 'unavailable'; reason: string }
@@ -266,7 +266,7 @@ export interface RuntimeApprovalDanger {
   end: number
 }
 
-/** 越界与危险命令可以出现在同一张卡片上（permissions.md §5.1）。 */
+/** 越界与危险命令可以出现在同一张卡片上（permissions.md §12.1）。 */
 export interface RuntimeApprovalCard {
   mode: RuntimePermissionMode
   command: string | null

@@ -219,13 +219,13 @@ Use OpenWork only with trusted projects and trusted local agent configurations. 
 
 - [Documentation index](docs/README.md)
 - [System architecture](docs/architecture.md)
-- [Workbench session runtime](docs/session-runtime.md)
-- [Tools and permissions](docs/tools.md) · [Permission model](docs/permissions.md)
-- [Context window](docs/context-window.md) · [Compaction](docs/compaction.md) · [Trace](docs/trace.md)
-- [Skills](docs/skills.md) · [Read-only sub-agents](docs/multi-agent.md)
-- [Collaboration runtime](docs/collaboration.md)
-- [Collaboration Desktop](docs/collaboration-desktop.md)
-- [Collaboration data model](docs/collaboration-data-model.md)
+- [Workbench session runtime](docs/subsystems/session-runtime.md)
+- [Tools and permissions](docs/subsystems/tools.md) · [Permission model](docs/subsystems/permissions.md)
+- [Context window](docs/subsystems/context-window.md) · [Compaction](docs/subsystems/compaction.md) · [Trace](docs/subsystems/trace.md)
+- [Skills](docs/subsystems/skills.md) · [Read-only sub-agents](docs/subsystems/multi-agent.md)
+- [Collaboration runtime](docs/subsystems/collaboration.md)
+- [Collaboration Desktop](docs/subsystems/collaboration-desktop.md)
+- [Collaboration data model](docs/subsystems/collaboration.md)
 
 ## License
 

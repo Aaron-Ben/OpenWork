@@ -271,7 +271,7 @@ fn accept_edits_denies_bash_workspace_writes_until_escalated() {
     sandbox.succeeds(&touch, &workspace, "touch src/x.rs");
 }
 
-/// permissions.md §3.1：按路径写标准流与文件描述符的常见脚本写法，在两个模式下都能用。
+/// permissions.md §5：按路径写标准流与文件描述符的常见脚本写法，在两个模式下都能用。
 #[test]
 fn stream_devices_are_writable_in_every_mode() {
     let sandbox = Sandbox::new();
@@ -291,7 +291,7 @@ fn stream_devices_are_writable_in_every_mode() {
     }
 }
 
-/// permissions.md §9.2 #49：主目录作工作区时，bash 在两个模式下都不能写它。
+/// permissions.md §15 #49：主目录作工作区时，bash 在两个模式下都不能写它。
 #[test]
 fn a_home_workspace_is_read_only_for_bash() {
     let sandbox = Sandbox::new();
@@ -322,7 +322,7 @@ fn a_home_workspace_is_read_only_for_bash() {
     }
 }
 
-/// permissions.md §9.2 #50：Go 的编译缓存在 OpenWork 私有的临时目录里，`go build` / `go test` 不需要越界。
+/// permissions.md §15 #50：Go 的编译缓存在 OpenWork 私有的临时目录里，`go build` / `go test` 不需要越界。
 #[test]
 fn go_builds_and_tests_with_the_private_cache() {
     if Command::new("go").arg("version").output().is_err() {

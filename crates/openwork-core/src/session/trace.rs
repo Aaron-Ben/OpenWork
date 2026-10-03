@@ -1065,7 +1065,7 @@ impl ToolCallTraceGuard {
         &self.started.span_id
     }
 
-    /// 调用发生时会话的模式与它的来源（permissions.md §7）。
+    /// 调用发生时会话的模式与它的来源（permissions.md §14.2）。
     pub fn record_session_mode(&mut self, mode: SandboxMode, origin: SessionModeOrigin) {
         self.attributes.session_mode = Some(mode.as_str().to_string());
         self.attributes.session_mode_origin = Some(origin.as_str().to_string());

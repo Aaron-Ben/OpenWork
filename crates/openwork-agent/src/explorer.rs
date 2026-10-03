@@ -5,7 +5,7 @@ use crate::{AgentDefinition, AgentPolicy};
 /// explorer 的固定系统提示。
 ///
 /// 这个角色没有人工审批通道：提示要说明它改不了仓库、被沙箱拒绝的调用不会有人批准，
-/// 以及信息不足时怎么收尾。沙箱模式本身不写进提示词，由 world state 给出（permissions.md §4.6）。
+/// 以及信息不足时怎么收尾。沙箱模式本身不写进提示词，由 world state 给出（permissions.md §11）。
 pub const EXPLORER_SYSTEM_PROMPT: &str = "\
 You are the explorer sub-agent. Your final answer goes directly to the parent agent, so make it \
 standalone, concise, and supported by concrete code locations or command output.\n\
@@ -35,7 +35,7 @@ pub fn explorer_definition() -> AgentDefinition {
             max_model_calls: 15,
             doom_loop_threshold: 3,
         },
-        // 没有 write / edit，bash 又写不了工作区：explorer 改不了仓库（permissions.md §2.2）。
+        // 没有 write / edit，bash 又写不了工作区：explorer 改不了仓库（permissions.md §2）。
         sandbox_ceiling: SandboxMode::AcceptEdits,
     }
 }

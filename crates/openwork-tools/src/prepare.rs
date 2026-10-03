@@ -1,4 +1,4 @@
-//! 执行前 Core 需要知道的事实（permissions.md §2.1）。
+//! 执行前 Core 需要知道的事实（permissions.md §1）。
 //!
 //! 工具只报告事实——命令原文、写目标、模型请求的越界；要不要问、问什么由 Core 决定。
 //! 这里不推断命令会读写什么：那由内核在执行时判断。
@@ -102,7 +102,7 @@ pub(crate) async fn prepare(
         }
         None => None,
     };
-    // 沙箱不可用时 bash 不会执行（permissions.md §3.2、§4.3），为它出危险命令卡片只会让用户白问一次。
+    // 沙箱不可用时 bash 不会执行（permissions.md §6、§10.1），为它出危险命令卡片只会让用户白问一次。
     let danger = if session.escalation_available() {
         command.as_deref().and_then(detect_danger)
     } else {
@@ -122,7 +122,7 @@ mod tests {
     use super::*;
     use crate::test_support::{policy_for, unavailable_session, unconfined_session};
 
-    /// permissions.md §9.2 #13：沙箱不可用时 bash 不执行，危险命令也不出卡片。
+    /// permissions.md §15 #13：沙箱不可用时 bash 不执行，危险命令也不出卡片。
     #[tokio::test]
     async fn an_unavailable_sandbox_reports_no_dangerous_command() {
         let workspace = tempfile::tempdir().expect("workspace");

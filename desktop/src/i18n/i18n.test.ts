@@ -74,7 +74,7 @@ describe('i18n', () => {
       }
       for (const value of [
         'started', 'failed', 'succeeded', 'tool_use', 'stream_decode',
-        'semantic_output_emitted', 'allow', 'policy', 'sandbox', 'sandbox_unavailable', 'non_interactive',
+        'semantic_output_emitted', 'allow', 'sandbox', 'sandbox_unavailable', 'non_interactive',
         'control_tool', 'inherited', 'rm_recursive_or_force', 'auto', 'accept_edits', 'enabled', 'true', 'false',
         'degenerate', 'deterministic', 'input_overflow', 'transient', 'timeout',
       ] as const) {

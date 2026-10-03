@@ -1,4 +1,4 @@
-//! compaction.md §1.1: the pruning watermark is persisted per Session and
+//! compaction.md §2: the pruning watermark is persisted per Session and
 //! only moves forward, so a restart keeps pruned results pruned.
 
 use openwork_core::{PostgresStorage, SessionId, SessionInput, StorageError};

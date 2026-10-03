@@ -55,7 +55,7 @@ pub struct OpenWorkCoreConfig {
     pub database_url: Option<String>,
     pub trace_content: TraceContentConfig,
     pub agents_skills_root: Option<PathBuf>,
-    /// Root of the per-session spill directories (tools.md §10). `None`
+    /// Root of the per-session spill directories (tools.md §8). `None`
     /// keeps tool results bounded without saving the omitted content.
     pub spill_root: Option<PathBuf>,
 }
@@ -305,7 +305,7 @@ impl OpenWorkCore {
     }
 
     /// Which old tool results the projection prunes, as persisted
-    /// (compaction.md §1.1).
+    /// (compaction.md §2).
     async fn tool_result_pruning(
         &self,
         session_id: &SessionId,
@@ -323,7 +323,7 @@ impl OpenWorkCore {
     }
 
     /// Tool state that outlives one Turn's toolset: the spill directory and
-    /// the read-before-edit table (tools.md §9, §10).
+    /// the read-before-edit table (tools.md §7, §8).
     async fn session_tool_state(&self, session_id: &SessionId) -> SessionToolState {
         let observations = self
             .file_observations
@@ -987,7 +987,7 @@ impl OpenWorkCore {
         Ok(result)
     }
 
-    /// 撤销与重新应用改动时的工具上下文与策略（permissions.md §2.3）。
+    /// 撤销与重新应用改动时的工具上下文与策略（permissions.md §3）。
     async fn file_change_context(
         &self,
         session: &SessionRecord,
@@ -1025,7 +1025,7 @@ impl OpenWorkCore {
         Ok(())
     }
 
-    /// 切换会话模式：先落库，再通知 actor，下一次调用生效（permissions.md §6.1、§6.3）。
+    /// 切换会话模式：先落库，再通知 actor，下一次调用生效（permissions.md §13.1、§13.1）。
     /// 子 Agent 的模式是派生时的快照，不能切换（§6.6）。
     pub async fn set_permission_mode(
         &self,

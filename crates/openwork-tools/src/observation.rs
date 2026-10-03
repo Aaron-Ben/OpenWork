@@ -1,4 +1,4 @@
-//! Read before edit (tools.md §9 "先读后改").
+//! Read before edit (tools.md §7 "先读后改").
 //!
 //! One table per Session maps each file the model has read or written to the
 //! hash of the content it saw. `write` and `edit` refuse an existing file that

@@ -255,7 +255,7 @@ mod tests {
         assert!(!outside_target.join("created.txt").exists());
     }
 
-    /// tools.md §12 #28: write reports one line; the diff stays in the
+    /// tools.md §10 #28: write reports one line; the diff stays in the
     /// artifact.
     #[tokio::test]
     async fn acc_28_write_reports_one_line() {

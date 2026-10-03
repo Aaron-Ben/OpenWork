@@ -260,7 +260,7 @@ async fn run_smoke(
     runtime.stop().await;
 }
 
-/// collaboration.md §11.4、§16 #14：Desktop 改派卡片后 Agent 直接进入卡片 Turn（fake OpenCode 的
+/// collaboration.md §11.4、§15 #14：Desktop 改派卡片后 Agent 直接进入卡片 Turn（fake OpenCode 的
 /// triage 总是答“不参与”，所以卡片被领取就证明没有经过 triage），Run 成功后唤醒结算。
 #[tokio::test]
 async fn desktop_card_assignment_runs_a_card_turn_that_skips_triage() {

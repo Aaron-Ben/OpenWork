@@ -81,7 +81,7 @@ pub enum SessionRuntimeSnapshot {
 /// Session Update 与快照的形状版本；形状变化时提升，并同步 `desktop/src/bridge/compat.ts`。
 ///
 /// 7：模式换成沙箱模式，审批卡片换成越界 / 危险命令两种，快照带沙箱可用性
-/// （permissions.md §3.2、§5）。6：会话级审批动作。5：结构化权限卡片。4：`compacting`
+/// （permissions.md §6、§12）。6：会话级审批动作。5：结构化权限卡片。4：`compacting`
 /// 阶段。3：结构化的终态工具 artifact。2：`tool_call_progress`。
 pub const SESSION_UPDATE_VERSION: u16 = 7;
 
@@ -92,7 +92,7 @@ pub struct SessionSnapshot {
     pub session_id: SessionId,
     pub last_update_sequence: u64,
     pub permission_mode: SandboxMode,
-    /// 启动自检的结论；不可用时界面常驻提示并显示原因（permissions.md §3.2）。
+    /// 启动自检的结论；不可用时界面常驻提示并显示原因（permissions.md §6）。
     pub sandbox: SandboxStatus,
     pub runtime: SessionRuntimeSnapshot,
 }

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { SandboxUnavailableNotice } from './SandboxUnavailableNotice'
 
 describe('SandboxUnavailableNotice', () => {
-  /** permissions.md §3.2：沙箱不可用时常驻提示，并能看到自检失败的原因。 */
+  /** permissions.md §6：沙箱不可用时常驻提示，并能看到自检失败的原因。 */
   it('shows that bash is disabled and the self-check reason', () => {
     const markup = renderToStaticMarkup(
       <SandboxUnavailableNotice

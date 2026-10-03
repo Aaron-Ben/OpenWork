@@ -297,10 +297,11 @@ fn owning_docs_and_product_sources_have_no_retired_collaboration_shape() {
     current.push_str(&std::fs::read_to_string(crate_root.join("README.md")).unwrap());
     for document in [
         "docs/architecture.md",
-        "docs/collaboration.md",
-        "docs/collaboration-desktop.md",
+        "docs/subsystems/collaboration.md",
+        "docs/subsystems/collaboration-desktop.md",
     ] {
-        current.push_str(&std::fs::read_to_string(workspace_root.join(document)).unwrap());
+        let text = std::fs::read_to_string(workspace_root.join(document)).unwrap();
+        current.push_str(&without_link_targets(&text));
     }
     let normalized = current.to_ascii_lowercase();
     for forbidden in [
@@ -339,6 +340,26 @@ fn owning_docs_and_product_sources_have_no_retired_collaboration_shape() {
             "temporary collaboration artifact survived: {removed}"
         );
     }
+}
+
+/// 去掉 Markdown 链接的目标路径，只留链接文字。文档链接 `.agents/notes/` 下的 Agent Note，
+/// 这类路径不是被淘汰的 Agent home 结构。
+fn without_link_targets(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("](") {
+        kept.push_str(&rest[..=start]);
+        let target = &rest[start + 2..];
+        match target.find(')') {
+            Some(end) => rest = &target[end + 1..],
+            None => {
+                rest = target;
+                break;
+            }
+        }
+    }
+    kept.push_str(rest);
+    kept
 }
 
 fn source_text(root: &Path) -> String {

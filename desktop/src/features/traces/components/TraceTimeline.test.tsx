@@ -166,8 +166,8 @@ describe('TraceTimeline', () => {
     expect(markup).toContain('Conversation 压缩')
   })
 
-  /** permissions.md §6.4：时间线上一眼分得出七类权限结果。 */
-  it('labels every permission category of permissions.md §6.4 on the timeline', () => {
+  /** permissions.md §14.1：时间线上一眼分得出七类权限结果。 */
+  it('labels every permission category of permissions.md §14.1 on the timeline', () => {
     const escalation = [{ path: '/repo/.git', access: 'write', scope: 'subtree' }]
     const spans = [
       model,

@@ -34,7 +34,7 @@ pub struct SubAgentSpec {
 /// The host inherits the parent's working directory, permission profile and
 /// resolved model. None of them are parameters: a sub-agent that could widen its
 /// own path boundary or pick its own model would break the invariants in
-/// `docs/multi-agent.md` §1.
+/// `docs/subsystems/multi-agent.md` §1.
 #[async_trait]
 pub trait SubAgentHost: Send + Sync {
     /// Inserts the sub-agent's `sessions` row and starts its actor.

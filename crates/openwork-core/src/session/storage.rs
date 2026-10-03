@@ -136,7 +136,7 @@ pub trait SessionStorage: Send + Sync {
 
     /// The persisted Conversation with message sequences. Tool-result pruning
     /// places its watermark by sequence, and items appended during a run do
-    /// not carry one until they are reloaded (compaction.md §1.1).
+    /// not carry one until they are reloaded (compaction.md §2).
     async fn load_conversation_items(
         &self,
         _session_id: &SessionId,

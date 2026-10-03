@@ -7,7 +7,7 @@
 //! A sub-agent is a full Session ([`crate::session::SessionHandle`]) with its
 //! own Conversation, Turns and Trace. Nothing here duplicates the Agent Loop;
 //! [`AgentControl`] only owns creation, the `task_name` index and the
-//! concurrency cap. Design: `docs/multi-agent.md`.
+//! concurrency cap. Design: `docs/subsystems/multi-agent.md`.
 
 mod control;
 mod limiter;

@@ -1,4 +1,4 @@
-//! 区分"内核拒绝了命令里的操作"与"沙箱根本没有启动"（permissions.md §3.3）。
+//! 区分"内核拒绝了命令里的操作"与"沙箱根本没有启动"（permissions.md §7）。
 
 /// 一次结束的 `sandbox-exec` 运行对工具结果意味着什么。
 #[derive(Debug, Clone, PartialEq, Eq)]

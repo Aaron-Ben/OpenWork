@@ -551,7 +551,7 @@ mod tests {
         let _ = std::fs::remove_file(large_path);
     }
 
-    /// tools.md §12 #15: unbounded output neither exhausts memory nor fills
+    /// tools.md §10 #15: unbounded output neither exhausts memory nor fills
     /// the disk — the capture stays at head + tail and the spill file stops
     /// at its cap.
     #[cfg(unix)]

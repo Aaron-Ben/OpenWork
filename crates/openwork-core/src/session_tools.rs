@@ -1,4 +1,4 @@
-//! Core 为一个 Session 装配工具与沙箱（permissions.md §2.4、§3.2，tools.md §4）。
+//! Core 为一个 Session 装配工具与沙箱（permissions.md §4、§6，tools.md §4）。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -142,7 +142,7 @@ impl SandboxRuntime {
     }
 }
 
-/// 子 Agent 的生效模式：父会话模式与角色上限中较窄者（permissions.md §6.6）。
+/// 子 Agent 的生效模式：父会话模式与角色上限中较窄者（permissions.md §13.3）。
 pub(crate) fn sub_agent_mode(parent: SandboxMode) -> SandboxMode {
     parent.min(explorer_definition().sandbox_ceiling)
 }
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(definition.risk_hint, ToolRisk::ReadOnly);
     }
 
-    /// permissions.md §6.6：子 Agent 取父会话模式与 explorer 上限中较窄者。
+    /// permissions.md §13.3：子 Agent 取父会话模式与 explorer 上限中较窄者。
     #[test]
     fn a_sub_agent_never_gets_a_wider_mode_than_its_parent_or_role() {
         assert_eq!(sub_agent_mode(SandboxMode::Auto), SandboxMode::AcceptEdits);
@@ -285,7 +285,7 @@ mod tests {
         );
     }
 
-    /// tools.md §12 #26：落盘文件不经审批可读，任何模式下都不可写（`~/.openwork` 硬保护）。
+    /// tools.md §10 #26：落盘文件不经审批可读，任何模式下都不可写（`~/.openwork` 硬保护）。
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn acc_26_spilled_output_is_readable_and_never_writable() {

@@ -1,4 +1,4 @@
-//! 路径的四档（permissions.md §2.3）——只有这里知道它们。
+//! 路径的四档（permissions.md §3）——只有这里知道它们。
 //!
 //! 每条规则有两种表达，必须一致：给进程内文件工具围栏用的、作用于规范化路径的匹配函数，
 //! 以及给内核用的 Seatbelt 过滤器。`tests/parity.rs` 的对等测试把两者绑在一起。
@@ -47,7 +47,7 @@ pub(crate) const CREDENTIAL_PATHS: &[&str] = &[
     "Library/Application Support/Firefox",
 ];
 
-/// 所有命令都可写的字符设备（permissions.md §3.1）。在 `/dev` 下创建文件仍然不可能。
+/// 所有命令都可写的字符设备（permissions.md §5）。在 `/dev` 下创建文件仍然不可能。
 ///
 /// 不列 `/dev/stdout`、`/dev/stderr`：它们是指向 `/dev/fd/1`、`/dev/fd/2` 的符号链接，
 /// Seatbelt 按解析后的路径判断，文件工具围栏拿到的也是规范化后的路径，

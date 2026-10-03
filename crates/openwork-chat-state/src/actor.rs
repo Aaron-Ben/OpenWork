@@ -138,7 +138,7 @@ impl ChatStateHandle {
         response.await.map_err(|_| ChatStateError::ActorStopped)?
     }
 
-    /// Sets which old tool results the projection prunes (compaction.md §1.1).
+    /// Sets which old tool results the projection prunes (compaction.md §2).
     pub async fn set_tool_result_pruning(
         &self,
         pruning: ToolResultPruning,
@@ -328,7 +328,7 @@ mod tests {
         );
     }
 
-    /// compaction.md §1.1: installing a compacted or reloaded Conversation
+    /// compaction.md §2: installing a compacted or reloaded Conversation
     /// changes the items, not which results the projection has committed to
     /// prune.
     #[tokio::test]

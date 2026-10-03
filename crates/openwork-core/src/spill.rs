@@ -1,4 +1,4 @@
-//! Lifecycle of spill directories (tools.md §10 "大结果落盘").
+//! Lifecycle of spill directories (tools.md §8 "大结果落盘").
 //!
 //! Tools write the complete text behind bounded results into
 //! `<root>/<session-id>/`. Core owns the rest of the lifecycle: a session's

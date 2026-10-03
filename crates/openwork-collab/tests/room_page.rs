@@ -96,7 +96,7 @@ fn reply(room_id: &str, body: &str, quoted: Option<String>) -> AgentCommand {
     }
 }
 
-/// collaboration-desktop.md §4.2、§4.5、§7.1：房间列表带未读数、最近消息、成员（用户在前）、是否成员
+/// collaboration-desktop.md §4.2、§4.2、§7.1：房间列表带未读数、最近消息、成员（用户在前）、是否成员
 /// 与置顶；看过后未读归零；置顶可以取消，房间不存在时拒绝。
 #[tokio::test]
 async fn acc_15_room_list_carries_unread_last_message_members_and_pin() {

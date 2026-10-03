@@ -1,4 +1,4 @@
-//! tools.md §9 "先读后改" and §12 #31–34.
+//! tools.md §7 "先读后改" and §12 #31–34.
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};

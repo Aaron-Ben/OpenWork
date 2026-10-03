@@ -131,7 +131,7 @@ impl ToolSessionContext {
         self
     }
 
-    /// 沙箱可用时模型才能请求越界（permissions.md §4.2）。
+    /// 沙箱可用时模型才能请求越界（permissions.md §9.2）。
     pub fn escalation_available(&self) -> bool {
         self.sandbox.status().is_available()
     }

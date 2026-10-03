@@ -142,7 +142,7 @@ mod tests {
     use super::parse_route;
     use crate::protocol::ResponseMode;
 
-    /// collaboration.md §8.2、§16 #9：只有明确的 `me` 收窄，出错、截断、未知值都按参与处理。
+    /// collaboration.md §8.2、§15 #9：只有明确的 `me` 收窄，出错、截断、未知值都按参与处理。
     #[test]
     fn acc_09_only_an_explicit_me_narrows_the_route() {
         assert_eq!(parse_route(r#"{"responseMode": "me"}"#), ResponseMode::Me);

@@ -1,8 +1,8 @@
-# 工作方式
+# OpenWork
 
-本文规定设计原则与协作方式。
+OpenWork 是本地 Agent 工作台：Rust workspace 加 Tauri 2 / React 桌面应用，用 PostgreSQL 持久化。改 `crates/` 或 `desktop/` 前，先读 [docs/architecture.md](docs/architecture.md)。写或改 Markdown 前，先读 [docs/AGENTS.md](docs/AGENTS.md)。
 
-在代码里发现违反这些规范的写法时，立即指出，并给出修复建议。
+本文只放每个会话都需要的常驻规则。在代码里发现违反这些规则的写法时，立即指出，并给出修复建议。
 
 ## 设计原则
 
@@ -15,13 +15,19 @@
 - 自己实现或添加新包之前，先用项目里已有的依赖。先查这个库的文档和类型，再判断它有没有某个能力。
 - 按长期目标做架构决策。不要接受只为眼下能用、以后要替换的权宜方案。
 
+## 决策记录
+
+- 把长期有效的决策理由写进 Agent Note（`.agents/notes/`）。格式与时机见 [README](.agents/notes/README.md)。
+- 不要重新讨论 implemented Agent Note 里的决策。如果你发现了新事实，先说明这个新事实，再提出重议。
+- 改动 Agent Note 提到的路径、符号或默认值时，在同一个改动里更新它。
+
 ## 何时继续，何时停下
 
 - 未经用户同意，禁止修改 CLAUDE.md。
 - 如果一个步骤不需要用户决定，直接做。
 - 把进度说明和下一步动作放在同一条消息里。不要只汇报而不行动。不要用"要我继续吗"结束消息。
 - 在以下情况下，停下来问用户。写清楚现状、选项和建议：
-  - 设计文档里的数字、清单或行为边界需要改（先改文档，再改代码）；
+  - 子系统页里的数字、清单或行为边界需要改；新设计先写 `proposed/` Agent Note，再改代码（见 [docs/AGENTS.md](docs/AGENTS.md) §2）；
   - 设计与现实冲突、有歧义或做不到；
   - 任何提交、推送、合并；
   - 会改动仓库以外内容的操作。
@@ -31,8 +37,8 @@
 
 - 只有 `scripts/check.sh` 全部通过，工作才算完成。
 - 这个脚本要求设置 `TEST_DATABASE_URL`。如果没有设置，postgres 测试会静默跳过，结果不可信。
-- 已知不稳定的测试：`crates/openwork-collab/tests/opencode_adapter.rs` 的 `reported_rate_limit_terminates_a_still_running_opencode_process` 偶尔失败。全量运行与单独运行时都出现过失败。重跑后通过就可以，但要在报告里写明。
-- 把设计文档的每一条验收条目对应到一个测试名或一条手动记录。"应该没问题"不算验收。
+- 已知不稳定的测试：`crates/openwork-collab/tests/opencode_adapter.rs` 的 `reported_rate_limit_terminates_a_still_running_opencode_process`。重跑后通过就可以，但要在报告里写明。
+- 子系统页“验收”一节的每一条都写出测试名；没有测试时写“手动”与验证方法。"应该没问题"不算验收。
 
 ## 提交
 
@@ -46,6 +52,7 @@
 | 名称 | 路径 |
 |---|---|
 | Codex | `/Volumes/Extreme SSD/Code/codex` |
+| Cumora | `/Volumes/Extreme SSD/Code/cumora` |
 | DSH | `/Volumes/Extreme SSD/Code/deepseek-harness` |
 | maka | `/Volumes/Extreme SSD/Code/maka` |
 | opencode | `/Volumes/Extreme SSD/Code/opencode` |
@@ -54,18 +61,7 @@
 - 不要相信 maka 中未提交的文档和 html 文件。只以已提交的源码为准。
 - 引用参考项目的做法时，给出文件路径。
 - 如果你没有读过源码，只凭印象或文档写出某个内容，把它标为"未确认"。
-- 设计文档里写"来自 X"的内容，必须能在 X 的源码里找到。
-
-## 写作
-
-按 ASD-STE100 写文档，中文文档也一样。文档指仓库里所有的 Markdown 文件。规则如下：
-
-- 只用批准词，每个词只用它批准的那一个意思。项目专有名词（Session、Turn、Tool Call、spill）保持原样。
-- 程序性句子不超过 20 个词，描述性句子不超过 25 个词。中文按约 40 字、50 字估算。
-- 一句只写一条指令。指令用祈使句。
-- 用主动语态。
-- 名词串不超过 3 个名词。
-- 一个段落不超过 6 句。
+- 文档里写"来自 X"的内容，必须能在 X 的源码里找到。
 
 ## 汇报格式
 

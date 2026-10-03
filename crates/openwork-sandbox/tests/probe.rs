@@ -1,4 +1,4 @@
-//! 用真实的 `sandbox-exec` 验证 permissions.md §3.2–§3.3。
+//! 用真实的 `sandbox-exec` 验证 permissions.md §6–§7。
 
 #![cfg(target_os = "macos")]
 

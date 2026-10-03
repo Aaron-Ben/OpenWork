@@ -20,7 +20,7 @@ pub trait SandboxBackend: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<String>, SandboxUnavailable>;
 }
 
-/// bash 不能运行：自检失败（permissions.md §3.2）。
+/// bash 不能运行：自检失败（permissions.md §6）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxUnavailable {
     pub reason: String,

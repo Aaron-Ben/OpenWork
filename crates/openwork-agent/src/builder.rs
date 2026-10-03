@@ -99,7 +99,7 @@ mod tests {
         );
     }
 
-    /// multi-agent.md §11 #15：explorer 的上限是 `accept-edits`，工具面里没有写文件的工具。
+    /// multi-agent.md §10 #15：explorer 的上限是 `accept-edits`，工具面里没有写文件的工具。
     #[test]
     fn explorer_cannot_change_the_workspace() {
         let definition = crate::explorer_definition();

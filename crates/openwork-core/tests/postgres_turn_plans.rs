@@ -1,7 +1,7 @@
 //! `turn_plans` 的持久化行为。
 //!
 //! 重点不是"能存能取"，而是三条会静默出错的性质：提交的原子性、Turn 之间的隔离，
-//! 以及级联删除。见 `docs/update-plan.md` §13.3。
+//! 以及级联删除。见 `docs/subsystems/update-plan.md` §13.3。
 
 use openwork_core::plan::{PlanStep, PlanStepStatus, TurnPlan};
 use openwork_core::{

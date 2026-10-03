@@ -138,7 +138,7 @@ impl FinalizedToolset {
         Ok(&entry.definition)
     }
 
-    /// 执行前的事实：越界请求、危险命令、写目标是否硬保护（permissions.md §2.1）。
+    /// 执行前的事实：越界请求、危险命令、写目标是否硬保护（permissions.md §1）。
     /// 要不要问、问什么由 Core 决定；工具在这里不做任何放行判断。
     pub async fn prepare(
         &self,
@@ -161,7 +161,7 @@ impl FinalizedToolset {
         &self.session.working_directory
     }
 
-    /// 启动自检的结论；不可用时 bash 不执行，越界参数不在 schema 里（permissions.md §3.2）。
+    /// 启动自检的结论；不可用时 bash 不执行，越界参数不在 schema 里（permissions.md §6）。
     pub fn sandbox_status(&self) -> &SandboxStatus {
         self.session.sandbox.status()
     }

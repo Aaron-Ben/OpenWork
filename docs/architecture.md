@@ -30,7 +30,7 @@ openwork-collab           → openwork-sandbox；除此之外是独立协作分�
 - `openwork-chat-state` 执行工具或决定权限；
 - `openwork-core` 把数据库 Record 类型暴露给 Desktop。
 
-依赖图的最后一行是协作模式，见 [collaboration.md](collaboration.md)。它是图里的**独立分支**。Server 拥有 PostgreSQL/Redis 与业务事实，本机 Computer daemon 拥有 Engine 运行时。二者只通过 crate 内 `protocol` 定义的契约通信。`desktop/src-tauri` 监督这两个进程，只使用 Desktop HTTP interface。**不得让 Desktop 绕过 Collaboration Server 直接读写 `collab_*` 表**。
+依赖图的最后一行是协作模式，见 [collaboration.md](subsystems/collaboration.md)。它是图里的**独立分支**。Server 拥有 PostgreSQL/Redis 与业务事实，本机 Computer daemon 拥有 Engine 运行时。二者只通过 crate 内 `protocol` 定义的契约通信。`desktop/src-tauri` 监督这两个进程，只使用 Desktop HTTP interface。**不得让 Desktop 绕过 Collaboration Server 直接读写 `collab_*` 表**。
 
 ## 2. 各 crate 的职责
 
@@ -52,7 +52,7 @@ src/
 
 ### openwork-agent
 
-它回答"这个 Agent 是什么"。它是**静态定义，不含运行状态**，内容包括：System Prompt、可用工具集、默认模型参数、最大 Model Call 次数、沙箱模式上限（`sandbox_ceiling`，见 [multi-agent.md §4](multi-agent.md)）。
+它回答"这个 Agent 是什么"。它是**静态定义，不含运行状态**，内容包括：System Prompt、可用工具集、默认模型参数、最大 Model Call 次数、沙箱模式上限（`sandbox_ceiling`，见 [multi-agent.md §4](subsystems/multi-agent.md)）。
 
 `AgentBuilder::build` 返回近似不可变的 `Agent`。**它不得启动任何异步循环。**
 
@@ -70,13 +70,13 @@ Message/ContentBlock、Model Request/Response/Event、`ModelPort` trait、各 Pr
 
 ### openwork-tools
 
-工具的四层运行时（契约 / 工具集 / 会话上下文 / 调用上下文）、路径解析（`CheckedPath`）、文件与进程后端、内置工具实现、危险命令检测（`tree-sitter-bash`）。详见 [tools.md](tools.md)。
+工具的四层运行时（契约 / 工具集 / 会话上下文 / 调用上下文）、路径解析（`CheckedPath`）、文件与进程后端、内置工具实现、危险命令检测（`tree-sitter-bash`）。详见 [tools.md](subsystems/tools.md)。
 
 分工如下。Tools 在**执行时**强制边界：bash 经 `openwork-sandbox` 包装后启动；文件工具用 `openwork-sandbox` 的同一组路径函数做围栏。Core 拥有 Tool Call 生命周期、越界校验和用户授权等待。
 
 ### openwork-sandbox
 
-**回答"这一次调用能读写哪里"，并让内核兑现它。** 详见 [permissions.md §2.4、§3](permissions.md)。
+**回答"这一次调用能读写哪里"，并让内核兑现它。** 详见 [permissions.md §4、§5–§7](subsystems/permissions.md)。
 
 ```text
 src/
@@ -93,12 +93,12 @@ src/
 | 模式（`auto` / `accept-edits`，子 Agent 的角色上限也取这两者之一）与四档路径的**唯一定义**：可写根、受保护子路径、凭据禁读 | 启动工具进程：`ProcessBackend` 负责。唯一的例外是启动自检：它自己运行两次 `sandbox-exec`。这是一次性的环境检查，不是 Tool Call |
 | Seatbelt profile 与 `sandbox-exec` argv；越界请求的路径校验（数量、绝对路径、硬保护、过宽、是否带来新权限） | 越界是否批准、`justification` 是否为空：Core 负责 |
 | 自检结论（可用 / 不可用及原因） | 危险命令检测：它关心 bash 语法，不关心沙箱，所以留在 `openwork-tools` |
-| 协作 Engine 进程的围栏 `EngineConfinement`：可写根、`$HOME` 下的可读例外及其 Seatbelt profile（[collaboration.md §3.1](collaboration.md)） | 围栏里放哪些目录：协作 Computer 按 Agent home 布局决定 |
+| 协作 Engine 进程的围栏 `EngineConfinement`：可写根、`$HOME` 下的可读例外及其 Seatbelt profile（[collaboration.md §3.1](subsystems/collaboration.md)） | 围栏里放哪些目录：协作 Computer 按 Agent home 布局决定 |
 | 拒绝识别 | 会话模式的存储：Core 负责 |
 
 **单独成 crate 的理由是多个消费者共享同一份事实。** `openwork-tools` 用它包装 bash，并为文件工具做围栏。`openwork-collab` 用它把本机 Engine 进程关进 Seatbelt，并与工作台共用 profile 生成和路径转义。`openwork-core` 用它盖章每次调用的策略、校验越界请求、写 Trace 与策略上下文。`openwork-agent` 用它声明角色的模式上限。
 
-三处若各自持有路径知识，就会出现"bash 能写而 write 工具不能写"这类不一致。对等测试（[permissions.md §2.4](permissions.md)）也只在同一个 crate 提供推导函数时才有意义。
+三处若各自持有路径知识，就会出现"bash 能写而 write 工具不能写"这类不一致。对等测试（[permissions.md §4](subsystems/permissions.md)）也只在同一个 crate 提供推导函数时才有意义。
 
 **无 OpenWork 依赖**，只依赖标准库与序列化。平台差异也收在它内部，例如 P2 的 Linux 后端。
 
@@ -141,12 +141,12 @@ Desktop 是唯一的 supervisor。每次启动时，它先创建一个 RuntimeSe
 ## 3. 核心不变量
 
 1. **一个活动 Session 一个 `SessionActor`**，它同时最多推进一个 Turn。
-2. **OpenWork 自身的 Agent Loop 只有一处** —— `session/run_loop.rs`。Trace、Storage、Desktop 都不能推进 Turn。协作模式中，Computer 上的外部 Engine adapter 推进推理，V1 是 `OpenCodeAdapter`。`AgentRunner` 只交付 wake delta 并记录结果，见 [collaboration.md](collaboration.md)。
+2. **OpenWork 自身的 Agent Loop 只有一处** —— `session/run_loop.rs`。Trace、Storage、Desktop 都不能推进 Turn。协作模式中，Computer 上的外部 Engine adapter 推进推理，V1 是 `OpenCodeAdapter`。`AgentRunner` 只交付 wake delta 并记录结果，见 [collaboration.md](subsystems/collaboration.md)。
 3. **Conversation 只有一个写者** —— `openwork-chat-state`。
 4. **模型总是用户显式选择**（`providerId + model`），没有自动选择或跨模型 fallback。
 5. **Trace 是 best-effort** —— Trace、队列或数据库失败时，不得让 Turn 失败。正文写入失败时，Span 本身仍须落库。
 6. **同一份内容只有一个权威副本** —— 对 `messages` 已有的内容，Trace 只留指针，不复制。
-7. **用户批准不能绕过执行期边界**——批准只能让这一次调用得到更宽的沙箱策略，不能跳过它。`ToolSessionContext` 的路径围栏约束文件工具，OS 沙箱约束 `bash`，两者读同一个 `SandboxPolicy`。在任何批准下，硬保护路径都不可写。见 [permissions.md §2](permissions.md)。
+7. **用户批准不能绕过执行期边界**——批准只能让这一次调用得到更宽的沙箱策略，不能跳过它。`ToolSessionContext` 的路径围栏约束文件工具，OS 沙箱约束 `bash`，两者读同一个 `SandboxPolicy`。在任何批准下，硬保护路径都不可写。见 [permissions.md §1–§4](subsystems/permissions.md)。
 
 ## 4. 对外 API
 
@@ -183,11 +183,11 @@ Session
 其他术语：
 
 - **Prompt** 只表示 System/User Prompt 等指令内容，不是运行聚合；
-- **Compaction** 是把 Conversation 压成摘要投影的操作，见 [compaction.md](compaction.md)；
+- **Compaction** 是把 Conversation 压成摘要投影的操作，见 [compaction.md](subsystems/compaction.md)；
 - **SessionUpdate** 是 Live UI 消息，不是持久化事实；
 - **Trace Span** 是质量记录（模型看到什么、说了什么、烧了多少 token），不是恢复状态；
-- **Sub-Agent** 是主 Agent 派生的只读从属 Session，见 [multi-agent.md](multi-agent.md)。它不是新的运行聚合，所有 Turn 语义与根会话完全相同；
-- **协作模式** 是与工作台运行时不相交的 BYOA 子系统。Collaboration Server 保存业务事实，本机 Computer daemon 运行 Engine adapter（当前只有 `OpenCodeAdapter`）。每个协作 Agent 有显式 `engine_id`、主模型、triage 模型、私有 home、当前 RuntimeSession JWT 与 `AgentRunner`，见 [collaboration.md](collaboration.md)。它的 **Room**、**Computer daemon**、**协作 Agent** 与本篇的 Session、Sub-Agent 没有继承关系，不要混用；
+- **Sub-Agent** 是主 Agent 派生的只读从属 Session，见 [multi-agent.md](subsystems/multi-agent.md)。它不是新的运行聚合，所有 Turn 语义与根会话完全相同；
+- **协作模式** 是与工作台运行时不相交的 BYOA 子系统。Collaboration Server 保存业务事实，本机 Computer daemon 运行 Engine adapter（当前只有 `OpenCodeAdapter`）。每个协作 Agent 有显式 `engine_id`、主模型、triage 模型、私有 home、当前 RuntimeSession JWT 与 `AgentRunner`，见 [collaboration.md](subsystems/collaboration.md)。它的 **Room**、**Computer daemon**、**协作 Agent** 与本篇的 Session、Sub-Agent 没有继承关系，不要混用；
 - **Agent Message** 是子 Agent 回传给父的消息，以 `message_kind = 'agent_message'` 存在父的 Conversation 里，**永不触发 Turn**。
 
 **不要重新引入的退役术语**：`StepId`、`ToolRunId`、`ApprovalId`、`TurnRecorderPort`、`JournalTurnRecorder`、Event Journal。
@@ -196,15 +196,15 @@ Session
 
 工作台运行时不要添加：MCP、Memory、Artifact、Git/Diff、Worktree、跨进程未完成 Turn 恢复、Event Journal、有损压缩、后台任务恢复。
 
-多智能体已从非目标移出，设计见 [multi-agent.md](multi-agent.md)。它**不引入新 crate、不新增 Trace kind、不新增 SessionUpdate 类型**。子 Agent 本身就是一个 Session，复用 `SessionActor` 与唯一的 Agent Loop。父子拓扑是 `sessions` 表的四个新列。按 `update_plan` 的先例，Core 拥有五个控制工具。子 Agent 的 Trace 独立成树，靠 `sessions.parent_session_id` / `spawn_span_id` 关联。
+多智能体已从非目标移出，设计见 [multi-agent.md](subsystems/multi-agent.md)。它**不引入新 crate、不新增 Trace kind、不新增 SessionUpdate 类型**。子 Agent 本身就是一个 Session，复用 `SessionActor` 与唯一的 Agent Loop。父子拓扑是 `sessions` 表的四个新列。按 `update_plan` 的先例，Core 拥有五个控制工具。子 Agent 的 Trace 独立成树，靠 `sessions.parent_session_id` / `spawn_span_id` 关联。
 
 **范围严格限定在只读、单层、异步**。可写子 Agent、多层嵌套、角色文件加载、跨子 Agent 通信都仍是非目标。子 Agent 完成时只入队，不唤醒父会话，因此"后台任务恢复"仍在上面那行里。若某次改动要求新增 crate、Trace kind，或要求子 Agent 能写文件，先回到 multi-agent.md，确认设计是否偏离。
 
-Skill 已从非目标移出，设计见 [skills.md](skills.md)。它**不引入新 crate、不新增 Trace kind**。目录放在 System Context 中，正文走 Conversation，启停偏好单独保存在 `skill_status`，资源与脚本复用 `read` / `bash`。用户在 Desktop 选择 `$name` 时，可见 token 与 `{ name, path }` 绑定分开。Tauri 把文本和显式选择编码为同一个有序 `Vec<UserInput>`。
+Skill 已从非目标移出，设计见 [skills.md](subsystems/skills.md)。它**不引入新 crate、不新增 Trace kind**。目录放在 System Context 中，正文走 Conversation，启停偏好单独保存在 `skill_status`，资源与脚本复用 `read` / `bash`。用户在 Desktop 选择 `$name` 时，可见 token 与 `{ name, path }` 绑定分开。Tauri 把文本和显式选择编码为同一个有序 `Vec<UserInput>`。
 
 Core 在接受 Turn 前，把 `UserInput::Skill` 解析为持久化的 contextual User-role Text。模型内容层不定义 Skill 专用类型，`ModelRequestBuilder` 和 provider adapter 只处理已有 ContentBlock。文件读取不移到 Bridge、Chat State 或 provider adapter。若某次改动要求新增 Skill crate 或 Trace kind，先回到 skills.md，确认设计是否偏离。
 
-[collaboration.md](collaboration.md) 约束协作模式。它在 §1 的依赖图里是一条**独立分支**：`openwork-collab` 不依赖 `openwork-core`；其 `server/`、`computer/` 与 `protocol/` 按模块单向依赖。Engine 是每个 Agent 的显式领域属性。`AgentRunner` 通过 `EngineRegistry` 取得 adapter，当前生产 registry 只有 `OpenCodeAdapter`。以后接入 Codex 时，增加真实 adapter，不预留空实现或 capability 矩阵。
+[collaboration.md](subsystems/collaboration.md) 约束协作模式。它在 §1 的依赖图里是一条**独立分支**：`openwork-collab` 不依赖 `openwork-core`；其 `server/`、`computer/` 与 `protocol/` 按模块单向依赖。Engine 是每个 Agent 的显式领域属性。`AgentRunner` 通过 `EngineRegistry` 取得 adapter，当前生产 registry 只有 `OpenCodeAdapter`。以后接入 Codex 时，增加真实 adapter，不预留空实现或 capability 矩阵。
 
 Provider 登录态只在对应本机 Engine 的 data root 中，协作分支不依赖 `openwork-credentials`。持久化数据放在 `collab_*` 表，短期协调放在 Redis，瞬时 Runner 状态放在 Computer 内存。三者都不碰 `openwork-core` migrations。
 

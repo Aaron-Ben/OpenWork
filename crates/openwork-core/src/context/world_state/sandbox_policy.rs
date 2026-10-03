@@ -1,4 +1,4 @@
-//! 当前的沙箱策略（permissions.md §4.6）：模式、工作区根、bash 是否可用。
+//! 当前的沙箱策略（permissions.md §11）：模式、工作区根、bash 是否可用。
 //!
 //! 放在 world state 而不是系统提示词里，理由有两条：模式可以在会话中途切换，写进前缀
 //! 会作废缓存；DSH 的实测表明事先声明"只读沙箱"会让模型直接放弃工作，所以这里只陈述
@@ -20,7 +20,7 @@ const NOTICES: BodyNotices = BodyNotices {
     removal: "The previous sandbox policy no longer applies.",
 };
 
-/// bash 不可用时给模型的说明（permissions.md §3.2）。
+/// bash 不可用时给模型的说明（permissions.md §6）。
 const BASH_UNAVAILABLE: &str = "bash: unavailable, because the macOS sandbox failed its self-check. Use read / grep / glob / edit for file work, and tell the user which command you need them to run.";
 
 /// 渲染好的 `<sandbox_policy>` 正文。
@@ -132,7 +132,7 @@ mod tests {
         }
     }
 
-    /// permissions.md §9.2 #38：模式、工作区根与 bash 能写什么，逐字。
+    /// permissions.md §15 #38：模式、工作区根与 bash 能写什么，逐字。
     #[test]
     fn auto_mode_tells_the_model_bash_can_write_the_workspace() {
         let state = SandboxPolicyState::new(&policy(SandboxMode::Auto, "/Users/me/project"), true);
@@ -151,14 +151,14 @@ mod tests {
         ));
     }
 
-    /// permissions.md §2.2：工作区包含主目录时，`auto` 下 bash 也写不了工作区。
+    /// permissions.md §2：工作区包含主目录时，`auto` 下 bash 也写不了工作区。
     #[test]
     fn a_home_workspace_is_described_as_not_writable_by_bash_even_in_auto() {
         let state = SandboxPolicyState::new(&policy(SandboxMode::Auto, "/Users/me"), true);
         assert!(text(&state).contains("writes to the workspace need sandboxPermissions"));
     }
 
-    /// permissions.md §9.2 #13：沙箱不可用时写明 bash 不可用。
+    /// permissions.md §15 #13：沙箱不可用时写明 bash 不可用。
     #[test]
     fn an_unavailable_sandbox_says_bash_is_unavailable() {
         let state = SandboxPolicyState::new(&policy(SandboxMode::Auto, "/Users/me/project"), false);

@@ -34,7 +34,7 @@ Session
 └── Session（子 Agent，parent_session_id 自引用，深度上限 1）
 ```
 
-`trace_annotations` 是 Trace 家族里**唯一的业务真相**。其余三张表丢失时，只是排查变难；标注丢失时，用户的输入就丢失了。保留策略的例外由此而来，见 [trace.md](trace.md) §14。
+`trace_annotations` 是 Trace 家族里**唯一的业务真相**。其余三张表丢失时，只是排查变难；标注丢失时，用户的输入就丢失了。保留策略的例外由此而来，见 [trace.md](subsystems/trace.md) §14。
 
 **不建立**：明文凭证、`recorded_events`、`steps`、`tool_runs`、`approvals`、`runtime_states`、`session_updates`、`turn_recovery_checkpoints`、`trace_span_events`、评测集与自动打分表。
 
@@ -86,7 +86,7 @@ attributes.checkpointId          → conversation_compactions(id)  -- 成功的�
 
 Trace 只保存 `messages` 回答不了的内容：**组装后的请求**（投影后的 Conversation + System Context + 工具定义），以及**失败调用的响应**。前者是"模型实际看到了什么"的唯一答案；压缩之后，它和原始消息不再相同。后者从未产生 Message。
 
-详见 [trace.md](trace.md) §6。
+详见 [trace.md](subsystems/trace.md) §6。
 
 ## 3. 业务实体与 Trace 的分工
 
@@ -167,7 +167,7 @@ CREATE TABLE sessions (
     -- 发起它的 Tool Call Span。Trace 是 best-effort，Span 可能没落库，故不建外键。
     spawn_span_id       TEXT,
 
-    -- 旧工具结果修剪的水位线，只增不减；NULL 表示从未修剪（compaction.md §1.1）
+    -- 旧工具结果修剪的水位线，只增不减；NULL 表示从未修剪（compaction.md §2）
     tool_result_pruned_through_sequence BIGINT,
 
     CONSTRAINT sessions_subagent_fields_consistent CHECK (
@@ -194,7 +194,7 @@ CREATE INDEX idx_sessions_parent
 
 `working_directory` 是工具执行的根目录，可以不是 Git 仓库。**不为它建立 Workspace 记录、Trust 状态或 Git 元数据。** 子 Agent 继承父 Session 的 `working_directory`，不放宽，也不收紧。
 
-Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。**它也不保存子 Agent 的 mailbox。** 未消费的 Agent Message 只在内存里。事实来源是子 Session 自己的 `turns` 与 `messages`。重启后，父 Session 的下一个用户 Turn 做幂等对账，见 [multi-agent.md §8](multi-agent.md)。
+Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。**它也不保存子 Agent 的 mailbox。** 未消费的 Agent Message 只在内存里。事实来源是子 Session 自己的 `turns` 与 `messages`。重启后，父 Session 的下一个用户 Turn 做幂等对账，见 [multi-agent.md §8](subsystems/multi-agent.md)。
 
 子 Agent 的深度上限有两道防线：工具面不给它注册 `spawn_agent`；数据库用 `sessions_spawn_depth_at_most_one` 兜底。**只靠工具面不够。** 工具面是运行时决策；判断写错时，就没有第二道防线。
 
@@ -280,11 +280,11 @@ CREATE UNIQUE INDEX uq_messages_tool_result
 
 `content_format_version` 是**产品最核心持久化事实的版本标记**。`content` 只有一条结构约束："它是个数组"。`ContentBlock` 的形状一旦变化，没有这一列就无法区分新旧行，也无法写针对性的回填。
 
-用户显式选择 Skill 时，Core 先写入一条 `message_kind = 'skill_instruction'` 的 User-role Message。它的 `content` 只含普通 Text block，正文使用 `<skill><name>…</name><path>…</path>…</skill>` 标记。随后，Core 写入一条 `message_kind = 'normal'` 的原始 Text Message，用户可以看到它。Desktop transcript 过滤 Skill instruction；模型 Conversation、Trace、summarizer 和精确 transcript 仍能读取完整快照。不新增 skill invocation 表。压缩语义见 [compaction.md §4](compaction.md)。
+用户显式选择 Skill 时，Core 先写入一条 `message_kind = 'skill_instruction'` 的 User-role Message。它的 `content` 只含普通 Text block，正文使用 `<skill><name>…</name><path>…</path>…</skill>` 标记。随后，Core 写入一条 `message_kind = 'normal'` 的原始 Text Message，用户可以看到它。Desktop transcript 过滤 Skill instruction；模型 Conversation、Trace、summarizer 和精确 transcript 仍能读取完整快照。不新增 skill invocation 表。压缩语义见 [compaction.md §5](subsystems/compaction.md)。
 
 子 Agent 回传的消息同样存入 `messages`，形式是 `message_kind = 'agent_message'` 的 **User-role** Message，正文使用 `<agent_message><task>…</task><kind>…</kind><body>…</body></agent_message>` 标记。**用 user role 而不用 assistant role，是 provider 的限制所致。** 排空点在组装 Model Request 之前。assistant-role 的消息会成为 Anthropic 请求的最后一条，Anthropic 会把它当作 prefill 来续写。不新增 agent message 表。
 
-`message_kind` 现在有三个值。`normal` 之外的两个值都是"模型可见、Desktop transcript 不渲染"。**任何依赖"user role 就是用户请求"的代码，都必须改成按 kind 判断。** `last_real_user` 是第一处这样的代码，见 [multi-agent.md §6.2](multi-agent.md)。
+`message_kind` 现在有三个值。`normal` 之外的两个值都是"模型可见、Desktop transcript 不渲染"。**任何依赖"user role 就是用户请求"的代码，都必须改成按 kind 判断。** `last_real_user` 是第一处这样的代码，见 [multi-agent.md §6.2](subsystems/multi-agent.md)。
 
 重启对账时补发的 Agent Message 使用确定性 ID `agent-msg:{child_session_id}:{child_turn_id}:{kind}`。主键冲突直接提供幂等，不需要先查再写。
 
@@ -322,7 +322,7 @@ CONSTRAINT ..._parent_shape CHECK (
 
 三个 `*_format_version` 分别覆盖 checkpoint 结构、摘要格式和提醒格式。它们可以独立演进。
 
-语义见 [compaction.md](compaction.md)。
+语义见 [compaction.md](subsystems/compaction.md)。
 
 ## 6. Trace 三表 + 标注
 
@@ -365,7 +365,7 @@ CREATE INDEX idx_trace_spans_turn_started    ON trace_spans(turn_id, started_at)
     WHERE turn_id IS NOT NULL;
 ```
 
-**结构根是 `trace_id`，不是 `turn_id`。** `turn_id` 是指向 `turns` 的外键。`turns` 有业务生命周期和 Session 内的轮次编号，无法给"不属于任何 Turn 的操作"编号。详见 [trace.md](trace.md)。
+**结构根是 `trace_id`，不是 `turn_id`。** `turn_id` 是指向 `turns` 的外键。`turns` 有业务生命周期和 Session 内的轮次编号，无法给"不属于任何 Turn 的操作"编号。详见 [trace.md](subsystems/trace.md)。
 
 以下三条设计反直觉，但都是有意为之：
 
@@ -509,7 +509,7 @@ FROM trace_span_payloads m JOIN trace_payloads p ON p.hash = m.payload_hash
 WHERE m.span_id = $1 AND m.slot = $2;
 
 -- 孤儿正文清扫：与删除 Session 或过期 mapping 同一事务，且只清理候选哈希。
--- 全表 NOT EXISTS 扫描在并发下会误删刚插入、mapping 尚未挂载的正文，见 trace.md §14。
+-- 全表 NOT EXISTS 扫描在并发下会误删刚插入、mapping 尚未挂载的正文，见 trace.md §10。
 DELETE FROM trace_payloads p
 WHERE p.hash = ANY($2)
   AND NOT EXISTS (SELECT 1 FROM trace_span_payloads m WHERE m.payload_hash = p.hash);
@@ -517,7 +517,7 @@ WHERE p.hash = ANY($2)
 
 **正文必须是独立的按需查询。** 把它并进 Turn Trace 后，打开一个 Turn 就会拉取几 MB 的 JSONB，而用户多数时候只想看时间线。
 
-**Token 用量不要跨 Provider 直接相加。** `cached_input_tokens` 是否已含在 `input_tokens` 里，各家不同。聚合前，必须按 `resolved_provider_kind` 分组，见 [trace.md](trace.md) §7。
+**Token 用量不要跨 Provider 直接相加。** `cached_input_tokens` 是否已含在 `input_tokens` 里，各家不同。聚合前，必须按 `resolved_provider_kind` 分组，见 [trace.md](subsystems/trace.md) §7。
 
 组装模型可见的 Conversation 时，依次执行：读取 latest checkpoint；精确加载 last-user 原始 Message；放入冻结的 summary 与 reminder；最后追加大于 `replaced_through_message_sequence` 的原始消息。`load_conversation_items` 统一实现这个投影。**Desktop 的普通聊天记录仍读取全部 `messages`**。
 

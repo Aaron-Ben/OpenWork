@@ -1,4 +1,4 @@
-//! 会话的沙箱状态（permissions.md §6）：模式、模式的来源、有没有人能批准。
+//! 会话的沙箱状态（permissions.md §13）：模式、模式的来源、有没有人能批准。
 //!
 //! 越界批准只作用于那一次调用，这里不保存任何授权（§6.2）。
 
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// **Not a third mode.** A mode is the sandbox the user chose; this is a
 /// property of the runtime environment — whether a user exists at all.
 /// Sub-agent Sessions run unattended, so a card there can never be answered
-/// (permissions.md §6.6).
+/// (permissions.md §13.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionApproval {
@@ -30,7 +30,7 @@ impl SessionApproval {
     }
 }
 
-/// 子 Agent 碰到需要批准的调用时给模型的文本（permissions.md §6.6）。
+/// 子 Agent 碰到需要批准的调用时给模型的文本（permissions.md §13.3）。
 ///
 /// 必须可操作：只说"被拒"会让模型重复同一条命令直到耗尽 `max_model_calls`。
 pub fn non_interactive_denial(mode: SandboxMode, reason: &str) -> String {
@@ -45,7 +45,7 @@ pub fn non_interactive_denial(mode: SandboxMode, reason: &str) -> String {
     )
 }
 
-/// 会话模式是怎么来的（permissions.md §7 `sessionModeOrigin`）。
+/// 会话模式是怎么来的（permissions.md §14.2 `sessionModeOrigin`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionModeOrigin {

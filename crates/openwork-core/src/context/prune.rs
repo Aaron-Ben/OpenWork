@@ -1,4 +1,4 @@
-//! 旧工具结果修剪（compaction.md §1.1）。
+//! 旧工具结果修剪（compaction.md §2）。
 //!
 //! 水位线以下、过长的 Tool Result 在投影里只保留开头与结尾，中间换成一行
 //! 标记，指明完整内容所在的落盘文件。这是纯投影变换：`messages` 里的原文
@@ -99,7 +99,7 @@ fn prune_result(result: &mut ToolResultBlock, spill_directory: Option<&Path>) {
 }
 
 /// The spill file named in the marker; the tools write bounded results to the
-/// same path (tools.md §10).
+/// same path (tools.md §8).
 pub(crate) fn spill_file(directory: &Path, tool_call_id: &str) -> std::path::PathBuf {
     SpillDirectory::new(directory).file_for_call(tool_call_id)
 }

@@ -31,7 +31,7 @@ impl ResolvedModel {
     }
 }
 
-/// 卡片上只有两个按钮（permissions.md §5.2）：没有"本会话允许"，卡片也不切换模式。
+/// 卡片上只有两个按钮（permissions.md §12.2）：没有"本会话允许"，卡片也不切换模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {

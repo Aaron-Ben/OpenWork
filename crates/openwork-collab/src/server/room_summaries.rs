@@ -1,4 +1,4 @@
-//! Desktop 的房间列表与置顶（collaboration-desktop.md §4.2、§4.5、§7.1）。Agent 命令的房间视图在
+//! Desktop 的房间列表与置顶（collaboration-desktop.md §4.2、§4.2、§7.1）。Agent 命令的房间视图在
 //! `rooms.rs`，不经过这里。房间里谁在工作由 Agent 的 `activity` 得出，不在这里下发。
 
 use sqlx::{FromRow, PgPool, Postgres, Transaction};

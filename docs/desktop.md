@@ -2,9 +2,9 @@
 
 Tauri 2 + React + TypeScript。React 只通过 Tauri Command/Event 与 Core 通信，**不访问 SQL、Provider Adapter 或 Tool Executor**。
 
-本文描述当前已经落地的 Desktop 实现。具体协议仍以 [permissions.md](permissions.md)、[multi-agent.md](multi-agent.md)、[skills.md](skills.md) 与 [trace.md](trace.md) 为准。
+本文描述当前已经落地的 Desktop 实现。具体协议仍以 [permissions.md](subsystems/permissions.md)、[multi-agent.md](subsystems/multi-agent.md)、[skills.md](subsystems/skills.md) 与 [trace.md](subsystems/trace.md) 为准。
 
-**本篇只描述工作台（`AppShell`）这一侧。** 协作模式是与它平级的第二个 Shell，一个 `mode` 字段在两者之间切换，见 [collaboration-desktop.md](collaboration-desktop.md)。两者只共享 UI 原语、主题与 i18n 基建；导航、状态与事件通道各自独立。
+**本篇只描述工作台（`AppShell`）这一侧。** 协作模式是与它平级的第二个 Shell，一个 `mode` 字段在两者之间切换，见 [collaboration-desktop.md](subsystems/collaboration-desktop.md)。两者只共享 UI 原语、主题与 i18n 基建；导航、状态与事件通道各自独立。
 
 ## 1. 目录与职责
 
@@ -218,7 +218,7 @@ Accepted 与 `turn_started` 的到达顺序没有保证。如果 `turn_start` �
 
 发送期间输入框仍可编辑。清理草稿时，同时比较提交时的 Session 与单调递增的 revision。不要只比较字符串，否则跨 Session 或 ABA 改动会清掉新草稿。Session 切换会重建 `ChatInput`。本地 Skill 绑定不能泄漏到另一会话。
 
-Skill 绑定只存在于输入组件本地。提交时，输入组件把它编码为 `UserInput::Skill`。Core 解析出正文，并以 `message_kind = 'skill_instruction'` 持久化。Transcript 过滤这条正文，只展示用户可见消息。完整契约见 [skills.md §4.2](skills.md)。
+Skill 绑定只存在于输入组件本地。提交时，输入组件把它编码为 `UserInput::Skill`。Core 解析出正文，并以 `message_kind = 'skill_instruction'` 持久化。Transcript 过滤这条正文，只展示用户可见消息。完整契约见 [skills.md §4](subsystems/skills.md)。
 
 `buildTranscript` 负责把 canonical Message、乐观用户消息、live assistant draft、live tool result 和 Plan 投影成 `ChatItem[]`。它不写回任何 Store。
 
@@ -275,11 +275,11 @@ Skill 绑定只存在于输入组件本地。提交时，输入组件把它编�
 - 普通审批提供“允许一次 / 本会话始终允许 / 拒绝”；危险操作只提供“取消 / 仍要允许”，并默认聚焦取消；
 - `Enter` 执行默认的安全选择，`Esc` 拒绝；危险操作下两者都不会直接批准。
 
-Permission 的结构化 effect、规则与 session action 来自 Core。Desktop 只把它们转成用户能读懂的文字并做布局，不重新推导授权结果。详细权限语义见 [permissions.md](permissions.md)。
+Permission 的结构化 effect、规则与 session action 来自 Core。Desktop 只把它们转成用户能读懂的文字并做布局，不重新推导授权结果。详细权限语义见 [permissions.md](subsystems/permissions.md)。
 
 ## 8. 多智能体视图
 
-多智能体协议见 [multi-agent.md](multi-agent.md)。Desktop 不新增 Session Update 类型：子 Session 的 Update 通过同一条全局事件流到达，并携带自己的 `sessionId`。
+多智能体协议见 [multi-agent.md](subsystems/multi-agent.md)。Desktop 不新增 Session Update 类型：子 Session 的 Update 通过同一条全局事件流到达，并携带自己的 `sessionId`。
 
 ### 8.1 右栏数据
 

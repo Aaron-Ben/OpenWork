@@ -16,7 +16,7 @@ use openwork_sandbox::Access;
 
 use crate::checked_path::PathIntent;
 
-/// Lines returned when the model does not ask for fewer (tools.md §9 read).
+/// Lines returned when the model does not ask for fewer (tools.md §7 read).
 const MAX_LINES: usize = 2000;
 /// Longer lines are cut and marked; minified files would otherwise fill the
 /// byte budget with a single line.
@@ -157,7 +157,7 @@ struct Page {
     total_lines: usize,
     stop: Stop,
     /// Hash of the whole file, whatever part was returned: reading any page
-    /// counts as having seen the file (tools.md §9 先读后改).
+    /// counts as having seen the file (tools.md §7 先读后改).
     hash: ContentHash,
 }
 
@@ -345,7 +345,7 @@ mod tests {
             .map(|output| output.into_tool_result().text_content())
     }
 
-    /// 读取除凭据目录外处处允许（permissions.md §2.3）；经符号链接进入凭据目录照样被拒。
+    /// 读取除凭据目录外处处允许（permissions.md §3）；经符号链接进入凭据目录照样被拒。
     #[tokio::test]
     async fn rejects_read_through_symlink_into_a_credential_directory() {
         let sandbox = TestDirectory::new("read-symlink");
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(text, "1\tone\n2\ttwo");
     }
 
-    /// tools.md §12 #20: the default read of a 5000-line file stops at line
+    /// tools.md §10 #20: the default read of a 5000-line file stops at line
     /// 2000 or at the last complete line within 32 KB, never in the middle.
     #[tokio::test]
     async fn acc_20_default_read_stops_at_the_first_limit_and_says_how_to_continue() {
@@ -480,7 +480,7 @@ mod tests {
         );
     }
 
-    /// tools.md §12 #21.
+    /// tools.md §10 #21.
     #[tokio::test]
     async fn acc_21_long_lines_are_cut_to_2000_chars_and_marked() {
         let workspace = TestDirectory::new("read-long-line");

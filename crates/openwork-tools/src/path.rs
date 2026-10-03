@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 /// 只按字面消去 `.` 与 `..`，不解析符号链接。
 ///
-/// 结果不能证明真实文件在哪里——那要靠规范化（tools.md §8）；这里只把模型给的
+/// 结果不能证明真实文件在哪里——那要靠规范化（tools.md §6.2）；这里只把模型给的
 /// 相对写法变成一个可以拿去规范化的绝对路径。
 pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();

@@ -104,7 +104,7 @@ fn wake_refs(inbox: &InboxResponse) -> Vec<CardWakeRef> {
         .clone()
 }
 
-/// collaboration.md §16 #14: real reassignments and new mentions wake once, edits merge into one
+/// collaboration.md §15 #14: real reassignments and new mentions wake once, edits merge into one
 /// pending wake, the initiator and archived Agents are skipped, and only a successful Run settles
 /// the wakes it saw — a change merged while the Run was working stays pending.
 #[tokio::test]
@@ -323,7 +323,7 @@ async fn acc_14_real_changes_wake_once_and_merge_until_a_successful_run_settles_
     fixture.stop().await;
 }
 
-/// collaboration.md §16 #14: Agent-triggered card wakes share the 30-per-minute wake limit with
+/// collaboration.md §15 #14: Agent-triggered card wakes share the 30-per-minute wake limit with
 /// message wakes; wakes over the limit are not written. Desktop-triggered wakes are not limited.
 /// One card Turn carries at most the ten oldest wakes and counts the rest.
 #[tokio::test]

@@ -1,7 +1,7 @@
 import type { RuntimeTraceSpan } from '@/bridge/compat'
 
 /**
- * Tool Span 在时间线上的类别（permissions.md §6.4）。前七类是设计规定的；
+ * Tool Span 在时间线上的类别（permissions.md §14.1）。前七类是设计规定的；
  * `control_tool` 是 Core 控制工具，`cancelled` 是等待审批时 Turn 被取消，
  * `unknown` 是属性缺失或来自旧版本的 Trace——显示"来源未知"，不留白（§7）。
  */

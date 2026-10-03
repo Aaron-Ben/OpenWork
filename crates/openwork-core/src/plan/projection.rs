@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn an_empty_plan_overwrites_rather_than_carrying_the_old_one_forward() {
-        // 这条守 docs/update-plan.md §8.1 那张表的第二行。collector 在 `collect` 返回
+        // 这条守 docs/subsystems/update-plan.md §7.2 那张表的第二行。collector 在 `collect` 返回
         // `None` 时会保留并继续渲染旧值，所以清空计划**必须**返回 `Some(空)`。
         let value = collected(Some(&plan(Vec::new(), None))).expect("empty plan still overwrites");
 

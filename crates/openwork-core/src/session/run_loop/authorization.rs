@@ -1,4 +1,4 @@
-//! 一次工具调用执行前的授权（permissions.md §2.1、§5）。
+//! 一次工具调用执行前的授权（permissions.md §1、§12）。
 //!
 //! 事实来自工具（[`openwork_tools::FinalizedToolset::prepare`]），判定在
 //! [`super::super::approval`]，这里负责和用户往返：发出卡片、等待决定、记录 Trace。
@@ -100,7 +100,7 @@ impl TurnRunner {
                         })
                     }
                     Some(PermissionDecision::Deny) => {
-                        // 用户明确表态，Turn 停下（permissions.md §5.3）。
+                        // 用户明确表态，Turn 停下（permissions.md §12.3）。
                         tool_trace.record_permission_decision("deny", "user");
                         let result = ToolResult::denied(USER_DENIED);
                         self.append_tool_result(call, tool_call_id.clone(), result, tool_trace)
@@ -155,7 +155,7 @@ impl TurnRunner {
 
 const USER_DENIED: &str = "user denied tool permission";
 
-/// 被沙箱拒绝的结果里最能说明原因的一行，放到同一 Turn 下一张越界卡片上（permissions.md §5.1）。
+/// 被沙箱拒绝的结果里最能说明原因的一行，放到同一 Turn 下一张越界卡片上（permissions.md §12.1）。
 pub(super) fn denial_line(result: &ToolResult) -> Option<String> {
     let text = result.text_content();
     text.lines()

@@ -68,7 +68,7 @@ pub struct SubAgentSessionInput {
     pub default_model_id: Option<String>,
     /// Tool Call Span that spawned it. `None` when the Trace write was dropped.
     pub spawn_span_id: Option<String>,
-    /// 父会话模式与角色上限中较窄者，派生时取快照（permissions.md §6.6）。
+    /// 父会话模式与角色上限中较窄者，派生时取快照（permissions.md §13.3）。
     pub sandbox_mode: SandboxMode,
 }
 
@@ -89,7 +89,7 @@ pub struct SessionRecord {
     pub task_name: Option<String>,
     pub agent_role: Option<String>,
     pub spawn_span_id: Option<String>,
-    /// `auto` 或 `accept_edits`（permissions.md §6.3）。库里的 CHECK 约束保证只有这两个值，
+    /// `auto` 或 `accept_edits`（permissions.md §13.1）。库里的 CHECK 约束保证只有这两个值，
     /// 取用时经 [`SessionRecord::sandbox_mode`] 转成枚举。
     pub sandbox_mode: String,
 }

@@ -648,7 +648,7 @@ mod tests {
         }
     }
 
-    /// collaboration.md §8.3、§16 #21：triage 模型只看最后 40 条，正文空白压成一个空格、截到 500 字
+    /// collaboration.md §8.3、§15 #21：triage 模型只看最后 40 条，正文空白压成一个空格、截到 500 字
     /// （Cumora `compactMessages`）。
     #[test]
     fn acc_21_triage_input_keeps_the_latest_forty_messages_cut_to_500_chars() {
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(body_line, format!("first line second {}", "x".repeat(482)));
     }
 
-    /// collaboration.md §8.3、§16 #10：自最近一次人类关注后 Agent 消息数超过发言的 Agent 数，
+    /// collaboration.md §8.3、§15 #10：自最近一次人类关注后 Agent 消息数超过发言的 Agent 数，
     /// 且本批每个房间都如此时，确定性跳过；私聊在检查点之间照常参与。
     #[test]
     fn acc_10_a_lapping_agent_run_is_skipped_without_a_model() {

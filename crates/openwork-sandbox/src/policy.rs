@@ -1,4 +1,4 @@
-//! 一次调用能读写什么（permissions.md §2.2–§2.4、§4.2）。
+//! 一次调用能读写什么（permissions.md §2–§4、§9.2）。
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::tiers;
 
 /// 工作区对一次调用开放到什么程度。按从窄到宽排序，所以子 Agent 的生效模式是
-/// `parent.min(role_ceiling)`。用户与角色从同样的两个取值里选（permissions.md §2.2）。
+/// `parent.min(role_ceiling)`。用户与角色从同样的两个取值里选（permissions.md §2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxMode {
@@ -50,7 +50,7 @@ pub enum GrantScope {
     Subtree,
 }
 
-/// 单次调用额外获得读或写的一个路径（permissions.md §4.1）。授权只存在于那次调用的策略里。
+/// 单次调用额外获得读或写的一个路径（permissions.md §9.1）。授权只存在于那次调用的策略里。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PathGrant {
     /// 规范化后的绝对路径。
@@ -68,7 +68,7 @@ impl PathGrant {
     }
 }
 
-/// 路径所属的档（permissions.md §2.3），供卡片与错误文本使用。
+/// 路径所属的档（permissions.md §3），供卡片与错误文本使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathTier {
@@ -141,7 +141,7 @@ impl SandboxEnvironment {
         &self.temp_roots
     }
 
-    /// bash 启动时必须设置的环境变量（permissions.md §3.1 工具链缓存），覆盖用户环境里的同名变量。
+    /// bash 启动时必须设置的环境变量（permissions.md §5 工具链缓存），覆盖用户环境里的同名变量。
     ///
     /// 缓存放在最后一个临时根下：`detect` 把本用户的 `$TMPDIR` 排在最后。它是 OpenWork
     /// 私有的，不与用户自己的缓存共用，沙箱内的进程因此篡改不了用户在沙箱外编译时取到的产物。
@@ -175,11 +175,11 @@ pub(crate) fn canonical_or_lexical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// 一次越界最多可列的路径数（permissions.md §4.2）。
+/// 一次越界最多可列的路径数（permissions.md §9.2）。
 pub const MAX_GRANTS: usize = 16;
 
 /// 一次调用的策略：会话模式、工作区，以及用户只为这一次批准的授权。bash 的 Seatbelt profile
-/// 与文件工具的围栏都由它推导（permissions.md §2.4）。
+/// 与文件工具的围栏都由它推导（permissions.md §4）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxPolicy {
     pub mode: SandboxMode,
@@ -220,7 +220,7 @@ impl SandboxPolicy {
         }
     }
 
-    /// bash 能否不经越界写工作区：只有 `auto`，且工作区不包含主目录（permissions.md §2.2）。
+    /// bash 能否不经越界写工作区：只有 `auto`，且工作区不包含主目录（permissions.md §2）。
     pub fn bash_writes_workspace(&self) -> bool {
         self.mode == SandboxMode::Auto && !self.workspace_contains_home()
     }
@@ -308,7 +308,7 @@ impl SandboxPolicy {
         roots
     }
 
-    /// 工作区是主目录或它的上级（permissions.md §2.2）。这时工作区里有 `~/Library/LaunchAgents`
+    /// 工作区是主目录或它的上级（permissions.md §2）。这时工作区里有 `~/Library/LaunchAgents`
     /// 这类会在沙箱外被执行的位置，列举不全，所以两个模式下 bash 都不能写工作区。
     fn workspace_contains_home(&self) -> bool {
         self.environment.home.starts_with(&self.workspace_root)
@@ -337,7 +337,7 @@ impl SandboxPolicy {
             .any(|credential| path.starts_with(credential))
     }
 
-    /// 按当前策略校验越界请求里的路径（permissions.md §4.2）。理由与审批归 Core 管。
+    /// 按当前策略校验越界请求里的路径（permissions.md §9.2）。理由与审批归 Core 管。
     pub fn validate_grants(&self, grants: &[PathGrant], actor: Actor) -> Result<(), GrantError> {
         if grants.is_empty() {
             return Err(GrantError::Empty);
@@ -491,7 +491,7 @@ mod tests {
         );
     }
 
-    /// permissions.md §2.2、§9.2 #49：主目录或它的上级作工作区时，bash 在两个模式下都不能写工作区。
+    /// permissions.md §2、§15 #49：主目录或它的上级作工作区时，bash 在两个模式下都不能写工作区。
     #[test]
     fn a_workspace_containing_home_is_read_only_for_bash_in_every_mode() {
         let launch_agent = "/home/me/Library/LaunchAgents/x.plist";
@@ -523,7 +523,7 @@ mod tests {
         );
     }
 
-    /// permissions.md §3.1、§9.2 #50：Go 的缓存指向用户临时目录下 OpenWork 私有的位置，两个模式下 bash 都能写。
+    /// permissions.md §5、§15 #50：Go 的缓存指向用户临时目录下 OpenWork 私有的位置，两个模式下 bash 都能写。
     #[test]
     fn bash_environment_points_the_go_cache_at_a_private_temp_directory() {
         let cache = PathBuf::from("/private/var/folders/t/openwork/go-build");

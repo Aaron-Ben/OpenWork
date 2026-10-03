@@ -500,7 +500,7 @@ mod tests {
         }
     }
 
-    /// collaboration.md §9.4、§16 #20：`--continue` 写在正文前后都可以，`--` 之后是正文。
+    /// collaboration.md §9.4、§15 #20：`--continue` 写在正文前后都可以，`--` 之后是正文。
     #[tokio::test]
     async fn acc_20_reply_takes_continue_anywhere_outside_the_body() {
         let continued = |body: &str| AgentCommand::Reply {
@@ -540,7 +540,7 @@ mod tests {
         );
     }
 
-    /// collaboration.md §7.3、§16 #21：只有 `messages` 认 `--json`；其他命令的 `--json` 留给解析报错。
+    /// collaboration.md §7.3、§15 #21：只有 `messages` 认 `--json`；其他命令的 `--json` 留给解析报错。
     #[tokio::test]
     async fn acc_21_only_messages_takes_json() {
         let (rest, format) =
@@ -561,7 +561,7 @@ mod tests {
         );
     }
 
-    /// collaboration.md §9、§16 #12：`--quote` 与 `--held-token` 写在正文前后都可以（Cumora
+    /// collaboration.md §9、§15 #12：`--quote` 与 `--held-token` 写在正文前后都可以（Cumora
     /// `cli-parse.ts`），`--` 之后都是正文；缺少值时拒绝并说明（模型可见文本逐字断言）。
     #[tokio::test]
     async fn acc_12_reply_takes_a_quote_anywhere_outside_the_body() {

@@ -1,4 +1,4 @@
-//! 文件工具的路径围栏（tools.md §8、permissions.md §2.4）。
+//! 文件工具的路径围栏（tools.md §6.2、permissions.md §4）。
 //!
 //! 先把路径规范化成真实路径（解析符号链接；新文件取最近的已存在父目录），再用本次调用的
 //! [`SandboxPolicy`] 以 `Actor::FileTool` 判断。四档路径由 `openwork-sandbox` 定义，与 bash 的

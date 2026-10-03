@@ -4,7 +4,7 @@ import type {
   RuntimePermissionDecision,
 } from '@/bridge/compat'
 
-/** 卡片的三种形态（permissions.md §5.1）：越界、危险命令，或两者同时。 */
+/** 卡片的三种形态（permissions.md §12.1）：越界、危险命令，或两者同时。 */
 export type ApprovalKind = 'escalation' | 'danger' | 'combined'
 
 export function approvalKind(card: RuntimeApprovalCard): ApprovalKind {

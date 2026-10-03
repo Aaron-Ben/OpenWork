@@ -20,7 +20,7 @@ function isPermissionMode(value: string): value is RuntimePermissionMode {
 }
 
 /**
- * 输入框旁常驻的模式指示器（permissions.md §6.1）。Turn 运行中也能切换：新模式从
+ * 输入框旁常驻的模式指示器（permissions.md §13.1）。Turn 运行中也能切换：新模式从
  * 下一次工具调用起生效，由 Core 保证。
  */
 export function PermissionModeSelect({ mode, disabled, onChange }: PermissionModeSelectProps) {

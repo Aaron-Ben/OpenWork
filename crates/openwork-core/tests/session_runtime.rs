@@ -1075,7 +1075,7 @@ async fn session_actor_forwards_updates_to_the_core_global_bus() {
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 }
 
-/// permissions.md §9.2 #1、#13：快照带模式与沙箱可用性；切换模式不写任何文件。
+/// permissions.md §15 #1、#13：快照带模式与沙箱可用性；切换模式不写任何文件。
 #[tokio::test]
 async fn acc_01_13_the_snapshot_carries_the_mode_and_sandbox_availability() {
     let fixture = runtime(
@@ -1137,7 +1137,7 @@ async fn acc_01_13_the_snapshot_carries_the_mode_and_sandbox_availability() {
     );
 }
 
-/// permissions.md §9.2 #13、#38：策略经 `runtime/sandbox-policy` 给出，不在系统前缀里；
+/// permissions.md §15 #13、#38：策略经 `runtime/sandbox-policy` 给出，不在系统前缀里；
 /// 沙箱不可用时写明 bash 不可用。
 #[tokio::test]
 async fn acc_13_38_the_sandbox_policy_reaches_the_model_as_world_state() {
@@ -1175,7 +1175,7 @@ async fn acc_13_38_the_sandbox_policy_reaches_the_model_as_world_state() {
     assert!(!system.contains("accept-edits"));
 }
 
-/// permissions.md §9.2 #13：沙箱不可用时危险命令不出卡片，直接交给 bash（它返回 `sandbox_unavailable`）。
+/// permissions.md §15 #13：沙箱不可用时危险命令不出卡片，直接交给 bash（它返回 `sandbox_unavailable`）。
 #[tokio::test]
 async fn acc_13_an_unavailable_sandbox_never_asks_about_a_dangerous_command() {
     let mut fixture = runtime_with_options(
@@ -1210,7 +1210,7 @@ async fn acc_13_an_unavailable_sandbox_never_asks_about_a_dangerous_command() {
     assert_eq!(finished_tool_traces(&fixture)[0].danger_match, None);
 }
 
-/// permissions.md §9.2 #38、#44：切换后的下一次调用在新模式下执行，Trace 记下来源，
+/// permissions.md §15 #38、#44：切换后的下一次调用在新模式下执行，Trace 记下来源，
 /// 模型在同一 Turn 里收到新的策略快照。
 #[tokio::test]
 async fn acc_38_44_a_mode_switch_applies_to_the_next_call_and_is_traced() {
@@ -2353,7 +2353,7 @@ fn decision(attributes: &ToolTraceAttributesV1) -> (Option<&str>, Option<&str>) 
     )
 }
 
-/// permissions.md §9.2 #18、#19：越界卡片列出命令、理由与每条路径；批准只作用于这一次，
+/// permissions.md §15 #18、#19：越界卡片列出命令、理由与每条路径；批准只作用于这一次，
 /// 紧接着的同一请求再次出卡片。
 #[tokio::test]
 async fn acc_18_19_an_escalation_asks_with_its_paths_and_applies_to_that_call_only() {
@@ -2428,7 +2428,7 @@ async fn acc_18_19_an_escalation_asks_with_its_paths_and_applies_to_that_call_on
     assert!(traces[2].escalation_paths.is_empty());
 }
 
-/// permissions.md §9.2 #24：用户拒绝后 Turn 停止，工具不执行，结果照样写回会话。
+/// permissions.md §15 #24：用户拒绝后 Turn 停止，工具不执行，结果照样写回会话。
 #[tokio::test]
 async fn acc_24_a_user_denial_stops_the_turn_without_running_the_tool() {
     let mut fixture = runtime(
@@ -2466,7 +2466,7 @@ async fn acc_24_a_user_denial_stops_the_turn_without_running_the_tool() {
     );
 }
 
-/// permissions.md §9.2 #9、#39：硬保护的写目标是规则拒绝，不出卡片，Turn 继续。
+/// permissions.md §15 #9、#39：硬保护的写目标是规则拒绝，不出卡片，Turn 继续。
 #[tokio::test]
 async fn acc_09_39_a_protected_write_target_is_refused_and_the_turn_continues() {
     let mut fixture = runtime(
@@ -2515,7 +2515,7 @@ async fn acc_09_39_a_protected_write_target_is_refused_and_the_turn_continues() 
     )));
 }
 
-/// permissions.md §9.2 #22：不带来新权限、或没有理由的越界请求直接拒绝，不出卡片。
+/// permissions.md §15 #22：不带来新权限、或没有理由的越界请求直接拒绝，不出卡片。
 #[tokio::test]
 async fn acc_22_an_escalation_that_fails_validation_is_refused_without_a_card() {
     let workspace = TestWorkspace::new();
@@ -2580,7 +2580,7 @@ async fn acc_22_an_escalation_that_fails_validation_is_refused_without_a_card() 
     }
 }
 
-/// permissions.md §9.2 #26、#34：`auto` 下危险命令出卡片，标出命中的键与位置；
+/// permissions.md §15 #26、#34：`auto` 下危险命令出卡片，标出命中的键与位置；
 /// §9.2 #32：`accept-edits` 下不单独出卡片，直接在沙箱内执行。
 #[tokio::test]
 async fn acc_26_32_34_a_dangerous_command_asks_only_in_auto_and_is_traced() {
@@ -2727,7 +2727,7 @@ async fn multiple_tool_results_keep_provider_order_in_the_next_request() {
     assert_eq!(tool_ids, ["call-1", "call-2"]);
 }
 
-/// permissions.md §9.2 #41：一次响应里的多张卡片串行呈现。
+/// permissions.md §15 #41：一次响应里的多张卡片串行呈现。
 #[tokio::test]
 async fn acc_41_multiple_permission_requests_are_presented_serially() {
     let mut fixture = runtime(
@@ -3893,7 +3893,7 @@ async fn child_active_turn_owns_and_releases_its_slot_at_terminal() {
     assert_eq!(control.active_turns(), 0);
 }
 
-/// permissions.md §9.2 #36、#37：子 Agent 没有人可问，越界请求直接拒绝，拒绝文本可操作；
+/// permissions.md §15 #36、#37：子 Agent 没有人可问，越界请求直接拒绝，拒绝文本可操作；
 /// `accept-edits` 下危险命令不出卡片，与其他调用一样在沙箱内执行（非交互 Session 在 `auto`
 /// 下拒绝危险命令由 `approval.rs` 的单元测试覆盖）；explorer 的工具面没有写工具与控制工具。
 #[tokio::test]
@@ -4968,7 +4968,7 @@ async fn the_summary_request_excludes_world_state_fragments() {
     );
 }
 
-// compaction.md §1.1 —— 修剪先于摘要。
+// compaction.md §2 —— 修剪先于摘要。
 //
 // 阈值是否触发取决于整份请求的估算，其中 System Context 与工具定义的大小
 // 由实现决定。测试因此先用足够大的窗口跑一遍同样的脚本，从 Trace 读出每次

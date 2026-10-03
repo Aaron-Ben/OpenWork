@@ -5,7 +5,7 @@
 //! 才向对话末尾追加一条**全量重渲染**的消息，没变就一个字节都不发。
 //!
 //! 本模块只有纯逻辑：捕获正文的 IO 在 `context/` 下的三个 loader 里；沙箱策略由
-//! Session 在采样时给出（permissions.md §4.6）。
+//! Session 在采样时给出（permissions.md §11）。
 
 use openwork_chat_state::{ConversationItem, MessageKind};
 use openwork_models::model::ContentBlock;

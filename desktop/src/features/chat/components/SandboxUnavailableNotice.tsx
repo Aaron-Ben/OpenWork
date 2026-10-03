@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import type { RuntimeSandboxStatus } from '@/bridge/compat'
 
 /**
- * 沙箱自检失败时常驻在输入框上方（permissions.md §3.2）：bash 已停用，直到下次启动自检通过。
+ * 沙箱自检失败时常驻在输入框上方（permissions.md §6）：bash 已停用，直到下次启动自检通过。
  * 原因是自检的原始输出，折叠在"查看原因"里。
  */
 export function SandboxUnavailableNotice({ sandbox }: { sandbox: RuntimeSandboxStatus | null }) {

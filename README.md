@@ -219,13 +219,13 @@ pnpm tauri dev
 
 - [文档索引](docs/README.md)
 - [总体架构](docs/architecture.md)
-- [工作台 Session Runtime](docs/session-runtime.md)
-- [工具与权限](docs/tools.md) · [权限模型](docs/permissions.md)
-- [上下文窗口](docs/context-window.md) · [压缩](docs/compaction.md) · [Trace](docs/trace.md)
-- [Skill](docs/skills.md) · [只读 Sub-Agent](docs/multi-agent.md)
-- [协作 Runtime](docs/collaboration.md)
-- [协作 Desktop](docs/collaboration-desktop.md)
-- [协作数据模型](docs/collaboration-data-model.md)
+- [工作台 Session Runtime](docs/subsystems/session-runtime.md)
+- [工具与权限](docs/subsystems/tools.md) · [权限模型](docs/subsystems/permissions.md)
+- [上下文窗口](docs/subsystems/context-window.md) · [压缩](docs/subsystems/compaction.md) · [Trace](docs/subsystems/trace.md)
+- [Skill](docs/subsystems/skills.md) · [只读 Sub-Agent](docs/subsystems/multi-agent.md)
+- [协作 Runtime](docs/subsystems/collaboration.md)
+- [协作 Desktop](docs/subsystems/collaboration-desktop.md)
+- [协作数据模型](docs/subsystems/collaboration.md)
 
 ## 许可证
 

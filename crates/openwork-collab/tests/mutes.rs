@@ -38,7 +38,7 @@ fn rejected(code: &str, message: &str) -> AgentCommandResult {
     }
 }
 
-/// collaboration.md §10.1、§16 #23：静音后群消息不唤醒、不进收件箱，`@` 仍送达；静音时封住未读尾巴，
+/// collaboration.md §10.1、§15 #23：静音后群消息不唤醒、不进收件箱，`@` 仍送达；静音时封住未读尾巴，
 /// follow 后不补发积压；`mute list` 只列仍在静音的房间。
 #[tokio::test]
 async fn acc_23_a_muted_group_only_delivers_mentions_and_follow_skips_the_backlog() {
@@ -163,7 +163,7 @@ async fn acc_23_a_muted_group_only_delivers_mentions_and_follow_skips_the_backlo
     fixture.stop().await;
 }
 
-/// collaboration.md §10.1、§16 #23：Direct Room、非成员房间和不合法的期限都被拒，且不改动成员状态。
+/// collaboration.md §10.1、§15 #23：Direct Room、非成员房间和不合法的期限都被拒，且不改动成员状态。
 #[tokio::test]
 async fn acc_23_direct_rooms_foreign_rooms_and_bad_spans_are_rejected() {
     let Some(fixture) = Fixture::start().await else {

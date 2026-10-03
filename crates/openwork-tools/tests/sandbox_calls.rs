@@ -1,4 +1,4 @@
-//! 工具在真实 Seatbelt 下的行为（tools.md §12 #10、#10b–10e、#26；permissions.md §3、§4.6）。
+//! 工具在真实 Seatbelt 下的行为（tools.md §10 #10、#10b–10e、#26；permissions.md §5–§7、§11）。
 //!
 //! 工作区建在 `CARGO_TARGET_TMPDIR` 下，不在系统临时目录里：临时目录在两个模式下都可写，
 //! 放在那里就看不出模式之间的差别。
@@ -127,7 +127,7 @@ async fn acc_10c_bash_runs_under_the_policy_of_this_call() {
     assert!(!written.is_error(), "{}", written.text_content());
 }
 
-/// #10e 与 permissions.md §4.6：被内核拒绝的结果标记 `sandbox_denied`，并在末尾附拒绝标记与越界提示。
+/// #10e 与 permissions.md §11：被内核拒绝的结果标记 `sandbox_denied`，并在末尾附拒绝标记与越界提示。
 #[tokio::test]
 async fn acc_10e_kernel_denials_are_marked_with_the_escalation_hint() {
     let workspace = Workspace::new("denied");
@@ -295,7 +295,7 @@ async fn acc_10b_credential_directories_are_unreadable_for_file_tools_and_bash()
     assert!(!cat.text_content().contains("secret"));
 }
 
-/// permissions.md §3.1 工具链缓存：bash 的环境里 `GOCACHE` 指向 OpenWork 私有的临时目录。
+/// permissions.md §5 工具链缓存：bash 的环境里 `GOCACHE` 指向 OpenWork 私有的临时目录。
 #[tokio::test]
 async fn bash_sees_the_private_go_cache() {
     let workspace = Workspace::new("gocache");

@@ -1,4 +1,4 @@
-//! 危险命令检测（permissions.md §4.3–§4.5）。
+//! 危险命令检测（permissions.md §10.1–§10.3）。
 //!
 //! 只回答"这条命令会不会批量丢弃未提交的工作、要不要先问一次"，不参与任何放行判断——
 //! 边界是沙箱。尽力而为：程序名是动态的、或者脚本有语法错误时不检测，直接在沙箱里执行。
@@ -9,7 +9,7 @@ use std::ops::Range;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser, Tree};
 
-/// 清单键（permissions.md §4.3）。清单是封闭的，加一条的标准只有一个：它在沙箱允许的
+/// 清单键（permissions.md §10.1）。清单是封闭的，加一条的标准只有一个：它在沙箱允许的
 /// 范围内能批量丢弃未提交的工作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -318,7 +318,7 @@ mod tests {
         detect(command).map(|found| found.key)
     }
 
-    /// permissions.md §9.2 #26–#29 列出的写法，逐条原样。
+    /// permissions.md §15 #26–#29 列出的写法，逐条原样。
     #[test]
     fn acc_26_27_28_29_the_listed_commands_hit_or_miss_as_specified() {
         use DangerKey::{FindDelete, GitCleanForce, RmRecursiveOrForce};

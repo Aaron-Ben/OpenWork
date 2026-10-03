@@ -1,4 +1,4 @@
-//! 执行前的判定（permissions.md §2.1、§4、§5）：规则拒绝、出卡片，还是直接在沙箱里执行。
+//! 执行前的判定（permissions.md §1、§9–§10、§12）：规则拒绝、出卡片，还是直接在沙箱里执行。
 //!
 //! 判定只看三件事：写目标是否硬保护、模型有没有请求越界、命令是否命中危险命令清单。
 //! 命令会读写什么交给内核在执行时判断，这里不推断。
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::permission_state::{SessionApproval, non_interactive_denial};
 
-/// 审批卡片的数据（permissions.md §5.1）。越界与危险命令可以同时出现在一张卡片上，
+/// 审批卡片的数据（permissions.md §12.1）。越界与危险命令可以同时出现在一张卡片上，
 /// 一次批准覆盖两者。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,7 +48,7 @@ pub struct ApprovalDanger {
     pub end: usize,
 }
 
-/// 决定的来源（permissions.md §7 `permissionDecisionSource`）。
+/// 决定的来源（permissions.md §14.2 `permissionDecisionSource`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DecisionSource {
     /// 硬保护路径或越界请求没通过校验。
@@ -136,7 +136,7 @@ pub(super) fn gate(
         };
     }
     // `accept-edits` 下 bash 本来就写不了工作区，危险命令会先被内核拒绝、再走越界卡片；
-    // 单独再问一次只是重复（permissions.md §4.3）。
+    // 单独再问一次只是重复（permissions.md §10.1）。
     if let Some(danger) = danger
         && policy.mode == SandboxMode::Auto
     {
@@ -270,7 +270,7 @@ mod tests {
         ));
     }
 
-    /// permissions.md §4.3：危险命令只在 `auto` 下单独出卡。
+    /// permissions.md §10.1：危险命令只在 `auto` 下单独出卡。
     #[test]
     fn dangerous_commands_ask_only_in_auto() {
         let call = bash("rm -rf build");
@@ -296,7 +296,7 @@ mod tests {
         );
     }
 
-    /// permissions.md §4.2：理由为空、路径不带来新权限，都是规则拒绝。
+    /// permissions.md §9.2：理由为空、路径不带来新权限，都是规则拒绝。
     #[test]
     fn escalations_are_validated_before_any_card() {
         let target = "/home/me/.cargo/registry";
@@ -367,7 +367,7 @@ mod tests {
         assert!(card.previous_denial.is_some());
     }
 
-    /// permissions.md §9.2 #32：`accept-edits` 下 `rm -rf build` 带写工作区的越界重试时，
+    /// permissions.md §15 #32：`accept-edits` 下 `rm -rf build` 带写工作区的越界重试时，
     /// 越界卡片同时标注危险命令，一次批准覆盖两者。
     #[test]
     fn acc_32_an_escalation_card_also_marks_a_dangerous_command() {
@@ -396,7 +396,7 @@ mod tests {
         );
     }
 
-    /// permissions.md §6.6：没有人可问时，越界与危险命令都直接拒绝。
+    /// permissions.md §13.3：没有人可问时，越界与危险命令都直接拒绝。
     #[test]
     fn unattended_sessions_deny_what_would_need_a_card() {
         let escalation = with_escalation(

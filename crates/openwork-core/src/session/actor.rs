@@ -53,7 +53,7 @@ pub struct SessionRuntimeConfig {
     pub storage: Arc<dyn SessionStorage>,
     pub compaction_state: Arc<CompactionStateCollector>,
     pub trace: Arc<dyn TraceRecorder>,
-    /// 会话的沙箱模式：持久化的值，子 Agent 是派生时的快照（permissions.md §6）。
+    /// 会话的沙箱模式：持久化的值，子 Agent 是派生时的快照（permissions.md §13）。
     pub sandbox_mode: SandboxMode,
     pub mode_origin: SessionModeOrigin,
     /// 生成每次调用的沙箱策略所需的工作区与主机事实。

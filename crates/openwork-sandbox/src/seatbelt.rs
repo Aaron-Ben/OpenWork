@@ -1,4 +1,4 @@
-//! 生成 Seatbelt profile 与 `sandbox-exec` 的 argv（permissions.md §3.1）。
+//! 生成 Seatbelt profile 与 `sandbox-exec` 的 argv（permissions.md §5）。
 //!
 //! profile 正文里从不出现路径。每个路径和正则都以 `-D NAME=value` 参数传给 `sandbox-exec`，
 //! 正文只按名字引用，因此名叫 `x")(allow default` 的目录也只是一个字符串。
@@ -176,7 +176,7 @@ impl Builder {
     }
 
     /// 硬保护路径从每个可写根和每条授权中扣除；敏感与凭据路径从所有没有点名它们的
-    /// 可写范围中扣除（permissions.md §3.1）。
+    /// 可写范围中扣除（permissions.md §5）。
     fn carve_outs(
         &mut self,
         policy: &SandboxPolicy,

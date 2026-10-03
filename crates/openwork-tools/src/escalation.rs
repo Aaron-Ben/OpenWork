@@ -1,4 +1,4 @@
-//! write / edit / bash 共用的越界参数（permissions.md §4.1–§4.2、tools.md 越界参数）。
+//! write / edit / bash 共用的越界参数（permissions.md §9.1–§9.2、tools.md 越界参数）。
 //!
 //! 这里只描述模型给的形状。路径规范化在 [`crate::ToolSessionContext`]，校验与批准在
 //! Core（`SandboxPolicy::validate_grants` 加上 `justification` 非空）。
@@ -54,7 +54,7 @@ pub enum GrantScopeInput {
     Subtree,
 }
 
-/// schema 里两个越界字段的名字：沙箱不可用时从 schema 中删掉（permissions.md §4.2）。
+/// schema 里两个越界字段的名字：沙箱不可用时从 schema 中删掉（permissions.md §9.2）。
 pub(crate) const ESCALATION_FIELDS: [&str; 2] = ["sandboxPermissions", "justification"];
 
 /// Core 拿到的越界请求：路径已经规范化，理由原样保留（是否为空由 Core 校验）。

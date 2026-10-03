@@ -81,7 +81,7 @@ async fn failed_run_keeps_the_durable_delivery_and_human_triage_is_deterministic
     fixture.stop().await;
 }
 
-/// collaboration.md §8.4、§16 #7：被点名的是别人时，Agent 完成 Turn 后既不回复也不 ack。
+/// collaboration.md §8.4、§15 #7：被点名的是别人时，Agent 完成 Turn 后既不回复也不 ack。
 /// 这批 delivery 仍要结算，否则同一条 User 消息会在每次 poll 重新触发完整 Turn。
 #[tokio::test]
 async fn a_completed_silent_run_settles_its_delivery_so_the_agent_is_not_woken_again() {
@@ -234,7 +234,7 @@ async fn inbox_water_fills_each_unread_room_before_spending_slack_on_a_busy_room
     fixture.stop().await;
 }
 
-/// collaboration.md §8.3、§16 #10：人类消息之后 Ada、Bo、Cy 各说一次、Ada 又说第二次，Bo 的
+/// collaboration.md §8.3、§15 #10：人类消息之后 Ada、Bo、Cy 各说一次、Ada 又说第二次，Bo 的
 /// triage 以 `lap_floor` 确定性跳过；用户在 Desktop 看到这些消息后计数重新开始，再来一条
 /// Agent 消息就回到 triage 模型。看到的位置只增不减，也不超过房间最后一条消息。
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn acc_10_a_second_lap_is_skipped_until_the_user_looks_again() {
     fixture.stop().await;
 }
 
-/// collaboration.md §8.2、§8.3、§16 #9：人类只点名 Bo 时，Bo 直接参与；Ada 先拿到路由题，
+/// collaboration.md §8.2、§8.3、§15 #9：人类只点名 Bo 时，Bo 直接参与；Ada 先拿到路由题，
 /// 答 `me` 时以 `routing` 跳过并结算 delivery、记下 response_mode，答 `each` 时参与；
 /// `@all` 永不收窄。
 #[tokio::test]
@@ -448,7 +448,7 @@ async fn acc_09_a_message_naming_one_agent_asks_the_others_to_route_it() {
     fixture.stop().await;
 }
 
-/// collaboration.md §9.3、§16 #12：只能引用同一房间的消息，发布结果与 inbox 都带着被引用的原文；
+/// collaboration.md §9.3、§15 #12：只能引用同一房间的消息，发布结果与 inbox 都带着被引用的原文；
 /// 被引用的作者即使 mute 了房间也会收到引用它的消息，普通消息则不会。
 #[tokio::test]
 async fn acc_12_quotes_stay_in_the_room_and_reach_a_muted_author() {
@@ -584,7 +584,7 @@ async fn acc_12_quotes_stay_in_the_room_and_reach_a_muted_author() {
     fixture.stop().await;
 }
 
-/// collaboration.md §7.2、§16 #8：inbox 带上本批房间的类型与标题，以及渲染名册所需的
+/// collaboration.md §7.2、§15 #8：inbox 带上本批房间的类型与标题，以及渲染名册所需的
 /// 全部 active 参与者；已归档且没有出现在本批消息里的 Agent 不在其中。
 #[tokio::test]
 async fn acc_08_inbox_carries_room_headers_and_the_active_team() {

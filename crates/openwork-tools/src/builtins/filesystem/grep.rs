@@ -20,7 +20,7 @@ use crate::{
 };
 use openwork_sandbox::Access;
 
-/// Matching lines returned in `content` mode (tools.md §9 grep).
+/// Matching lines returned in `content` mode (tools.md §7 grep).
 const MAX_LINES: usize = 250;
 /// One large file cannot take the whole result.
 const MAX_LINES_PER_FILE: usize = 50;
@@ -501,7 +501,7 @@ mod tests {
         assert!(text.starts_with("No matches"));
     }
 
-    /// tools.md §12 #22: at most 250 lines, 50 per file and 2000 bytes per
+    /// tools.md §10 #22: at most 250 lines, 50 per file and 2000 bytes per
     /// line, with exact totals and the full list on disk.
     #[tokio::test]
     async fn acc_22_bounds_lines_and_reports_exact_totals() {
@@ -572,7 +572,7 @@ mod tests {
         assert!(!spill_root.join("grep.txt").exists());
     }
 
-    /// tools.md §12 #23: a timed-out scan reports what it found as a minimum.
+    /// tools.md §10 #23: a timed-out scan reports what it found as a minimum.
     #[test]
     fn acc_23_timeout_reports_at_least_the_counted_matches() {
         let scan = Scan {

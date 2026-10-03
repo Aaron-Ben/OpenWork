@@ -286,7 +286,7 @@ mod tests {
     use super::*;
     use crate::model::{Message, ThinkingConfig, ToolDefinition};
 
-    /// tools.md §12 #38: a tool result reaches the provider as its text
+    /// tools.md §10 #38: a tool result reaches the provider as its text
     /// output only; Artifacts stay out of the model context.
     #[test]
     fn tool_result_artifacts_are_not_sent_to_the_provider() {

@@ -349,7 +349,7 @@ mod tests {
         );
     }
 
-    /// collaboration.md §7.3、§16 #21：inbox 240 字、messages 280 字、glance 200 字、HELD 压空白后
+    /// collaboration.md §7.3、§15 #21：inbox 240 字、messages 280 字、glance 200 字、HELD 压空白后
     /// 200 字，截断处 `…`，有截断时最后一行说明 `messages --json`；没截断时不加说明。
     #[test]
     fn acc_21_listings_cut_long_bodies_like_cumora() {
@@ -410,7 +410,7 @@ mod tests {
         assert!(!untouched.contains("--json") && !untouched.contains('…'));
     }
 
-    /// collaboration.md §7.3、§16 #21：`messages --json` 输出完整正文（Cumora `messages --json`）。
+    /// collaboration.md §7.3、§15 #21：`messages --json` 输出完整正文（Cumora `messages --json`）。
     #[test]
     fn acc_21_messages_json_prints_full_bodies() {
         let long = "z".repeat(5000);

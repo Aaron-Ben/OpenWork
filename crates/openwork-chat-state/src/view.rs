@@ -19,7 +19,7 @@ impl ConversationContextView {
     }
 }
 
-/// Which old tool results the model projection shortens (compaction.md §1.1).
+/// Which old tool results the model projection shortens (compaction.md §2).
 ///
 /// This is projection state, not Conversation content: the items keep their
 /// full results, and every projection of the same view shortens the same

@@ -553,7 +553,7 @@ async fn desktop_owns_board_structure_while_agent_owns_the_card_workflow() {
     fixture.stop().await;
 }
 
-/// collaboration.md §16 #13、#15: concurrent claims have one winner; concurrent moves stay contiguous.
+/// collaboration.md §15 #13、#15: concurrent claims have one winner; concurrent moves stay contiguous.
 #[tokio::test]
 async fn acc_15_concurrent_claim_and_move_keep_one_owner_and_contiguous_positions() {
     let Some(fixture) = Fixture::start().await else {
@@ -649,7 +649,7 @@ async fn acc_15_concurrent_claim_and_move_keep_one_owner_and_contiguous_position
     fixture.stop().await;
 }
 
-/// collaboration.md §16 #13: claiming moves `todo` to the leftmost `doing` and nothing else;
+/// collaboration.md §15 #13: claiming moves `todo` to the leftmost `doing` and nothing else;
 /// another Agent takes over only an archived assignee's card, or one idle 20 minutes
 /// whose assignee has no running Run.
 #[tokio::test]
@@ -820,7 +820,7 @@ async fn acc_13_claim_advances_todo_and_takes_over_only_archived_or_idle_stale_w
     fixture.stop().await;
 }
 
-/// collaboration.md §16 #15: with Column `kind` replacing the terminal flag, Agenda skips only `done`.
+/// collaboration.md §15 #15: with Column `kind` replacing the terminal flag, Agenda skips only `done`.
 #[tokio::test]
 async fn acc_15_agenda_is_opt_in_excludes_only_done_columns_and_opens_a_card_focused_run() {
     let Some(fixture) = Fixture::start().await else {

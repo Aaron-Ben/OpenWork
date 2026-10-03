@@ -18,7 +18,7 @@ use crate::{
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
 
-/// 执行命令的 shell：与危险命令检测解析所用的语法一致（tools.md §9 bash）。
+/// 执行命令的 shell：与危险命令检测解析所用的语法一致（tools.md §7 bash）。
 const SHELL: &str = "/bin/bash";
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -142,7 +142,7 @@ impl Tool for BashTool {
     }
 }
 
-/// 会话环境叠加沙箱要求的变量（permissions.md §3.1 工具链缓存），同名时后者覆盖。
+/// 会话环境叠加沙箱要求的变量（permissions.md §5 工具链缓存），同名时后者覆盖。
 fn environment(session: &ToolSessionContext, policy: &SandboxPolicy) -> HashMap<String, String> {
     let mut environment = session.environment.as_ref().clone();
     environment.extend(
@@ -155,7 +155,7 @@ fn environment(session: &ToolSessionContext, policy: &SandboxPolicy) -> HashMap<
     environment
 }
 
-/// 沙箱不可用时 bash 不执行（permissions.md §3.2），也没有"这一次不用沙箱"的选项。
+/// 沙箱不可用时 bash 不执行（permissions.md §6），也没有"这一次不用沙箱"的选项。
 fn sandbox_unavailable(reason: &str) -> ToolResult {
     ToolResult::failed(
         ToolErrorCode::SandboxUnavailable,
@@ -171,7 +171,7 @@ fn default_timeout_ms() -> u64 {
 }
 
 /// Head, an omission marker naming the spill file, then the tail
-/// (tools.md §9 bash). Build logs put their noise first and their errors
+/// (tools.md §7 bash). Build logs put their noise first and their errors
 /// last, hence the short head.
 fn render_output(output: &CapturedOutput) -> String {
     let mut text = output.head_lossy();
@@ -211,7 +211,7 @@ mod tests {
         crate::test_support::call_context(id, CancellationToken::new())
     }
 
-    /// permissions.md §9.2 #11：结果里不出现网络限制或隔离的表述；沙箱标记只在被内核拒绝时追加。
+    /// permissions.md §15 #11：结果里不出现网络限制或隔离的表述；沙箱标记只在被内核拒绝时追加。
     /// 一个恒为"未强制"的免责声明只会训练用户忽略周围的文字（§1.4）。
     #[tokio::test]
     async fn acc_11_bash_output_makes_no_network_or_isolation_claim() {
@@ -355,7 +355,7 @@ mod tests {
         );
     }
 
-    /// tools.md §12 #25 and #26: long output shows its first 2 KB and last
+    /// tools.md §10 #25 and #26: long output shows its first 2 KB and last
     /// 14 KB, names the omitted byte count, and saves the complete output.
     #[cfg(unix)]
     #[tokio::test]

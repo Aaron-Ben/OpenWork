@@ -153,7 +153,7 @@ mod tests {
         }
     }
 
-    /// collaboration.md §8.3、§16 #22：限流与超时退避、取消记为中断；无法解析与其他 Engine 错误
+    /// collaboration.md §8.3、§15 #22：限流与超时退避、取消记为中断；无法解析与其他 Engine 错误
     /// fail closed（Cumora daemon 的本地 triage）。
     #[test]
     fn acc_22_triage_failures_back_off_or_fail_closed_like_cumora() {

@@ -21,7 +21,7 @@ interface RoomStoreState {
   loading: boolean
   error: string | null
   fetchAll: () => Promise<void>
-  /** 置顶或取消置顶（collaboration-desktop.md §4.5），成功后重新取列表。 */
+  /** 置顶或取消置顶（collaboration-desktop.md §4.2），成功后重新取列表。 */
   pin: (roomId: string, pinned: boolean) => Promise<void>
   createGroup: (title: string, agentIds: string[]) => Promise<CollabRoom | null>
   openDirect: (agentId: string) => Promise<CollabRoom | null>

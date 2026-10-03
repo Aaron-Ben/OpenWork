@@ -224,7 +224,7 @@ async fn apply_edit(
 }
 
 /// The lines the replacement occupies in the new file, so the model can
-/// re-read just that range (tools.md §9 edit).
+/// re-read just that range (tools.md §7 edit).
 fn replaced_lines(before_match: &str, new: &str) -> (usize, usize) {
     let start = before_match.matches('\n').count() + 1;
     let spanned = new.strip_suffix('\n').unwrap_or(new).matches('\n').count();
@@ -290,7 +290,7 @@ mod tests {
         observations
     }
 
-    /// tools.md §12 #28: one-line summaries with the new line range.
+    /// tools.md §10 #28: one-line summaries with the new line range.
     #[tokio::test]
     async fn acc_28_edits_report_one_line_with_the_new_line_range() {
         let path = temp_file();

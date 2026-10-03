@@ -83,7 +83,7 @@ pub(super) struct TurnRunRequest {
     pub cancel: CancellationToken,
     pub events: mpsc::Sender<RunnerEvent>,
     pub permission_state: watch::Receiver<SessionPermissionState>,
-    /// `NonInteractive` 时，需要卡片的调用直接拒绝（permissions.md §6.6）。
+    /// `NonInteractive` 时，需要卡片的调用直接拒绝（permissions.md §13.3）。
     pub approval: SessionApproval,
     /// 生成每次调用的沙箱策略。
     pub sandbox: SessionSandbox,
@@ -452,7 +452,7 @@ impl TurnRunner {
         Ok(())
     }
 
-    /// 这一次采样时的会话模式与 bash 可用性（permissions.md §4.6）。
+    /// 这一次采样时的会话模式与 bash 可用性（permissions.md §11）。
     fn sandbox_policy_state(&self) -> SandboxPolicyState {
         let mode = self.request.permission_state.borrow().mode();
         SandboxPolicyState::new(
@@ -587,7 +587,7 @@ impl TurnRunner {
     }
 
     /// Prunes old tool results before a threshold or overflow compaction
-    /// (compaction.md §1.1) and returns the request rebuilt on the pruned
+    /// (compaction.md §2) and returns the request rebuilt on the pruned
     /// projection. `None` means nothing new could be pruned, so the caller
     /// summarizes exactly as it would have without pruning.
     async fn prune_before_compacting(
@@ -855,7 +855,7 @@ impl TurnRunner {
         tool_trace.record_session_mode(mode, permission_state.mode_origin());
 
         // 控制工具在这里分流：它不访问主机文件与进程，不经沙箱，也不做执行前判定。
-        // Trace 记来源 `control_tool`（permissions.md §7），与沙箱内执行的调用区分开。
+        // Trace 记来源 `control_tool`（permissions.md §14.2），与沙箱内执行的调用区分开。
         match resolved.expect("unknown tools returned above") {
             ResolvedTurnTool::UpdatePlan => {
                 return self
@@ -917,7 +917,7 @@ impl TurnRunner {
             .as_ref()
             .is_some_and(|error| error.code == ToolErrorCode::SandboxUnavailable)
         {
-            // 沙箱不可用时命令没有执行（permissions.md §6.4 "沙箱不可用而未执行"）。
+            // 沙箱不可用时命令没有执行（permissions.md §14.1 "沙箱不可用而未执行"）。
             tool_trace.record_permission_decision("deny", "sandbox_unavailable");
         } else {
             tool_trace.record_sandbox_mode(policy.mode);
@@ -943,7 +943,7 @@ impl TurnRunner {
 
     /// 执行一次 `update_plan`。
     ///
-    /// 顺序（见 `docs/update-plan.md` §7）：解析校验 → 单事务提交计划与成功 Tool Result
+    /// 顺序（见 `docs/subsystems/update-plan.md` §7）：解析校验 → 单事务提交计划与成功 Tool Result
     /// → Chat State → 内存中的 current_plan → PlanUpdated → ToolCallFinished。
     /// 任何一步失败都不能留下"计划变了但历史里没有对应结果"的状态。
     async fn run_update_plan(
@@ -954,7 +954,7 @@ impl TurnRunner {
         mut tool_trace: ToolCallTraceGuard,
     ) -> Result<(), TurnRunError> {
         // `control_tool` 是独立的来源，不复用 `sandbox`：它根本没有在沙箱里执行
-        // （permissions.md §6.4）。
+        // （permissions.md §14.1）。
         tool_trace.record_permission_decision("allow", "control_tool");
 
         let plan = match parse_update_plan_arguments(input).and_then(|args| {

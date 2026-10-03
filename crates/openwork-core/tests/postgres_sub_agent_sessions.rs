@@ -1,6 +1,6 @@
 //! Storage-level contract for sub-agent Sessions.
 //!
-//! Covers the P0 acceptance items in `docs/multi-agent.md` §11 that only the
+//! Covers the P0 acceptance items in `docs/subsystems/multi-agent.md` §11 that only the
 //! database can answer: list filtering, name uniqueness, name format, depth, and
 //! cascade delete.
 

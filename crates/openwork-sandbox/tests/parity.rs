@@ -1,4 +1,4 @@
-//! permissions.md §2.4、§9.2 #10：文件工具围栏（`SandboxPolicy::check`）与 Seatbelt profile
+//! permissions.md §4、§15 #10：文件工具围栏（`SandboxPolicy::check`）与 Seatbelt profile
 //! 对每一档、每个模式、每个访问方和每种授权给出同样的结论——对照真实内核检查。
 //!
 //! 整个测试环境（主目录、工作区、临时根）都在 `CARGO_TARGET_TMPDIR` 下：它不在本机真实的
@@ -223,7 +223,7 @@ fn acc_10_file_tool_fence_and_seatbelt_agree_on_every_path() {
     }
 }
 
-/// 两个访问方之间唯一有意的差异（permissions.md §2.2）。
+/// 两个访问方之间唯一有意的差异（permissions.md §2）。
 #[test]
 fn bash_and_file_tools_differ_only_on_the_workspace_under_accept_edits() {
     let world = World::new("actors");

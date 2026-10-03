@@ -160,7 +160,7 @@ async fn production_host_persists_and_starts_an_idle_explorer_session() {
     );
 }
 
-/// permissions.md §9.2 #1、#35、#42：新会话从 `auto` 开始；模式先落库再生效，重启后恢复；
+/// permissions.md §15 #1、#35、#42：新会话从 `auto` 开始；模式先落库再生效，重启后恢复；
 /// 子 Agent 在派生时取父会话与角色上限中较窄者，之后父会话切换不影响它，它自己也不能切换。
 #[tokio::test]
 async fn acc_01_35_42_session_modes_persist_and_sub_agents_keep_their_snapshot() {

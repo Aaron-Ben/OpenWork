@@ -107,7 +107,7 @@ pub enum DesktopCommand {
     OpenRoom {
         room_id: String,
     },
-    /// 置顶或取消置顶（collaboration-desktop.md §4.5）。
+    /// 置顶或取消置顶（collaboration-desktop.md §4.2）。
     PinRoom {
         room_id: String,
         pinned: bool,

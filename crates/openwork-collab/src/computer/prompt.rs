@@ -375,7 +375,7 @@ mod tests {
         }
     }
 
-    /// collaboration.md §7.2、§16 #8：开头一段、时间、房间标题行、显示名与身份、消息 id、Climate 与名册
+    /// collaboration.md §7.2、§15 #8：开头一段、时间、房间标题行、显示名与身份、消息 id、Climate 与名册
     /// 逐字符合；
     /// persona 不在增量里。
     #[test]
@@ -430,7 +430,7 @@ mod tests {
         );
     }
 
-    /// collaboration.md §7.2、§16 #8：超过 40 行时按 quietest-first 分配，未显示的条数与读取命令就地写明。
+    /// collaboration.md §7.2、§15 #8：超过 40 行时按 quietest-first 分配，未显示的条数与读取命令就地写明。
     #[test]
     fn acc_08_digest_over_forty_lines_names_what_it_left_out() {
         let mut messages = (1..=45)
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(prompt.matches("\n  [msg-").count(), 40);
     }
 
-    /// collaboration.md §7.2、§9.3、§16 #12：带引用的消息下一行是被引用的原文，不占 40 行预算。
+    /// collaboration.md §7.2、§9.3、§15 #12：带引用的消息下一行是被引用的原文，不占 40 行预算。
     #[test]
     fn acc_12_quoted_messages_show_the_original_under_the_reply() {
         let mut reply = message("msg-2", "room-g", 2, "bo", "Use a partial index.");
@@ -550,7 +550,7 @@ mod tests {
         }
     }
 
-    /// collaboration.md §11.4、§16 #14：卡片 Turn 的正文逐字符合文档，附带随唤醒到达的未读消息与名册。
+    /// collaboration.md §11.4、§15 #14：卡片 Turn 的正文逐字符合文档，附带随唤醒到达的未读消息与名册。
     #[test]
     fn acc_14_card_turn_prompt_lists_the_cards_and_the_board_commands() {
         let cards = vec![

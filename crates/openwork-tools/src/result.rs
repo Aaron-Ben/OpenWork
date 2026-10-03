@@ -29,7 +29,7 @@ pub enum ToolErrorCode {
     Timeout,
     ExecutionFailed,
     OutcomeUnknown,
-    /// 沙箱自检失败，bash 不执行（permissions.md §3.2）。
+    /// 沙箱自检失败，bash 不执行（permissions.md §6）。
     SandboxUnavailable,
 }
 
@@ -47,7 +47,7 @@ pub struct ToolResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ToolResultArtifact>,
     pub error: Option<ToolError>,
-    /// 沙箱或文件工具围栏拒绝了其中的文件操作（permissions.md §3.3）。它是结果上的事实，
+    /// 沙箱或文件工具围栏拒绝了其中的文件操作（permissions.md §7）。它是结果上的事实，
     /// 不是权限判定：命令照样执行了，退出码也照常给出。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_denied: bool,

@@ -43,7 +43,7 @@ pub trait Tool: Send + Sync + 'static {
     fn description(&self) -> &'static str;
     fn risk(&self) -> ToolRisk;
 
-    /// 执行前报告给 Core 的事实（permissions.md §2.1）：命令原文、写目标、越界请求。
+    /// 执行前报告给 Core 的事实（permissions.md §1）：命令原文、写目标、越界请求。
     /// 默认是既不写文件也不启动进程的工具。
     fn inspect(&self, _input: &Self::Input) -> CallInspection {
         CallInspection::read_only()
@@ -60,7 +60,7 @@ pub trait Tool: Send + Sync + 'static {
 #[async_trait]
 pub(crate) trait DynTool: Send + Sync {
     fn id(&self) -> ToolId;
-    /// `escalation_available` 为假时从 schema 里删掉越界参数（permissions.md §4.2）。
+    /// `escalation_available` 为假时从 schema 里删掉越界参数（permissions.md §9.2）。
     fn definition(&self, escalation_available: bool) -> Result<ToolDefinition, String>;
     fn validate(&self, input: &Value) -> Result<(), String>;
     fn inspect(&self, input: &Value) -> Result<CallInspection, String>;

@@ -91,7 +91,7 @@ mod tests {
         }
     }
 
-    /// permissions.md §4.2、tools.md §12 #10f：沙箱不可用时 schema 里没有越界参数。
+    /// permissions.md §9.2、tools.md §10 #10f：沙箱不可用时 schema 里没有越界参数。
     #[test]
     fn escalation_parameters_disappear_when_the_sandbox_is_unavailable() {
         let unavailable: Arc<dyn SandboxBackend> =
