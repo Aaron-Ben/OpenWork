@@ -57,6 +57,7 @@ fn sub_agent(parent: &SessionId, task_name: &str) -> SubAgentSessionInput {
         agent_role: "explorer".to_string(),
         working_directory: "/tmp/openwork-sub-agent".to_string(),
         default_model_id: None,
+        reasoning_effort: None,
         spawn_span_id: Some("span-spawn-1".to_string()),
         sandbox_mode: SandboxMode::AcceptEdits,
     }

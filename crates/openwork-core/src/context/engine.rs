@@ -68,8 +68,10 @@ impl ContextEngine {
                 temperature: None,
                 top_p: None,
                 max_output_tokens,
-                thinking: None,
+                reasoning_effort: None,
                 tools: input.tool_definitions.to_vec(),
+                // 缓存键由调用方按 Session 设置。
+                prompt_cache_key: None,
             },
             context_budget,
             projection_summary: projected.summary,
@@ -288,7 +290,7 @@ mod tests {
         );
         assert_eq!(prepared.request.tools, [tool]);
         assert_eq!(prepared.request.temperature, None);
-        assert_eq!(prepared.request.thinking, None);
+        assert_eq!(prepared.request.reasoning_effort, None);
         assert!(prepared.context_budget.estimated_input_tokens > 0);
     }
 

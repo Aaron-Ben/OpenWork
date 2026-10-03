@@ -24,6 +24,8 @@ export interface RuntimeSessionRecord {
   title: string | null
   workingDirectory: string
   defaultModelId: string | null
+  /** Responses `reasoning.effort`; null uses the model's catalog default. */
+  reasoningEffort: string | null
   status: 'active' | 'archived'
   createdAt: string
   updatedAt: string

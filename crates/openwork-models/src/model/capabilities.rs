@@ -4,8 +4,8 @@
 //! 单项裁到多大、什么时候压缩，都是 Core 的策略，属于 `openwork-core` 的
 //! `ModelContextLimits`，不属于这里。
 //!
-//! 这些值必须由 Provider preset 或用户显式配置提供。未知模型不能靠推断——
-//! 猜错窗口的后果是请求被 Provider 拒绝或历史被无谓压缩，两者都不会有明确报错。
+//! 这些值来自用户配置或打包的模型目录（`crate::catalog`）。两者都没有时用保守的
+//! 兜底值，并记一条警告：窗口猜小只会提前压缩，猜大会被 Provider 拒绝。
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -21,7 +21,7 @@ pub struct ModelCapabilities {
     /// 厂商把输出定义为"窗口减去 prompt"（例如 Kimi）时，这个值完全由我们决定。
     pub max_output_tokens: u32,
     /// 厂商单独公布的推理 token 额度，仅当它**不计入** `max_output_tokens`
-    /// 却仍然占用窗口时才有值（例如 Qwen 的思维链额度）。
+    /// 却仍然占用窗口时才有值。
     ///
     /// 有值时它与输出额度相加才是需要从窗口里预留的总量。绝大多数模型为
     /// `None`：推理 token 本来就算在输出额度里。

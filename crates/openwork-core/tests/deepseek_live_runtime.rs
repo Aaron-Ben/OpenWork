@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openwork_core::{
-    ClientRequestId, ModelCapabilities, ModelInput, OpenWorkCore, PermissionDecision,
-    PostgresStorage, SessionId, SessionInput, SessionUpdate, ToolCallId, session::TurnId,
+    ClientRequestId, FileProviderRepository, OpenWorkCore, PermissionDecision, PostgresStorage,
+    ProviderInput, ProviderModel, ProviderRepository, ProviderSettings, SessionId, SessionInput,
+    SessionUpdate, ToolCallId, session::TurnId,
 };
-use serde_json::json;
 use uuid::Uuid;
 
 fn unique(prefix: &str) -> String {
@@ -19,28 +19,40 @@ async fn deepseek_v4_flash_completes_a_durable_runtime_turn() {
     std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY");
 
     let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
-    let core = OpenWorkCore::from_storage(Arc::clone(&storage))
+    // 预设的 DeepSeek 连接，key 从环境变量读取；模型能力取自打包的模型目录。
+    let config_directory = tempfile::TempDir::new().unwrap();
+    let providers = Arc::new(FileProviderRepository::new(
+        config_directory.path().join("config.json"),
+    ));
+    providers
+        .create(
+            "deepseek",
+            ProviderInput {
+                settings: ProviderSettings {
+                    name: "DeepSeek".to_string(),
+                    base_url: "https://api.deepseek.com".to_string(),
+                    env_key: Some("DEEPSEEK_API_KEY".to_string()),
+                    http_headers: Default::default(),
+                    query_params: Default::default(),
+                    request_max_retries: None,
+                    stream_idle_timeout_ms: None,
+                    models: vec![ProviderModel {
+                        model_id: "deepseek-flash".to_string(),
+                        display_name: None,
+                        enabled: true,
+                        capabilities: None,
+                    }],
+                    enabled: true,
+                },
+                api_key: None,
+            },
+        )
         .await
         .unwrap();
-    let model_id = unique("model-deepseek-live");
-    core.register_model(&ModelInput {
-        id: model_id.clone(),
-        display_name: "DeepSeek V4 Flash live test".to_string(),
-        provider_kind: "deepseek".to_string(),
-        model_name: "deepseek-v4-flash".to_string(),
-        base_url: "https://api.deepseek.com".to_string(),
-        credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
-        enabled: true,
-        capabilities: ModelCapabilities {
-            context_window_tokens: 1_048_576,
-            max_output_tokens: 32_768,
-            max_reasoning_tokens: None,
-            accepts_data_blocks: false,
-        },
-        config: json!({}),
-    })
-    .await
-    .unwrap();
+    let core = OpenWorkCore::from_storage(Arc::clone(&storage), providers)
+        .await
+        .unwrap();
+    let model_id = "deepseek/deepseek-flash".to_string();
 
     let session_id = SessionId::new(unique("session-deepseek-live"));
     core.create_session(&SessionInput {

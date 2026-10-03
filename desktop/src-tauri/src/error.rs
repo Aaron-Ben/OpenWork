@@ -47,12 +47,6 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::ConfigurationInvalid,
                 format!("Model not found: {id}"),
             ),
-            OpenWorkCoreError::ModelCapabilitiesMissing(id) => Self::new(
-                CommandErrorCode::ConfigurationInvalid,
-                format!(
-                    "Model capabilities are missing for {id}; open Settings > Models and edit its provider"
-                ),
-            ),
             OpenWorkCoreError::SessionActive(id) => Self::new(
                 CommandErrorCode::OperationConflict,
                 format!("Session has an active turn: {id}"),
@@ -92,6 +86,10 @@ impl From<OpenWorkCoreError> for CommandError {
                 CommandErrorCode::InvalidRequest,
                 format!("A sub-agent keeps the sandbox mode it was started with: {id}"),
             ),
+            OpenWorkCoreError::SubAgentModelFixed(_)
+            | OpenWorkCoreError::ReasoningEffortUnsupported { .. } => {
+                Self::new(CommandErrorCode::InvalidRequest, error.to_string())
+            }
             OpenWorkCoreError::FileChangeUndo(error) => {
                 Self::new(CommandErrorCode::OperationConflict, error.to_string())
             }
@@ -204,19 +202,26 @@ impl From<OpenWorkCoreError> for CommandError {
                     format!("Provider field is invalid: {field}"),
                 )
             }
-            OpenWorkCoreError::Provider(ProviderRepositoryError::CredentialEncryption {
-                ..
-            })
-            | OpenWorkCoreError::CredentialBootstrap(_)
-            | OpenWorkCoreError::ProviderRepositoryUnavailable => Self::new(
+            OpenWorkCoreError::Provider(ProviderRepositoryError::AlreadyExists { id }) => {
+                Self::new(
+                    CommandErrorCode::OperationConflict,
+                    format!("Provider already exists: {id}"),
+                )
+            }
+            OpenWorkCoreError::Provider(ProviderRepositoryError::MissingCredential { id }) => {
+                Self::new(
+                    CommandErrorCode::ConfigurationInvalid,
+                    format!(
+                        "Provider {id} has no API key; open Settings > Models and add a key or an environment variable name"
+                    ),
+                )
+            }
+            OpenWorkCoreError::ProviderConfigPathMissing => Self::new(
                 CommandErrorCode::ConfigurationInvalid,
-                "Provider credential storage is not configured correctly",
+                "The provider config file could not be located",
             ),
             OpenWorkCoreError::DefaultModelMissing(_)
             | OpenWorkCoreError::ModelDisabled(_)
-            | OpenWorkCoreError::CredentialReferenceMissing(_)
-            | OpenWorkCoreError::CredentialUnavailable(_)
-            | OpenWorkCoreError::UnsupportedProvider(_)
             | OpenWorkCoreError::RuntimeComponent(_) => {
                 Self::new(CommandErrorCode::ConfigurationInvalid, error.to_string())
             }
@@ -271,13 +276,15 @@ mod tests {
     }
 
     #[test]
-    fn missing_model_capabilities_point_to_the_model_settings() {
-        let error = CommandError::from(OpenWorkCoreError::ModelCapabilitiesMissing(
-            "model-1".to_string(),
+    fn a_provider_without_a_key_points_to_the_model_settings() {
+        let error = CommandError::from(OpenWorkCoreError::Provider(
+            ProviderRepositoryError::MissingCredential {
+                id: "deepseek".to_string(),
+            },
         ));
 
         assert_eq!(error.code, CommandErrorCode::ConfigurationInvalid);
-        assert!(error.message.contains("Model capabilities are missing"));
+        assert!(error.message.contains("has no API key"));
         assert!(error.message.contains("Settings > Models"));
     }
 

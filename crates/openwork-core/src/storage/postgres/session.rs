@@ -1,6 +1,7 @@
 use super::*;
 
-const SESSION_COLUMNS: &str = "SELECT id, title, working_directory, default_model_id, status,
+const SESSION_COLUMNS: &str =
+    "SELECT id, title, working_directory, default_model_id, reasoning_effort, status,
             to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS created_at,
             to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS updated_at,
             to_char(last_turn_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+08:00\"') AS last_turn_at,
@@ -53,13 +54,14 @@ impl PostgresStorage {
 
         sqlx::query(
             "INSERT INTO sessions
-                 (id, working_directory, default_model_id,
+                 (id, working_directory, default_model_id, reasoning_effort,
                   parent_session_id, task_name, agent_role, spawn_span_id, sandbox_mode)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(input.id.as_str())
         .bind(&input.working_directory)
         .bind(&input.default_model_id)
+        .bind(&input.reasoning_effort)
         .bind(input.parent_session_id.as_str())
         .bind(&input.task_name)
         .bind(&input.agent_role)
@@ -71,6 +73,30 @@ impl PostgresStorage {
         self.load_session(&input.id)
             .await?
             .ok_or_else(|| StorageError::SessionNotFound(input.id.to_string()))
+    }
+
+    /// 写入会话的模型与推理档位。调用方负责校验它们存在于 Provider 配置与模型目录中。
+    pub async fn set_session_model(
+        &self,
+        session_id: &SessionId,
+        model_ref: &str,
+        reasoning_effort: Option<&str>,
+    ) -> Result<(), StorageError> {
+        let updated = sqlx::query(
+            "UPDATE sessions
+                 SET default_model_id = $2, reasoning_effort = $3,
+                     updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'
+             WHERE id = $1",
+        )
+        .bind(session_id.as_str())
+        .bind(model_ref)
+        .bind(reasoning_effort)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::SessionNotFound(session_id.to_string()));
+        }
+        Ok(())
     }
 
     /// 写入会话的沙箱模式（permissions.md §13.1）。会话不存在时报错。

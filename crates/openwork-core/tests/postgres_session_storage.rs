@@ -3,11 +3,10 @@ use openwork_core::{
     ClientRequestId, CompactionFinished, CompactionRuntimeState, CompactionStarted,
     CompactionStateCollector, CompactionTraceAttributesV1, ConversationCompactionKind,
     ConversationProjectionSelector, ConversationTranscriptQuery, MessageKind, ModelCallFinished,
-    ModelCallStarted, ModelCapabilities, ModelInput, ModelTraceAttributesV1,
-    NewConversationCompaction, PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId,
-    SessionInput, SessionStorage, ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1,
-    TracePayloads, TraceRecorder, TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome,
-    session::TurnId,
+    ModelCallStarted, ModelCapabilities, ModelTraceAttributesV1, NewConversationCompaction,
+    PostgresStorage, PostgresTraceRecorder, ResolvedModel, SessionId, SessionInput, SessionStorage,
+    ToolCallFinished, ToolCallStarted, ToolTraceAttributesV1, TracePayloads, TraceRecorder,
+    TraceSignal, TraceSpanRecord, TraceStatus, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
@@ -422,20 +421,6 @@ async fn postgres_storage_round_trips_a_threshold_compaction_for_an_active_turn(
     storage.migrate().await.unwrap();
 
     let model_id = unique("model-threshold");
-    storage
-        .upsert_model(&ModelInput {
-            id: model_id.clone(),
-            display_name: "Threshold test model".to_string(),
-            provider_kind: "deepseek".to_string(),
-            model_name: "threshold-test-model".to_string(),
-            base_url: format!("https://example.invalid/threshold/{model_id}"),
-            credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
-            enabled: true,
-            capabilities: test_capabilities(),
-            config: json!({}),
-        })
-        .await
-        .unwrap();
     let session_id = SessionId::new(unique("session-threshold"));
     storage
         .create_session(&SessionInput {
@@ -686,8 +671,6 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         vec![
             "conversation_compactions",
             "messages",
-            "models",
-            "provider_credentials",
             "sessions",
             "skill_status",
             "trace_annotations",
@@ -761,20 +744,6 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
     );
 
     let model_id = unique("model-test");
-    storage
-        .upsert_model(&ModelInput {
-            id: model_id.clone(),
-            display_name: "Postgres test model".to_string(),
-            provider_kind: "deepseek".to_string(),
-            model_name: "deepseek-v4-flash".to_string(),
-            base_url: format!("https://example.invalid/{model_id}"),
-            credential_ref: Some("DEEPSEEK_API_KEY".to_string()),
-            enabled: true,
-            capabilities: test_capabilities(),
-            config: json!({}),
-        })
-        .await
-        .unwrap();
 
     let session_id = SessionId::new(unique("session-test"));
     let session = storage
@@ -1039,8 +1008,9 @@ async fn postgres_storage_round_trips_a_complete_tool_turn() {
         temperature: None,
         top_p: None,
         max_output_tokens: None,
-        thinking: None,
+        reasoning_effort: None,
         tools: Vec::new(),
+        prompt_cache_key: None,
     };
     let projected_payload = TracePayloads::for_model_request(&projected_request)
         .request

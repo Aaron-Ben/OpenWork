@@ -22,8 +22,8 @@ use openwork_core::skills::SkillRoots;
 use openwork_core::{AgentControl, ModelCapabilities, SubAgentHost, SubAgentSpec};
 use openwork_models::model::{
     ContentBlock, FinishReason, Message, ModelCallOptions, ModelError, ModelEvent, ModelPort,
-    ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, ThinkingConfig,
-    TokenUsage, ToolCallBlock, ToolCallState, ToolResultArtifact,
+    ModelRequest, ModelResponse, ModelStream, ModelTransportSignalKind, Role, TokenUsage,
+    ToolCallBlock, ToolCallState, ToolResultArtifact,
 };
 use openwork_sandbox::{
     Access, GrantScope, PathTier, SandboxBackend, SandboxEnvironment, SandboxMode, SandboxPolicy,
@@ -1470,7 +1470,7 @@ async fn no_tool_turn_completes_after_one_model_call() {
     );
     assert_eq!(requests[0].temperature, None);
     assert_eq!(requests[0].max_output_tokens, Some(32_768));
-    assert_eq!(requests[0].thinking, None);
+    assert_eq!(requests[0].reasoning_effort, None);
     let submitted_messages = requests[0].messages.clone();
     drop(requests);
     assert!(fixture.tools.invocations.lock().unwrap().is_empty());
@@ -2914,10 +2914,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         );
         assert!(summary_trace.started.turn_id.is_none());
         assert_eq!(summary_trace.status, TraceStatus::Succeeded);
-        assert_eq!(
-            summary_trace.attributes.thinking_mode.as_deref(),
-            Some("disabled")
-        );
+        assert_eq!(summary_trace.attributes.reasoning_effort, None);
         assert!(summary_trace.started.payloads.request.is_some());
         assert!(summary_trace.response_payload.is_some());
         assert!(summary_trace.response_message_id.is_none());
@@ -2984,7 +2981,7 @@ async fn manual_compaction_uses_the_full_conversation_and_replaces_only_the_acti
         );
         assert!(requests[1].tools.is_empty());
         assert_eq!(requests[1].max_output_tokens, Some(16_384));
-        assert_eq!(requests[1].thinking, Some(ThinkingConfig::disabled()));
+        assert_eq!(requests[1].reasoning_effort, None);
         let ContentBlock::Text(prompt) = requests[1]
             .messages
             .last()

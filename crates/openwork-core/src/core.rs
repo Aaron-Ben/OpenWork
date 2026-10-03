@@ -7,10 +7,11 @@ use openwork_chat_state::{
     ChatStateHandle, ConversationContextView, ConversationItem, ToolResultPruning,
 };
 use openwork_models::ProviderFactory;
+use openwork_models::catalog::resolve_model_info;
 use openwork_models::model::{ContentBlock, Message, Role};
 use openwork_models::provider::{
-    ApiCredential, ModelTier, ProviderInput, ProviderKind, ProviderModel, ProviderProfile,
-    ProviderRepository, ProviderRepositoryError, ProviderRuntimeConfig,
+    ApiCredential, ProviderInput, ProviderProfile, ProviderRepository, ProviderRepositoryError,
+    ProviderRuntimeConfig,
 };
 use openwork_sandbox::{SandboxMode, SandboxPolicy};
 use openwork_tools::{
@@ -30,7 +31,10 @@ use crate::context::{
     check_item_tokens, estimate_serialized_tokens, list_skills,
 };
 use crate::plan::{TurnPlan, TurnPlanRecord};
-use crate::provider::{BUILTIN_PRESETS, ProviderIndex, ProviderPreset, ProviderTestResult};
+use crate::provider::{
+    ProviderEntry, ProviderIndex, ProviderPreset, ProviderTestResult, builtin_presets,
+};
+use crate::provider_config::{FileProviderRepository, ModelRef};
 use crate::session::{
     AgentMessageKind, ClientRequestId, CompactionError, CompactionStateCollector,
     ControlToolSurface, ConversationCompaction, ParentLink, PermissionDecision, PreparedTurnInput,
@@ -42,9 +46,9 @@ use crate::session_tools::{SandboxRuntime, SessionToolState, sub_agent_mode};
 use crate::skills::{SkillRoots, resolve_selected_skills};
 use crate::spill::{SPILL_RETENTION, SpillRoot};
 use crate::storage::{
-    ApiKeyCipherError, ModelInput, ModelRecord, PostgresProviderRepository, PostgresStorage,
-    PostgresTraceRecorder, SessionInput, SessionRecord, StorageError, StoredMessageRecord,
-    SubAgentSessionInput, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    PostgresStorage, PostgresTraceRecorder, SessionInput, SessionRecord, StorageError,
+    StoredMessageRecord, SubAgentSessionInput, TraceSpanPayloadRecord, TraceSpanRecord,
+    TraceTurnSummary, TurnTrace,
 };
 use crate::{AgentControl, SubAgentHost, SubAgentSpec, TurnSlot};
 
@@ -58,6 +62,8 @@ pub struct OpenWorkCoreConfig {
     /// Root of the per-session spill directories (tools.md §8). `None`
     /// keeps tool results bounded without saving the omitted content.
     pub spill_root: Option<PathBuf>,
+    /// Provider 配置文件。为空时使用 `~/.openwork/config.json`。
+    pub provider_config_path: Option<PathBuf>,
 }
 
 impl OpenWorkCoreConfig {
@@ -67,47 +73,9 @@ impl OpenWorkCoreConfig {
             database_url: std::env::var("DATABASE_URL").ok(),
             trace_content: TraceContentConfig::default(),
             agents_skills_root: home.as_ref().map(|home| home.join(".agents/skills")),
-            spill_root: home.map(|home| home.join(".openwork/spill")),
+            spill_root: home.as_ref().map(|home| home.join(".openwork/spill")),
+            provider_config_path: home.map(|home| home.join(".openwork/config.json")),
         }
-    }
-}
-
-#[async_trait]
-pub trait CredentialResolver: Send + Sync {
-    async fn resolve(&self, reference: &str) -> Result<ApiCredential, String>;
-}
-
-#[derive(Debug, Default)]
-pub struct EnvironmentCredentialResolver;
-
-#[async_trait]
-impl CredentialResolver for EnvironmentCredentialResolver {
-    async fn resolve(&self, reference: &str) -> Result<ApiCredential, String> {
-        std::env::var(reference)
-            .map(ApiCredential::new)
-            .map_err(|_| format!("environment variable is unavailable: {reference}"))
-    }
-}
-
-struct ProviderCredentialResolver {
-    providers: Arc<dyn ProviderRepository>,
-}
-
-#[async_trait]
-impl CredentialResolver for ProviderCredentialResolver {
-    async fn resolve(&self, reference: &str) -> Result<ApiCredential, String> {
-        if let Some(provider_id) = reference.strip_prefix("provider:") {
-            return self
-                .providers
-                .load_runtime(provider_id)
-                .await
-                .map_err(|_| "provider credential is unavailable".to_string())?
-                .map(|runtime| runtime.credential)
-                .ok_or_else(|| "provider credential is unavailable".to_string());
-        }
-        std::env::var(reference)
-            .map(ApiCredential::new)
-            .map_err(|_| "environment credential is unavailable".to_string())
     }
 }
 
@@ -137,8 +105,6 @@ pub enum OpenWorkCoreError {
     DefaultModelMissing(String),
     #[error("model not found: {0}")]
     ModelNotFound(String),
-    #[error("model capabilities are missing for {0}; open Settings > Models and edit its provider")]
-    ModelCapabilitiesMissing(String),
     #[error("session has an active turn and cannot be changed: {0}")]
     SessionActive(String),
     #[error("file change not found: {0}")]
@@ -153,12 +119,6 @@ pub enum OpenWorkCoreError {
     FileChangeReapply(#[from] FileChangeReapplyError),
     #[error("model is disabled: {0}")]
     ModelDisabled(String),
-    #[error("model credential reference is missing: {0}")]
-    CredentialReferenceMissing(String),
-    #[error("credential environment variable is unavailable: {0}")]
-    CredentialUnavailable(String),
-    #[error("unsupported provider kind: {0}")]
-    UnsupportedProvider(String),
     #[error("runtime component failed: {0}")]
     RuntimeComponent(String),
     #[error("selected skill is unavailable: {0}")]
@@ -173,12 +133,16 @@ pub enum OpenWorkCoreError {
     SandboxStartupTask(#[source] tokio::task::JoinError),
     #[error("a sub-agent keeps the sandbox mode it was started with: {0}")]
     SubAgentModeFixed(String),
+    #[error("a sub-agent keeps the model it was started with: {0}")]
+    SubAgentModelFixed(String),
+    #[error("model {model} does not support reasoning effort {effort}")]
+    ReasoningEffortUnsupported { model: String, effort: String },
     #[error(transparent)]
     Provider(#[from] ProviderRepositoryError),
-    #[error("provider credential bootstrap failed: {0}")]
-    CredentialBootstrap(#[from] ApiKeyCipherError),
-    #[error("provider repository is unavailable in this core configuration")]
-    ProviderRepositoryUnavailable,
+    #[error(
+        "could not locate the provider config file; set HOME or OpenWorkCoreConfig.provider_config_path"
+    )]
+    ProviderConfigPathMissing,
 }
 
 pub struct OpenWorkCore {
@@ -186,8 +150,7 @@ pub struct OpenWorkCore {
     storage: Arc<PostgresStorage>,
     provider_factory: ProviderFactory,
     trace: Arc<PostgresTraceRecorder>,
-    credentials: Arc<dyn CredentialResolver>,
-    providers: Option<Arc<dyn ProviderRepository>>,
+    providers: Arc<dyn ProviderRepository>,
     skill_roots: SkillRoots,
     sandbox: SandboxRuntime,
     spill_root: Option<SpillRoot>,
@@ -208,16 +171,15 @@ impl OpenWorkCore {
                 .await
                 .map_err(OpenWorkCoreError::Storage)?,
         );
-        let providers: Arc<dyn ProviderRepository> = Arc::new(
-            PostgresProviderRepository::from_env(storage.pool().clone())?,
-        );
-        let credentials: Arc<dyn CredentialResolver> = Arc::new(ProviderCredentialResolver {
-            providers: Arc::clone(&providers),
-        });
+        let provider_config_path = config
+            .provider_config_path
+            .or_else(FileProviderRepository::default_path)
+            .ok_or(OpenWorkCoreError::ProviderConfigPathMissing)?;
+        let providers: Arc<dyn ProviderRepository> =
+            Arc::new(FileProviderRepository::new(provider_config_path));
         Self::from_storage_parts(
             storage,
-            credentials,
-            Some(providers),
+            providers,
             config.trace_content,
             SkillRoots {
                 agents: config.agents_skills_root,
@@ -227,28 +189,14 @@ impl OpenWorkCore {
         .await
     }
 
+    /// 测试与嵌入用：调用方提供存储与 Provider 配置。
     pub async fn from_storage(
         storage: Arc<PostgresStorage>,
+        providers: Arc<dyn ProviderRepository>,
     ) -> Result<Arc<Self>, OpenWorkCoreError> {
         Self::from_storage_parts(
             storage,
-            Arc::new(EnvironmentCredentialResolver),
-            None,
-            TraceContentConfig::default(),
-            SkillRoots::default(),
-            None,
-        )
-        .await
-    }
-
-    pub async fn from_storage_with_credentials(
-        storage: Arc<PostgresStorage>,
-        credentials: Arc<dyn CredentialResolver>,
-    ) -> Result<Arc<Self>, OpenWorkCoreError> {
-        Self::from_storage_parts(
-            storage,
-            credentials,
-            None,
+            providers,
             TraceContentConfig::default(),
             SkillRoots::default(),
             None,
@@ -258,8 +206,7 @@ impl OpenWorkCore {
 
     async fn from_storage_parts(
         storage: Arc<PostgresStorage>,
-        credentials: Arc<dyn CredentialResolver>,
-        providers: Option<Arc<dyn ProviderRepository>>,
+        providers: Arc<dyn ProviderRepository>,
         trace_content: TraceContentConfig,
         skill_roots: SkillRoots,
         spill_root: Option<SpillRoot>,
@@ -284,7 +231,6 @@ impl OpenWorkCore {
             storage,
             provider_factory: ProviderFactory::default(),
             trace,
-            credentials,
             providers,
             skill_roots,
             sandbox,
@@ -342,21 +288,28 @@ impl OpenWorkCore {
     }
 
     pub async fn list_providers(&self) -> Result<ProviderIndex, OpenWorkCoreError> {
-        let providers = self.provider_repository()?;
         Ok(ProviderIndex {
-            providers: providers.list_profiles().await?,
+            providers: self
+                .providers
+                .list_profiles()
+                .await?
+                .into_iter()
+                .map(ProviderEntry::new)
+                .collect(),
         })
     }
 
     pub fn provider_presets(&self) -> Vec<ProviderPreset> {
-        BUILTIN_PRESETS.to_vec()
+        builtin_presets()
     }
 
+    /// 新建 Provider。界面从预设新建，`id` 是预设 id。
     pub async fn create_provider(
         &self,
+        id: &str,
         input: ProviderInput,
     ) -> Result<ProviderProfile, OpenWorkCoreError> {
-        Ok(self.provider_repository()?.create(input).await?)
+        Ok(self.providers.create(id, input).await?)
     }
 
     pub async fn update_provider(
@@ -364,13 +317,14 @@ impl OpenWorkCore {
         id: &str,
         input: ProviderInput,
     ) -> Result<ProviderProfile, OpenWorkCoreError> {
-        Ok(self.provider_repository()?.update(id, input).await?)
+        Ok(self.providers.update(id, input).await?)
     }
 
     pub async fn delete_provider(&self, id: &str) -> Result<(), OpenWorkCoreError> {
-        Ok(self.provider_repository()?.delete(id).await?)
+        Ok(self.providers.delete(id).await?)
     }
 
+    /// 用已保存的 Provider，或用一份未保存的草稿，发一次最小请求。
     pub async fn test_provider(
         &self,
         id: Option<String>,
@@ -378,22 +332,30 @@ impl OpenWorkCore {
         model: &str,
     ) -> Result<ProviderTestResult, OpenWorkCoreError> {
         let config = if let Some(id) = id {
-            self.provider_repository()?
+            self.providers
                 .load_runtime(&id)
                 .await?
                 .ok_or(ProviderRepositoryError::NotFound { id })?
         } else if let Some(input) = input {
-            ProviderRuntimeConfig {
-                profile: ProviderProfile {
+            let credential = input
+                .api_key
+                .clone()
+                .filter(|key| !key.is_empty())
+                .or_else(|| {
+                    input
+                        .settings
+                        .env_key
+                        .as_deref()
+                        .and_then(|name| std::env::var(name).ok())
+                })
+                .map(ApiCredential::new)
+                .ok_or_else(|| ProviderRepositoryError::MissingCredential {
                     id: "draft".to_string(),
-                    name: input.name,
-                    base_url: input.base_url,
-                    kind: input.kind,
-                    models: input.models,
-                    enabled: input.enabled,
-                },
-                credential: ApiCredential::new(input.api_key),
-                adapter_options: input.extra_body,
+                })?;
+            ProviderRuntimeConfig {
+                id: "draft".to_string(),
+                settings: input.settings,
+                credential,
             }
         } else {
             return Err(ProviderRepositoryError::InvalidInput { field: "id/input" }.into());
@@ -408,28 +370,66 @@ impl OpenWorkCore {
         }
     }
 
-    fn provider_repository(&self) -> Result<&dyn ProviderRepository, OpenWorkCoreError> {
-        self.providers
-            .as_deref()
-            .ok_or(OpenWorkCoreError::ProviderRepositoryUnavailable)
+    /// 解析模型引用，只需要 Provider 配置与模型目录，不需要密钥。`selected_effort` 是
+    /// Session 选的档位；不在这个模型的档位列表中时，用目录默认档位。
+    async fn resolve_model_profile(
+        &self,
+        model_ref: &str,
+        selected_effort: Option<&str>,
+    ) -> Result<(ModelRef, ResolvedModel), OpenWorkCoreError> {
+        let parsed = ModelRef::parse(model_ref)
+            .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_ref.to_string()))?;
+        let profile = self
+            .providers
+            .get_profile(&parsed.provider_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_ref.to_string()))?;
+        let configured = profile
+            .settings
+            .models
+            .iter()
+            .find(|model| model.model_id == parsed.model_id);
+        if !profile.settings.enabled || configured.is_some_and(|model| !model.enabled) {
+            return Err(OpenWorkCoreError::ModelDisabled(model_ref.to_string()));
+        }
+        let info = resolve_model_info(
+            &parsed.model_id,
+            configured.and_then(|model| model.capabilities),
+        );
+        let resolved = ResolvedModel::new(
+            Some(model_ref),
+            parsed.provider_id.clone(),
+            parsed.model_id.clone(),
+            info.capabilities,
+        )
+        .with_provider_settings(&profile.settings)
+        .with_reasoning_effort(info.effective_reasoning_effort(selected_effort));
+        Ok((parsed, resolved))
     }
 
-    pub async fn register_model(&self, input: &ModelInput) -> Result<(), OpenWorkCoreError> {
-        self.storage.upsert_model(input).await?;
-        Ok(())
+    /// 解析模型引用，并加载发起调用所需的密钥。
+    async fn resolve_model_runtime(
+        &self,
+        model_ref: &str,
+        selected_effort: Option<&str>,
+    ) -> Result<(ResolvedModel, ProviderRuntimeConfig), OpenWorkCoreError> {
+        let (parsed, resolved) = self
+            .resolve_model_profile(model_ref, selected_effort)
+            .await?;
+        let runtime = self
+            .providers
+            .load_runtime(&parsed.provider_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_ref.to_string()))?;
+        Ok((resolved, runtime))
     }
 
     pub async fn create_session(
         &self,
         input: &SessionInput,
     ) -> Result<SessionRecord, OpenWorkCoreError> {
-        if let Some(model_id) = input.default_model_id.as_deref() {
-            let model = self
-                .storage
-                .load_model(model_id)
-                .await?
-                .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
-            require_model_capabilities(&model)?;
+        if let Some(model_ref) = input.default_model_id.as_deref() {
+            self.resolve_model_profile(model_ref, None).await?;
         }
         Ok(self.storage.create_session(input).await?)
     }
@@ -525,12 +525,10 @@ impl OpenWorkCore {
             .default_model_id
             .as_deref()
             .ok_or_else(|| OpenWorkCoreError::DefaultModelMissing(session_id.to_string()))?;
-        let model = self
-            .storage
-            .load_model(model_id)
-            .await?
-            .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
-        let capabilities = require_model_capabilities(&model)?;
+        let (_, resolved_model) = self
+            .resolve_model_profile(model_id, loaded.session.reasoning_effort.as_deref())
+            .await?;
+        let capabilities = resolved_model.capabilities;
         let working_directory = PathBuf::from(&loaded.session.working_directory);
         let (agent, tools, control_surface) = if loaded.session.is_sub_agent() {
             let (agent, tools) = self.sandbox.build_explorer_agent_and_tools(
@@ -595,7 +593,7 @@ impl OpenWorkCore {
             ContextEngine::new(ModelContextLimits::from_capabilities(capabilities));
         let prepared = context_engine
             .prepare(PrepareContextInput::new(
-                &model.model_name,
+                &resolved_model.model_name,
                 &system_context,
                 ConversationContextView {
                     items: conversation_items,
@@ -637,7 +635,7 @@ impl OpenWorkCore {
             schema_version: CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION,
             session_id: loaded.session.id,
             current_turn_id,
-            resolved_model_name: model.model_name,
+            resolved_model_name: resolved_model.model_name.clone(),
             system_context: system_context
                 .parts()
                 .iter()
@@ -666,6 +664,56 @@ impl OpenWorkCore {
         title: &str,
     ) -> Result<SessionRecord, OpenWorkCoreError> {
         Ok(self.storage.rename_session(session_id, title).await?)
+    }
+
+    /// 换 Session 的模型或推理档位。`reasoning_effort` 为 `None` 时用模型目录的默认档位。
+    /// 运行时会被卸载，下一个 Turn 按新模型重建；运行中的 Session 不能换。
+    pub async fn set_session_model(
+        &self,
+        session_id: &SessionId,
+        model_ref: &str,
+        reasoning_effort: Option<String>,
+    ) -> Result<SessionRecord, OpenWorkCoreError> {
+        let _workspace_operation = self.workspace_operation_guard(session_id).await;
+        let session = self
+            .storage
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))?;
+        if session.parent_session_id.is_some() {
+            return Err(OpenWorkCoreError::SubAgentModelFixed(
+                session_id.to_string(),
+            ));
+        }
+        let (_, resolved) = self
+            .resolve_model_profile(model_ref, reasoning_effort.as_deref())
+            .await?;
+        if let Some(effort) = &reasoning_effort
+            && resolved.reasoning_effort.as_ref() != Some(effort)
+        {
+            return Err(OpenWorkCoreError::ReasoningEffortUnsupported {
+                model: model_ref.to_string(),
+                effort: effort.clone(),
+            });
+        }
+        if let Some(handle) = self.sessions.read().await.get(session_id).cloned()
+            && matches!(
+                handle.snapshot().await?.runtime,
+                crate::session::SessionRuntimeSnapshot::Running { .. }
+            )
+        {
+            return Err(OpenWorkCoreError::SessionActive(session_id.to_string()));
+        }
+        self.storage
+            .set_session_model(session_id, model_ref, reasoning_effort.as_deref())
+            .await?;
+        let children = self.storage.list_sub_agent_sessions(session_id).await?;
+        self.unload_runtime_session_tree(session_id, &children)
+            .await;
+        self.storage
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| OpenWorkCoreError::SessionNotFound(session_id.to_string()))
     }
 
     pub async fn delete_session(&self, session_id: &SessionId) -> Result<(), OpenWorkCoreError> {
@@ -1206,16 +1254,9 @@ impl OpenWorkCore {
             .default_model_id
             .as_deref()
             .ok_or_else(|| OpenWorkCoreError::DefaultModelMissing(session_id.to_string()))?;
-        let model = self
-            .storage
-            .load_model(model_id)
-            .await?
-            .ok_or_else(|| OpenWorkCoreError::ModelNotFound(model_id.to_string()))?;
-        if !model.enabled {
-            return Err(OpenWorkCoreError::ModelDisabled(model.id));
-        }
-        let capabilities = require_model_capabilities(&model)?;
-        let runtime = provider_runtime(&model, capabilities, self.credentials.as_ref()).await?;
+        let (resolved_model, runtime) = self
+            .resolve_model_runtime(model_id, loaded.session.reasoning_effort.as_deref())
+            .await?;
         let model_port = Arc::from(self.provider_factory.build(&runtime));
         let conversation = self.storage.load_conversation_items(session_id).await?;
         let chat = ChatStateHandle::spawn_items(conversation)
@@ -1274,12 +1315,7 @@ impl OpenWorkCore {
                 session_id: session_id.clone(),
                 working_directory,
                 skill_roots: self.skill_roots.clone(),
-                resolved_model: ResolvedModel::new(
-                    Some(model.id),
-                    model.provider_kind,
-                    model.model_name,
-                    capabilities,
-                ),
+                resolved_model,
                 agent,
                 chat,
                 model: model_port,
@@ -1377,6 +1413,7 @@ impl SubAgentHost for OpenWorkCore {
                 agent_role: spec.agent_role,
                 working_directory: parent.working_directory,
                 default_model_id: parent.default_model_id,
+                reasoning_effort: parent.reasoning_effort,
                 spawn_span_id: spec.spawn_span_id,
                 sandbox_mode: sub_agent_mode(parent_mode),
             })
@@ -1558,66 +1595,6 @@ fn mark_file_changes_state(
     Ok(updates)
 }
 
-async fn provider_runtime(
-    model: &ModelRecord,
-    capabilities: openwork_models::model::ModelCapabilities,
-    credentials: &dyn CredentialResolver,
-) -> Result<ProviderRuntimeConfig, OpenWorkCoreError> {
-    let provider_kind = parse_provider_kind(&model.provider_kind)?;
-    let credential_ref = model
-        .credential_ref
-        .as_deref()
-        .ok_or_else(|| OpenWorkCoreError::CredentialReferenceMissing(model.id.clone()))?;
-    let credential = credentials
-        .resolve(credential_ref)
-        .await
-        .map_err(|_| OpenWorkCoreError::CredentialUnavailable(credential_ref.to_string()))?;
-    let adapter_options = model
-        .config
-        .get("extraBody")
-        .and_then(serde_json::Value::as_object)
-        .cloned()
-        .filter(|map| !map.is_empty());
-    Ok(ProviderRuntimeConfig {
-        profile: ProviderProfile {
-            id: model.id.clone(),
-            name: model.display_name.clone(),
-            base_url: model.base_url.clone(),
-            kind: provider_kind,
-            models: vec![ProviderModel {
-                model_id: model.model_name.clone(),
-                display_name: Some(model.display_name.clone()),
-                model_tier: ModelTier::Plus,
-                enabled: model.enabled,
-                capabilities: Some(capabilities),
-            }],
-            enabled: model.enabled,
-        },
-        credential,
-        adapter_options,
-    })
-}
-
-fn require_model_capabilities(
-    model: &ModelRecord,
-) -> Result<openwork_models::model::ModelCapabilities, OpenWorkCoreError> {
-    model
-        .capabilities()?
-        .ok_or_else(|| OpenWorkCoreError::ModelCapabilitiesMissing(model.id.clone()))
-}
-
-fn parse_provider_kind(value: &str) -> Result<ProviderKind, OpenWorkCoreError> {
-    match value {
-        "openai" | "openai_responses" => Ok(ProviderKind::Openai),
-        "anthropic" | "anthropic_messages" => Ok(ProviderKind::Anthropic),
-        "deepseek" | "openai_chat_deepseek" => Ok(ProviderKind::Deepseek),
-        "kimi" | "openai_chat_kimi" => Ok(ProviderKind::Kimi),
-        "qwen" | "openai_chat_qwen" => Ok(ProviderKind::Qwen),
-        "glm" | "openai_chat_glm" => Ok(ProviderKind::Glm),
-        other => Err(OpenWorkCoreError::UnsupportedProvider(other.to_string())),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use openwork_chat_state::MessageKind;
@@ -1635,13 +1612,46 @@ mod tests {
         }
     }
 
-    struct FixedTestCredential;
+    /// 不需要调用模型的测试用的空 Provider 配置。
+    fn empty_providers() -> (tempfile::TempDir, Arc<dyn ProviderRepository>) {
+        let directory = tempfile::TempDir::new().expect("provider config directory");
+        let repository = FileProviderRepository::new(directory.path().join("config.json"));
+        (directory, Arc::new(repository))
+    }
 
-    #[async_trait::async_trait]
-    impl CredentialResolver for FixedTestCredential {
-        async fn resolve(&self, _reference: &str) -> Result<ApiCredential, String> {
-            Ok(ApiCredential::new("test-credential"))
-        }
+    /// 含一个带 key 的测试 Provider。返回模型引用 `<providerId>/<modelId>`。
+    async fn test_providers(
+        suffix: &str,
+    ) -> (tempfile::TempDir, Arc<dyn ProviderRepository>, String) {
+        let (directory, repository) = empty_providers();
+        let provider_id = format!("test-{suffix}");
+        let model_name = format!("test-model-{suffix}");
+        repository
+            .create(
+                &provider_id,
+                ProviderInput {
+                    settings: openwork_models::provider::ProviderSettings {
+                        name: "Test provider".to_string(),
+                        base_url: "http://127.0.0.1:9".to_string(),
+                        env_key: None,
+                        http_headers: Default::default(),
+                        query_params: Default::default(),
+                        request_max_retries: None,
+                        stream_idle_timeout_ms: None,
+                        models: vec![openwork_models::provider::ProviderModel {
+                            model_id: model_name.clone(),
+                            display_name: None,
+                            enabled: true,
+                            capabilities: Some(test_capabilities()),
+                        }],
+                        enabled: true,
+                    },
+                    api_key: Some("test-credential".to_string()),
+                },
+            )
+            .await
+            .expect("test provider");
+        (directory, repository, format!("{provider_id}/{model_name}"))
     }
 
     async fn insert_completed_test_turn(
@@ -1655,7 +1665,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO turns (
                  id, session_id, client_request_id, sequence, model_id,
-                 resolved_provider_kind, resolved_model_name, app_version,
+                 resolved_provider_id, resolved_model_name, app_version,
                  status, ended_at
              ) VALUES (
                  $1, $2, $3, 1, NULL, 'test', 'test-model', $4,
@@ -1695,8 +1705,7 @@ mod tests {
         let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
         let core = OpenWorkCore::from_storage_parts(
             Arc::clone(&storage),
-            Arc::new(EnvironmentCredentialResolver),
-            None,
+            empty_providers().1,
             TraceContentConfig::default(),
             roots.clone(),
             None,
@@ -1711,8 +1720,7 @@ mod tests {
         drop(core);
         let restarted = OpenWorkCore::from_storage_parts(
             Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap()),
-            Arc::new(EnvironmentCredentialResolver),
-            None,
+            empty_providers().1,
             TraceContentConfig::default(),
             roots,
             None,
@@ -1762,6 +1770,7 @@ mod tests {
                 agent_role: "explorer".to_string(),
                 working_directory: "/tmp/openwork-agent-restore".to_string(),
                 default_model_id: None,
+                reasoning_effort: None,
                 spawn_span_id: Some("span-agent-restore".to_string()),
                 sandbox_mode: SandboxMode::AcceptEdits,
             })
@@ -1775,7 +1784,8 @@ mod tests {
         )
         .await;
 
-        let restarted = OpenWorkCore::from_storage(Arc::clone(&storage))
+        let (_providers_directory, providers) = empty_providers();
+        let restarted = OpenWorkCore::from_storage(Arc::clone(&storage), providers)
             .await
             .unwrap();
         let control = restarted
@@ -1810,21 +1820,8 @@ mod tests {
         let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
         storage.migrate().await.unwrap();
         let suffix = uuid::Uuid::new_v4().simple();
-        let model_id = format!("model-agent-followup-{suffix}");
-        storage
-            .upsert_model(&ModelInput {
-                id: model_id.clone(),
-                display_name: "Agent follow-up test".to_string(),
-                provider_kind: "deepseek".to_string(),
-                model_name: format!("agent-followup-model-{suffix}"),
-                base_url: "http://127.0.0.1:9".to_string(),
-                credential_ref: Some("test:credential".to_string()),
-                enabled: true,
-                capabilities: test_capabilities(),
-                config: serde_json::json!({}),
-            })
-            .await
-            .unwrap();
+        let (_providers_directory, providers, model_id) =
+            test_providers(&format!("followup-{suffix}")).await;
         let parent_session_id = SessionId::new(format!("session-agent-followup-parent-{suffix}"));
         let child_session_id = SessionId::new(format!("session-agent-followup-child-{suffix}"));
         let child_turn_id = TurnId::new(format!("turn-agent-followup-child-{suffix}"));
@@ -1845,6 +1842,7 @@ mod tests {
                 agent_role: "explorer".to_string(),
                 working_directory: "/tmp/openwork-agent-followup".to_string(),
                 default_model_id: Some(model_id),
+                reasoning_effort: None,
                 spawn_span_id: None,
                 sandbox_mode: SandboxMode::AcceptEdits,
             })
@@ -1858,12 +1856,9 @@ mod tests {
         )
         .await;
 
-        let restarted = OpenWorkCore::from_storage_with_credentials(
-            Arc::clone(&storage),
-            Arc::new(FixedTestCredential),
-        )
-        .await
-        .unwrap();
+        let restarted = OpenWorkCore::from_storage(Arc::clone(&storage), providers)
+            .await
+            .unwrap();
         let control = restarted
             .agent_control_for_root(&parent_session_id)
             .await
@@ -1901,21 +1896,8 @@ mod tests {
         let storage = Arc::new(PostgresStorage::connect(Some(&database_url)).await.unwrap());
         storage.migrate().await.unwrap();
         let suffix = uuid::Uuid::new_v4().simple();
-        let model_id = format!("model-agent-orphan-{suffix}");
-        storage
-            .upsert_model(&ModelInput {
-                id: model_id.clone(),
-                display_name: "Agent orphan test".to_string(),
-                provider_kind: "deepseek".to_string(),
-                model_name: format!("agent-orphan-model-{suffix}"),
-                base_url: "http://127.0.0.1:9".to_string(),
-                credential_ref: Some("test:credential".to_string()),
-                enabled: true,
-                capabilities: test_capabilities(),
-                config: serde_json::json!({}),
-            })
-            .await
-            .unwrap();
+        let (_providers_directory, providers, model_id) =
+            test_providers(&format!("orphan-{suffix}")).await;
         let parent_session_id = SessionId::new(format!("session-agent-orphan-parent-{suffix}"));
         let child_session_id = SessionId::new(format!("session-agent-orphan-child-{suffix}"));
         storage
@@ -1935,18 +1917,16 @@ mod tests {
                 agent_role: "explorer".to_string(),
                 working_directory: "/tmp/openwork-agent-orphan".to_string(),
                 default_model_id: Some(model_id),
+                reasoning_effort: None,
                 spawn_span_id: None,
                 sandbox_mode: SandboxMode::AcceptEdits,
             })
             .await
             .unwrap();
 
-        let restarted = OpenWorkCore::from_storage_with_credentials(
-            Arc::clone(&storage),
-            Arc::new(FixedTestCredential),
-        )
-        .await
-        .unwrap();
+        let restarted = OpenWorkCore::from_storage(Arc::clone(&storage), providers)
+            .await
+            .unwrap();
         let control = restarted
             .agent_control_for_root(&parent_session_id)
             .await

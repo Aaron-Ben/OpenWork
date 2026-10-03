@@ -5,13 +5,12 @@
 
 use openwork_core::plan::{PlanStep, PlanStepStatus, TurnPlan};
 use openwork_core::{
-    ClientRequestId, ModelCapabilities, ModelInput, PostgresStorage, ResolvedModel, SessionId,
-    SessionInput, SessionStorage, TurnOutcome, session::TurnId,
+    ClientRequestId, ModelCapabilities, PostgresStorage, ResolvedModel, SessionId, SessionInput,
+    SessionStorage, TurnOutcome, session::TurnId,
 };
 use openwork_models::model::{
     ContentBlock, Message, Role, ToolCallBlock, ToolCallState, ToolResultBlock, ToolResultState,
 };
-use serde_json::json;
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use uuid::Uuid;
 
@@ -90,20 +89,6 @@ impl Fixture {
         storage.migrate().await.unwrap();
 
         let model_id = unique("model-plan");
-        storage
-            .upsert_model(&ModelInput {
-                id: model_id.clone(),
-                display_name: "Plan test model".to_string(),
-                provider_kind: "deepseek".to_string(),
-                model_name: "deepseek-v4-flash".to_string(),
-                base_url: format!("https://example.invalid/{model_id}"),
-                credential_ref: None,
-                enabled: true,
-                capabilities: test_capabilities(),
-                config: json!({}),
-            })
-            .await
-            .unwrap();
 
         let session_id = SessionId::new(unique(label));
         storage

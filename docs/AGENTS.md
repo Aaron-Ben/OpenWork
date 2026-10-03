@@ -14,9 +14,10 @@
 | 本文 | 文档标准 | 代码规范 |
 | [README.md](README.md) | 文档索引与阅读顺序 | 规则 |
 | [architecture.md](architecture.md) | crate 划分、依赖方向、所有权、领域词汇 | 单个功能的细节 |
+| [testing.md](testing.md) | 测试分层、原则、写法与运行方式 | 单个子系统的验收条目 |
 | `docs/subsystems/<子系统>.md` | 一个子系统已实现的行为、数据结构、数字、边界与验收清单 | 决策理由、备选方案、目标状态、迁移叙事 |
 | [Agent Notes](../.agents/notes/README.md) | 决策理由、放弃的方案、代价；还没实现的设计（`proposed/`） | 当前行为的完整规则 |
-| crate README | crate 对外提供什么、怎样使用 | 子系统页已有的规则 |
+| crate README | 每个 crate 一份，按[模板](templates/crate-readme.md)写：对外提供什么、怎样使用、对模型上下文的影响 | 子系统页已有的规则 |
 | 代码注释 | 这段代码为什么这样写 | 复述代码，复述设计文档 |
 
 放置规则：

@@ -1,71 +1,64 @@
+use std::time::Duration;
+
 use crate::{
     model::{Message, ModelCallOptions, ModelError, ModelEvent, ModelPort, ModelRequest, Role},
     provider::ProviderRuntimeConfig,
 };
 use futures_util::StreamExt;
 
-use crate::adapters::ProviderAdapter;
+use crate::adapters::ResponsesAdapter;
 use crate::{HttpProviderConfig, HttpTransport, RetryPolicy, RetryingModelPort};
 
-/// 在应用生命周期内持有共享 HTTP Transport，并为每份运行时配置组装 Adapter。
-#[derive(Debug, Clone)]
+/// Codex 的连接重试退避从 200ms 起指数增长（`codex-rs/codex-client/src/retry.rs`）。
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(200);
+const RETRY_MAX_DELAY: Duration = Duration::from_secs(8);
+
+/// 在应用生命周期内持有共享 HTTP Transport，并为每份 Provider 配置组装 Responses 适配器。
+#[derive(Debug, Clone, Default)]
 pub struct ProviderFactory {
     transport: HttpTransport,
-    retry_policy: RetryPolicy,
 }
 
 impl ProviderFactory {
     pub fn new(transport: HttpTransport) -> Self {
-        Self {
-            transport,
-            retry_policy: RetryPolicy::default(),
-        }
+        Self { transport }
     }
 
-    pub fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
-        self.retry_policy = retry_policy;
-        self
-    }
-
-    /// 将持久化配置组装为厂商 Adapter，并统一套用 transport retry。
+    /// 组装可调用的模型端口，重试次数取自 Provider 配置。调用方还应把
+    /// [`crate::provider::ProviderSettings::apply_to`] 用在每次调用的参数上。
     pub fn build(&self, config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
-        Box::new(RetryingModelPort::new(
-            self.build_adapter(config),
-            self.retry_policy.clone(),
-        ))
+        let policy = RetryPolicy::new(
+            config.settings.request_max_retries() as usize + 1,
+            RETRY_BASE_DELAY,
+            RETRY_MAX_DELAY,
+        );
+        Box::new(RetryingModelPort::new(self.build_adapter(config), policy))
     }
 
     fn build_adapter(&self, config: &ProviderRuntimeConfig) -> Box<dyn ModelPort> {
-        let http = HttpProviderConfig::new(&config.profile.base_url, config.credential.expose());
-        Box::new(ProviderAdapter::new(
-            http,
-            self.transport.clone(),
-            config.profile.kind.driver(),
-            config.adapter_options.clone(),
-        ))
+        let http = HttpProviderConfig::new(
+            &config.settings.base_url,
+            config.credential.expose(),
+            config.settings.http_headers.clone(),
+            config.settings.query_params.clone(),
+        );
+        Box::new(ResponsesAdapter::new(http, self.transport.clone()))
     }
 
-    /// 发出最小生成请求验证配置。UI 如何呈现结果不属于 Provider Adapter。
+    /// 发出最小生成请求验证配置。界面怎样呈现结果不属于这里。
     pub async fn test(
         &self,
         config: &ProviderRuntimeConfig,
         model: &str,
     ) -> Result<(), ModelError> {
         let provider = self.build(config);
-        let mut stream = provider
-            .invoke(
-                ModelRequest {
-                    model: model.to_string(),
-                    messages: vec![Message::text(Role::User, "ping")],
-                    temperature: None,
-                    top_p: None,
-                    max_output_tokens: Some(16),
-                    thinking: None,
-                    tools: Vec::new(),
-                },
-                ModelCallOptions::new("provider-test"),
-            )
-            .await?;
+        let mut request = ModelRequest::text(model, "ping");
+        request.messages = vec![Message::text(Role::User, "ping")];
+        request.max_output_tokens = Some(16);
+        let options = config
+            .settings
+            .apply_to(ModelCallOptions::new("provider-test"));
+        let mut stream = provider.invoke(request, options).await?;
         while let Some(item) = stream.next().await {
             if matches!(item?, ModelEvent::ResponseCompleted { .. }) {
                 return Ok(());
@@ -74,57 +67,5 @@ impl ProviderFactory {
         Err(ModelError::protocol(
             "provider test stream ended without ResponseCompleted",
         ))
-    }
-}
-
-impl Default for ProviderFactory {
-    fn default() -> Self {
-        Self::new(HttpTransport::default())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel, ProviderProfile};
-
-    fn sample_config(kind: ProviderKind) -> ProviderRuntimeConfig {
-        ProviderRuntimeConfig {
-            profile: ProviderProfile {
-                id: "test".to_string(),
-                name: "provider".to_string(),
-                base_url: "https://example.com".to_string(),
-                kind,
-                models: vec![ProviderModel {
-                    model_id: "test-model".to_string(),
-                    display_name: None,
-                    model_tier: ModelTier::Plus,
-                    enabled: true,
-                    capabilities: None,
-                }],
-                enabled: true,
-            },
-            credential: ApiCredential::new("test-key"),
-            adapter_options: None,
-        }
-    }
-
-    #[test]
-    fn builds_every_supported_adapter_from_one_transport() {
-        let transport = HttpTransport::default();
-        let factory = ProviderFactory::new(transport.clone());
-
-        for kind in [
-            ProviderKind::Openai,
-            ProviderKind::Glm,
-            ProviderKind::Kimi,
-            ProviderKind::Deepseek,
-            ProviderKind::Qwen,
-            ProviderKind::Anthropic,
-        ] {
-            let _provider = factory.build(&sample_config(kind));
-        }
-
-        assert!(transport.shares_lifecycle_with(&factory.transport));
     }
 }

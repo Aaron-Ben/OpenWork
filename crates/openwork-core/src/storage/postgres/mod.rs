@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use openwork_chat_state::{ConversationItem, MessageKind};
-use openwork_models::model::{ContentBlock, Message, ModelCapabilities, Role, TokenUsage};
+use openwork_models::model::{ContentBlock, Message, Role, TokenUsage};
 use openwork_sandbox::SandboxMode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,7 +23,6 @@ use super::TRACE_PAYLOAD_ADVISORY_LOCK;
 mod compaction;
 mod conversation;
 mod internal;
-mod model;
 mod plan;
 mod session;
 mod session_storage;
@@ -43,10 +42,10 @@ use types::{ConversationCompactionRow, UndeliveredSubAgentResultRow};
 pub use types::{
     ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, DeletedOrphanSubAgent,
-    MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput, ModelRecord, SessionInput, SessionRecord,
-    StorageError, StoredMessageRecord, SubAgentReconciliation, SubAgentSessionInput,
-    TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord,
-    TraceTurnSummary, TurnTrace, UndeliveredSubAgentResult,
+    MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, SessionInput, SessionRecord, StorageError,
+    StoredMessageRecord, SubAgentReconciliation, SubAgentSessionInput, TraceCompleteness,
+    TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
+    UndeliveredSubAgentResult,
 };
 use validate::*;
 

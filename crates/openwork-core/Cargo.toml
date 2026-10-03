@@ -8,7 +8,6 @@ license.workspace = true
 openwork-sandbox = { workspace = true }
 openwork-agent = { workspace = true }
 openwork-chat-state = { workspace = true }
-openwork-credentials = { workspace = true }
 openwork-models = { workspace = true }
 openwork-tools = { workspace = true }
 async-trait = { workspace = true }
@@ -28,6 +27,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
 
 [lints]
 workspace = true

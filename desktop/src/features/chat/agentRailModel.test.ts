@@ -18,7 +18,7 @@ function child(id: string, role: string, task: string): RuntimeSubAgentSessionRe
     id,
     title: null,
     workingDirectory: '/repo',
-    defaultModelId: 'model-1',
+    defaultModelId: 'model-1', reasoningEffort: null,
     status: 'active',
     createdAt: '2026-08-08T12:00:00+08:00',
     updatedAt: '2026-08-08T12:00:05+08:00',

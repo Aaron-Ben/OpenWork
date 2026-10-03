@@ -4,12 +4,7 @@ use std::path::{Path, PathBuf};
 fn one_local_engine_path_keeps_separate_server_and_computer_facades() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(crate_root.join("Cargo.toml")).unwrap();
-    for dependency in [
-        "rmcp",
-        "openwork-core",
-        "openwork-credentials",
-        "openwork-models",
-    ] {
+    for dependency in ["rmcp", "openwork-core", "openwork-models"] {
         assert!(
             !manifest.contains(dependency),
             "legacy collaboration dependency survived: {dependency}"

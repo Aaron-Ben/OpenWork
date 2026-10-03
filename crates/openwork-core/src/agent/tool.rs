@@ -117,6 +117,7 @@ pub fn agent_tool_definitions(max_active_turns: usize) -> Vec<ToolDefinition> {
                 "properties": {
                     "timeout_ms": {
                         "type": "integer",
+                        "description": "How long to wait, in milliseconds.",
                         "minimum": MIN_WAIT_TIMEOUT_MS,
                         "maximum": MAX_WAIT_TIMEOUT_MS,
                         "default": DEFAULT_WAIT_TIMEOUT_MS
@@ -150,6 +151,7 @@ pub fn agent_tool_definitions(max_active_turns: usize) -> Vec<ToolDefinition> {
                 "properties": {
                     "task_name": {
                         "type": "string",
+                        "description": "Name of the explorer whose active turn to stop.",
                         "pattern": "^[a-z][a-z0-9_]{0,47}$"
                     }
                 },
@@ -189,9 +191,16 @@ fn task_message_schema() -> Value {
         "properties": {
             "task_name": {
                 "type": "string",
+                "description": "Explorer name. spawn_agent: a new name, unique in this session. \
+                                followup_task: the name of an existing idle explorer.",
                 "pattern": "^[a-z][a-z0-9_]{0,47}$"
             },
-            "message": { "type": "string", "minLength": 1 }
+            "message": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The complete task. The explorer cannot see the parent \
+                                conversation, so include the paths, symbols, and question it needs."
+            }
         },
         "required": ["task_name", "message"],
         "additionalProperties": false

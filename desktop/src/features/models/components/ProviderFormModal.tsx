@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { providersApi } from "@/bridge/providers";
 import { resolveErrorMessage as resolveMessage } from "@/lib/commandError";
-import type { ModelCapabilities, ModelTier, ProviderConfig, ProviderInput, ProviderKind, ProviderModel, ProviderPreset } from "@/bridge/providerContracts";
+import type { ProviderConfig, ProviderInput, ProviderPreset } from "@/bridge/providerContracts";
 import { useModelStore } from "../modelStore";
 
 const inputClass =
@@ -20,45 +20,12 @@ interface ProviderFormModalProps {
   open: boolean;
   mode: "create" | "edit";
   initial?: ProviderConfig;
-  focusModelId?: string;
   onClose: () => void;
 }
 
-export interface ModelCapabilitiesDraft {
-  contextWindowTokens: string;
-  maxOutputTokens: string;
-  maxReasoningTokens: string;
-  acceptsDataBlocks: boolean;
-}
-
-export interface ProviderFormDraft {
-  name: string;
-  baseUrl: string;
-  apiKey: string;
-  kind: ProviderKind;
-  liteModelsText: string;
-  plusModelsText: string;
-  proModelsText: string;
-  extraBodyText: string;
-  capabilitiesByModel: Record<string, ModelCapabilitiesDraft>;
-}
-
-type ProviderFormErrorKey =
-  | "nameRequired"
-  | "baseUrlRequired"
-  | "apiKeyRequired"
-  | "modelRequired"
-  | "duplicateModel"
-  | "contextWindowTokensInvalid"
-  | "maxOutputTokensInvalid"
-  | "maxReasoningTokensInvalid"
-  | "generationReservationExhaustsWindow"
-  | "extraBodyObject"
-  | "extraBodyInvalid";
-
 export type ProviderInputBuildResult =
   | { ok: true; input: ProviderInput }
-  | { ok: false; errorKey: ProviderFormErrorKey; model?: string };
+  | { ok: false; errorKey: "presetRequired" | "apiKeyRequired" };
 
 export type ProviderTestTarget =
   | { kind: "stored"; providerId: string }
@@ -74,156 +41,61 @@ export function resolveProviderTestTarget(
     : { kind: "draft" };
 }
 
-export function buildProviderInput(
-  draft: ProviderFormDraft,
-  mode: "create" | "edit",
+/** Builds a provider from a preset. Model capabilities stay empty, so Core reads them from the model catalog. */
+export function presetProviderInput(
+  preset: ProviderPreset | undefined,
+  apiKey: string,
 ): ProviderInputBuildResult {
-  const trimmedName = draft.name.trim();
-  const trimmedBaseUrl = draft.baseUrl.trim();
-  const trimmedApiKey = draft.apiKey.trim();
-  if (!trimmedName) return { ok: false, errorKey: "nameRequired" };
-  if (!trimmedBaseUrl) return { ok: false, errorKey: "baseUrlRequired" };
-  if (mode === "create" && !trimmedApiKey) {
-    return { ok: false, errorKey: "apiKeyRequired" };
-  }
-
-  const models = [
-    ...parseModels(draft.liteModelsText, "lite"),
-    ...parseModels(draft.plusModelsText, "plus"),
-    ...parseModels(draft.proModelsText, "pro"),
-  ];
-  if (models.length === 0) return { ok: false, errorKey: "modelRequired" };
-  const modelIds = new Set<string>();
-  const duplicate = models.find((model) => {
-    if (modelIds.has(model.modelId)) return true;
-    modelIds.add(model.modelId);
-    return false;
-  });
-  if (duplicate) {
-    return { ok: false, errorKey: "duplicateModel", model: duplicate.modelId };
-  }
-
-  for (const model of models) {
-    const capabilityDraft = draft.capabilitiesByModel[model.modelId];
-    const contextWindowTokens = parseUnsignedInteger(
-      capabilityDraft?.contextWindowTokens ?? "",
-      true,
-      Number.MAX_SAFE_INTEGER,
-    );
-    if (contextWindowTokens === null) {
-      return { ok: false, errorKey: "contextWindowTokensInvalid", model: model.modelId };
-    }
-    const maxOutputTokens = parseUnsignedInteger(
-      capabilityDraft?.maxOutputTokens ?? "",
-      true,
-      0xffff_ffff,
-    );
-    if (maxOutputTokens === null) {
-      return { ok: false, errorKey: "maxOutputTokensInvalid", model: model.modelId };
-    }
-    const reasoningText = capabilityDraft?.maxReasoningTokens.trim() ?? "";
-    const maxReasoningTokens = reasoningText === ""
-      ? null
-      : parseUnsignedInteger(reasoningText, false, 0xffff_ffff);
-    if (reasoningText !== "" && maxReasoningTokens === null) {
-      return { ok: false, errorKey: "maxReasoningTokensInvalid", model: model.modelId };
-    }
-    if (maxOutputTokens + (maxReasoningTokens ?? 0) >= contextWindowTokens) {
-      return {
-        ok: false,
-        errorKey: "generationReservationExhaustsWindow",
-        model: model.modelId,
-      };
-    }
-    model.capabilities = {
-      contextWindowTokens,
-      maxOutputTokens,
-      maxReasoningTokens,
-      acceptsDataBlocks: capabilityDraft?.acceptsDataBlocks ?? false,
-    };
-  }
-
-  let extraBody: Record<string, unknown> | undefined;
-  const trimmedExtra = draft.extraBodyText.trim();
-  if (trimmedExtra) {
-    try {
-      const parsed = JSON.parse(trimmedExtra) as unknown;
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { ok: false, errorKey: "extraBodyObject" };
-      }
-      extraBody = parsed as Record<string, unknown>;
-    } catch {
-      return { ok: false, errorKey: "extraBodyInvalid" };
-    }
-  }
-
+  if (!preset) return { ok: false, errorKey: "presetRequired" };
+  const trimmedApiKey = apiKey.trim();
+  if (!trimmedApiKey) return { ok: false, errorKey: "apiKeyRequired" };
   return {
     ok: true,
     input: {
-      name: trimmedName,
-      baseUrl: trimmedBaseUrl,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
       apiKey: trimmedApiKey,
-      kind: draft.kind,
-      models,
+      models: preset.models.map((model) => ({ modelId: model.modelId, enabled: true })),
       enabled: true,
-      extraBody,
     },
   };
 }
 
-export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }: ProviderFormModalProps) {
+/** Keeps every stored setting. A blank key keeps the stored key. */
+export function apiKeyUpdateInput(provider: ProviderConfig, apiKey: string): ProviderInput {
+  const { id: _id, hasApiKey: _hasApiKey, resolvedModels: _resolvedModels, ...settings } = provider;
+  return { ...settings, apiKey: apiKey.trim() || undefined };
+}
+
+export function ProviderFormModal({ open, mode, initial, onClose }: ProviderFormModalProps) {
   const { t } = useTranslation();
   const presets = useModelStore((state) => state.presets);
   const create = useModelStore((state) => state.create);
+  const providers = useModelStore((state) => state.providers);
   const update = useModelStore((state) => state.update);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
 
   const [selectedPresetId, setSelectedPresetId] = useState("");
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [kind, setKind] = useState<ProviderKind>("openai");
-  const [liteModelsText, setLiteModelsText] = useState("");
-  const [plusModelsText, setPlusModelsText] = useState("");
-  const [proModelsText, setProModelsText] = useState("");
-  const [extraBodyText, setExtraBodyText] = useState("");
-  const [capabilitiesByModel, setCapabilitiesByModel] = useState<Record<string, ModelCapabilitiesDraft>>({});
   const [showApiKey, setShowApiKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  const isConfigured = (presetId: string) => providers.some((provider) => provider.id === presetId);
+
   useEffect(() => {
     if (!open) return;
     setError(null);
     setTestResult(null);
-    if (mode === "edit" && initial) {
-      setSelectedPresetId("");
-      setName(initial.name);
-      setBaseUrl(initial.baseUrl);
-      // Provider profiles never contain credentials; a blank edit keeps the encrypted key in Core.
-      setApiKey("");
-      setKind(initial.kind);
-      setLiteModelsText(modelsTextForTier(initial.models, "lite"));
-      setPlusModelsText(modelsTextForTier(initial.models, "plus"));
-      setProModelsText(modelsTextForTier(initial.models, "pro"));
-      setExtraBodyText("");
-      setCapabilitiesByModel(capabilityDraftsFor(initial.models));
-    } else {
-      const defaultPreset = presets[0];
-      setSelectedPresetId(defaultPreset?.id ?? "");
-      setName(defaultPreset?.name ?? "");
-      setBaseUrl(defaultPreset?.baseUrl ?? "");
-      setApiKey("");
-      setKind(defaultPreset?.kind ?? "openai");
-      setLiteModelsText(modelsTextForTier(defaultPreset?.models ?? [], "lite"));
-      setPlusModelsText(modelsTextForTier(defaultPreset?.models ?? [], "plus"));
-      setProModelsText(modelsTextForTier(defaultPreset?.models ?? [], "pro"));
-      setExtraBodyText("");
-      setCapabilitiesByModel(capabilityDraftsFor(defaultPreset?.models ?? []));
+    setApiKey("");
+    if (mode === "create") {
+      const firstAvailable = presets.find((preset) => !providers.some((provider) => provider.id === preset.id));
+      setSelectedPresetId(firstAvailable?.id ?? "");
     }
+    // Reset only when the dialog opens; a provider list refresh must not clear the typed key.
   }, [open, mode, initial, presets]);
 
   useEffect(() => {
@@ -233,65 +105,15 @@ export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }
     return () => previousFocus.current?.focus();
   }, [open]);
 
-  const configuredModels = [
-    ...parseModels(liteModelsText, "lite"),
-    ...parseModels(plusModelsText, "plus"),
-    ...parseModels(proModelsText, "pro"),
-  ].filter((model, index, models) => (
-    models.findIndex((candidate) => candidate.modelId === model.modelId) === index
-  ));
-  const configuredModelIds = configuredModels.map((model) => model.modelId).join("\n");
-
-  useEffect(() => {
-    if (!open || !focusModelId || !configuredModelIds.split("\n").includes(focusModelId)) return;
-    const editor = document.getElementById(capabilitiesEditorId(focusModelId));
-    editor?.scrollIntoView?.({ block: "center" });
-    editor?.querySelector<HTMLInputElement>("input")?.focus();
-  }, [configuredModelIds, focusModelId, open]);
-
   if (!open) return null;
 
-  function applyPreset(preset: ProviderPreset) {
-    setSelectedPresetId(preset.id);
-    if (mode !== "create") return;
-    setName(preset.name);
-    setBaseUrl(preset.baseUrl);
-    setKind(preset.kind);
-    setLiteModelsText(modelsTextForTier(preset.models, "lite"));
-    setPlusModelsText(modelsTextForTier(preset.models, "plus"));
-    setProModelsText(modelsTextForTier(preset.models, "pro"));
-    setCapabilitiesByModel(capabilityDraftsFor(preset.models));
-  }
-
-  function updateCapability(
-    modelId: string,
-    field: keyof ModelCapabilitiesDraft,
-    value: string | boolean,
-  ) {
-    setCapabilitiesByModel((current) => ({
-      ...current,
-      [modelId]: {
-        ...emptyCapabilitiesDraft(),
-        ...current[modelId],
-        [field]: value,
-      },
-    }));
-  }
-
   function buildInput(): ProviderInput | string {
-    const result = buildProviderInput({
-      name,
-      baseUrl,
+    if (mode === "edit" && initial) return apiKeyUpdateInput(initial, apiKey);
+    const result = presetProviderInput(
+      presets.find((preset) => preset.id === selectedPresetId),
       apiKey,
-      kind,
-      liteModelsText,
-      plusModelsText,
-      proModelsText,
-      extraBodyText,
-      capabilitiesByModel,
-    }, mode);
-    if (result.ok) return result.input;
-    return t(`settings.models.form.${result.errorKey}`, { model: result.model });
+    );
+    return result.ok ? result.input : t(`settings.models.form.${result.errorKey}`);
   }
 
   async function handleSubmit() {
@@ -306,7 +128,7 @@ export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }
       if (mode === "edit" && initial) {
         await update(initial.id, inputOrError);
       } else {
-        await create(inputOrError);
+        await create(selectedPresetId, inputOrError);
       }
       onClose();
     } catch (submitError) {
@@ -323,15 +145,12 @@ export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }
       return;
     }
     const firstModel = inputOrError.models.find((model) => model.enabled);
-    if (!firstModel) {
-      setError(t("settings.models.form.modelRequiredForTest"));
-      return;
-    }
+    if (!firstModel) return;
     setError(null);
     setIsTesting(true);
     setTestResult(null);
     try {
-      const target = resolveProviderTestTarget(mode, initial?.id, inputOrError.apiKey);
+      const target = resolveProviderTestTarget(mode, initial?.id, inputOrError.apiKey ?? "");
       const result = target.kind === "stored"
         ? await providersApi.test(target.providerId, firstModel.modelId)
         : await providersApi.testDraft(inputOrError, firstModel.modelId);
@@ -359,7 +178,7 @@ export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }
         onKeyDown={(event) => {
           if (event.key === "Escape") onClose();
         }}
-        className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-line bg-paper shadow-xl outline-none"
+        className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-xl border border-line bg-paper shadow-xl outline-none"
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 id="provider-form-title" className="m-0 text-base font-semibold text-ink">
@@ -384,8 +203,9 @@ export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }
                   <button
                     key={preset.id}
                     type="button"
-                    onClick={() => applyPreset(preset)}
-                    className={`rounded-full border px-3 py-1 text-xs ${
+                    disabled={isConfigured(preset.id)}
+                    onClick={() => setSelectedPresetId(preset.id)}
+                    className={`rounded-full border px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                       selectedPresetId === preset.id
                         ? "border-clay bg-clay-soft text-clay"
                         : "border-line-strong text-ink-soft hover:bg-paper-hover"
@@ -396,122 +216,31 @@ export function ProviderFormModal({ open, mode, initial, focusModelId, onClose }
                 ))}
               </div>
             </div>
-          ) : null}
+          ) : (
+            <p className="m-0 text-sm text-ink">{initial?.name}</p>
+          )}
 
-          <div data-provider-form-grid="true" className="grid gap-4 sm:grid-cols-2">
-            <Field label={t("settings.models.form.name")}>
-              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="My DeepSeek" />
-            </Field>
-
-            <Field label={t("settings.models.form.baseUrl")}>
-              <input className={inputClass} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com" />
-            </Field>
-
-            <Field label={t("settings.models.form.apiKey")} className="sm:col-span-2">
-              <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
-                <input
-                  className={inputClass}
-                  type={showApiKey ? "text" : "password"}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={mode === "edit" ? t("settings.models.form.apiKeyKeep") : "sk-..."}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <button
-                  type="button"
-                  className="grid size-10 place-items-center rounded-lg border border-line-strong bg-paper text-ink-soft hover:bg-paper-hover"
-                  onClick={() => setShowApiKey((value) => !value)}
-                  aria-label={showApiKey ? t("settings.models.form.hideApiKey") : t("settings.models.form.showApiKey")}
-                >
-                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-              {mode === "edit" ? (
-                <span className="text-xs text-ink-faint">{t("settings.models.form.apiKeyKeep")}</span>
-              ) : null}
-            </Field>
-
-            <Field label={t("settings.models.form.liteModels")}>
-              <input className={inputClass} value={liteModelsText} onChange={(e) => setLiteModelsText(e.target.value)} placeholder="deepseek-chat" />
-            </Field>
-
-            <Field label={t("settings.models.form.plusModels")}>
-              <input className={inputClass} value={plusModelsText} onChange={(e) => setPlusModelsText(e.target.value)} placeholder="qwen-plus" />
-            </Field>
-
-            <Field label={t("settings.models.form.proModels")}>
-              <input className={inputClass} value={proModelsText} onChange={(e) => setProModelsText(e.target.value)} placeholder="deepseek-reasoner" />
-            </Field>
-
-            <Field label={t("settings.models.form.extraBody")}>
-              <textarea
-                className={`${inputClass} min-h-10 resize-y py-2 font-mono text-xs`}
-                value={extraBodyText}
-                onChange={(e) => setExtraBodyText(e.target.value)}
-                placeholder='{"reasoning_effort": "high"}'
+          <Field label={t("settings.models.form.apiKey")}>
+            <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
+              <input
+                className={inputClass}
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={mode === "edit" ? t("settings.models.form.apiKeyKeep") : "sk-..."}
+                autoComplete="off"
+                spellCheck={false}
               />
-            </Field>
-
-            <div className="grid gap-3 sm:col-span-2">
-              <span className="text-sm font-medium text-ink-soft">
-                {t("settings.models.form.capabilities")}
-              </span>
-              {configuredModels.map((model) => {
-                const capability = capabilitiesByModel[model.modelId] ?? emptyCapabilitiesDraft();
-                return (
-                  <fieldset
-                    id={capabilitiesEditorId(model.modelId)}
-                    key={model.modelId}
-                    className="grid gap-3 rounded-lg border border-line p-3"
-                  >
-                    <legend className="px-1 font-mono text-xs text-ink-soft">{model.modelId}</legend>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <Field label={t("settings.models.form.contextWindowTokens")}>
-                        <input
-                          className={inputClass}
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={capability.contextWindowTokens}
-                          onChange={(event) => updateCapability(model.modelId, "contextWindowTokens", event.target.value)}
-                        />
-                      </Field>
-                      <Field label={t("settings.models.form.maxOutputTokens")}>
-                        <input
-                          className={inputClass}
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={capability.maxOutputTokens}
-                          onChange={(event) => updateCapability(model.modelId, "maxOutputTokens", event.target.value)}
-                        />
-                      </Field>
-                      <Field label={t("settings.models.form.maxReasoningTokens")}>
-                        <input
-                          className={inputClass}
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={capability.maxReasoningTokens}
-                          placeholder={t("settings.models.form.optional")}
-                          onChange={(event) => updateCapability(model.modelId, "maxReasoningTokens", event.target.value)}
-                        />
-                      </Field>
-                    </div>
-                    <label className="flex items-center gap-2 text-xs text-ink-soft">
-                      <input
-                        type="checkbox"
-                        checked={capability.acceptsDataBlocks}
-                        onChange={(event) => updateCapability(model.modelId, "acceptsDataBlocks", event.target.checked)}
-                      />
-                      {t("settings.models.form.acceptsDataBlocks")}
-                    </label>
-                  </fieldset>
-                );
-              })}
+              <button
+                type="button"
+                className="grid size-10 place-items-center rounded-lg border border-line-strong bg-paper text-ink-soft hover:bg-paper-hover"
+                onClick={() => setShowApiKey((value) => !value)}
+                aria-label={showApiKey ? t("settings.models.form.hideApiKey") : t("settings.models.form.showApiKey")}
+              >
+                {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
             </div>
-          </div>
+          </Field>
 
           {testResult ? (
             <div className={`rounded-lg border px-3 py-2 text-xs ${providerTestResultStyle(testResult.success)}`}>
@@ -559,62 +288,4 @@ function Field({ label, className, children }: { label: string; className?: stri
       {children}
     </label>
   );
-}
-
-function modelsTextForTier(
-  models: Array<Pick<ProviderModel, "modelId" | "modelTier">>,
-  tier: ModelTier,
-): string {
-  return models
-    .filter((model) => model.modelTier === tier)
-    .map((model) => model.modelId)
-    .join(", ");
-}
-
-function parseModels(value: string, modelTier: ModelTier): ProviderModel[] {
-  return value
-    .split(",")
-    .map((modelId) => modelId.trim())
-    .filter(Boolean)
-    .map((modelId) => ({ modelId, modelTier, enabled: true }));
-}
-
-function capabilityDraftsFor(
-  models: Array<Pick<ProviderModel, "modelId" | "capabilities">>,
-): Record<string, ModelCapabilitiesDraft> {
-  return Object.fromEntries(models.map((model) => [
-    model.modelId,
-    model.capabilities ? capabilitiesToDraft(model.capabilities) : emptyCapabilitiesDraft(),
-  ]));
-}
-
-function capabilitiesToDraft(capabilities: ModelCapabilities): ModelCapabilitiesDraft {
-  return {
-    contextWindowTokens: String(capabilities.contextWindowTokens),
-    maxOutputTokens: String(capabilities.maxOutputTokens),
-    maxReasoningTokens: capabilities.maxReasoningTokens === null
-      ? ""
-      : String(capabilities.maxReasoningTokens),
-    acceptsDataBlocks: capabilities.acceptsDataBlocks,
-  };
-}
-
-function emptyCapabilitiesDraft(): ModelCapabilitiesDraft {
-  return {
-    contextWindowTokens: "",
-    maxOutputTokens: "",
-    maxReasoningTokens: "",
-    acceptsDataBlocks: false,
-  };
-}
-
-function parseUnsignedInteger(value: string, positive: boolean, max: number): number | null {
-  const parsed = Number(value);
-  if (!value.trim() || !Number.isSafeInteger(parsed) || parsed > max) return null;
-  if (positive ? parsed <= 0 : parsed < 0) return null;
-  return parsed;
-}
-
-function capabilitiesEditorId(modelId: string): string {
-  return `model-capabilities-${modelId}`;
 }

@@ -86,6 +86,7 @@ pub fn run() {
             commands::runtime::runtime_conversation_replay,
             commands::runtime::runtime_compaction_transcript_read,
             commands::runtime::runtime_session_rename,
+            commands::runtime::runtime_session_set_model,
             commands::runtime::runtime_session_delete,
             commands::runtime::runtime_turn_start,
             commands::runtime::runtime_turn_cancel,

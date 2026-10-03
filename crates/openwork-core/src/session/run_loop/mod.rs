@@ -507,7 +507,7 @@ impl TurnRunner {
         );
         attributes.record_context_budget(prepared.prepared.context_budget);
         attributes.record_projection_summary(prepared.prepared.projection_summary);
-        let options = ModelCallOptions::new(format!(
+        let options = self.request.resolved_model.call_options(format!(
             "{}-model-{model_call_index}-submission-{submission_attempt}",
             self.request.turn_id
         ));
@@ -572,7 +572,7 @@ impl TurnRunner {
         conversation: ConversationContextView,
     ) -> Result<PreparedTurnModelCall, TurnRunError> {
         let request_build_started = Instant::now();
-        let prepared = context_engine
+        let mut prepared = context_engine
             .prepare(PrepareContextInput::new(
                 &self.request.resolved_model.model_name,
                 system_context,
@@ -580,6 +580,9 @@ impl TurnRunner {
                 self.request.tools.definitions(),
             ))
             .map_err(|error| TurnRunError::Protocol(error.to_string()))?;
+        // 同一 Session 的请求带相同的缓存键（Codex 用 session id 作 `prompt_cache_key`）。
+        prepared.request.prompt_cache_key = Some(self.request.session_id.to_string());
+        prepared.request.reasoning_effort = self.request.resolved_model.reasoning_effort.clone();
         Ok(PreparedTurnModelCall {
             prepared,
             request_build_ms: elapsed_millis_u64(request_build_started),

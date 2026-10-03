@@ -82,6 +82,12 @@ impl ModelCallOptions {
         self
     }
 
+    /// `attempts` 包含第一次调用。
+    pub fn with_max_transport_attempts(mut self, attempts: usize) -> Self {
+        self.max_transport_attempts = attempts.max(1);
+        self
+    }
+
     pub fn with_transport_observer(mut self, observer: Arc<dyn ModelTransportObserver>) -> Self {
         self.transport_observer = Some(observer);
         self

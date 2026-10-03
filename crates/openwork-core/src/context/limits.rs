@@ -91,7 +91,7 @@ mod tests {
 
     /// 推理额度单独计费的模型，必须把它一并从窗口里预留掉。
     ///
-    /// 例如 Qwen 把最大输出和最大思维链分开公布，两者都占窗口：只按输出预留
+    /// 厂商把最大输出和最大思维链分开公布时，两者都占窗口：只按输出预留
     /// 会低估几万 token，直到请求被 Provider 拒绝才暴露。
     #[test]
     fn a_separate_reasoning_budget_is_reserved_on_top_of_the_output() {

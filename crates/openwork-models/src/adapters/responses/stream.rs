@@ -1,4 +1,4 @@
-//! OpenAI Responses stream event codec boundary.
+//! Responses 的 SSE 事件流。
 
 use std::{collections::VecDeque, pin::Pin};
 
@@ -8,14 +8,14 @@ use serde_json::Value;
 
 use super::response::ResponseAccumulator;
 use crate::{
-    error::{ErrorDialect, decode_stream_json, map_stream_error_event_for},
+    error::{decode_stream_json, map_stream_error_event},
     sse::{SseFrame, sse_frames},
 };
 
-struct OpenAiResponseStreamState<F> {
+struct ResponseStreamState<F> {
     frames: Pin<Box<F>>,
     accumulator: Option<ResponseAccumulator>,
-    tools: Option<OpenAiResponsesToolStream>,
+    tools: Option<ResponsesToolStream>,
     pending: VecDeque<ModelEvent>,
     provider_request_id: Option<String>,
     fallback_model: String,
@@ -28,10 +28,10 @@ pub(crate) fn response_stream(
     provider_request_id: Option<String>,
     fallback_model: String,
 ) -> ModelStream {
-    let state = OpenAiResponseStreamState {
+    let state = ResponseStreamState {
         frames: Box::pin(sse_frames(response)),
         accumulator: Some(ResponseAccumulator::default()),
-        tools: Some(OpenAiResponsesToolStream::default()),
+        tools: Some(ResponsesToolStream::default()),
         pending: VecDeque::new(),
         provider_request_id,
         fallback_model,
@@ -48,14 +48,13 @@ pub(crate) fn response_stream(
                 return Ok(None);
             }
             if state.terminal {
-                let tools = state
-                    .tools
-                    .take()
-                    .ok_or_else(|| ModelError::protocol("OpenAI tool stream already finished"))?;
+                let tools = state.tools.take().ok_or_else(|| {
+                    ModelError::protocol("Responses tool stream already finished")
+                })?;
                 let (tool_calls, tool_end_events) = tools.finish().map_err(ModelError::protocol)?;
                 state.pending.extend(tool_end_events);
                 let accumulator = state.accumulator.take().ok_or_else(|| {
-                    ModelError::protocol("OpenAI response accumulator already finished")
+                    ModelError::protocol("Responses response accumulator already finished")
                 })?;
                 let response = accumulator.finish(
                     state.provider_request_id.take(),
@@ -71,18 +70,18 @@ pub(crate) fn response_stream(
 
             let frame = next_frame(&mut state.frames).await?;
             let event = decode_stream_json(&frame.data)?;
-            if let Some(error) = map_stream_error_event_for(&event, ErrorDialect::OpenAi) {
+            if let Some(error) = map_stream_error_event(&event) {
                 return Err(error);
             }
             let accumulator = state.accumulator.as_mut().ok_or_else(|| {
-                ModelError::protocol("OpenAI response accumulator is unavailable")
+                ModelError::protocol("Responses response accumulator is unavailable")
             })?;
             let (events, terminal) = accumulator.observe(&event);
             state.pending.extend(events);
             let tools = state
                 .tools
                 .as_mut()
-                .ok_or_else(|| ModelError::protocol("OpenAI tool stream is unavailable"))?;
+                .ok_or_else(|| ModelError::protocol("Responses tool stream is unavailable"))?;
             state.pending.extend(tools.observe(&event));
             state.terminal = terminal;
         }
@@ -96,7 +95,7 @@ where
     match frames.next().await {
         Some(frame) => frame,
         None => Err(ModelError::network(
-            "OpenAI stream ended before a terminal event",
+            "Responses stream ended before a terminal event",
         )),
     }
 }
@@ -111,11 +110,11 @@ struct PendingTool {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct OpenAiResponsesToolStream {
+pub(crate) struct ResponsesToolStream {
     tools: Vec<PendingTool>,
 }
 
-impl OpenAiResponsesToolStream {
+impl ResponsesToolStream {
     pub(crate) fn observe(&mut self, event: &Value) -> Vec<ModelEvent> {
         let index = event
             .get("output_index")
@@ -199,7 +198,7 @@ impl OpenAiResponsesToolStream {
             };
             serde_json::from_str::<Value>(&input).map_err(|error| {
                 format!(
-                    "OpenAI Responses tool call '{}' produced invalid JSON input: {error}",
+                    "Responses tool call '{}' produced invalid JSON input: {error}",
                     tool.name
                 )
             })?;
@@ -226,7 +225,7 @@ mod tests {
 
     #[test]
     fn accumulates_function_call_argument_events() {
-        let mut stream = OpenAiResponsesToolStream::default();
+        let mut stream = ResponsesToolStream::default();
         let started = stream.observe(&json!({
             "type": "response.output_item.added",
             "output_index": 2,

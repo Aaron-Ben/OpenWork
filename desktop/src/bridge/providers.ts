@@ -11,8 +11,9 @@ import type {
 export const providersApi = {
   list: (): Promise<ProviderIndex> => invoke('provider_list'),
   presets: (): Promise<ProviderPreset[]> => invoke('provider_presets'),
-  create: (input: ProviderInput): Promise<ProviderConfig> =>
-    invoke('provider_create', { input }),
+  /** `presetId` becomes the provider id; null lets Core generate a custom id. */
+  create: (presetId: string, input: ProviderInput): Promise<ProviderConfig> =>
+    invoke('provider_create', { presetId, input }),
   update: (id: string, input: ProviderInput): Promise<ProviderConfig> =>
     invoke('provider_update', { id, input }),
   remove: (id: string): Promise<void> => invoke('provider_delete', { id }),

@@ -12,7 +12,9 @@
 | [data-model.md](data-model.md) | 全部表的 DDL 与约束理由、写入顺序、启动修正 |
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
 | [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |
+| [testing.md](testing.md) | 测试分层、原则、写法与运行方式 |
 | [AGENTS.md](AGENTS.md) | 文档标准 |
+| [templates/crate-readme.md](templates/crate-readme.md) | crate README 的结构与写法 |
 
 ## 子系统
 

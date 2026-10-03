@@ -63,6 +63,12 @@ export const coreCommands = {
     invoke('runtime_compaction_transcript_read', { sessionId, query }),
   renameSession: (sessionId: string, title: string): Promise<RuntimeSessionRecord> =>
     invoke('runtime_session_rename', { sessionId, title }),
+  setSessionModel: (
+    sessionId: string,
+    modelRef: string,
+    reasoningEffort: string | null,
+  ): Promise<RuntimeSessionRecord> =>
+    invoke('runtime_session_set_model', { sessionId, modelRef, reasoningEffort }),
   deleteSession: (sessionId: string): Promise<void> =>
     invoke('runtime_session_delete', { sessionId }),
   startTurn: (

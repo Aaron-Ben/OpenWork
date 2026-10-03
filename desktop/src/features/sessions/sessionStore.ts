@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 import { coreCommands } from '@/bridge/commands'
-import type { ProviderConfig } from '@/bridge/providerContracts'
+import { modelRef, type ProviderConfig } from '@/bridge/providerContracts'
 import type {
   RuntimeSessionRecord,
   RuntimeStoredMessage,
@@ -34,16 +34,14 @@ interface SessionStoreState {
   select: (sessionId: string) => Promise<void>
   reload: (sessionId: string) => Promise<boolean>
   rename: (sessionId: string, title: string) => Promise<void>
+  /** reasoningEffort null uses the model's catalog default. */
+  setModel: (sessionId: string, modelRef: string, reasoningEffort: string | null) => Promise<void>
   remove: (sessionId: string) => Promise<void>
   clearSelection: () => void
 }
 
 function newSessionId(): string {
   return `sess-${crypto.randomUUID().split('-').join('')}`
-}
-
-function modelRecordId(providerId: string, modelId: string): string {
-  return `model:${providerId}:${modelId}`
 }
 
 let reloadRequestSequence = 0
@@ -85,7 +83,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         id: newSessionId(),
         title,
         workingDirectory,
-        defaultModelId: modelRecordId(provider.id, modelId),
+        defaultModelId: modelRef(provider.id, modelId),
       })
       set((state) => ({
         summaries: { ...state.summaries, [session.id]: session },
@@ -146,6 +144,18 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   rename: async (sessionId, title) => {
     try {
       const session = await coreCommands.renameSession(sessionId, title)
+      set((state) => ({
+        summaries: { ...state.summaries, [sessionId]: session },
+        error: null,
+      }))
+    } catch (error) {
+      set({ error: resolveErrorMessage(error) })
+    }
+  },
+
+  setModel: async (sessionId, ref, reasoningEffort) => {
+    try {
+      const session = await coreCommands.setSessionModel(sessionId, ref, reasoningEffort)
       set((state) => ({
         summaries: { ...state.summaries, [sessionId]: session },
         error: null,

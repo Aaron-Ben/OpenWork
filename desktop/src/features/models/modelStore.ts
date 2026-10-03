@@ -34,7 +34,7 @@ interface ModelStoreState {
 
   fetchAll: () => Promise<void>
   fetchPresets: () => Promise<void>
-  create: (input: ProviderInput) => Promise<ProviderConfig>
+  create: (presetId: string, input: ProviderInput) => Promise<ProviderConfig>
   update: (id: string, input: ProviderInput) => Promise<ProviderConfig>
   remove: (id: string) => Promise<void>
   test: (config: ProviderConfig, model: string) => Promise<TestResult>
@@ -70,8 +70,8 @@ export const useModelStore = create<ModelStoreState>((set, get) => ({
     }
   },
 
-  create: async (input) => {
-    const config = await providersApi.create(input)
+  create: async (presetId, input) => {
+    const config = await providersApi.create(presetId, input)
     await get().fetchAll()
     return config
   },

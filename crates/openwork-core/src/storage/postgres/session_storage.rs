@@ -271,7 +271,7 @@ impl PostgresStorage {
         sqlx::query(
             "INSERT INTO turns (
                  id, session_id, client_request_id, sequence, model_id,
-                 resolved_provider_kind, resolved_model_name, app_version, status
+                 resolved_provider_id, resolved_model_name, app_version, status
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running')",
         )
         .bind(turn_id.as_str())
@@ -279,7 +279,7 @@ impl PostgresStorage {
         .bind(client_request_id.as_str())
         .bind(turn_sequence)
         .bind(&model.model_id)
-        .bind(&model.provider_kind)
+        .bind(&model.provider_id)
         .bind(&model.model_name)
         .bind(env!("CARGO_PKG_VERSION"))
         .execute(&mut *transaction)

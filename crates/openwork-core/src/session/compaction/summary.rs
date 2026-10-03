@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use openwork_models::model::{
     FinishReason, Message, ModelCallOptions, ModelEvent, ModelPort, ModelResponse, Role,
-    ThinkingConfig,
 };
 
 use crate::context::{
@@ -173,7 +172,8 @@ pub(super) async fn generate_summary(
     trace.attributes_mut().summary_max_output_tokens = Some(summary_output_tokens);
     let mut model_request = prepared.request;
     model_request.max_output_tokens = Some(summary_output_tokens);
-    model_request.thinking = Some(ThinkingConfig::disabled());
+    // 摘要不需要推理：不发送 `reasoning`，由厂商用默认行为。
+    model_request.reasoning_effort = None;
     let summary_context_budget = ContextBudgetEstimate {
         reserved_output_tokens: Some(summary_output_tokens),
         ..prepared.context_budget

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use openwork_models::model::{
     FinishReason, ModelError, ModelEvent, ModelRequest, ModelResponse, ModelTransportObserver,
-    ModelTransportSignal, ModelTransportSignalKind, ThinkingMode, TokenUsage,
+    ModelTransportSignal, ModelTransportSignalKind, TokenUsage,
 };
 use openwork_sandbox::{PathGrant, SandboxMode};
 use openwork_tools::{DangerKey, ToolResult, ToolResultStatus};
@@ -166,7 +166,7 @@ pub struct ModelTraceAttributesV1 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_mode: Option<String>,
+    pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_tool_call_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,10 +204,7 @@ impl ModelTraceAttributesV1 {
             request_projected_tool_result_tokens: None,
             tool_definition_count: Some(saturating_u64(request.tools.len())),
             max_output_tokens: request.max_output_tokens,
-            thinking_mode: request.thinking.map(|thinking| match thinking.mode {
-                ThinkingMode::Enabled => "enabled".to_string(),
-                ThinkingMode::Disabled => "disabled".to_string(),
-            }),
+            reasoning_effort: request.reasoning_effort.clone(),
             response_tool_call_count: None,
             summary_chars: None,
             summary_retry_delay_ms: None,
@@ -1443,8 +1440,9 @@ mod tests {
             temperature: Some(0.2),
             top_p: Some(0.8),
             max_output_tokens: Some(128),
-            thinking: None,
+            reasoning_effort: None,
             tools: Vec::new(),
+            prompt_cache_key: None,
         };
         let payloads = TracePayloads::for_model_request(&request);
         let encoded = serde_json::to_string(&[
@@ -1492,12 +1490,13 @@ mod tests {
             temperature: Some(0.25),
             top_p: Some(0.75),
             max_output_tokens: Some(4096),
-            thinking: None,
+            reasoning_effort: None,
             tools: vec![openwork_models::model::ToolDefinition {
                 name: "read".to_string(),
                 description: "secret tool description".to_string(),
                 parameters: serde_json::json!({"type": "object"}),
             }],
+            prompt_cache_key: None,
         };
         let mut attributes = ModelTraceAttributesV1::from_request(2, 7, &request);
         let estimate = ContextBudgetEstimate {

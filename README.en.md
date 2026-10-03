@@ -43,7 +43,7 @@ The two modes share the Tauri Desktop, theme, i18n, and PostgreSQL instance. The
 
 ### Workbench
 
-- **Explicit model selection**: built-in presets for OpenAI, Anthropic, DeepSeek, Kimi, Qwen, and GLM. Each session uses one specific provider and model. There is no silent fallback to a different model;
+- **Explicit model selection**: built-in presets for OpenAI, DeepSeek, Kimi, and GLM, all on the Responses protocol. Each session uses one specific model and reasoning effort. There is no silent fallback to a different model;
 - **Agent loop**: advances Model → Tool/Permission → Model inside one turn until completion, failure, cancellation, or a safety guard;
 - **Seven built-in tools**: `read`, `write`, `edit`, `grep`, `glob`, `list`, and `bash`. All file tools go through one path-authorization boundary. `bash` starts the host POSIX shell in the working directory;
 - **Two permission modes**: `default` automatically allows workspace reads and commands that are proven read-only. `acceptEdits` also allows changes to non-sensitive workspace files;
@@ -141,19 +141,14 @@ Redis never stores message bodies, boards, or a pending-work queue. If Redis los
 git clone https://github.com/Aaron-Ben/OpenWork.git
 cd OpenWork
 cp .env.example .env
-openssl rand -base64 32
 ```
 
-Put the generated Base64 value in the root `.env`. Then add the Redis URL:
+`.env` sets the database and Redis URLs:
 
 ```dotenv
-DATABASE_URL=postgres://openwork:openwork@127.0.0.1:5432/openwork
-REDIS_URL=redis://127.0.0.1:6379/0
-OPENWORK_API_KEY_ENCRYPTION_KEY=<generated Base64 value>
+DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork
+REDIS_URL=redis://localhost:6379/0
 ```
-
-> [!WARNING]
-> Do not change `OPENWORK_API_KEY_ENCRYPTION_KEY` while you use the same database. If you change it, OpenWork cannot decrypt the existing workbench provider API keys.
 
 ### 3. Start PostgreSQL and Redis
 
@@ -186,7 +181,7 @@ Run Desktop commands inside `desktop/`. The repository root has no `package.json
 
 ### Workbench
 
-1. Create a provider and save its API key in Settings;
+1. Create a provider and save its API key in Settings. OpenWork writes providers to `~/.openwork/config.json`. The API key is plain text, and the file mode is `0600`;
 2. create a session and choose a model and working directory;
 3. submit a task and resolve permission requests when necessary;
 4. inspect messages, file diffs, the context window, and traces.

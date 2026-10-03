@@ -24,9 +24,10 @@ pub fn provider_presets(core: tauri::State<'_, OpenWorkCore>) -> Vec<ProviderPre
 #[tauri::command]
 pub async fn provider_create(
     core: tauri::State<'_, OpenWorkCore>,
+    preset_id: String,
     input: ProviderInput,
 ) -> Result<ProviderProfile, CommandError> {
-    core.create_provider(input)
+    core.create_provider(&preset_id, input)
         .await
         .map_err(CommandError::from)
 }

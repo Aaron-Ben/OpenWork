@@ -1,45 +1,5 @@
 use super::*;
 
-pub struct ModelInput {
-    pub id: String,
-    pub display_name: String,
-    pub provider_kind: String,
-    pub model_name: String,
-    pub base_url: String,
-    pub credential_ref: Option<String>,
-    pub enabled: bool,
-    pub capabilities: ModelCapabilities,
-    pub config: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelRecord {
-    pub id: String,
-    pub display_name: String,
-    pub provider_kind: String,
-    pub model_name: String,
-    pub base_url: String,
-    pub credential_ref: Option<String>,
-    pub enabled: bool,
-    pub config: Value,
-}
-
-impl ModelRecord {
-    pub fn capabilities(&self) -> Result<Option<ModelCapabilities>, StorageError> {
-        let Some(value) = self.config.get("capabilities") else {
-            return Ok(None);
-        };
-        let capabilities = serde_json::from_value::<ModelCapabilities>(value.clone())?;
-        capabilities.validate().map(Some).map_err(|error| {
-            StorageError::InvalidInput(format!(
-                "model {} has invalid capabilities: {error}",
-                self.id
-            ))
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInput {
@@ -66,6 +26,8 @@ pub struct SubAgentSessionInput {
     /// Inherited from the parent; never widened or narrowed.
     pub working_directory: String,
     pub default_model_id: Option<String>,
+    /// Inherited from the parent together with the model.
+    pub reasoning_effort: Option<String>,
     /// Tool Call Span that spawned it. `None` when the Trace write was dropped.
     pub spawn_span_id: Option<String>,
     /// 父会话模式与角色上限中较窄者，派生时取快照（permissions.md §13.3）。
@@ -79,6 +41,8 @@ pub struct SessionRecord {
     pub title: Option<String>,
     pub working_directory: String,
     pub default_model_id: Option<String>,
+    /// Responses `reasoning.effort`。`None` 时用模型目录的默认档位。
+    pub reasoning_effort: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,

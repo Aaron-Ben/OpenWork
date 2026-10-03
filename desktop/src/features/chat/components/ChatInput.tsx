@@ -4,8 +4,6 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { ProviderModel } from '@/bridge/providerContracts'
 import type {
   RuntimePermissionMode,
   RuntimeSkillInput,
@@ -27,9 +25,8 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { PermissionModeSelect } from './PermissionModeSelect'
 
 interface ChatInputProps {
-  model: string
-  modelOptions: ProviderModel[]
-  modelSelectionLocked?: boolean
+  /** Model and reasoning-effort selector, rendered beside the send button. */
+  modelControl?: ReactNode
   permissionMode: RuntimePermissionMode
   value: string
   isSending: boolean
@@ -37,7 +34,6 @@ interface ChatInputProps {
   disabled?: boolean
   skills?: readonly RuntimeSkillSummary[]
   onValueChange: (value: string) => void
-  onModelChange: (model: string) => void
   onPermissionModeChange: (mode: RuntimePermissionMode) => void
   onSubmit: (skills: RuntimeSkillInput[]) => void
   onCancel?: () => void
@@ -101,9 +97,7 @@ function resizeTextarea(textarea: HTMLTextAreaElement) {
 }
 
 export function ChatInput({
-  model,
-  modelOptions,
-  modelSelectionLocked = false,
+  modelControl,
   permissionMode,
   value,
   isSending,
@@ -111,7 +105,6 @@ export function ChatInput({
   disabled = false,
   skills = [],
   onValueChange,
-  onModelChange,
   onPermissionModeChange,
   onSubmit,
   onCancel,
@@ -137,7 +130,6 @@ export function ChatInput({
   const [caret, setCaret] = useState(value.length)
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0)
   const [skillBindings, setSkillBindings] = useState<SkillMentionBinding[]>([])
-  const selectedModel = modelOptions.find((option) => option.modelId === model)
   const skillTarget = useMemo(() => {
     const target = findSkillMentionTarget(value, caret)
     if (!target) return null
@@ -483,29 +475,7 @@ export function ChatInput({
             onInspect={onInspectContext}
           />
 
-          <Select
-            value={model}
-            onValueChange={onModelChange}
-            disabled={disabled || modelSelectionLocked || isSending || isCompacting || modelOptions.length === 0}
-          >
-            <SelectTrigger
-              /* 宽度随内容自适应、设上限，短模型名完整显示，超长才截断 —— 悬停要能看到全名。 */
-              className="w-auto min-w-[104px] max-w-[min(320px,34vw)] overflow-hidden rounded-full border border-line text-ink-soft"
-              aria-label={t('chat.selectModel')}
-              title={selectedModel ? formatModelLabel(selectedModel) : undefined}
-            >
-              <SelectValue placeholder={t('chat.noModel')}>
-                {selectedModel ? formatModelLabel(selectedModel) : undefined}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent side="top" align="end">
-              {modelOptions.map((option) => (
-                <SelectItem key={option.modelId} value={option.modelId}>
-                  {formatModelLabel(option)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {modelControl}
 
           <AnimatePresence initial={false} mode="wait">
             <motion.div
@@ -530,7 +500,7 @@ export function ChatInput({
                   variant="accent"
                   type="submit"
                   aria-label={t('chat.send')}
-                  disabled={disabled || !model || !value.trim()}
+                  disabled={disabled || !value.trim()}
                 >
                   <ArrowUp size={18} strokeWidth={2.1} />
                 </Button>
@@ -541,10 +511,4 @@ export function ChatInput({
       </motion.form>
     </div>
   )
-}
-
-function formatModelLabel(model: ProviderModel): string {
-  const name = model.displayName?.trim() || model.modelId
-  const tier = model.modelTier.charAt(0).toUpperCase() + model.modelTier.slice(1)
-  return `${name} · ${tier}`
 }

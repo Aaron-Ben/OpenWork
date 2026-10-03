@@ -43,7 +43,7 @@ OpenWork 是一个本地优先的桌面 Agent 工作空间。当前 Desktop 内�
 
 ### 工作台
 
-- **显式模型选择**：内置 OpenAI、Anthropic、DeepSeek、Kimi、Qwen 和 GLM 的 Provider 预设。每个 Session 选择一个具体的 Provider 与模型。OpenWork 不在模型之间静默 fallback；
+- **显式模型选择**：内置 OpenAI、DeepSeek、Kimi 和 GLM 的 Provider 预设，全部走 Responses 协议。每个 Session 选择一个具体的模型与推理档位。OpenWork 不在模型之间静默 fallback；
 - **Agent Loop**：在一个 Turn 中推进 Model → Tool/Permission → Model，直到完成、失败、取消或触发保护条件；
 - **七个内置工具**：`read`、`write`、`edit`、`grep`、`glob`、`list`、`bash`。所有文件工具都经过同一个路径授权边界。`bash` 在工作目录中启动宿主 POSIX Shell；
 - **两种权限模式**：`default` 自动允许工作区读取和可证明只读的命令。`acceptEdits` 还允许修改非敏感的工作区文件；
@@ -141,19 +141,14 @@ Redis 不保存消息正文、Board 或待执行任务。Redis 数据丢失最�
 git clone https://github.com/Aaron-Ben/OpenWork.git
 cd OpenWork
 cp .env.example .env
-openssl rand -base64 32
 ```
 
-把生成的 Base64 值写入根目录的 `.env`。再补上 Redis 地址：
+`.env` 设置数据库与 Redis 的地址：
 
 ```dotenv
-DATABASE_URL=postgres://openwork:openwork@127.0.0.1:5432/openwork
-REDIS_URL=redis://127.0.0.1:6379/0
-OPENWORK_API_KEY_ENCRYPTION_KEY=<生成的 Base64 值>
+DATABASE_URL=postgres://openwork:openwork@localhost:5432/openwork
+REDIS_URL=redis://localhost:6379/0
 ```
-
-> [!WARNING]
-> 使用同一个数据库期间，不要更换 `OPENWORK_API_KEY_ENCRYPTION_KEY`。更换后，OpenWork 无法解密数据库中已有的工作台 Provider API Key。
 
 ### 3. 启动 PostgreSQL 和 Redis
 
@@ -186,7 +181,7 @@ pnpm tauri dev
 
 ### 工作台
 
-1. 在 Settings 中创建 Provider 并保存 API Key；
+1. 在 Settings 中创建 Provider 并保存 API Key。OpenWork 把 Provider 写入 `~/.openwork/config.json`，API Key 为明文，文件权限为 `0600`；
 2. 创建 Session，选择模型与工作目录；
 3. 提交任务，并在需要时处理 Permission Request；
 4. 从消息、文件 Diff、上下文窗口和 Trace 检查执行过程。

@@ -21,12 +21,12 @@ The clean baseline creates:
 | Table | Purpose |
 | --- | --- |
 | `_sqlx_migrations` | SQLx migration version, checksum, status, and execution time |
-| `provider_credentials` | Provider metadata and encrypted API keys |
-| `models` | Selectable model endpoints and references to provider credentials |
 | `sessions` | Session metadata |
 | `turns` | Turn lifecycle and token/tool summaries |
 | `messages` | Complete model conversation messages |
 | `trace_spans` | Best-effort diagnostics for Model Calls and Tool Calls |
+
+Migration `202610030001_models_from_config.sql` drops `provider_credentials` and `models`. Providers are in `~/.openwork/config.json`.
 
 This baseline has no backfill for a legacy schema. It is for the current pre-production stage, when you can rebuild the development database.
 
@@ -38,20 +38,11 @@ The default local connection is:
 postgres://openwork:openwork@localhost:5432/openwork
 ```
 
-OpenWork encrypts provider API keys independently of the database connection. Copy the development environment template. Then make a stable 32-byte key:
+Copy the development environment template:
 
 ```bash
 cp .env.example .env
-openssl rand -base64 32
 ```
-
-Write the generated value to `.env`:
-
-```dotenv
-OPENWORK_API_KEY_ENCRYPTION_KEY=<generated value>
-```
-
-Do not commit the real value. If you change this key, OpenWork cannot read the existing encrypted provider credentials.
 
 ## Start and migrate
 

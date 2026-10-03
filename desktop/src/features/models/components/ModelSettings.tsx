@@ -19,7 +19,6 @@ export function ModelSettings() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editing, setEditing] = useState<ProviderConfig | undefined>(undefined);
-  const [editingModelId, setEditingModelId] = useState<string | undefined>(undefined);
   const [tests, setTests] = useState<TestState>({});
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -27,14 +26,12 @@ export function ModelSettings() {
   function openCreate() {
     setModalMode("create");
     setEditing(undefined);
-    setEditingModelId(undefined);
     setModalOpen(true);
   }
 
-  function openEdit(provider: ProviderConfig, modelId?: string) {
+  function openEdit(provider: ProviderConfig) {
     setModalMode("edit");
     setEditing(provider);
-    setEditingModelId(modelId);
     setModalOpen(true);
   }
 
@@ -104,27 +101,17 @@ export function ModelSettings() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium text-ink">{provider.name}</span>
-                      <span className="rounded-full bg-paper-hover px-2 py-0.5 text-[11px] text-ink-faint">{provider.kind}</span>
                     </div>
                     <p className="mt-0.5 truncate font-mono text-[11px] text-ink-faint">{provider.baseUrl}</p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      {provider.models.length > 0 ? (
-                        provider.models.map((model) => (
+                      {provider.resolvedModels.length > 0 ? (
+                        provider.resolvedModels.map((model) => (
                           <span
                             key={model.modelId}
-                            className="inline-flex flex-wrap items-baseline gap-x-1 gap-y-0.5 rounded-md bg-paper-hover px-1.5 py-0.5 font-mono text-[11px] text-ink-soft"
+                            title={model.modelId}
+                            className="inline-flex flex-wrap items-baseline gap-x-1 gap-y-0.5 rounded-md bg-paper-hover px-1.5 py-0.5 text-[11px] text-ink-soft"
                           >
-                            {model.modelId}
-                            <span className="font-sans text-[10px] text-ink-faint">{model.modelTier}</span>
-                            {!model.capabilities ? (
-                              <button
-                                type="button"
-                                onClick={() => openEdit(provider, model.modelId)}
-                                className="basis-full text-left font-sans text-[10px] text-status-danger-ink underline decoration-dotted underline-offset-2"
-                              >
-                                {t("settings.models.capabilitiesMissing")}
-                              </button>
-                            ) : null}
+                            {model.displayName}
                           </span>
                         ))
                       ) : (
@@ -190,7 +177,6 @@ export function ModelSettings() {
         open={modalOpen}
         mode={modalMode}
         initial={editing}
-        focusModelId={editingModelId}
         onClose={() => setModalOpen(false)}
       />
     </div>

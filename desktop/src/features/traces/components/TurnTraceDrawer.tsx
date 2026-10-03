@@ -876,7 +876,7 @@ function SpanStatusChip({ status }: { status: string }) {
 
 const LOCALIZED_TRACE_ATTRIBUTE_VALUES = new Set([
   'finishReason', 'errorPhase', 'deliveryState', 'sandboxMode', 'sessionMode', 'sessionModeOrigin',
-  'permissionDecision', 'permissionDecisionSource', 'dangerMatch', 'thinkingMode', 'toolChoice',
+  'permissionDecision', 'permissionDecisionSource', 'dangerMatch', 'reasoningEffort', 'toolChoice',
 ])
 
 function localizeTraceAttributeValue(row: TraceAttributeRow, t: TFunction): string {

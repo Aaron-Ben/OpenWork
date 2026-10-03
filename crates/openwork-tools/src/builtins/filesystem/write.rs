@@ -41,7 +41,7 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &'static str {
-        "Write text content to a file. Creates the file (and parent directories) if missing; overwrites if it exists."
+        "Write text content (at most 1 MiB) to a file. Creates the file (and parent directories) if missing. Overwriting an existing file requires that you read it in this session (any range) and that it has not changed since your last read, write, or edit; otherwise the call is refused and you must read it again."
     }
 
     fn risk(&self) -> ToolRisk {

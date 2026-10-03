@@ -1,0 +1,74 @@
+{
+  "models": [
+    {
+      "modelId": "gpt-6-astra",
+      "displayName": "GPT-6 Astra",
+      "contextWindowTokens": 1050000,
+      "maxOutputTokens": 128000,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": true,
+      "reasoningEfforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "modelId": "gpt-6.1-sol",
+      "displayName": "GPT-6.1 Sol",
+      "contextWindowTokens": 1050000,
+      "maxOutputTokens": 128000,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": true,
+      "reasoningEfforts": ["low", "medium", "high", "xhigh", "max"],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "modelId": "gpt-6-luna",
+      "displayName": "GPT-6 Luna",
+      "contextWindowTokens": 1050000,
+      "maxOutputTokens": 128000,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": true,
+      "reasoningEfforts": ["none", "low", "medium", "high", "xhigh", "max"],
+      "defaultReasoningEffort": "medium"
+    },
+    {
+      "modelId": "deepseek-flash",
+      "displayName": "DeepSeek-V4.1-Flash",
+      "contextWindowTokens": 1048576,
+      "maxOutputTokens": 393216,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": true,
+      "reasoningEfforts": ["none", "low", "high", "max"],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "modelId": "deepseek-v4-pro",
+      "displayName": "DeepSeek-V4-Pro",
+      "contextWindowTokens": 1048576,
+      "maxOutputTokens": 393216,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": false,
+      "reasoningEfforts": ["none", "low", "high", "max"],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "modelId": "kimi-k3",
+      "displayName": "Kimi K3",
+      "contextWindowTokens": 1048576,
+      "maxOutputTokens": 131072,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": true,
+      "reasoningEfforts": ["low", "high", "max"],
+      "defaultReasoningEffort": "max"
+    },
+    {
+      "modelId": "glm-5.3",
+      "displayName": "GLM-5.3",
+      "contextWindowTokens": 1048576,
+      "maxOutputTokens": 131072,
+      "maxReasoningTokens": null,
+      "acceptsDataBlocks": false,
+      "reasoningEfforts": ["low", "high", "max"],
+      "defaultReasoningEffort": "max"
+    }
+  ]
+}

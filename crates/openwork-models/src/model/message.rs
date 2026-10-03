@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::provider::ProviderDriver;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -58,7 +56,6 @@ pub enum ContentBlock {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderOpaqueBlock {
-    pub driver: ProviderDriver,
     pub kind: String,
     pub payload: Value,
 }

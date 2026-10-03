@@ -1,6 +1,8 @@
-//! OpenAI Responses response and stream-event accumulator.
+//! Responses 的流事件累加器：文本、思考、reasoning 条目、用量与结束原因。
 
-use crate::model::{FinishReason, ModelEvent, ModelResponse, TokenUsage, ToolCallBlock};
+use crate::model::{
+    FinishReason, ModelEvent, ModelResponse, ProviderOpaqueBlock, TokenUsage, ToolCallBlock,
+};
 use serde_json::Value;
 
 #[derive(Debug)]
@@ -9,6 +11,8 @@ pub(crate) struct ResponseAccumulator {
     model: Option<String>,
     text: String,
     reasoning_text: String,
+    /// 原样保存的 reasoning 条目，下一次请求时回传。
+    reasoning_items: Vec<Value>,
     finish_reason: FinishReason,
     raw_finish_reason: Option<String>,
     usage: Option<TokenUsage>,
@@ -21,6 +25,7 @@ impl Default for ResponseAccumulator {
             model: None,
             text: String::new(),
             reasoning_text: String::new(),
+            reasoning_items: Vec::new(),
             finish_reason: FinishReason::Stop,
             raw_finish_reason: None,
             usage: None,
@@ -43,8 +48,7 @@ impl ResponseAccumulator {
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned)
             });
-            if let Some(usage) = crate::adapters::openai_chat::response::usage_from_openai(response)
-            {
+            if let Some(usage) = usage_from_response(response) {
                 self.usage = Some(usage);
             }
         }
@@ -60,6 +64,12 @@ impl ResponseAccumulator {
         }
 
         let event_type = event.get("type").and_then(Value::as_str);
+        if event_type == Some("response.output_item.done")
+            && event.pointer("/item/type").and_then(Value::as_str) == Some("reasoning")
+            && let Some(item) = event.get("item")
+        {
+            self.reasoning_items.push(item.clone());
+        }
         if event_type == Some("response.refusal.delta") {
             self.finish_reason = FinishReason::Refusal;
             self.raw_finish_reason = Some("refusal".to_string());
@@ -104,12 +114,36 @@ impl ResponseAccumulator {
             text: self.text,
             reasoning_text: (!self.reasoning_text.is_empty()).then_some(self.reasoning_text),
             tool_calls,
-            provider_opaque_blocks: Vec::new(),
+            provider_opaque_blocks: self
+                .reasoning_items
+                .into_iter()
+                .map(|payload| ProviderOpaqueBlock {
+                    kind: super::request::REASONING_ITEM_KIND.to_string(),
+                    payload,
+                })
+                .collect(),
             finish_reason: self.finish_reason,
             raw_finish_reason: self.raw_finish_reason,
             usage: self.usage,
         }
     }
+}
+
+/// Responses 的用量字段（`response.usage`）。
+fn usage_from_response(response: &Value) -> Option<TokenUsage> {
+    let usage = response.get("usage")?;
+    Some(TokenUsage {
+        input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
+        output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
+        total_tokens: usage.get("total_tokens").and_then(Value::as_u64),
+        cached_input_tokens: usage
+            .pointer("/input_tokens_details/cached_tokens")
+            .and_then(Value::as_u64),
+        cache_creation_input_tokens: None,
+        reasoning_tokens: usage
+            .pointer("/output_tokens_details/reasoning_tokens")
+            .and_then(Value::as_u64),
+    })
 }
 
 fn text_delta(event: &Value) -> Option<String> {
@@ -163,7 +197,7 @@ pub(crate) fn parse_buffered(raw: Value) -> ModelResponse {
             .get("status")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
-        usage: crate::adapters::openai_chat::response::usage_from_openai(&raw),
+        usage: usage_from_response(&raw),
     }
 }
 
@@ -187,6 +221,35 @@ fn output_text(raw: &Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn keeps_reasoning_items_for_replay_and_reads_usage() {
+        let mut accumulator = ResponseAccumulator::default();
+        let reasoning = json!({ "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAA" });
+        accumulator.observe(&json!({ "type": "response.output_item.done", "item": reasoning }));
+        let (_, terminal) = accumulator.observe(&json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "input_tokens_details": { "cached_tokens": 4 },
+                    "output_tokens_details": { "reasoning_tokens": 3 }
+                }
+            }
+        }));
+        assert!(terminal);
+        let response = accumulator.finish(None, "m".to_string(), Vec::new());
+
+        assert_eq!(response.provider_opaque_blocks.len(), 1);
+        assert_eq!(response.provider_opaque_blocks[0].kind, "reasoning");
+        assert_eq!(response.provider_opaque_blocks[0].payload, reasoning);
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.cached_input_tokens, Some(4));
+        assert_eq!(usage.reasoning_tokens, Some(3));
+    }
 
     #[test]
     fn joins_response_output_text_parts() {

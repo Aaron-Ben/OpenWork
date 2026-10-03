@@ -47,7 +47,7 @@ impl Tool for EditTool {
     }
 
     fn description(&self) -> &'static str {
-        "Edit a file by replacing a unique occurrence of `oldString` with `newString`. Use `oldString: \"\"` to create a new file (refuses if it already exists). Set `replaceAll: true` to replace every occurrence. Without `replaceAll`, `oldString` must match exactly and be unique in the file."
+        "Edit a file by replacing a unique occurrence of `oldString` with `newString`. Use `oldString: \"\"` to create a new file (refuses if it already exists). Set `replaceAll: true` to replace every occurrence. Without `replaceAll`, `oldString` must match exactly and be unique in the file. Editing an existing file requires that you read it in this session (any range) and that it has not changed since your last read, write, or edit; otherwise the call is refused."
     }
 
     fn risk(&self) -> ToolRisk {

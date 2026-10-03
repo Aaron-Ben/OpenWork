@@ -1,5 +1,6 @@
-//! Model contracts, provider profiles, protocol adapters, and transport.
+//! 模型合同、Provider 配置、模型目录、Responses 线协议与传输。
 
+pub mod catalog;
 pub mod model;
 pub mod provider;
 

@@ -80,12 +80,13 @@ fn request(marker: &str) -> ModelRequest {
         temperature: None,
         top_p: None,
         max_output_tokens: None,
-        thinking: None,
+        reasoning_effort: None,
         tools: vec![ToolDefinition {
             name: "read".to_string(),
             description: "Read one file".to_string(),
             parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
         }],
+        prompt_cache_key: None,
     }
 }
 

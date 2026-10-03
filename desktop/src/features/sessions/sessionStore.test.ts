@@ -21,9 +21,10 @@ const provider: ProviderConfig = {
   id: 'provider-deepseek',
   name: 'DeepSeek',
   baseUrl: 'https://api.deepseek.com',
-  kind: 'deepseek',
   enabled: true,
-  models: [{ modelId: 'deepseek-v4-flash', displayName: 'V4 Flash', modelTier: 'plus', enabled: true }],
+  hasApiKey: true,
+  resolvedModels: [],
+  models: [{ modelId: 'deepseek-v4-flash', displayName: 'V4 Flash', enabled: true }],
 }
 
 describe('sessionStore', () => {
@@ -44,7 +45,7 @@ describe('sessionStore', () => {
   it('stores canonical messages without streaming fields', async () => {
     vi.mocked(coreCommands.loadSession).mockResolvedValue({
       session: {
-        id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
+        id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null, reasoningEffort: null,
         status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
         parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null, sandboxMode: 'auto',
       },
@@ -64,7 +65,7 @@ describe('sessionStore', () => {
   it('loads child canonical history without adding the child to the top-level session order', async () => {
     vi.mocked(coreCommands.loadSession).mockResolvedValue({
       session: {
-        id: 'child-1', title: null, workingDirectory: '/repo', defaultModelId: null,
+        id: 'child-1', title: null, workingDirectory: '/repo', defaultModelId: null, reasoningEffort: null,
         status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
         parentSessionId: 'parent-1', taskName: 'inspect_auth', agentRole: 'explorer', spawnSpanId: null, sandboxMode: 'auto',
       },
@@ -86,7 +87,7 @@ describe('sessionStore', () => {
       .mockImplementationOnce(() => new Promise((resolve) => { resolveNewer = resolve }))
 
     const session = {
-      id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
+      id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null, reasoningEffort: null,
       status: 'active' as const, createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
       parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null, sandboxMode: 'auto' as const,
@@ -167,7 +168,7 @@ describe('sessionStore', () => {
     vi.mocked(coreCommands.createSession).mockImplementation(async (input) => ({
       ...input,
       title: input.title ?? null,
-      defaultModelId: input.defaultModelId ?? null,
+      defaultModelId: input.defaultModelId ?? null, reasoningEffort: null,
       status: 'active',
       createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z',
@@ -183,7 +184,7 @@ describe('sessionStore', () => {
     })
 
     expect(coreCommands.createSession).toHaveBeenCalledWith(expect.objectContaining({
-      defaultModelId: 'model:provider-deepseek:deepseek-v4-flash',
+      defaultModelId: 'provider-deepseek/deepseek-v4-flash', reasoningEffort: null,
     }))
   })
 
@@ -196,7 +197,7 @@ describe('sessionStore', () => {
       id: 'session-2',
       title: 'Still here',
       workingDirectory: '/repo',
-      defaultModelId: null,
+      defaultModelId: null, reasoningEffort: null,
       status: 'active',
       createdAt: '2026-07-18T00:00:00Z',
       updatedAt: '2026-07-18T00:00:00Z',
@@ -217,7 +218,7 @@ describe('sessionStore', () => {
     useSessionStore.setState({
       summaries: {
         'session-1': {
-          id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null,
+          id: 'session-1', title: 'Session', workingDirectory: '/repo', defaultModelId: null, reasoningEffort: null,
           status: 'active', createdAt: '2026-07-18T00:00:00Z', updatedAt: '2026-07-18T00:00:00Z', lastTurnAt: null,
           parentSessionId: null, taskName: null, agentRole: null, spawnSpanId: null, sandboxMode: 'auto',
         },

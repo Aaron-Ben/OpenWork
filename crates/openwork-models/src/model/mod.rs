@@ -20,5 +20,5 @@ pub use port::{
     ModelCallOptions, ModelPort, ModelStream, ModelTransportObserver, ModelTransportSignal,
     ModelTransportSignalKind,
 };
-pub use request::{ModelRequest, ThinkingConfig, ThinkingMode, ToolDefinition};
+pub use request::{ModelRequest, ToolDefinition};
 pub use response::{FinishReason, ModelResponse, TokenUsage};

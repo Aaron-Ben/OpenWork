@@ -3,6 +3,7 @@ import { LoaderCircle, Sparkles, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { ChatInput } from './components/ChatInput'
+import { ModelEffortMenu, type ModelOption } from './components/ModelEffortMenu'
 import { ContextWindowDrawer } from './components/ContextWindowDrawer'
 import {
   ConversationNavigator,
@@ -23,6 +24,7 @@ import type {
   RuntimeTurnPlan,
 } from '@/bridge/compat'
 import { coreCommands } from '@/bridge/commands'
+import { modelRef, type ResolvedModel } from '@/bridge/providerContracts'
 import { TurnTraceDrawer } from '@/features/traces/components/TurnTraceDrawer'
 import { useSessionStore } from '@/features/sessions/sessionStore'
 import { EMPTY_RUNTIME_VIEW, useRuntimeStore } from './runtimeStore'
@@ -82,6 +84,7 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
   const sessionError = useSessionStore((state) => state.error)
   const loadState = useSessionStore((state) => sessionId ? state.loadStateBySession[sessionId] : undefined)
   const reloadSession = useSessionStore((state) => state.reload)
+  const setSessionModel = useSessionStore((state) => state.setModel)
   const providers = useModelStore((state) => state.providers)
   const messageFocus = useNavigationStore((state) => state.messageFocus)
   const clearMessageFocus = useNavigationStore((state) => state.clearMessageFocus)
@@ -112,23 +115,49 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
     runtime.turnId ?? '',
     runtime.phase,
     finishedToolCallCount,
+    session?.defaultModelId ?? '',
+    session?.reasoningEffort ?? '',
   ].join(':')
-  const sessionModel = useMemo(() => {
+  const modelOptions = useMemo((): ModelOption[] => providers
+    .filter((provider) => provider.enabled)
+    .flatMap((provider) => provider.resolvedModels
+      .filter((model) => model.enabled)
+      .map((model) => ({
+        ref: modelRef(provider.id, model.modelId),
+        label: model.displayName,
+        reasoningEfforts: model.reasoningEfforts,
+      }))), [providers])
+  const sessionModel = useMemo((): ResolvedModel | null => {
     if (!session?.defaultModelId) return null
     for (const provider of providers) {
-      const model = provider.models.find(
-        (item) => `model:${provider.id}:${item.modelId}` === session.defaultModelId,
+      const model = provider.resolvedModels.find(
+        (item) => modelRef(provider.id, item.modelId) === session.defaultModelId,
       )
       if (model) return model
     }
-    return {
-      modelId: session.defaultModelId,
-      displayName: session.defaultModelId,
-      modelTier: 'plus' as const,
-      enabled: true,
-    }
+    return null
   }, [providers, session?.defaultModelId])
-  const contextWindowTokens = sessionModel?.capabilities?.contextWindowTokens ?? null
+  // Mirrors Core's ModelInfo::effective_reasoning_effort: an unlisted choice falls back to the default.
+  const reasoningEffort = sessionModel
+    ? (session?.reasoningEffort && sessionModel.reasoningEfforts.includes(session.reasoningEffort)
+      ? session.reasoningEffort
+      : sessionModel.defaultReasoningEffort)
+    : null
+  const contextWindowTokens = sessionModel?.capabilities.contextWindowTokens ?? null
+
+  const changeModel = (ref: string) => {
+    if (!sessionId) return
+    const next = modelOptions.find((option) => option.ref === ref)
+    // Keep the current effort when the new model lists it; otherwise use the new model's default.
+    const keptEffort = reasoningEffort && next?.reasoningEfforts.includes(reasoningEffort)
+      ? reasoningEffort
+      : null
+    void setSessionModel(sessionId, ref, keptEffort)
+  }
+  const changeReasoningEffort = (effort: string) => {
+    if (!sessionId || !session?.defaultModelId) return
+    void setSessionModel(sessionId, session.defaultModelId, effort)
+  }
 
   const refreshSkills = useCallback(async () => {
     const requestSequence = skillRefreshSequenceRef.current + 1
@@ -465,9 +494,16 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
               <ApprovalDialog sessionId={sessionId} workspaceRoot={session?.workingDirectory} />
             </>
           )}
-          model={sessionModel?.modelId ?? ''}
-          modelOptions={sessionModel ? [sessionModel] : []}
-          modelSelectionLocked
+          modelControl={(
+            <ModelEffortMenu
+              options={modelOptions}
+              modelRef={session?.defaultModelId ?? null}
+              reasoningEffort={reasoningEffort}
+              disabled={!sessionId || isSending || isCompacting}
+              onModelChange={changeModel}
+              onReasoningEffortChange={changeReasoningEffort}
+            />
+          )}
           permissionMode={runtime.permissionMode}
           contextUsage={contextUsage}
           contextBreakdown={contextBreakdown}
@@ -478,7 +514,6 @@ export function ChatPage({ sessionId }: { sessionId: string | null }) {
           disabled={!sessionId || !sessionModel}
           skills={availableSkills}
           onValueChange={updateDraft}
-          onModelChange={() => undefined}
           onPermissionModeChange={(mode) => void setPermissionMode(mode)}
           onSubmit={(skills) => void send(skills)}
           onCancel={() => void cancelTurn()}

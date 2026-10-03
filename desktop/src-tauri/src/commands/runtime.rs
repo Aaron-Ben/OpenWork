@@ -126,6 +126,18 @@ pub async fn runtime_session_rename(
 }
 
 #[tauri::command]
+pub async fn runtime_session_set_model(
+    core: tauri::State<'_, OpenWorkCore>,
+    session_id: String,
+    model_ref: String,
+    reasoning_effort: Option<String>,
+) -> Result<SessionRecord, CommandError> {
+    core.set_session_model(&SessionId::new(session_id), &model_ref, reasoning_effort)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn runtime_session_delete(
     core: tauri::State<'_, OpenWorkCore>,
     session_id: String,

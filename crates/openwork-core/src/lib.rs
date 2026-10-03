@@ -5,6 +5,7 @@ mod context;
 mod core;
 pub mod plan;
 mod provider;
+mod provider_config;
 pub mod session;
 mod session_tools;
 pub mod skills;
@@ -20,17 +21,17 @@ pub use context::{
     CONTEXT_WINDOW_INSPECTION_SCHEMA_VERSION, ContextInspectionBudget, ContextInspectionMessage,
     ContextInspectionSystemPart, ContextWindowInspection,
 };
-pub use core::{
-    CredentialResolver, EnvironmentCredentialResolver, LoadedSession, OpenWorkCore,
-    OpenWorkCoreConfig, OpenWorkCoreError,
-};
+pub use core::{LoadedSession, OpenWorkCore, OpenWorkCoreConfig, OpenWorkCoreError};
 pub use openwork_chat_state::MessageKind;
 pub use openwork_models::model::ModelCapabilities;
 pub use openwork_models::provider::ApiCredential as ModelCredential;
-pub use openwork_models::provider::{ProviderInput, ProviderProfile};
+pub use openwork_models::provider::{
+    ProviderInput, ProviderModel, ProviderProfile, ProviderRepository, ProviderSettings,
+};
 pub use openwork_sandbox::{SandboxMode, SandboxStatus};
 pub use openwork_tools::{ReapplyFileChangesResult, UndoFileChangesResult};
 pub use provider::{ProviderIndex, ProviderPreset, ProviderPresetModel, ProviderTestResult};
+pub use provider_config::{FileProviderRepository, MODEL_REF_SEPARATOR, ModelRef};
 pub use session::{
     AgentMessageKind, ApprovalCard, ApprovalDanger, ApprovalPath, ClientRequestId,
     CompactionAttemptOutcome, CompactionError, CompactionFinished, CompactionRuntimeState,
@@ -51,13 +52,11 @@ pub use session::{
     TurnId as RuntimeTurnId, TurnOutcome,
 };
 pub use storage::{
-    API_KEY_ENCRYPTION_KEY_ENV, ApiKeyCipher, ApiKeyCipherError, ConversationProjectionRecord,
-    ConversationTranscriptPage, ConversationTranscriptQuery,
+    ConversationProjectionRecord, ConversationTranscriptPage, ConversationTranscriptQuery,
     DEFAULT_COMPACTION_TRANSCRIPT_PAGE_LIMIT, DeletedOrphanSubAgent,
-    MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, ModelInput, ModelRecord, PostgresProviderRepository,
-    PostgresStorage, PostgresTraceRecorder, SessionInput, SessionRecord, StorageError,
-    StoredMessageRecord, SubAgentReconciliation, SubAgentSessionInput, TraceCompleteness,
-    TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord, TraceTurnSummary, TurnTrace,
-    UndeliveredSubAgentResult,
+    MAX_COMPACTION_TRANSCRIPT_PAGE_LIMIT, PostgresStorage, PostgresTraceRecorder, SessionInput,
+    SessionRecord, StorageError, StoredMessageRecord, SubAgentReconciliation, SubAgentSessionInput,
+    TraceCompleteness, TraceCompletenessState, TraceSpanPayloadRecord, TraceSpanRecord,
+    TraceTurnSummary, TurnTrace, UndeliveredSubAgentResult,
 };
 pub use user_input::UserInput;

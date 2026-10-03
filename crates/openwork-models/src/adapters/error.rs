@@ -5,8 +5,6 @@ use serde_json::Value;
 use std::time::SystemTime;
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
 
-pub(crate) use super::error_dialect::ErrorDialect;
-
 const MAX_ERROR_BODY_CHARS: usize = 4_096;
 const MAX_ERROR_BODY_BYTES: usize = 4_096;
 const MAX_ERROR_CODE_CHARS: usize = 256;
@@ -27,10 +25,7 @@ pub(crate) fn decode_stream_json(data: &str) -> Result<Value, ModelError> {
     serde_json::from_str(data).map_err(|error| ModelError::protocol(error.to_string()))
 }
 
-pub(crate) async fn map_error_response_for(
-    response: Response,
-    dialect: ErrorDialect,
-) -> ModelError {
+pub(crate) async fn map_error_response(response: Response) -> ModelError {
     let status = response.status();
     let retry_after = response
         .headers()
@@ -50,7 +45,7 @@ pub(crate) async fn map_error_response_for(
     let header_request_id = request_id_from_headers(response.headers());
     let body = read_bounded_error_body(response).await;
 
-    classify_http_error_for_dialect(dialect, status, &body, retry_after_ms, header_request_id)
+    classify_http_error(status, &body, retry_after_ms, header_request_id)
 }
 
 async fn read_bounded_error_body(response: Response) -> String {
@@ -100,15 +95,7 @@ fn retry_after_millis(
     Some(milliseconds.max(0).min(u64::MAX as i128) as u64)
 }
 
-#[cfg(test)]
 pub(crate) fn map_stream_error_event(event: &Value) -> Option<ModelError> {
-    map_stream_error_event_for(event, ErrorDialect::OpenAi)
-}
-
-pub(crate) fn map_stream_error_event_for(
-    event: &Value,
-    dialect: ErrorDialect,
-) -> Option<ModelError> {
     let is_error = matches!(
         event.get("type").and_then(Value::as_str),
         Some("error") | Some("response.failed")
@@ -131,9 +118,10 @@ pub(crate) fn map_stream_error_event_for(
         .or_else(|| event.get("requestId"))
         .and_then(Value::as_str)
         .map(truncate_code);
-    let (kind, retry_hint) =
-        super::error_dialect::classify(dialect, StatusCode::OK, provider_code.as_deref(), None)
-            .unwrap_or_else(|| classify_stream_signal(&signal));
+    let (kind, retry_hint) = provider_code
+        .as_deref()
+        .and_then(|code| super::error_codes::classify(code, None))
+        .unwrap_or_else(|| classify_stream_signal(&signal));
 
     let mut error = ModelError::http(
         kind,
@@ -147,24 +135,7 @@ pub(crate) fn map_stream_error_event_for(
     Some(error)
 }
 
-#[cfg(test)]
 fn classify_http_error(
-    status: StatusCode,
-    body: &str,
-    retry_after_ms: Option<u64>,
-    header_request_id: Option<String>,
-) -> ModelError {
-    classify_http_error_for_dialect(
-        ErrorDialect::OpenAi,
-        status,
-        body,
-        retry_after_ms,
-        header_request_id,
-    )
-}
-
-fn classify_http_error_for_dialect(
-    dialect: ErrorDialect,
     status: StatusCode,
     body: &str,
     retry_after_ms: Option<u64>,
@@ -192,9 +163,10 @@ fn classify_http_error_for_dialect(
     )
     .to_ascii_lowercase();
 
-    let (kind, retry_hint) =
-        super::error_dialect::classify(dialect, status, provider_code.as_deref(), retry_after_ms)
-            .unwrap_or_else(|| classify_status(status, &signal, retry_after_ms));
+    let (kind, retry_hint) = provider_code
+        .as_deref()
+        .and_then(|code| super::error_codes::classify(code, retry_after_ms))
+        .unwrap_or_else(|| classify_status(status, &signal, retry_after_ms));
     ModelError::http(
         kind,
         status.as_u16(),
@@ -368,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_overload_is_retryable() {
+    fn http_529_overload_is_retryable() {
         let error = classify_http_error(
             StatusCode::from_u16(529).unwrap(),
             r#"{"type":"error","error":{"type":"overloaded_error","message":"overloaded"},"request_id":"req_529"}"#,
@@ -413,8 +385,7 @@ mod tests {
 
     #[test]
     fn classifies_vendor_codes_without_english_message_guessing() {
-        let glm_billing = classify_http_error_for_dialect(
-            ErrorDialect::Glm,
+        let glm_billing = classify_http_error(
             StatusCode::TOO_MANY_REQUESTS,
             r#"{"error":{"code":"1113","message":"您的账户已欠费"}}"#,
             None,
@@ -423,18 +394,7 @@ mod tests {
         assert_eq!(glm_billing.code(), ModelErrorCode::QuotaExhausted);
         assert_eq!(glm_billing.retry_hint(), RetryHint::Never);
 
-        let qwen_throttle = classify_http_error_for_dialect(
-            ErrorDialect::Qwen,
-            StatusCode::TOO_MANY_REQUESTS,
-            r#"{"error":{"code":"Throttling.AllocationQuota","message":"TPS limit"}}"#,
-            None,
-            None,
-        );
-        assert_eq!(qwen_throttle.code(), ModelErrorCode::RateLimited);
-        assert_eq!(qwen_throttle.retry_hint(), RetryHint::Backoff);
-
-        let kimi_quota = classify_http_error_for_dialect(
-            ErrorDialect::Kimi,
+        let kimi_quota = classify_http_error(
             StatusCode::TOO_MANY_REQUESTS,
             r#"{"error":{"type":"exceeded_current_quota_error","message":"账户额度不足"}}"#,
             None,

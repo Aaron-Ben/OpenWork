@@ -1,17 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
-
 use openwork_core::{
-    API_KEY_ENCRYPTION_KEY_ENV, ClientRequestId, CredentialResolver, ModelCapabilities, ModelInput,
-    OpenWorkCore, OpenWorkCoreConfig, OpenWorkCoreError, PermissionDecision, ProviderInput,
-    ResolvedModel, RuntimeTurnId, SandboxMode, SessionId, SessionInput, SessionStorage,
-    SessionUpdate, SessionUpdateEnvelope, SubAgentHost, SubAgentSessionInput, SubAgentSpec,
-    ToolCallId, TurnOutcome,
+    ClientRequestId, FileProviderRepository, ModelCapabilities, OpenWorkCore, OpenWorkCoreConfig,
+    OpenWorkCoreError, PermissionDecision, ProviderInput, ProviderModel, ProviderRepository,
+    ProviderSettings, ResolvedModel, RuntimeTurnId, SandboxMode, SessionId, SessionInput,
+    SessionStorage, SessionUpdate, SessionUpdateEnvelope, SubAgentHost, SubAgentSessionInput,
+    SubAgentSpec, ToolCallId, TurnOutcome,
 };
 use openwork_models::model::{Message, Role};
-use openwork_models::provider::{ApiCredential, ModelTier, ProviderKind, ProviderModel};
 use uuid::Uuid;
 
 fn unique(prefix: &str) -> String {
@@ -27,13 +24,43 @@ fn test_capabilities() -> ModelCapabilities {
     }
 }
 
-struct FixedCredential;
-
-#[async_trait]
-impl CredentialResolver for FixedCredential {
-    async fn resolve(&self, _reference: &str) -> Result<ApiCredential, String> {
-        Ok(ApiCredential::new("test-credential"))
+fn provider_input(name: &str, model_name: &str) -> ProviderInput {
+    ProviderInput {
+        settings: ProviderSettings {
+            name: name.to_string(),
+            base_url: "http://127.0.0.1:9".to_string(),
+            env_key: None,
+            http_headers: Default::default(),
+            query_params: Default::default(),
+            request_max_retries: None,
+            stream_idle_timeout_ms: None,
+            models: vec![ProviderModel {
+                model_id: model_name.to_string(),
+                display_name: None,
+                enabled: true,
+                capabilities: Some(test_capabilities()),
+            }],
+            enabled: true,
+        },
+        api_key: Some("test-credential".to_string()),
     }
+}
+
+/// 临时目录中的 Provider 配置，含一个带 key 的测试 Provider。返回模型引用。
+async fn test_providers(label: &str) -> (tempfile::TempDir, Arc<dyn ProviderRepository>, String) {
+    let directory = tempfile::TempDir::new().expect("provider config directory");
+    let repository = FileProviderRepository::new(directory.path().join("config.json"));
+    let provider_id = unique(label);
+    let model_name = unique("model");
+    repository
+        .create(&provider_id, provider_input("Test provider", &model_name))
+        .await
+        .expect("test provider");
+    (
+        directory,
+        Arc::new(repository),
+        format!("{provider_id}/{model_name}"),
+    )
 }
 
 async fn wait_for_turn_finished(
@@ -64,28 +91,10 @@ async fn production_host_persists_and_starts_an_idle_explorer_session() {
             .await
             .expect("storage"),
     );
-    let model_id = unique("model-sub-agent-host");
-    let model_name = unique("sub-agent-host-model");
-    storage
-        .upsert_model(&ModelInput {
-            id: model_id.clone(),
-            display_name: "Sub-agent host test".to_string(),
-            provider_kind: "deepseek".to_string(),
-            model_name: model_name.clone(),
-            base_url: format!("https://example.invalid/{model_name}"),
-            credential_ref: Some("test:credential".to_string()),
-            enabled: true,
-            capabilities: test_capabilities(),
-            config: serde_json::json!({}),
-        })
+    let (_providers_directory, providers, model_id) = test_providers("sub-agent-host").await;
+    let core = OpenWorkCore::from_storage(Arc::clone(&storage), Arc::clone(&providers))
         .await
-        .expect("model");
-    let core = OpenWorkCore::from_storage_with_credentials(
-        Arc::clone(&storage),
-        Arc::new(FixedCredential),
-    )
-    .await
-    .expect("core");
+        .expect("core");
     let parent_session_id = SessionId::new(unique("session-sub-agent-parent"));
     core.create_session(&SessionInput {
         id: parent_session_id.clone(),
@@ -172,28 +181,10 @@ async fn acc_01_35_42_session_modes_persist_and_sub_agents_keep_their_snapshot()
             .await
             .expect("storage"),
     );
-    let model_id = unique("model-sandbox-mode");
-    let model_name = unique("sandbox-mode-model");
-    storage
-        .upsert_model(&ModelInput {
-            id: model_id.clone(),
-            display_name: "Sandbox mode test".to_string(),
-            provider_kind: "deepseek".to_string(),
-            model_name: model_name.clone(),
-            base_url: format!("https://example.invalid/{model_name}"),
-            credential_ref: Some("test:credential".to_string()),
-            enabled: true,
-            capabilities: test_capabilities(),
-            config: serde_json::json!({}),
-        })
+    let (_providers_directory, providers, model_id) = test_providers("sandbox-mode").await;
+    let core = OpenWorkCore::from_storage(Arc::clone(&storage), Arc::clone(&providers))
         .await
-        .expect("model");
-    let core = OpenWorkCore::from_storage_with_credentials(
-        Arc::clone(&storage),
-        Arc::new(FixedCredential),
-    )
-    .await
-    .expect("core");
+        .expect("core");
     let parent = SessionId::new(unique("session-sandbox-mode-parent"));
     core.create_session(&SessionInput {
         id: parent.clone(),
@@ -252,12 +243,9 @@ async fn acc_01_35_42_session_modes_persist_and_sub_agents_keep_their_snapshot()
         SandboxMode::AcceptEdits
     );
 
-    let restarted = OpenWorkCore::from_storage_with_credentials(
-        Arc::clone(&storage),
-        Arc::new(FixedCredential),
-    )
-    .await
-    .expect("restarted core");
+    let restarted = OpenWorkCore::from_storage(Arc::clone(&storage), Arc::clone(&providers))
+        .await
+        .expect("restarted core");
     assert_eq!(
         restarted
             .get_session_snapshot(&parent)
@@ -284,21 +272,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
             .expect("storage"),
     );
     storage.migrate().await.expect("migrations");
-    let model_id = unique("model-reconciliation");
-    storage
-        .upsert_model(&ModelInput {
-            id: model_id.clone(),
-            display_name: "Reconciliation test".to_string(),
-            provider_kind: "deepseek".to_string(),
-            model_name: unique("reconciliation-model"),
-            base_url: "http://127.0.0.1:9".to_string(),
-            credential_ref: Some("test:credential".to_string()),
-            enabled: true,
-            capabilities: test_capabilities(),
-            config: serde_json::json!({}),
-        })
-        .await
-        .expect("model");
+    let (_providers_directory, providers, model_id) = test_providers("reconciliation").await;
     let parent_session_id = SessionId::new(unique("session-reconciliation-parent"));
     storage
         .create_session(&SessionInput {
@@ -325,6 +299,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
                 .to_string_lossy()
                 .into_owned(),
             default_model_id: None,
+            reasoning_effort: None,
             spawn_span_id: None,
             sandbox_mode: SandboxMode::AcceptEdits,
         })
@@ -373,6 +348,7 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
                 .to_string_lossy()
                 .into_owned(),
             default_model_id: None,
+            reasoning_effort: None,
             spawn_span_id: None,
             sandbox_mode: SandboxMode::AcceptEdits,
         })
@@ -391,12 +367,9 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
         .await
         .expect("interrupted turn start");
 
-    let core = OpenWorkCore::from_storage_with_credentials(
-        Arc::clone(&storage),
-        Arc::new(FixedCredential),
-    )
-    .await
-    .expect("core restart");
+    let core = OpenWorkCore::from_storage(Arc::clone(&storage), Arc::clone(&providers))
+        .await
+        .expect("core restart");
     let orphan_session_id = SessionId::new(unique("session-reconciliation-orphan"));
     SubAgentHost::start_sub_agent(
         core.as_ref(),
@@ -486,7 +459,6 @@ async fn parent_next_turn_reconciles_restart_results_exactly_once() {
 #[ignore = "requires a stored DeepSeek credential and network access"]
 async fn stored_deepseek_v4_flash_completes_a_real_turn() {
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL");
-    std::env::var(API_KEY_ENCRYPTION_KEY_ENV).expect(API_KEY_ENCRYPTION_KEY_ENV);
     let core = OpenWorkCore::bootstrap(OpenWorkCoreConfig {
         database_url: Some(database_url),
         ..OpenWorkCoreConfig::default()
@@ -501,14 +473,13 @@ async fn stored_deepseek_v4_flash_completes_a_real_turn() {
         .into_iter()
         .rev()
         .find(|provider| {
-            provider.kind == ProviderKind::Deepseek
-                && provider.enabled
+            provider.profile.settings.enabled
                 && provider
-                    .models
+                    .resolved_models
                     .iter()
-                    .any(|model| model.model_id == "deepseek-v4-flash" && model.enabled)
+                    .any(|model| model.model_id == "deepseek-flash" && model.enabled)
         })
-        .expect("stored enabled deepseek-v4-flash provider");
+        .expect("a configured enabled deepseek-flash provider in ~/.openwork/config.json");
     let session_id = SessionId::new(unique("session-deepseek-stored-live"));
     core.create_session(&SessionInput {
         id: session_id.clone(),
@@ -517,7 +488,7 @@ async fn stored_deepseek_v4_flash_completes_a_real_turn() {
             .unwrap()
             .to_string_lossy()
             .into_owned(),
-        default_model_id: Some(format!("model:{}:deepseek-v4-flash", provider.id)),
+        default_model_id: Some(format!("{}/deepseek-flash", provider.profile.id)),
     })
     .await
     .unwrap();
@@ -573,33 +544,20 @@ async fn bootstrapped_core_persists_a_provider_and_creates_a_session_from_its_mo
     let Ok(database_url) = std::env::var("TEST_DATABASE_URL") else {
         return;
     };
-    if std::env::var(API_KEY_ENCRYPTION_KEY_ENV).is_err() {
-        return;
-    }
-
+    let config_directory = tempfile::TempDir::new().unwrap();
     let core = OpenWorkCore::bootstrap(OpenWorkCoreConfig {
         database_url: Some(database_url),
+        provider_config_path: Some(config_directory.path().join("config.json")),
         ..OpenWorkCoreConfig::default()
     })
     .await
     .unwrap();
     let model_name = unique("provider-host-model");
     let provider = core
-        .create_provider(ProviderInput {
-            name: unique("provider-host-test"),
-            base_url: format!("https://example.invalid/{model_name}"),
-            api_key: "test-secret-never-logged".to_string(),
-            kind: ProviderKind::Deepseek,
-            models: vec![ProviderModel {
-                model_id: model_name.clone(),
-                display_name: None,
-                model_tier: ModelTier::Lite,
-                enabled: true,
-                capabilities: Some(test_capabilities()),
-            }],
-            enabled: true,
-            extra_body: None,
-        })
+        .create_provider(
+            &unique("provider-host"),
+            provider_input(&unique("provider-host-test"), &model_name),
+        )
         .await
         .unwrap();
 
@@ -607,12 +565,13 @@ async fn bootstrapped_core_persists_a_provider_and_creates_a_session_from_its_mo
     let listed = index
         .providers
         .iter()
-        .find(|candidate| candidate.id == provider.id)
+        .find(|candidate| candidate.profile.id == provider.id)
         .unwrap();
-    assert_eq!(listed.models[0].model_tier, ModelTier::Lite);
+    assert!(listed.profile.has_api_key);
+    assert_eq!(listed.profile.settings.models[0].model_id, model_name);
 
     let session_id = SessionId::new(unique("session-host-test"));
-    let model_id = format!("model:{}:{model_name}", provider.id);
+    let model_id = format!("{}/{model_name}", provider.id);
     let session = core
         .create_session(&SessionInput {
             id: session_id.clone(),
