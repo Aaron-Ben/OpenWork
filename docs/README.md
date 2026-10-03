@@ -24,8 +24,6 @@
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
 | [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |
 
-进行中的开发计划放在 `plans/`。计划回答按什么顺序做、做到什么程度算完成、何时需要决策。计划**不定义功能**，完成后删除。当前计划：[plans/sandbox-and-tools.md](plans/sandbox-and-tools.md)、[plans/collab-core.md](plans/collab-core.md)、[plans/collab-opencode.md](plans/collab-opencode.md)。
-
 需要保留的外部参考资料，放在 `references/`。它们只描述其他项目，不约束 OpenWork。OpenWork 采纳的决定，必须写进对应的 owning 文档。
 
 ## 事实来源

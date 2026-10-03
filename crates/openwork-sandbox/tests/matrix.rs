@@ -1,4 +1,4 @@
-//! 真机矩阵（docs/plans/sandbox-and-tools.md WP2）：在真实的 `$HOME` 与真实的 Seatbelt 下
+//! 真机矩阵：在真实的 `$HOME` 与真实的 Seatbelt 下
 //! 运行日常命令。
 //!
 //! 工作区建在 `CARGO_TARGET_TMPDIR` 下，不在系统临时根内。对受保护位置的每次探测都用唯一的
