@@ -2,7 +2,7 @@
 
 一个功能一篇文档。每篇描述**这个功能是什么、边界在哪、怎么验收**，不记录迁移过程。
 
-跨功能且容易混淆的领域术语以 [architecture.md](architecture.md) 为准；具体 interface、状态机和验收仍由下面各 owning 文档约束。
+跨功能且容易混淆的领域术语，以 [architecture.md](architecture.md) 为准。具体的 interface、状态机和验收，仍以下面各篇 owning 文档为准。
 
 ## 索引
 
@@ -24,11 +24,9 @@
 | [desktop.md](desktop.md) | Tauri Bridge、前端状态三层、Reducer、Trace UI |
 | [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |
 
-规范类文档在 [`.claude/rules/`](../.claude/rules/)：目前有 [database.md](../.claude/rules/database.md)（时间字段与迁移规范）。
+进行中的开发计划放在 `plans/`。计划回答按什么顺序做、做到什么程度算完成、何时需要决策。计划**不定义功能**，完成后删除。当前计划：[plans/sandbox-and-tools.md](plans/sandbox-and-tools.md)、[plans/collab-core.md](plans/collab-core.md)、[plans/collab-opencode.md](plans/collab-opencode.md)。
 
-进行中的开发计划放在 `plans/`：它们回答按什么顺序做、做到什么程度算完成、何时需要决策，**不定义功能**，完成后删除。当前：[plans/sandbox-and-tools.md](plans/sandbox-and-tools.md)。
-
-外部参考资料如需保留，放在 `references/`。它们只描述其他项目，不约束 OpenWork；被 OpenWork 采纳的决定必须进入对应 owning 文档。
+需要保留的外部参考资料，放在 `references/`。它们只描述其他项目，不约束 OpenWork。OpenWork 采纳的决定，必须写进对应的 owning 文档。
 
 ## 事实来源
 
@@ -39,9 +37,9 @@
 | 协作存储与并发约束 | [collaboration.md §13](collaboration.md) |
 | 协作 Desktop 投影 | [collaboration-desktop.md](collaboration-desktop.md) |
 | 其他功能应该是什么、为什么 | 本目录对应 owning 文档 |
-| 怎么跑起来、有哪些命令 | 仓库根 [AGENTS.md](../AGENTS.md) |
+| 怎么跑起来、有哪些命令 | 仓库根 [README.md](../README.md) 的“快速开始” |
 
-Owning 文档描述当前约束和已确认目标。**代码与目标有差距时，各篇的“尚未实施”小节必须明确列出**；没有该提示的内容应与实现和自动化证据一致。
+Owning 文档描述当前约束和已确认的目标。**代码与目标有差距时，在该篇的“尚未实施”小节中明确列出差距。**没有这类提示的内容，应与实现和自动化证据一致。
 
 ## 阅读顺序
 
@@ -54,9 +52,10 @@ Owning 文档描述当前约束和已确认目标。**代码与目标有差距�
 
 ## 维护原则
 
-- **一个功能一篇文档。** 新增能力时先判断它属于哪一篇，只有当它拥有独立的生命周期、失败语义和验收标准时才新开一篇。
-- **每篇自带验收清单。** 没有验收标准的设计描述等于没有约束力。
-- **`references/` 不受上面两条约束**，也不描述 OpenWork 的目标状态。调研外部项目的结论放这里，落到 OpenWork 的决定必须写回对应的功能文档才生效。
+- **一个功能一篇文档。** 新增能力时，先判断它属于哪一篇。只有它有独立的生命周期、失败语义和验收标准时，才新开一篇。
+- **每篇自带验收清单。** 没有验收标准的设计描述，就没有约束力。
+- **`references/` 不受上面两条约束**，也不描述 OpenWork 的目标状态。调研外部项目的结论放在这里。落到 OpenWork 的决定，必须写回对应的功能文档才生效。
 - **不写迁移叙事。** "以前是什么样"属于 git 历史，不属于文档。
-- 领域词汇统一：Session、Turn、Model Call、Tool Call、Permission、Message、Update、Trace、Compaction。
-- 修改根目录 README 时同步检查 `README.md` 与 `README.en.md`。
+- **按 ASD-STE100 写。** 中文文档也一样，规则见仓库根 [CLAUDE.md](../CLAUDE.md) 的“写作”一节。
+- 统一使用这些领域词汇：Session、Turn、Model Call、Tool Call、Permission、Message、Update、Trace、Compaction。
+- 修改根目录 README 时，同时检查 `README.md` 与 `README.en.md`。

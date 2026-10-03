@@ -106,7 +106,7 @@ fn every_message_kind_is_accepted_by_the_database() {
     );
 }
 
-/// 已应用的迁移不可修改，只能新增（见 .claude/rules/database.md）。
+/// 已应用的迁移不可修改，只能新增。
 ///
 /// 放宽取值必须落在一个新文件里；直接改 202608080001 那条会让已经跑过迁移的
 /// 库与迁移文件的校验和对不上。

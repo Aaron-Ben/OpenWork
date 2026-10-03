@@ -26,7 +26,7 @@
 </div>
 
 > [!IMPORTANT]
-> OpenWork 尚未发布，当前面向 `0.1.0` 开发，只支持从源码运行。协作模式仅支持 macOS 与本机 OpenCode。OpenWork 的权限规则、Agent home 和 Runtime JWT 都不是 OS 安全沙箱；模型与工具进程仍拥有当前 macOS 用户授予它们的宿主机能力。
+> OpenWork 尚未发布。当前的开发目标是 `0.1.0`，只能从源码运行。协作模式只支持 macOS 与本机 OpenCode。OpenWork 的权限规则、Agent home 和 Runtime JWT 都不是 OS 安全沙箱。模型与工具进程仍拥有当前 macOS 用户授予它们的宿主机能力。
 
 ## OpenWork 是什么
 
@@ -35,37 +35,37 @@ OpenWork 是一个本地优先的桌面 Agent 工作空间。当前 Desktop 内�
 | 模式 | 适合什么 | 谁执行模型任务 | 核心对象 |
 |---|---|---|---|
 | **工作台** | 用户指定项目目录，逐个发起可审阅的代码与文件任务 | OpenWork 自己的 Agent Loop 和模型 Provider adapter | Session、Turn、Tool Call、Permission、Trace |
-| **协作模式** | 创建多个长期存在的本机同事，让它们围绕消息和任务主动协作 | 每个协作 Agent 独立的本机 OpenCode Runner | Agent、Room、Message、Board、Card、Run |
+| **协作模式** | 创建多个长期存在的本机 Agent，让它们围绕消息和任务主动协作 | 每个协作 Agent 独立的本机 OpenCode Runner | Agent、Room、Message、Board、Card、Run |
 
-两种模式共享同一个 Tauri Desktop、主题、i18n 和 PostgreSQL 实例，但不共享运行状态机。工作台中的只读 Sub-Agent 不是协作模式中的长期 Agent；工作台 Session 也不是协作 Room。
+两种模式共享同一个 Tauri Desktop、主题、i18n 和 PostgreSQL 实例，但不共享运行状态机。工作台中的只读 Sub-Agent 不是协作模式中的长期 Agent。工作台 Session 也不是协作 Room。
 
 ## 当前能力
 
 ### 工作台
 
-- **显式模型选择**：内置 OpenAI、Anthropic、DeepSeek、Kimi、Qwen 和 GLM Provider 预设；每个 Session 选择具体 Provider 与模型，不做跨模型静默 fallback；
+- **显式模型选择**：内置 OpenAI、Anthropic、DeepSeek、Kimi、Qwen 和 GLM 的 Provider 预设。每个 Session 选择一个具体的 Provider 与模型。OpenWork 不在模型之间静默 fallback；
 - **Agent Loop**：在一个 Turn 中推进 Model → Tool/Permission → Model，直到完成、失败、取消或触发保护条件；
-- **七个内置工具**：`read`、`write`、`edit`、`grep`、`glob`、`list`、`bash`；文件工具统一经过路径授权边界，`bash` 在工作目录中启动宿主 POSIX Shell；
-- **两种权限模式**：`default` 自动允许工作区读取和可证明只读的命令；`acceptEdits` 额外允许非敏感的工作区文件修改；
-- **可审阅文件改动**：`write` / `edit` 产生结构化 Diff，并支持冲突检查下的 Undo / Reapply；
+- **七个内置工具**：`read`、`write`、`edit`、`grep`、`glob`、`list`、`bash`。所有文件工具都经过同一个路径授权边界。`bash` 在工作目录中启动宿主 POSIX Shell；
+- **两种权限模式**：`default` 自动允许工作区读取和可证明只读的命令。`acceptEdits` 还允许修改非敏感的工作区文件；
+- **可审阅文件改动**：`write` / `edit` 产生结构化 Diff。Undo / Reapply 先检查冲突，再执行；
 - **上下文工程**：支持 `AGENTS.md`、Skill、上下文构成预览、自动或手动 `/compact`、checkpoint、replay 与 rewind；
-- **任务与只读 Sub-Agent**：复杂 Turn 可以维护任务清单，并派生一层只读 Sub-Agent 进行代码库调查；
-- **质量 Trace**：记录模型实际请求、System Context、工具定义、Token、权限决定、耗时和失败阶段。
+- **任务与只读 Sub-Agent**：复杂的 Turn 可以维护任务清单。它也可以派生一层只读 Sub-Agent 来调查代码库；
+- **质量 Trace**：记录实际发给模型的请求、System Context、工具定义、Token、权限决定、耗时和失败阶段。
 
 ### 协作模式
 
-- **长期 Agent roster**：创建、编辑、归档和恢复 Agent；每个 Agent 持久化 persona、主模型、triage 模型、Agenda 开关与 `engine_id`；
-- **每 Agent 独立 Engine**：领域模型允许每个 Agent 选择自己的 Engine，当前唯一生产 adapter 是本机 `OpenCode`；模型 ID 直接交给 OpenCode，因此可以使用 OpenCode 支持的自定义模型；
-- **私聊与群聊**：固定人类 Participant 为 `local-user`；Direct Room 幂等创建，Group Room 的成员只能由 Desktop 用户管理；
-- **消息协调**：Agent 通过 durable inbox、triage、HELD 和 delivery settlement 协调响应；消息正文以 PostgreSQL 为事实来源；
-- **Board / Column / Card**：用户管理看板结构和任务分配，Agent 通过结构化命令读取、创建、认领、更新和移动 Card；
+- **长期 Agent roster**：可以创建、编辑、归档和恢复 Agent。每个 Agent 持久保存 persona、主模型、triage 模型、Agenda 开关与 `engine_id`；
+- **每 Agent 独立 Engine**：领域模型允许每个 Agent 选择自己的 Engine。当前唯一的生产 adapter 是本机 `OpenCode`。OpenWork 把模型 ID 直接交给 OpenCode，因此可以使用 OpenCode 支持的自定义模型；
+- **私聊与群聊**：人类 Participant 固定为 `local-user`。Direct Room 的创建是幂等的。只有 Desktop 用户能管理 Group Room 的成员；
+- **消息协调**：Agent 通过 durable inbox、triage、HELD 和 delivery settlement 协调响应。消息正文以 PostgreSQL 为事实来源；
+- **Board / Column / Card**：用户管理看板结构和任务分配。Agent 用结构化命令读取、创建、认领、更新和移动 Card；
 - **Agenda**：开启后，Agent 可以依据未完成 Card 和停滞 Room 主动发起有界工作；
-- **运行观测**：按 Agent 和状态检查每个 Turn 的 Run、模型、Token、耗时、错误与结构化事件时间线；
-- **事件驱动 Desktop**：Room、Message、Board、Agent 和 Runner 变化通过失效事件刷新，业务真相始终由 Server 重新投影。
+- **运行观测**：可以按 Agent 和状态检查每个 Turn 的 Run、模型、Token、耗时、错误与结构化的事件时间线；
+- **事件驱动 Desktop**：Room、Message、Board、Agent 和 Runner 发生变化时，失效事件通知 Desktop 刷新。业务事实始终以 Server 重新投影的结果为准。
 
 ## 协作模式的运行边界
 
-当前协作模式刻意保持为一个本机产品：
+当前的协作模式刻意只做成一个本机产品：
 
 ```text
 一个 macOS 登录用户
@@ -76,14 +76,14 @@ OpenWork 是一个本地优先的桌面 Agent 工作空间。当前 Desktop 内�
         └── 每个 Agent 一个 OpenCode 子进程
 ```
 
-- Server 和 Computer 是独立进程，但不会由 `launchd` 常驻；Desktop 启动它们，也负责停止它们；
+- Server 和 Computer 是独立进程，但不作为 `launchd` 服务常驻。Desktop 启动它们，也停止它们；
 - 每次 Desktop 启动都会创建新的 RuntimeSession、临时 Desktop/Computer 凭证和短期 Agent JWT；
-- Server 或 Computer 意外退出时，Desktop 会成组替换两者并旋转 RuntimeSession；
-- 正常退出 Desktop 时，先停止 Computer 和全部 Engine 进程，再停止 Server；PostgreSQL 与 Redis 外部服务不会被停止；
-- `~/.openwork/runtime/<runtime-session-id>/` 保存临时 shim、token 和派生配置，正常退出时清除；
+- Server 或 Computer 意外退出时，Desktop 同时替换两者，并轮换 RuntimeSession；
+- Desktop 正常退出时，先停止 Computer 和全部 Engine 进程，再停止 Server。Desktop 不停止外部的 PostgreSQL 与 Redis 服务；
+- `~/.openwork/runtime/<runtime-session-id>/` 保存临时 shim、token 和派生配置。Desktop 正常退出时清除这个目录；
 - `~/.openwork/agents/<agent-id>/` 保存持久 persona、私有 `work/` 与最小 Engine 会话连续性。
 
-Agent 的 `work/` 彼此独立，不是多个 Agent 共享的真实项目 checkout。当前不提供远程 Mac、多 Computer 分配、后台常驻 Runtime、共享项目目录、Worktree、Memory、协作 Skill、reaction 或可视化 Agent 关系。
+各个 Agent 的 `work/` 彼此独立，不是多个 Agent 共享的真实项目 checkout。当前不提供远程 Mac、多 Computer 分配、后台常驻 Runtime、共享项目目录、Worktree、Memory、协作 Skill、reaction 或可视化 Agent 关系。
 
 ## 架构
 
@@ -105,11 +105,11 @@ flowchart TB
     Server --> Redis[(Redis<br/>expiring coordination)]
 ```
 
-协作分支的依赖关系是有意设计的：
+协作路径的依赖关系是有意的设计：
 
-- **Server** 是协作业务事实的唯一写者，拥有 PostgreSQL、Redis、Room、Board、Run、triage 和 Agenda；它不启动 Engine；
-- **Computer** 对账 desired/actual Agent 状态，管理 Agent home、Engine adapter 和子进程；它不持有数据库凭证；
-- **Desktop** 只监督生命周期并调用 typed command；它不复制 Server 的业务规则；
+- **Server** 是协作业务事实的唯一写者。它拥有 PostgreSQL、Redis、Room、Board、Run、triage 和 Agenda。它不启动 Engine；
+- **Computer** 对账 desired/actual Agent 状态。它管理 Agent home、Engine adapter 和子进程。它不持有数据库凭证；
+- **Desktop** 只监督生命周期，并调用 typed command。它不复制 Server 的业务规则；
 - **OpenCode** 只通过每个 Agent Runtime 注入的结构化 `openwork` shim 与 Server 交互。
 
 ## 数据放在哪里
@@ -122,7 +122,7 @@ flowchart TB
 | `~/.openwork/runtime/` | 当前 RuntimeSession 的 shim、临时凭证和派生 Engine 配置 | 临时 |
 | OpenCode data root | OpenCode 自己的登录态和 Provider 配置 | 由 OpenCode 管理 |
 
-Redis 不保存消息正文、Board 或待执行任务。Redis 丢失最多导致额外的 poll/triage，不能删除 PostgreSQL 中的 durable facts。
+Redis 不保存消息正文、Board 或待执行任务。Redis 数据丢失最多导致额外的 poll/triage。它不能删除 PostgreSQL 中的 durable facts。
 
 ## 快速开始
 
@@ -133,7 +133,7 @@ Redis 不保存消息正文、Board 或待执行任务。Redis 丢失最多导�
 - Node.js 与 pnpm；
 - Docker 与 Docker Compose，或可直接访问的 PostgreSQL 16 和 Redis；
 - 当前平台的 [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)；
-- 已安装、完成 Provider 登录并可从当前终端执行的 `opencode` CLI。
+- `opencode` CLI：已安装，已登录 Provider，并能在当前终端执行。
 
 ### 2. 获取源码并配置环境
 
@@ -144,7 +144,7 @@ cp .env.example .env
 openssl rand -base64 32
 ```
 
-把生成的 Base64 值写入根目录 `.env`，并补充 Redis 地址：
+把生成的 Base64 值写入根目录的 `.env`。再补上 Redis 地址：
 
 ```dotenv
 DATABASE_URL=postgres://openwork:openwork@127.0.0.1:5432/openwork
@@ -153,7 +153,7 @@ OPENWORK_API_KEY_ENCRYPTION_KEY=<生成的 Base64 值>
 ```
 
 > [!WARNING]
-> 只要继续使用同一个数据库，就不要更换 `OPENWORK_API_KEY_ENCRYPTION_KEY`。更换后，数据库中已有的工作台 Provider API Key 将无法解密。
+> 使用同一个数据库期间，不要更换 `OPENWORK_API_KEY_ENCRYPTION_KEY`。更换后，OpenWork 无法解密数据库中已有的工作台 Provider API Key。
 
 ### 3. 启动 PostgreSQL 和 Redis
 
@@ -163,13 +163,13 @@ OPENWORK_API_KEY_ENCRYPTION_KEY=<生成的 Base64 值>
 docker compose up -d postgres
 ```
 
-如果本机还没有 Redis，可以启动一个只保存短期协调数据的容器：
+本机还没有 Redis 时，启动下面的容器。它只保存短期协调数据：
 
 ```bash
 docker run --rm -d --name openwork-redis -p 6379:6379 redis:7-alpine
 ```
 
-如果已经运行 Redis，只需让 `REDIS_URL` 指向它。
+本机已经运行 Redis 时，把 `REDIS_URL` 指向它。
 
 ### 4. 验证 OpenCode 并启动 Desktop
 
@@ -180,7 +180,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-Desktop 命令必须在 `desktop/` 中执行；仓库根目录没有 `package.json`。Debug Desktop 会向上读取仓库根目录 `.env`，并在启动时应用工作台与协作数据库迁移；Release 构建不会自动读取开发环境的 `.env`，必须从启动环境显式注入这些变量。
+在 `desktop/` 中执行 Desktop 命令。仓库根目录没有 `package.json`。Debug Desktop 向上查找并读取仓库根目录的 `.env`，并在启动时应用工作台与协作的数据库迁移。Release 构建不自动读取开发环境的 `.env`。使用 Release 构建时，在启动环境中显式注入这些变量。
 
 ## 第一次使用
 
@@ -196,24 +196,24 @@ Desktop 命令必须在 `desktop/` 中执行；仓库根目录没有 `package.js
 1. 从工作台侧栏进入 Collaboration；
 2. 创建 Agent，填写 persona、OpenCode 主模型与 triage 模型；
 3. 打开 Agent 私聊，或创建 Group Room 并选择成员；
-4. 创建 Board / Column / Card，需要主动工作时为 Agent 开启 Agenda；
+4. 创建 Board / Column / Card。需要 Agent 主动工作时，为它开启 Agenda；
 5. 在“运行观测”中检查每个 Agent Turn 的状态和事件轨迹。
 
-协作 Agent 使用 OpenCode 当前登录态；Collaboration Server 不保存 OpenCode 的 Provider API Key。
+协作 Agent 使用 OpenCode 当前的登录态。Collaboration Server 不保存 OpenCode 的 Provider API Key。
 
 ## 安全边界
 
 | 边界 | 当前行为 |
 |---|---|
-| 工作台文件工具 | 解析真实路径并执行工作区授权；显式的工作区外访问需要当前 Execution Permit |
-| 工作台 `bash` | 语法分析只用于权限判断，不提供执行期隔离；批准命令等于信任它及其子进程 |
-| 协作 Agent home / JWT | 提供应用层身份、API 权限和状态隔离，不阻止同一 macOS 用户下的可信进程访问其他宿主文件 |
-| OpenCode | 本机子进程，继承当前用户允许的文件与网络能力；没有 OpenWork OS 沙箱 |
-| 网络 | OpenWork 不强制网络隔离；模型请求会发送给用户配置的 Provider 或 OpenCode Provider |
-| Provider 凭证 | 工作台 API Key 使用 AES-256-GCM 加密后存入 PostgreSQL；OpenCode 凭证由 OpenCode 自己管理 |
-| Trace | 可能包含私有代码、模型请求、命令和错误信息，应按敏感开发数据管理 |
+| 工作台文件工具 | 解析真实路径，并执行工作区授权。显式访问工作区外的路径时，需要当前的 Execution Permit |
+| 工作台 `bash` | 语法分析只用于权限判断，不提供执行期隔离。批准一条命令，就等于信任它及其子进程 |
+| 协作 Agent home / JWT | 提供应用层身份、API 权限和状态隔离。它们不阻止同一 macOS 用户下的可信进程访问其他宿主文件 |
+| OpenCode | 本机子进程，继承当前用户允许的文件与网络能力。OpenWork 不为它提供 OS 沙箱 |
+| 网络 | OpenWork 不强制网络隔离。模型请求发往用户配置的 Provider 或 OpenCode Provider |
+| Provider 凭证 | OpenWork 用 AES-256-GCM 加密工作台 API Key，再存入 PostgreSQL。OpenCode 自己管理 OpenCode 凭证 |
+| Trace | 可能包含私有代码、模型请求、命令和错误信息。按敏感开发数据管理 Trace |
 
-只应在可信项目、可信本机 Agent 配置和理解其权限范围的前提下使用 OpenWork。
+只在可信项目与可信的本机 Agent 配置中使用 OpenWork。使用前，先了解它们的权限范围。
 
 ## 文档
 

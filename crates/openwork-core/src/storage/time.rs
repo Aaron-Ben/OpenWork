@@ -2,7 +2,7 @@
 //!
 //! 时间列一律是 `TIMESTAMP WITHOUT TIME ZONE`，存东八区墙上时间。naive 列本身不携带
 //! 时区，数据库无法替我们检查口径，所以落库的时间值只能来自本模块——任何绕过它的写入
-//! 都会造成静默的 8 小时偏差。见 `.claude/rules/database.md`。
+//! 都会造成静默的 8 小时偏差。见 docs/data-model.md。
 
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
@@ -30,7 +30,7 @@ pub(crate) fn to_china(value: OffsetDateTime) -> PrimitiveDateTime {
 /// 把库里的东八区墙上时间序列化成带 `+08:00` 的 RFC 3339 字符串。
 ///
 /// 偏移量必须如实标注：库里存的是东八区，若标成 `Z`，前端会在已经是东八区的值上
-/// 再做一次换算，最终偏 16 小时且全程不报错。
+/// 再做一次换算，最终偏 8 小时且全程不报错。
 pub(crate) fn to_wire(value: PrimitiveDateTime) -> Option<String> {
     value.assume_offset(CHINA_OFFSET).format(&Rfc3339).ok()
 }

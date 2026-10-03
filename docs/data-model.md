@@ -1,8 +1,8 @@
 # 数据模型
 
-PostgreSQL 单一持久化。`crates/openwork-core/migrations/` 是 schema 的**唯一事实来源**，本文解释形状和理由。
+持久化只用 PostgreSQL。`crates/openwork-core/migrations/` 是 schema 的**唯一事实来源**。本文解释 schema 的形状和理由。
 
-时间字段的写法、Rust 侧类型和迁移规范见 [.claude/rules/database.md](../.claude/rules/database.md)。
+时间列一律是 `TIMESTAMP WITHOUT TIME ZONE`，存东八区（Asia/Shanghai）墙上时间。列默认值是 `CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'`。Rust 侧的时间处理都在 `storage/time.rs`：`china_now` 取当前时间，`to_china` 把瞬间转成墙上时间，`to_wire` 输出带 `+08:00` 的 RFC 3339 字符串。
 
 ## 1. 表
 
@@ -17,7 +17,7 @@ PostgreSQL 单一持久化。`crates/openwork-core/migrations/` 是 schema 的**
 | `messages` | 完整原始消息 | 是 |
 | `conversation_compactions` | 压缩投影元数据 | 是 |
 | `trace_spans` | 质量追踪的骨架 | **否，best-effort** |
-| `trace_payloads` | 去重后的正文 | 否，可重建不了但可丢 |
+| `trace_payloads` | 去重后的正文 | 否；丢失后不能重建，但可以丢 |
 | `trace_span_payloads` | Span 与正文的挂载 | 否 |
 | `trace_annotations` | **人对一次运行的判断** | **是** |
 
@@ -34,7 +34,7 @@ Session
 └── Session（子 Agent，parent_session_id 自引用，深度上限 1）
 ```
 
-`trace_annotations` 是 Trace 家族里**唯一的业务真相**：其余三张丢了只是排查变难，标注丢了是用户的输入丢了。由此推出保留策略的例外，见 [trace.md](trace.md) §14。
+`trace_annotations` 是 Trace 家族里**唯一的业务真相**。其余三张表丢失时，只是排查变难；标注丢失时，用户的输入就丢失了。保留策略的例外由此而来，见 [trace.md](trace.md) §14。
 
 **不建立**：明文凭证、`recorded_events`、`steps`、`tool_runs`、`approvals`、`runtime_states`、`session_updates`、`turn_recovery_checkpoints`、`trace_span_events`、评测集与自动打分表。
 
@@ -42,9 +42,9 @@ Session
 
 ### 一、Message 只增不改不删
 
-压缩**不删除任何消息**，只新增一条 `conversation_compactions`，用序号划出"哪一段被摘要替换了"。模型看到投影，库里原文始终在。
+压缩**不删除任何消息**。它只新增一条 `conversation_compactions` 记录，用序号标出摘要替换了哪一段。模型看到的是投影，库里的原文始终保留。
 
-这是 rewind 和原文回读的前提。**任何"压缩时顺便清理旧消息"的优化都会同时废掉这两个能力。**
+这是 rewind 和原文回读的前提。**任何"压缩时顺便清理旧消息"的优化，都会同时破坏这两个能力。**
 
 ### 二、状态机由数据库守
 
@@ -56,7 +56,7 @@ CREATE UNIQUE INDEX uq_turns_one_running_per_session
     ON turns(session_id) WHERE status = 'running';
 ```
 
-这两条必须和启动时的清扫（§7）配成闭环：崩溃遗留的 `running` 行若不清扫，那个部分唯一索引会让该 Session **再也插不进新 Turn**。**约束和清扫是一对，只加其一比都不加更糟。**
+这两条约束必须和启动时的清扫（§7）配成闭环。如果不清扫崩溃遗留的 `running` 行，那个部分唯一索引会让该 Session **再也插不进新 Turn**。**约束和清扫是一对：只加其一，比都不加更糟。**
 
 ### 三、跨实体引用用复合外键
 
@@ -64,17 +64,17 @@ CREATE UNIQUE INDEX uq_turns_one_running_per_session
 FOREIGN KEY (turn_id, session_id) REFERENCES turns(id, session_id)
 ```
 
-而不是单列。这样消息、Span、压缩记录都不可能挂到别的 Session 的 Turn 上。代价是被引用侧要有 `(id, session_id)` 唯一约束，值得。
+不用单列外键。这样，消息、Span 和压缩记录都不能挂到其他 Session 的 Turn 上。代价是引用的目标表要有 `(id, session_id)` 唯一约束。这个代价值得。
 
-**反面：不要为了外键而造冗余索引。** 若某外键需要三列（`id, session_id, sequence`），被引用表就得建一个包含主键的唯一索引——而任何包含主键的列组合天然唯一，该索引提供零额外约束能力，却要在高频写入表上一直维护。这种情况应降级成单列外键。
+**反面：不要为了外键而造冗余索引。** 如果某个外键需要三列（`id, session_id, sequence`），目标表就要建一个包含主键的唯一索引。但任何包含主键的列组合本来就唯一，所以这个索引不增加任何约束能力。它却要在高频写入的表上一直维护。这种情况下，改用单列外键。
 
 ### 四、活动状态不落库
 
-pending permission、当前 phase、草稿只在 `SessionActor` 内存里。数据库只保存**已完成的事实**。因此不恢复未完成的 Turn。
+pending permission、当前 phase、草稿只在 `SessionActor` 内存里。数据库只保存**已完成的事实**。因此，系统不恢复未完成的 Turn。
 
 ### 五、同一份内容只有一个权威副本
 
-`messages` 是内容的业务真相，只增不改不删，永远比 Trace 完整。Trace **不复制它已有的内容**，只留指针：
+`messages` 是内容的业务真相。它只增不改不删，始终比 Trace 完整。Trace **不复制它已有的内容**，只保存指针：
 
 ```sql
 trace_spans.response_message_id  → messages(id)          -- 成功调用的响应
@@ -82,9 +82,9 @@ attributes.checkpointId          → conversation_compactions(id)  -- 成功的�
 （Tool Call 的参数与结果由 (turn_id, provider_call_id) 定位，不需要新列）
 ```
 
-理由不是省空间，是**避免同一份内容存在两个可能不一致的版本**——一旦不一致，没人知道该信哪个。
+理由不是节省空间，而是**避免同一份内容存在两个可能不一致的版本**。两个版本一旦不一致，就没人知道该信哪个。
 
-Trace 只保存 `messages` 回答不了的东西：**组装后的请求**（投影后的 Conversation + System Context + 工具定义）和**失败调用的响应**。前者是"模型实际看到了什么"的唯一答案，压缩之后它和原始消息不再相同；后者从未产生 Message。
+Trace 只保存 `messages` 回答不了的内容：**组装后的请求**（投影后的 Conversation + System Context + 工具定义），以及**失败调用的响应**。前者是"模型实际看到了什么"的唯一答案；压缩之后，它和原始消息不再相同。后者从未产生 Message。
 
 详见 [trace.md](trace.md) §6。
 
@@ -97,17 +97,17 @@ Trace 只保存 `messages` 回答不了的东西：**组装后的请求**（投�
 | 丢失后果 | 数据丢失 | 排查变难 |
 | 生命周期 | 业务决定 | 跟随 Session 级联删除 + 保留策略 |
 
-**唯一的交叉点**是刻意的冗余：**三个计数器**（`model_call_count` / `model_submission_count` / `tool_call_count`）由业务写入路径维护，与 Trace 写入路径完全独立，两者一致才判定 Trace 完整。若把 captured 改成从 Span 派生，对账永远相等，完整度检测失去意义。
+**唯一的交叉点**是刻意的冗余：**三个计数器**（`model_call_count` / `model_submission_count` / `tool_call_count`）。业务写入路径维护这三个计数器，与 Trace 写入路径完全独立。两者一致时，才判定 Trace 完整。如果把 captured 改成从 Span 派生，对账结果永远相等，完整度检测就失去意义。
 
-`trace_annotations` 不在这张表的两侧——它是长在 Trace 上的业务真相，见 §1。
+`trace_annotations` 不属于这张表的任何一侧。它是挂在 Trace 上的业务真相，见 §1。
 
 ## 4. ID 与时间
 
-- ID 是应用生成的稳定 `TEXT`，允许带前缀；全部校验 `btrim(id) <> ''`；
+- ID 是应用生成的稳定 `TEXT`，可以带前缀；所有 ID 都校验 `btrim(id) <> ''`；
 - 时间列一律 `TIMESTAMP WITHOUT TIME ZONE`，存**东八区墙上时间**，默认值 `CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai'`；
-- API 返回补 `+08:00`，**绝不能补 `Z`**——库里已是东八区，标成 UTC 会让前端再换算一次，最终偏 16 小时且不报错；
-- `created_at` 写入后不修改，更新业务字段时必须同时更新 `updated_at`；
-- Turn 与 Message 的顺序用 `sequence` 表达并由唯一约束兜底；**Trace Span 不参与这套编号**，按 `started_at` 排序（见 §6）。
+- API 返回值补 `+08:00`，**绝不能补 `Z`**。库里的值已是东八区时间；标成 UTC 会让前端再换算一次，最终偏差 16 小时，而且不报错；
+- `created_at` 写入后不再修改；更新业务字段时，必须同时更新 `updated_at`；
+- Turn 与 Message 的顺序用 `sequence` 表达，唯一约束负责兜底；**Trace Span 不参与这套编号**，按 `started_at` 排序（见 §6）。
 
 ## 5. 业务表
 
@@ -130,11 +130,11 @@ CREATE TABLE provider_credentials (
 );
 ```
 
-密文用 `provider_id` 作为 AAD。Repository **不返回密文字段**，只返回公开 Profile 或调用边界解密后的零化凭证类型。
+密文用 `provider_id` 作为 AAD。Repository **不返回密文字段**。它只返回公开 Profile，或调用边界解密后的零化凭证类型。
 
-`models` 一行是一个可直接选择的端点。`provider_kind` 使用**与上表相同**的 CHECK——同一概念不该在两张表约束强度不一致。
+`models` 的一行是一个可以直接选择的端点。它的 `provider_kind` 使用**与上表相同**的 CHECK。同一个概念在两张表里的约束强度应该一致。
 
-`credential_ref` 是**多态引用**：`provider:<provider_id>` 指向 `provider_credentials`，其余值是环境变量名。因此**不能建外键**，解析方是 `ProviderCredentialResolver`。
+`credential_ref` 是**多态引用**：`provider:<provider_id>` 指向 `provider_credentials`，其余值是环境变量名。因此**不能建外键**。`ProviderCredentialResolver` 负责解析它。
 
 `config` 只保存低频 Provider 选项。禁止保存：API Key 明文、完整请求/响应、Session/Turn 状态、能由代码默认值表达的字段。
 
@@ -147,7 +147,7 @@ CREATE TABLE skill_status (
 );
 ```
 
-它只保存用户对 Skill 名称的启停偏好，不缓存文件路径、description 或正文。Skill 文件系统仍是发现与内容的事实来源；目录被删除后，孤立状态行可以保留，之后同名 Skill 再次出现时继续应用该偏好。
+这张表只保存用户对 Skill 名称的启停偏好，不缓存文件路径、description 或正文。Skill 的发现与内容仍以文件系统为事实来源。删除 Skill 目录后，孤立的状态行可以保留。之后同名 Skill 再次出现时，继续应用该偏好。
 
 ### sessions
 
@@ -192,15 +192,15 @@ CREATE INDEX idx_sessions_parent
     ON sessions(parent_session_id, created_at) WHERE parent_session_id IS NOT NULL;
 ```
 
-`working_directory` 是工具执行根目录，可以不是 Git 仓库。**不为它建立 Workspace 记录、Trust 状态或 Git 元数据。** 子 Agent 继承父的 `working_directory`，不放宽也不收紧。
+`working_directory` 是工具执行的根目录，可以不是 Git 仓库。**不为它建立 Workspace 记录、Trust 状态或 Git 元数据。** 子 Agent 继承父 Session 的 `working_directory`，不放宽，也不收紧。
 
-Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。**也不保存子 Agent 的 mailbox**——未消费的 Agent Message 只在内存里，事实来源是子 Session 自己的 `turns` 与 `messages`，重启后由父的下一个用户 Turn 做幂等对账，见 [multi-agent.md §8](multi-agent.md)。
+Session 不保存 `runtime_state`、pending permission 或当前 Tool Call。**它也不保存子 Agent 的 mailbox。** 未消费的 Agent Message 只在内存里。事实来源是子 Session 自己的 `turns` 与 `messages`。重启后，父 Session 的下一个用户 Turn 做幂等对账，见 [multi-agent.md §8](multi-agent.md)。
 
-子 Agent 的深度上限有两道防线：工具面不给它注册 `spawn_agent`，`sessions_spawn_depth_at_most_one` 在数据库兜底。**只靠工具面不够**——那是运行时决策，判断写错就没有第二道防线。
+子 Agent 的深度上限有两道防线：工具面不给它注册 `spawn_agent`；数据库用 `sessions_spawn_depth_at_most_one` 兜底。**只靠工具面不够。** 工具面是运行时决策；判断写错时，就没有第二道防线。
 
-`tool_result_pruned_through_sequence` 是投影状态而不是消息内容：`messages` 里的 Tool Result 从不因修剪而改变。它必须落库，因为修剪只进不退——重启后若恢复成未修剪，同一段历史的请求字节就变了，提示词缓存随之作废。
+`tool_result_pruned_through_sequence` 是投影状态，不是消息内容：修剪从不改变 `messages` 里的 Tool Result。它必须落库，因为修剪只进不退。如果重启后恢复成未修剪，同一段历史的请求字节就会改变，提示词缓存随之失效。
 
-`list_sessions` 加 `WHERE parent_session_id IS NULL`：子 Agent 不进顶层会话列表。删除父会话时 `ON DELETE CASCADE` 连带删除子 Session 及其 `turns` / `messages` / `trace_spans`。
+`list_sessions` 加 `WHERE parent_session_id IS NULL`，所以子 Agent 不进入顶层 Session 列表。删除父 Session 时，`ON DELETE CASCADE` 连带删除子 Session 及其 `turns` / `messages` / `trace_spans`。
 
 ### turns
 
@@ -241,9 +241,9 @@ CREATE UNIQUE INDEX uq_turns_one_running_per_session
     ON turns(session_id) WHERE status = 'running';
 ```
 
-两个计数的区别：`model_call_count` 是 Agent Loop 的**逻辑**轮次；`model_submission_count` 是实际发出的 provider-neutral 请求次数。采样前 threshold 压缩发生在提交之前，不增加 submission；overflow 后同一逻辑轮次的重提交只增加 submission。
+两个计数的区别：`model_call_count` 是 Agent Loop 的**逻辑**轮次；`model_submission_count` 是实际发出的 provider-neutral 请求次数。采样前的 threshold 压缩发生在提交之前，不增加 submission。overflow 之后，同一逻辑轮次的重新提交只增加 submission。
 
-**不设 `total_tokens` 生成列。** "总量 = 输入 + 输出"是跨 provider 未统一的计费口径（reasoning 是否计入 output、input 是否已含 cached，各家不同），冻结在 `GENERATED ALWAYS ... STORED` 里是最难改的形态。由查询或 Rust 侧计算。
+**不设 `total_tokens` 生成列。** "总量 = 输入 + 输出"这一计费口径在各 provider 之间没有统一：reasoning 是否计入 output、input 是否已含 cached，各家不同。把它冻结在 `GENERATED ALWAYS ... STORED` 里，是最难修改的形态。总量由查询或 Rust 侧计算。
 
 ### messages
 
@@ -278,15 +278,15 @@ CREATE UNIQUE INDEX uq_messages_tool_result
     ON messages(turn_id, provider_call_id) WHERE role = 'tool';
 ```
 
-`content_format_version` 是**产品最核心持久化事实的版本标记**。`content` 的唯一结构约束只有"它是个数组"——`ContentBlock` 形状一旦变化，没有这一列就无法区分新旧行，也无法写针对性回填。
+`content_format_version` 是**产品最核心持久化事实的版本标记**。`content` 只有一条结构约束："它是个数组"。`ContentBlock` 的形状一旦变化，没有这一列就无法区分新旧行，也无法写针对性的回填。
 
-用户显式选择 Skill 时，Core 先写入一条 `message_kind = 'skill_instruction'` 的 User-role Message；`content` 只含普通 Text block，正文使用 `<skill><name>…</name><path>…</path>…</skill>` 标记。随后写入 `message_kind = 'normal'` 的用户可见原始 Text Message。Desktop transcript 过滤 Skill instruction，模型 Conversation、Trace、summarizer 和精确 transcript 仍能读取完整快照；不新增 skill invocation 表。压缩语义见 [compaction.md §4](compaction.md)。
+用户显式选择 Skill 时，Core 先写入一条 `message_kind = 'skill_instruction'` 的 User-role Message。它的 `content` 只含普通 Text block，正文使用 `<skill><name>…</name><path>…</path>…</skill>` 标记。随后，Core 写入一条 `message_kind = 'normal'` 的原始 Text Message，用户可以看到它。Desktop transcript 过滤 Skill instruction；模型 Conversation、Trace、summarizer 和精确 transcript 仍能读取完整快照。不新增 skill invocation 表。压缩语义见 [compaction.md §4](compaction.md)。
 
-子 Agent 回传的消息同样落在 `messages` 上：`message_kind = 'agent_message'` 的 **User-role** Message，正文使用 `<agent_message><task>…</task><kind>…</kind><body>…</body></agent_message>` 标记。**用 user role 而不是 assistant role 是被 provider 逼出来的**——排空点在组装 Model Request 之前，assistant-role 会成为 Anthropic 请求的最后一条并被当作 prefill 续写。不新增 agent message 表。
+子 Agent 回传的消息同样存入 `messages`，形式是 `message_kind = 'agent_message'` 的 **User-role** Message，正文使用 `<agent_message><task>…</task><kind>…</kind><body>…</body></agent_message>` 标记。**用 user role 而不用 assistant role，是 provider 的限制所致。** 排空点在组装 Model Request 之前。assistant-role 的消息会成为 Anthropic 请求的最后一条，Anthropic 会把它当作 prefill 来续写。不新增 agent message 表。
 
-`message_kind` 现在有三个值，`normal` 之外的两个都是"模型可见、Desktop transcript 不渲染"。**任何依赖"user role 就是用户请求"的代码都必须改成按 kind 判断**——`last_real_user` 是第一个，见 [multi-agent.md §6.2](multi-agent.md)。
+`message_kind` 现在有三个值。`normal` 之外的两个值都是"模型可见、Desktop transcript 不渲染"。**任何依赖"user role 就是用户请求"的代码，都必须改成按 kind 判断。** `last_real_user` 是第一处这样的代码，见 [multi-agent.md §6.2](multi-agent.md)。
 
-重启对账补发的 Agent Message 使用确定性 ID `agent-msg:{child_session_id}:{child_turn_id}:{kind}`，靠主键冲突白拿幂等，不需要先查再写。
+重启对账时补发的 Agent Message 使用确定性 ID `agent-msg:{child_session_id}:{child_turn_id}:{kind}`。主键冲突直接提供幂等，不需要先查再写。
 
 `uq_messages_tool_result` 保证一个 Turn 下同一 Provider Tool Call 只有一个结果。
 
@@ -320,7 +320,7 @@ CONSTRAINT ..._parent_shape CHECK (
 
 后两条 CHECK 让数据库直接拒绝"手动压缩却关联了触发 Turn"这类不可能状态。
 
-三个 `*_format_version` 分别覆盖 checkpoint 结构、摘要格式和提醒格式，可以独立演进。
+三个 `*_format_version` 分别覆盖 checkpoint 结构、摘要格式和提醒格式。它们可以独立演进。
 
 语义见 [compaction.md](compaction.md)。
 
@@ -365,12 +365,12 @@ CREATE INDEX idx_trace_spans_turn_started    ON trace_spans(turn_id, started_at)
     WHERE turn_id IS NOT NULL;
 ```
 
-**结构根是 `trace_id`，不是 `turn_id`。** `turn_id` 是指向 `turns` 的外键，而 `turns` 有业务生命周期和会话轮次编号，无法给"不属于任何 Turn 的操作"发号。详见 [trace.md](trace.md)。
+**结构根是 `trace_id`，不是 `turn_id`。** `turn_id` 是指向 `turns` 的外键。`turns` 有业务生命周期和 Session 内的轮次编号，无法给"不属于任何 Turn 的操作"编号。详见 [trace.md](trace.md)。
 
-三条反直觉但有意为之的设计：
+以下三条设计反直觉，但都是有意为之：
 
-- **没有 `sequence` 列**，排序用 `started_at`（`id` 兜底）。序号需要全局分配器，配上 `UNIQUE (turn_id, sequence)` 就把"同时只有一个执行体在写"编码进了约束；并发时冲突会让整批事务回滚，**一次静默丢失最多 64 条 Span**。
-- **`parent_span_id` 不建外键。** Trace 写入有损，父 Span 可能根本没落库；建外键会让子 Span 一并失败，把单点丢失放大成级联丢失。孤儿在读取时统计成完整性信号。
+- **没有 `sequence` 列**，排序用 `started_at`（`id` 兜底）。序号需要全局分配器。配上 `UNIQUE (turn_id, sequence)`，就把"同时只有一个执行体在写"编码进了约束。并发时，冲突会让整批事务回滚，**一次静默丢失最多 64 条 Span**。
+- **`parent_span_id` 不建外键。** Trace 写入有损，父 Span 可能根本没有落库。建外键会让子 Span 一起失败，使单点丢失扩大成级联丢失。读取时，把孤儿 Span 统计为完整性信号。
 - **不存 `total_tokens` 生成列**，理由同 `turns`。
 
 ### trace_payloads / trace_span_payloads
@@ -399,21 +399,21 @@ CREATE TABLE trace_span_payloads (
 CREATE INDEX idx_trace_span_payloads_hash ON trace_span_payloads(payload_hash);
 ```
 
-**拆成两张表是为了去重。** System Context 和工具定义在一个 Session 内几乎不变，却随每次 Model Call 重复发送：20 KB 的工具定义在 400 次调用后按行存是 8 MB，按哈希存是 20 KB。
+**拆成两张表是为了去重。** System Context 和工具定义在一个 Session 内几乎不变，但每次 Model Call 都重复发送。20 KB 的工具定义在 400 次调用后，按行存是 8 MB，按哈希存是 20 KB。
 
-**`trace_payloads` 没有 `session_id`** —— 同样的工具定义本就跨 Session 相同，加上它等于放弃去重。三个后果必须一起接受：
+**`trace_payloads` 没有 `session_id`。** 同样的工具定义本来就跨 Session 相同，加上这一列等于放弃去重。必须同时接受以下三个后果：
 
-1. 删除 Session **不**级联删除正文，必须由孤儿清扫收尾，而且**必须在删除的同一次操作里执行**——这是隐私必做项，不是空间优化；
-2. `payload_hash` 用 `ON DELETE RESTRICT`，让清扫无法误删仍被引用的正文；
-3. 清扫走 `idx_trace_span_payloads_hash` 的 `NOT EXISTS`。
+1. 删除 Session **不**级联删除正文，必须用孤儿清扫收尾，而且**必须在删除的同一次操作里执行**。这是隐私必做项，不是空间优化；
+2. `payload_hash` 用 `ON DELETE RESTRICT`，使清扫无法误删仍有引用的正文；
+3. 清扫通过 `idx_trace_span_payloads_hash` 执行 `NOT EXISTS`。
 
-**`span_id` 建了外键，和 `parent_span_id` 不建并不矛盾**：后者指向另一个可能被独立丢弃的 Span，前者指向同批写入的自己。判别法是"这个引用指向的行，有没有可能在被引用时还不存在或已经丢了"。
+**`span_id` 建了外键，和 `parent_span_id` 不建并不矛盾**：后者指向另一个 Span，那个 Span 可能单独丢失；前者指向同一批写入的所属 Span。判别方法是问："这个引用指向的行，在引用时有没有可能还不存在或已经丢了"。
 
-**截断了就必须说明原始多大**，由 CHECK 强制——界面上一个无法量化的"已截断"警告没有用。
+**截断后必须说明原始大小**，CHECK 强制执行这一点。界面上一个无法量化的"已截断"警告没有用。
 
-**`redacted_count` 是一个应当删除的列。** 它的本意是"这份正文里剔除了 N 处敏感字段"，但我们**刻意记录用户的私有代码**、不对正文做内容扫描，所以没有任何东西会让它非零——实现里它被硬编码成 `0`。
+**`redacted_count` 是一个应当删除的列。** 它的本意是"这份正文里剔除了 N 处敏感字段"。但我们**刻意记录用户的私有代码**，不对正文做内容扫描，所以没有任何路径会让它非零。实现里把它硬编码成 `0`。
 
-保留它只会让读 schema 的人以为存在一套脱敏机制。**下次因别的原因修改 initial migration 时一并删掉**，不为它单独改一次 schema。这是设计遗留，不是待实现功能。
+保留它只会让读 schema 的人以为存在一套脱敏机制。**下次因别的原因修改 initial migration 时，一并删掉它**，不为它单独改一次 schema。这是设计遗留，不是待实现的功能。
 
 ### trace_annotations
 
@@ -432,17 +432,17 @@ CREATE UNIQUE INDEX uq_trace_annotations_target
     ON trace_annotations(trace_id, COALESCE(span_id, ''));
 ```
 
-`COALESCE` 让"整条 Trace 的标注"也受唯一约束——普通唯一索引对 `NULL` 不生效，会允许无限条。
+`COALESCE` 让"整条 Trace 的标注"也受唯一约束。普通唯一索引对 `NULL` 不生效，会允许任意多条。
 
-改评价是 **upsert**，不是追加一条相反的。
+修改评价用 **upsert**，不追加一条相反的评价。
 
-这是 Trace 家族里唯一丢不起的表，因此**带标注的 Trace 不参与保留策略的自动清理**。
+这是 Trace 家族里唯一不能丢失的表，因此**带标注的 Trace 不参与保留策略的自动清理**。
 
 ## 7. 写入顺序
 
 ### 开始 Turn（一个事务）
 
-1. 锁定 Session 或依赖 `(session_id, sequence)` 唯一约束分配序号；
+1. 锁定 Session，或依靠 `(session_id, sequence)` 唯一约束分配序号；
 2. 插入 `turns(status='running')`；
 3. 插入 User Message；
 4. 更新 `sessions.last_turn_at / updated_at`；
@@ -450,24 +450,24 @@ CREATE UNIQUE INDEX uq_trace_annotations_target
 
 ### 完成一次 Model Call
 
-1. 调用 Provider 前更新 `model_call_count = GREATEST(...)` 并累加 `model_submission_count`（同轮 overflow 重提交只增后者）；
+1. 调用 Provider 前，更新 `model_call_count = GREATEST(...)`，并累加 `model_submission_count`（同轮 overflow 重新提交只增加后者）；
 2. 流式草稿只在内存；
 3. 响应完整后插入 Assistant Message；
 4. 同一事务累加 Token，并按响应中的调用数累加 `tool_call_count`；
 5. **事务提交后才执行 Tool Call**；
 6. Model Span 独立 best-effort 结束。
 
-第 5 条保证"数据库尚未保存模型要求执行什么"时不会先产生工具副作用。
+第 5 条保证：数据库保存"模型要求执行什么"之前，不会先产生工具副作用。
 
 ### 完成一次 Tool Call
 
 工具执行 → 形成结果 Message → 插入 → **提交成功后才进入下一次 Model Call** → Span 独立结束。
 
-若副作用已发生但 Message 写入失败，Turn 失败。重启后保持 `interrupted`/`outcome_unknown`，**不自动执行同一工具**。
+如果副作用已发生，但 Message 写入失败，Turn 就失败。重启后保持 `interrupted`/`outcome_unknown`，**不自动执行同一工具**。
 
 ### 结束 Turn
 
-更新 `status`、`ended_at`、最终汇总、可选错误。最终回答读取最后一条 Assistant Message，**不在 `turns` 重复存一份**。
+更新 `status`、`ended_at`、最终汇总和可选的错误。最终回答从最后一条 Assistant Message 读取，**不在 `turns` 里重复存一份**。
 
 ## 8. 启动修正
 
@@ -482,11 +482,11 @@ WHERE status = 'running';
 UPDATE trace_spans SET status = 'outcome_unknown', ... WHERE status = 'running';
 ```
 
-随后读取刚被中断的 Turn：从 Assistant Message 提取完整 Tool Call → 用 `(turn_id, provider_call_id)` 查已有结果 → 对没有结果的调用按原顺序追加合成 Message，状态 `outcome_unknown`，文本明确说明副作用可能已发生且不得自动重试 → 提交后才允许该 Session 接受新 Turn。
+随后读取刚刚中断的 Turn，按以下顺序处理：从 Assistant Message 提取完整 Tool Call → 用 `(turn_id, provider_call_id)` 查已有结果 → 对没有结果的调用，按原顺序追加合成 Message，状态为 `outcome_unknown`，文本明确说明副作用可能已发生、不得自动重试 → 提交后，才允许该 Session 接受新 Turn。
 
-**这只是状态与 Conversation 完整性收口**，不调度恢复任务，也不读 Trace 判断工具是否执行过。
+**这一步只收口状态与 Conversation 的完整性。** 它不调度恢复任务，也不读 Trace 来判断工具是否执行过。
 
-同一个 bootstrap 阶段还按 `OpenWorkCoreConfig.trace_content.retention_days`（默认 30 天）删除过期且不带标注的 `trace_span_payloads` 映射，再用 §9 的候选哈希清扫删除无人引用的正文 body。过期按 `trace_spans.started_at` 判断；清理在 Recorder 启动与首个 Turn 被接受之前完成，不增加后台定时任务。
+同一个 bootstrap 阶段还做以下清理。先按 `OpenWorkCoreConfig.trace_content.retention_days`（默认 30 天）删除过期且不带标注的 `trace_span_payloads` 映射。再用 §9 的候选哈希清扫，删除无人引用的正文 body。过期按 `trace_spans.started_at` 判断。清理在 Recorder 启动与接受首个 Turn 之前完成，不增加后台定时任务。
 
 ## 9. 常用读取
 
@@ -515,11 +515,11 @@ WHERE p.hash = ANY($2)
   AND NOT EXISTS (SELECT 1 FROM trace_span_payloads m WHERE m.payload_hash = p.hash);
 ```
 
-**正文必须是独立的按需查询。** 把它并进 Turn Trace 会让打开一个 Turn 就拉走几 MB JSONB，而用户多数时候只想看时间线。
+**正文必须是独立的按需查询。** 把它并进 Turn Trace 后，打开一个 Turn 就会拉取几 MB 的 JSONB，而用户多数时候只想看时间线。
 
-**Token 用量不要跨 Provider 直接相加。** `cached_input_tokens` 是否已含在 `input_tokens` 里各家不同，聚合前必须按 `resolved_provider_kind` 分组，见 [trace.md](trace.md) §7。
+**Token 用量不要跨 Provider 直接相加。** `cached_input_tokens` 是否已含在 `input_tokens` 里，各家不同。聚合前，必须按 `resolved_provider_kind` 分组，见 [trace.md](trace.md) §7。
 
-模型可见 Conversation 读取 latest checkpoint、精确加载 last-user 原始 Message、放入冻结的 summary 与 reminder，最后追加大于 `replaced_through_message_sequence` 的原始消息。该投影由 `load_conversation_items` 统一实现；**Desktop 的普通聊天记录仍读取全部 `messages`**。
+组装模型可见的 Conversation 时，依次执行：读取 latest checkpoint；精确加载 last-user 原始 Message；放入冻结的 summary 与 reminder；最后追加大于 `replaced_through_message_sequence` 的原始消息。`load_conversation_items` 统一实现这个投影。**Desktop 的普通聊天记录仍读取全部 `messages`**。
 
 ## 10. 开发库重建
 
@@ -529,7 +529,7 @@ docker compose up -d postgres
 cargo run -p openwork-core --bin openwork-migrate
 ```
 
-删除 volume 会清除 Session、Trace、模型设置和加密后的 API Key，**必须由开发者显式执行**，应用启动不得自动删除未知数据。
+删除 volume 会清除 Session、Trace、模型设置和加密后的 API Key。**开发者必须显式执行这一步。** 应用启动时不得自动删除未知数据。
 
 ## 11. 验收
 

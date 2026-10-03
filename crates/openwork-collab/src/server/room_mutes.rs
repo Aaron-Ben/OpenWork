@@ -11,7 +11,7 @@ use crate::protocol::MuteView;
 /// Longest `--for` mute (collaboration.md §10.1, Cumora `parseMuteUntil`: 1 minute to 90 days).
 pub(crate) const MUTE_MAX_MINUTES: u32 = 90 * 24 * 60;
 
-/// 库里的时间是东八区墙上时间（.claude/rules/database.md §1）。
+/// 库里的时间是东八区墙上时间（collaboration.md §13.1）。
 const CHINA_OFFSET: UtcOffset = match UtcOffset::from_hms(8, 0, 0) {
     Ok(offset) => offset,
     Err(_) => panic!("+08:00 is a valid offset"),

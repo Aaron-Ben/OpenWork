@@ -16,7 +16,7 @@ use crate::protocol::{
 const DIGEST_MAX_MESSAGE_LINES: usize = 40;
 /// Characters kept from one message body in the digest (collaboration.md §7.2, Cumora `snapshotUnread`).
 const MESSAGE_BODY_MAX_CHARS: usize = 600;
-/// 模型看到的时间统一为东八区（.claude/rules/database.md §1）。
+/// 模型看到的时间统一为东八区，与库里的时间口径一致（collaboration.md §13.1）。
 const CHINA_OFFSET: UtcOffset = match UtcOffset::from_hms(8, 0, 0) {
     Ok(offset) => offset,
     Err(_) => panic!("+08:00 is a valid offset"),

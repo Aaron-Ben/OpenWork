@@ -41,7 +41,7 @@ pub struct TurnPlanRecord {
 
 impl TurnPlan {
     /// 时间序列化必须带 `+08:00`。库里存的是东八区墙上时间，标成 `Z` 会让前端在已经是
-    /// 东八区的值上再换算一次，最终偏 16 小时且全程不报错。见 `.claude/rules/database.md`。
+    /// 东八区的值上再换算一次，最终偏 8 小时且全程不报错。见 docs/data-model.md。
     fn wire_updated_at(&self) -> String {
         to_wire(self.updated_at).unwrap_or_default()
     }
