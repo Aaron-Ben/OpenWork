@@ -7,7 +7,7 @@
 - 这是求职作品，目标岗位是全栈与 AI 应用工程师。产品是本地多 Agent 协作工作台。
 - 优先级从高到低：**能跑 → 能演示 → 能讲清楚设计取舍 → 架构整洁**。
 - 判断一项工作值不值得做，先问：它能不能让面试官更快看到效果，或让我更好地讲清楚一个设计。都不能时，先不做。
-- 项目正在用 TypeScript 重写，设计见 [Agent Note](.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。移植期间不给 Rust 代码加功能，只修影响旧版本运行的问题。
+- 项目正在参考 cumora 与 raft，用 TypeScript 从零实现，设计见 [Agent Note](.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。开发期间不给 Rust 代码加功能，只修影响旧版本运行的问题。
 
 ## 运行与检查
 
