@@ -10,7 +10,9 @@
     "includes": ["**", "!crates", "!desktop", "!target", "!pnpm-lock.yaml"]
   },
   "css": {
-    "parser": { "tailwindDirectives": true }
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "formatter": {
     "indentStyle": "space",
@@ -34,6 +36,21 @@
                   "Buffer": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。",
                   "__dirname": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/server/src/**", "packages/computer/src/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": {
+              "level": "error",
+              "options": {
+                "allow": ["error", "warn"]
               }
             }
           }

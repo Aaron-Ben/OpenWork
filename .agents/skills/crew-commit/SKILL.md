@@ -36,7 +36,7 @@ git diff --stat
 
 - type 用 `feat`、`fix`、`refactor`、`docs`、`test`、`chore`；scope 写包或区域，例如 `server`、`computer`、`desktop`、`notes`。
 - 正文按模块分条，写改了什么与为什么，不逐行复述 diff。范例：`git show -s d93f71c`。只改一处文字时可以只写标题。
-- 多行说明写进临时文件，用 `git commit -F <文件>` 提交。
+- 多行说明写进临时文件，用 `git commit -F <文件>` 提交。commit-msg 钩子会检查标题格式与空行，不合格时拒绝提交。
 
 ## 4. 汇报
 

@@ -2,7 +2,7 @@
 
 Agent Note 记录一项影响本仓库的决策或提议。它保存代码与设计文档不保存的内容：为什么这样定，放弃了什么。本文规定 Agent Note 的位置、写作时机和文件格式。
 
-做法来自 DSH 的 `.agents/notes/README.md`。
+做法来自 DSH 的 `dsh:.agents/notes/README.md`。
 
 ## 位置与命名
 

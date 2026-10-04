@@ -2,7 +2,7 @@
 
 本文规定 crate README 的结构与写法。每个 crate 在根目录有一份 `README.md`。
 
-做法来自 DSH：模板见 `.agents/skills/dsh-doc/templates/package-reference.md` 与 `package-library.md`，模型体验的规定见 `docs/cookbook/adding-a-package.md` 第 4 节。与 DSH 的不同：只写中文；没有 `cordis.yml` 装配，“使用本 crate”写对外的入口。
+做法来自 DSH：模板见 `dsh:.agents/skills/dsh-doc/templates/package-reference.md` 与 `package-library.md`，模型体验的规定见 `dsh:docs/cookbook/adding-a-package.md` 第 4 节。与 DSH 的不同：只写中文；没有 `cordis.yml` 装配，“使用本 crate”写对外的入口。
 
 ## 1. 骨架
 

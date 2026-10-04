@@ -1,6 +1,6 @@
 # 测试
 
-本文规定测试的分层、原则、写法与运行方式。做法参照 DSH 的 `docs/testing.md`。检查命令与完成的标准见根 [AGENTS.md](../AGENTS.md)；旧版 Rust 代码的检查见 [legacy-rust.md](legacy-rust.md)。
+本文规定测试的分层、原则、写法与运行方式。做法参照 DSH 的 `dsh:docs/testing.md`。检查命令与完成的标准见根 [AGENTS.md](../AGENTS.md)；旧版 Rust 代码的检查见 [legacy-rust.md](legacy-rust.md)。
 
 ## 1. 分层
 

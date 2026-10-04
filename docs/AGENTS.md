@@ -2,7 +2,7 @@
 
 本文规定文档分层与写作规则。“文档”指仓库里所有的 Markdown 文件。Agent Note 的格式见 [.agents/notes/README.md](../.agents/notes/README.md)。
 
-做法来自 DSH 的 `docs/AGENTS.md`。
+做法来自 DSH 的 `dsh:docs/AGENTS.md`。
 
 ## 1. 一个事实只有一个位置
 
@@ -49,6 +49,7 @@
 - 用主动语态，写清楚谁做什么。
 - 一段只讲一个主题。规则多时拆成列表。
 - 项目专有名词（Room、Agent、Engine、Run 等）保持原样。
+- 行内代码里写本仓库的路径时，从仓库根目录写起，例如 `apps/desktop/electron/main.ts`。引用参考项目的文件写成 `项目:路径`，例如 `raft:packages/cli/src/main.ts`。`pnpm lint` 检查这两类路径都存在；还没建的文件不加行内代码。
 - 只给改变行为的那一句加粗。处处加粗等于没有重点。
 
 ## 4. 低质量写法清单

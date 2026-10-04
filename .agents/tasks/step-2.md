@@ -15,7 +15,7 @@
 
 - [x] 测试流程：冒烟测试、真实模型 e2e、`testing.md`、`defensive-patterns.md`、提交流程 skill、本次规则调整。
   完成标准：`pnpm check` 通过；`CREW_E2E_MODEL=<模型> pnpm test:e2e` 通过；已提交。
-- [ ] 检查脚本：文档路径存在、Biome 的 `noConsole` 与 `noEmptyBlockStatements`、禁止 `as unknown`、commit-msg 钩子。
+- [x] 检查脚本：文档路径存在（含参考项目的 `项目:路径`）、Biome 的 `noConsole`、禁止 `as unknown` 与空 catch、commit-msg 钩子。
   完成标准：每项都有测试证明它拒绝违规输入；`pnpm check` 通过；已提交。
 - [ ] 界面截图命令 `pnpm preview:shot`：用临时数据库启动应用并截图，结束时清理。
   完成标准：截图能显示空状态；没有残留进程与临时库。

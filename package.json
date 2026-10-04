@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "lefthook install",
     "dev": "pnpm --filter @crew/desktop dev",
-    "lint": "biome check . && tsx scripts/verify-docs.ts",
+    "lint": "biome check . && tsx scripts/verify-docs.ts && tsx scripts/verify-code.ts",
     "format": "biome check --write .",
     "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json",
     "test": "pnpm -r test && vitest run scripts",

@@ -11,11 +11,11 @@ steer 指 Turn 进行中把新消息插入这个 Turn。没有 steer 时，Agent
 ## 提议
 
 - OpenCode adapter 改为每个 Agent 一个常驻的 `opencode serve`。
-- Turn 进行中到达的消息，作为同一 session 的新 prompt 送入。opencode `packages/opencode/src/session/prompt.ts` 的 `prompt()` 调用 `loop()`，`loop()` 经 `state.ensureRunning` 接入同一进程中正在运行的 loop。
+- Turn 进行中到达的消息，作为同一 session 的新 prompt 送入。opencode `opencode:packages/opencode/src/session/prompt.ts` 的 `prompt()` 调用 `loop()`，`loop()` 经 `state.ensureRunning` 接入同一进程中正在运行的 loop。
 
 ## 考虑过的方案
 
-**保持每 Turn 一个 `opencode run`。** 这是当前实现，没有 steer。Cumora 的 OpenCode adapter 也一样：`server/src/agents/computer/engine.ts` 的注释称 OpenCode 为 one-shot engine，`OpenCodeAdapter` 没有实现 `steer`。
+**保持每 Turn 一个 `opencode run`。** 这是当前实现，没有 steer。Cumora 的 OpenCode adapter 也一样：`cumora:server/src/agents/computer/engine.ts` 的注释称 OpenCode 为 one-shot engine，`OpenCodeAdapter` 没有实现 `steer`。
 
 **所有 Agent 共用一个 `opencode serve`。** 这是最初的设计（2026-08-18 的协作设计文档）。它被每 Turn 一个 `opencode run` 取代。当时记录的风险是单点：它退出时全体 Agent 停止。
 

@@ -11,6 +11,11 @@ pre-commit:
     - name: 空白字符（暂存内容）
       run: git diff --cached --check
 
+commit-msg:
+  jobs:
+    - name: 提交说明格式
+      run: pnpm exec tsx scripts/verify-commit-msg.ts {1}
+
 pre-push:
   jobs:
     - name: 类型检查

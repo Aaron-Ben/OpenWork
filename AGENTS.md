@@ -15,7 +15,7 @@
 
 - **改动后**：`pnpm lint`、`pnpm typecheck`，以及与改动相关的测试。
 - **提交前**：`pnpm check`，即 lint、类型检查、测试与冒烟测试。用户说“只做语法检查”时，只跑 lint 与类型检查，并在汇报中写明没有跑测试。提交流程见 [crew-commit](.agents/skills/crew-commit/SKILL.md)。
-- lefthook 在提交时检查暂存文件的格式与空白，在推送前运行类型检查。
+- lefthook 在提交时检查暂存文件的格式与空白、提交说明的格式，在推送前运行类型检查。
 - 改旧版 Rust 代码前，先看 [docs/legacy-rust.md](docs/legacy-rust.md)。
 
 代码约定见 [packages/AGENTS.md](packages/AGENTS.md)，测试规则见 [docs/testing.md](docs/testing.md)。
