@@ -1,85 +1,83 @@
-import { type AgentId, type AgentStatus, ComputerAgent, InboxRoom, type Parser, type RoomId } from "@crew/protocol";
-import { z } from "zod";
+import {
+  type AgentId,
+  type AgentStatus,
+  ApiClient,
+  ApiError,
+  api,
+  type CallArgs,
+  type ComputerAgent,
+  type Endpoint,
+  EVENT_STREAMS,
+  type InboxRoom,
+  type ResponseOf,
+  type RoomId,
+} from "@crew/protocol";
+import { ZodError } from "zod";
 
 /**
- * Computer 调用 Server 的客户端。每个响应都按 protocol 中的 schema 校验：Computer 与 Server 是两个进程。
- * 失败时抛出的错误说明原因，供日志与主进程显示。
+ * Computer 调用 Server 的客户端。接口与响应 schema 来自 protocol 的契约 `api`，每个响应都经过校验：
+ * Computer 与 Server 是两个进程。失败时抛出的错误说明原因，供日志与主进程显示。
  */
 export class ServerClient {
+  private readonly client: ApiClient;
+
   constructor(
     readonly baseUrl: string,
     private readonly computerToken: string,
     private readonly fetchFn: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.client = new ApiClient({ baseUrl, token: computerToken, fetch: fetchFn });
+  }
 
   /** 用 Computer 凭证调用 Server 一次，证明地址与凭证有效。 */
   async connect(): Promise<void> {
-    await this.request("POST", "/computer/connect");
+    await this.call(api.computer.connect);
   }
 
-  async listAgents(): Promise<ComputerAgent[]> {
-    return this.request("GET", "/computer/agents", undefined, z.array(ComputerAgent));
+  listAgents(): Promise<ComputerAgent[]> {
+    return this.call(api.computer.listAgents);
   }
 
-  async readInbox(agentId: AgentId): Promise<InboxRoom[]> {
-    return this.request("GET", `/computer/agents/${agentId}/inbox`, undefined, z.array(InboxRoom));
+  readInbox(agentId: AgentId): Promise<InboxRoom[]> {
+    return this.call(api.computer.readInbox, { params: { agentId } });
   }
 
   async acknowledge(agentId: AgentId, acks: Array<{ roomId: RoomId; seq: number }>): Promise<void> {
-    await this.request("POST", `/computer/agents/${agentId}/inbox/ack`, { acks });
+    await this.call(api.computer.acknowledge, { params: { agentId }, body: { acks } });
   }
 
   async issueAgentToken(agentId: AgentId): Promise<string> {
-    const { token } = await this.request(
-      "POST",
-      `/computer/agents/${agentId}/token`,
-      undefined,
-      z.object({ token: z.string().min(1) }),
-    );
+    const { token } = await this.call(api.computer.issueAgentToken, { params: { agentId } });
     return token;
   }
 
   async reportStatus(agentId: AgentId, status: AgentStatus): Promise<void> {
-    await this.request("POST", `/computer/agents/${agentId}/status`, status);
+    await this.call(api.computer.reportStatus, { params: { agentId }, body: status });
   }
 
   async reportModels(models: string[]): Promise<void> {
-    await this.request("POST", "/computer/models", { models });
+    await this.call(api.computer.reportModels, { body: { models } });
   }
 
   /** SSE 接口的地址、请求头与本客户端使用的 fetch，交给 `runEventStream`。 */
   eventStream(): { url: string; headers: Record<string, string>; fetch: typeof fetch } {
     return {
-      url: new URL("/computer/events", this.baseUrl).toString(),
+      url: new URL(EVENT_STREAMS.computer, this.baseUrl).toString(),
       headers: { Authorization: `Bearer ${this.computerToken}` },
       fetch: this.fetchFn,
     };
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<undefined>;
-  private async request<T>(method: string, path: string, body: unknown, schema: Parser<T>): Promise<T>;
-  private async request<T>(method: string, path: string, body?: unknown, schema?: Parser<T>): Promise<T | undefined> {
-    let response: Response;
+  /** 调用一个接口，把失败换成说明原因的错误。 */
+  private async call<E extends Endpoint>(endpoint: E, ...args: CallArgs<E>): Promise<ResponseOf<E>> {
     try {
-      response = await this.fetchFn(new URL(path, this.baseUrl), {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.computerToken}`,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
+      return await this.client.call(endpoint, ...args);
     } catch (error) {
-      throw new Error(`无法连接 Server（${this.baseUrl}）`, { cause: error });
+      const where = `${endpoint.method} ${endpoint.path}`;
+      if (error instanceof ZodError) throw new Error(`Server 的响应不符合协议（${where}）`, { cause: error });
+      if (!(error instanceof ApiError)) throw new Error(`无法连接 Server（${this.baseUrl}）`, { cause: error });
+      if (error.status === 401) throw new Error("Server 拒绝了 Computer 凭证（401）");
+      throw new Error(`Server 返回 ${error.status}：${error.message}（${where}）`);
     }
-    if (response.status === 401) throw new Error("Server 拒绝了 Computer 凭证（401）");
-    if (!response.ok) {
-      const reason = await response.json().then(
-        (json: unknown) => (typeof json === "object" && json && "error" in json ? String(json.error) : undefined),
-        () => undefined,
-      );
-      throw new Error(`Server 返回 ${response.status}${reason ? `：${reason}` : ""}（${method} ${path}）`);
-    }
-    return schema ? schema.parse(await response.json()) : undefined;
   }
 }

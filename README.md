@@ -37,14 +37,14 @@
 
 ```text
 Electron 主进程（监管者）
- ├── 界面（React）      ── HTTP + SSE ──→  Server（Hono）── PostgreSQL、Redis
+ ├── 界面（React）      ── HTTP + SSE ──→  Server（Express）── PostgreSQL、Redis
  └── Computer            ── HTTP + SSE ──→  Server
       └── OpenCode（每轮一个进程，在 Seatbelt 中）── crew ──→  Server
 ```
 
 - 三个进程都在本机回环地址上通信。Server 是业务数据的唯一写者；Computer 只经 HTTP 访问它，不持有数据库凭证。
 - SSE 只推送“哪部分数据变了”，收到的一方重新读取，丢一条提示的代价只是晚一点刷新。
-- 全部用 TypeScript：zod 定义跨进程的协议，`hono/client` 让界面直接得到 Server 接口的类型。
+- 全部用 TypeScript：protocol 包用 zod 定义接口契约，Server 按它注册路由，界面与 Computer 按它调用并校验响应；改一个字段，两边一起在类型检查中报错。
 
 详见 [docs/architecture.md](docs/architecture.md)。
 

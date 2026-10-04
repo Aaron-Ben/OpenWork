@@ -1,9 +1,8 @@
-import type { RoomId } from "@crew/protocol";
+import { api, type RoomId } from "@crew/protocol";
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "./api";
+import { server } from "./api";
 import { queryKeys } from "./keys";
 import type { NewAgentInput } from "./new-agent";
-import { request } from "./server";
 
 /**
  * 数据只在两种时候重新获取：SSE 提示某部分变了，或 SSE 重连成功（见 events.ts）。
@@ -20,14 +19,14 @@ export function createQueryClient(): QueryClient {
 export function useAgents() {
   return useQuery({
     queryKey: queryKeys.agents,
-    queryFn: async () => request(api.desktop.agents.$get()),
+    queryFn: () => server.call(api.desktop.listAgents),
   });
 }
 
 export function useMessages(roomId: RoomId) {
   return useQuery({
     queryKey: queryKeys.messages(roomId),
-    queryFn: async () => request(api.desktop.rooms[":roomId"].messages.$get({ param: { roomId } })),
+    queryFn: () => server.call(api.desktop.listMessages, { params: { roomId } }),
   });
 }
 
@@ -38,7 +37,7 @@ export function useMessages(roomId: RoomId) {
 export function useModels(enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.models,
-    queryFn: async () => request(api.desktop.models.$get()),
+    queryFn: () => server.call(api.desktop.listModels),
     enabled,
     staleTime: 0,
     refetchOnMount: "always",
@@ -48,8 +47,7 @@ export function useModels(enabled: boolean) {
 export function useSendMessage(roomId: RoomId) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (body: string) =>
-      request(api.desktop.rooms[":roomId"].messages.$post({ param: { roomId }, json: { body } })),
+    mutationFn: (body: string) => server.call(api.desktop.sendMessage, { params: { roomId }, body: { body } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.messages(roomId) }),
   });
 }
@@ -57,7 +55,7 @@ export function useSendMessage(roomId: RoomId) {
 export function useCreateAgent() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: NewAgentInput) => request(api.desktop.agents.$post({ json: input })),
+    mutationFn: (input: NewAgentInput) => server.call(api.desktop.createAgent, { body: input }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.agents }),
   });
 }

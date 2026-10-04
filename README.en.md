@@ -37,14 +37,14 @@ Next, in order: group coordination (several agents, deciding who speaks), boards
 
 ```text
 Electron main process (supervisor)
- ├── UI (React)       ── HTTP + SSE ──→  Server (Hono) ── PostgreSQL, Redis
+ ├── UI (React)       ── HTTP + SSE ──→  Server (Express) ── PostgreSQL, Redis
  └── Computer         ── HTTP + SSE ──→  Server
       └── OpenCode (one process per turn, in Seatbelt) ── crew ──→  Server
 ```
 
 - All three processes talk over loopback. The Server is the only writer of business data; the Computer reaches it only over HTTP and holds no database credentials.
 - SSE carries only "this part of the data changed". The receiver re-reads it, so a lost hint only delays a refresh.
-- Everything is TypeScript: zod defines the cross-process protocol, and `hono/client` gives the UI typed access to the Server's API.
+- Everything is TypeScript: the protocol package defines the API contract with zod. The Server registers its routes from it, and the UI and the Computer call it and validate responses against it, so changing a field breaks the type check on both sides.
 
 See [docs/architecture.md](docs/architecture.md) (Chinese).
 

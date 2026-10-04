@@ -43,3 +43,9 @@
 - **现象：** Agent 在沙箱里能写自己的目录。它可以把 `work/` 换成指向 `$HOME` 别处的符号链接，Computer 重建它的 Runner 时就会在沙箱外建目录、改权限；把 `session.json` 换成命名管道，Computer 读它时会永远等下去。
 - **规则：** 不受沙箱约束的一方，操作不可信方能写的路径之前，逐级用 `lstat` 确认是真正的目录或普通文件，遇到符号链接与特殊文件就拒绝，并把原因上报。
 - **出处：** `packages/computer/src/home.ts` 的 `ensureDirUnder` 与 `resumableSession`；`packages/computer/src/daemon.ts` 给准备失败的 Agent 上报 error。
+
+## 浏览器 API 要以原来的方式调用
+
+- **现象：** 接口客户端把全局的 `fetch` 存成自己的属性，再用 `this.fetchFn(...)` 调用。Node 里一切正常，测试全部通过；界面里却报 “Failed to execute 'fetch' on 'Window': Illegal invocation”，Agent 列表读不出来。浏览器的 `fetch` 只能以 `window` 为 `this` 调用。
+- **规则：** 存起来的 `fetch` 一类浏览器 API，先取到局部变量再当作普通函数调用。只在 Node 里跑的测试测不出这一类问题，改了界面用到的代码要在真实界面里跑一次（`pnpm preview:shot`）。
+- **出处：** `packages/protocol/src/client.ts` 的 `ApiClient.call`；`packages/protocol/test/client.test.ts` 用一个检查 `this` 的假 `fetch` 防止回退。

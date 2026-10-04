@@ -13,7 +13,7 @@ afterAll(async () => {
 });
 
 function call(token: string, path: string, method = "GET", body?: unknown) {
-  return t.app.request(path, {
+  return t.request(path, {
     method,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),

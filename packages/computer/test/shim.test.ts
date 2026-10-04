@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function newAgent(displayName: string): Promise<ComputerAgent> {
-  const response = await t.app.request("/desktop/agents", {
+  const response = await t.request("/desktop/agents", {
     method: "POST",
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({ displayName, persona: "同事", model: "fake/model" }),
@@ -66,7 +66,7 @@ async function crew(args: string[], run: Run = {}) {
 }
 
 async function bodies(roomId: RoomId): Promise<string[]> {
-  const response = await t.app.request(`/desktop/rooms/${roomId}/messages`, {
+  const response = await t.request(`/desktop/rooms/${roomId}/messages`, {
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}` },
   });
   const messages = (await response.json()) as Array<{ body: string }>;

@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { ApiClient } from "@crew/protocol";
 import { createTestDatabase, testEnv } from "@crew/server/testing";
 import { type Runtime, startRuntime } from "../../electron/runtime";
-import { createServerClient, type ServerClient } from "../../src/lib/server";
 
 // 冒烟测试与真实模型 e2e 共用：构建应用，再用主进程同一份 startRuntime 启动构建好的 Server 与 Computer。
 
@@ -15,7 +15,7 @@ export const electronPath = join(desktop, "node_modules/electron/dist/Electron.a
 
 export interface BuiltApp {
   runtime: Runtime;
-  client: ServerClient;
+  client: ApiClient;
   /** 停止 Server 与 Computer，删除构建产物、临时数据库与临时目录。 */
   close(): Promise<void>;
 }
@@ -65,7 +65,7 @@ export async function startBuiltApp(
     });
     return {
       runtime,
-      client: createServerClient(runtime.serverUrl, runtime.desktopToken),
+      client: new ApiClient({ baseUrl: runtime.serverUrl, token: runtime.desktopToken }),
       close: async () => {
         await runtime.stop();
         await cleanup();

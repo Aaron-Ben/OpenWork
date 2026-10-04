@@ -4,7 +4,6 @@ import { canSend, shouldSend } from "../src/lib/composer";
 import { keysForEvent, queryKeys } from "../src/lib/keys";
 import { selectedModel, validateNewAgent } from "../src/lib/new-agent";
 import { isNearBottom } from "../src/lib/scroll";
-import { errorMessage } from "../src/lib/server";
 import { statusView } from "../src/lib/status";
 import { formatMessageTime } from "../src/lib/time";
 
@@ -122,16 +121,5 @@ describe("selectedModel", () => {
 
   it("is empty while there are no models", () => {
     expect(selectedModel(undefined, [])).toBe("");
-  });
-});
-
-describe("errorMessage", () => {
-  it("uses the server's reason", () => {
-    expect(errorMessage({ error: "名字不能为空" }, 400)).toBe("名字不能为空");
-  });
-
-  it("falls back to the status code", () => {
-    expect(errorMessage("Internal Server Error", 500)).toBe("Server 返回 500");
-    expect(errorMessage(undefined, 502)).toBe("Server 返回 502");
   });
 });

@@ -1,4 +1,4 @@
-import { DesktopEvent, runEventStream } from "@crew/protocol";
+import { DesktopEvent, EVENT_STREAMS, runEventStream } from "@crew/protocol";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { keysForEvent } from "./keys";
@@ -16,7 +16,7 @@ export function useServerEvents(): Connection {
   useEffect(() => {
     const controller = new AbortController();
     void runEventStream({
-      url: new URL("/desktop/events", window.crew.serverUrl).toString(),
+      url: new URL(EVENT_STREAMS.desktop, window.crew.serverUrl).toString(),
       headers: { Authorization: `Bearer ${window.crew.desktopToken}` },
       schema: DesktopEvent,
       signal: controller.signal,

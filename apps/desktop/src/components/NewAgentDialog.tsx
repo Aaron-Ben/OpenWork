@@ -1,6 +1,7 @@
 import type { AgentId } from "@crew/protocol";
+import { DISPLAY_NAME_MAX, PERSONA_MAX } from "@crew/protocol";
 import { useState } from "react";
-import { DISPLAY_NAME_MAX, type NewAgentErrors, PERSONA_MAX, selectedModel, validateNewAgent } from "../lib/new-agent";
+import { type NewAgentErrors, selectedModel, validateNewAgent } from "../lib/new-agent";
 import { useCreateAgent, useModels } from "../lib/queries";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";

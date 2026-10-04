@@ -1,52 +1,40 @@
-import { AgentId, AgentStatus, RoomId } from "@crew/protocol";
-import { Hono } from "hono";
-import { z } from "zod";
+import { api, EVENT_STREAMS } from "@crew/protocol";
+import type { Express } from "express";
 import { assertAgentExists, listAgents } from "../agents";
 import type { ServerContext } from "../context";
-import { eventStream, requireToken, validate } from "../http";
+import { eventStream, route } from "../http";
 import { acknowledge, readInbox } from "../messages";
 
-const AgentParam = z.object({ agentId: AgentId });
+/** Computer 调用的接口。凭证在 app.ts 中按路径前缀统一处理。 */
+export function computerRoutes(app: Express, ctx: ServerContext): void {
+  // Computer 启动时调用，确认地址与凭证可用。
+  route(app, api.computer.connect, () => undefined);
 
-const AckBody = z.object({
-  acks: z.array(z.object({ roomId: RoomId, seq: z.number().int().nonnegative() })).min(1),
-});
+  route(app, api.computer.listAgents, () => listAgents(ctx.db));
 
-/** Computer 调用的接口，只接受 Computer 凭证。 */
-export function computerRoutes(ctx: ServerContext, computerToken: string) {
-  return new Hono()
-    .use(requireToken(computerToken))
-    .post("/connect", (c) => {
-      // Computer 启动时调用，确认地址与凭证可用。
-      return c.body(null, 204);
-    })
-    .get("/agents", async (c) => c.json(await listAgents(ctx.db)))
-    .get("/events", (c) => eventStream(c, ctx.events.computer))
-    .get("/agents/:agentId/inbox", validate("param", AgentParam), async (c) => {
-      return c.json(await readInbox(ctx.db, c.req.valid("param").agentId));
-    })
-    .post("/agents/:agentId/inbox/ack", validate("param", AgentParam), validate("json", AckBody), async (c) => {
-      const { agentId } = c.req.valid("param");
-      for (const { roomId, seq } of c.req.valid("json").acks) {
-        await acknowledge(ctx.db, agentId, roomId, seq);
-      }
-      return c.body(null, 204);
-    })
-    .post("/agents/:agentId/token", validate("param", AgentParam), async (c) => {
-      const { agentId } = c.req.valid("param");
-      await assertAgentExists(ctx.db, agentId);
-      return c.json({ token: ctx.state.issueAgentToken(agentId) });
-    })
-    .post("/agents/:agentId/status", validate("param", AgentParam), validate("json", AgentStatus), async (c) => {
-      const { agentId } = c.req.valid("param");
-      await assertAgentExists(ctx.db, agentId);
-      ctx.state.setStatus(agentId, c.req.valid("json"));
-      ctx.events.desktop.publish({ type: "agents" });
-      return c.body(null, 204);
-    })
-    .post("/models", validate("json", z.object({ models: z.array(z.string().min(1)) })), (c) => {
-      ctx.state.setModels(c.req.valid("json").models);
-      ctx.events.desktop.publish({ type: "models" });
-      return c.body(null, 204);
-    });
+  route(app, api.computer.readInbox, ({ params }) => readInbox(ctx.db, params.agentId));
+
+  route(app, api.computer.acknowledge, async ({ params, body }) => {
+    for (const { roomId, seq } of body.acks) {
+      await acknowledge(ctx.db, params.agentId, roomId, seq);
+    }
+  });
+
+  route(app, api.computer.issueAgentToken, async ({ params }) => {
+    await assertAgentExists(ctx.db, params.agentId);
+    return { token: ctx.state.issueAgentToken(params.agentId) };
+  });
+
+  route(app, api.computer.reportStatus, async ({ params, body }) => {
+    await assertAgentExists(ctx.db, params.agentId);
+    ctx.state.setStatus(params.agentId, body);
+    ctx.events.desktop.publish({ type: "agents" });
+  });
+
+  route(app, api.computer.reportModels, ({ body }) => {
+    ctx.state.setModels(body.models);
+    ctx.events.desktop.publish({ type: "models" });
+  });
+
+  app.get(EVENT_STREAMS.computer, (request, response) => eventStream(request, response, ctx.events.computer));
 }

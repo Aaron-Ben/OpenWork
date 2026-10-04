@@ -69,7 +69,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `POST /agent/reply` | Agent | 以凭证对应的 Agent 身份在房间里回复 |
 
 - 凭证用 `Authorization: Bearer`。缺少或不对时返回 401 与 `{ "error": "凭证无效" }`。
-- 错误响应一律是 `{ "error": 原因 }`。请求校验失败时返回 400 与第一条校验错误；未预料的错误返回 500 与 “Server 内部错误”。
+- 错误响应一律是 `{ "error": 原因 }`。请求校验失败时返回 400 与第一条校验错误；请求体不是合法 JSON 时返回 400；请求体超过 1 MB 时返回 413；没有匹配的接口时返回 404；未预料的错误返回 500 与 “Server 内部错误”。
+- 接口的方法、路径、参数与响应由 `packages/protocol/src/api.ts` 的契约定义，Server 用 `route()` 按契约注册（`packages/server/src/http.ts`）。
 - 只有界面的来源（`CREW_RENDERER_ORIGIN`）可以跨域调用 `/desktop/*`。
 - SSE 每 15 秒发一行注释保持连接。断线期间的提示不补发，客户端重连后重新读取全部数据（`packages/protocol/src/sse.ts`）。
 - SSE 响应带 `Connection: close`：流结束时连接一起关闭，不以 keep-alive 的形式留着拖住关闭。
@@ -86,6 +87,6 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | 未读消息从已读位置之后开始，已读位置只前进 | `api.test.ts` 的 `inbox` |
 | Agent 不能在非成员的房间回复；换发凭证后旧凭证失效 | `api.test.ts` 的 `agent replies` |
 | 状态与模型上报后通知界面 | `api.test.ts` 的 `status and models` |
-| 三类凭证互不通用；CORS 只允许界面来源 | `packages/server/test/app.test.ts` |
+| 三类凭证互不通用；CORS 只允许界面来源；不合法的请求体、过大的请求体与不存在的接口都返回 JSON 错误 | `packages/server/test/app.test.ts` |
 | SSE 能被共用的读取器读到，中止后干净结束；Server 关闭通道时 SSE 立即结束 | `api.test.ts` 的 `events over SSE` |
 | 界面正在读 SSE 时，Server 也能在 1 秒内关闭 | `packages/server/test/serve.test.ts` |

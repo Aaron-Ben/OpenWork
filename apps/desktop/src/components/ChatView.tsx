@@ -1,8 +1,8 @@
+import type { DesktopAgent as Agent, RoomMessage as Message } from "@crew/protocol";
 import { useLayoutEffect, useRef, useState } from "react";
 import { canSend, shouldSend } from "../lib/composer";
 import { useMessages, useSendMessage } from "../lib/queries";
 import { isNearBottom } from "../lib/scroll";
-import type { Agent, Message } from "../lib/server";
 import { statusView } from "../lib/status";
 import { formatMessageTime } from "../lib/time";
 import { Markdown } from "./Markdown";

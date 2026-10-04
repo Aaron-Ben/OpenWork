@@ -31,13 +31,13 @@ Electron 主进程（监管者）
 
 | 包 | 内容 | 依赖 |
 |---|---|---|
-| `packages/protocol` | 跨进程的类型与 zod schema、branded ID、stdio 握手、SSE 读取 | 无 |
-| `packages/server` | Hono 接口、drizzle 数据库、进程内事件、运行期状态 | protocol |
+| `packages/protocol` | 跨进程的类型与 zod schema、接口契约与 `ApiClient`、branded ID、stdio 握手、SSE 读取 | 无 |
+| `packages/server` | Express 接口、drizzle 数据库、进程内事件、运行期状态 | protocol |
 | `packages/computer` | Agent 宿主：Runner、OpenCode 适配器、Seatbelt、`~/.crew` 目录、`crew` 命令 | protocol |
-| `apps/desktop` | Electron 主进程与 preload（`electron/`）、界面（`src/`） | protocol；只引用 server 的类型 |
+| `apps/desktop` | Electron 主进程与 preload（`electron/`）、界面（`src/`） | protocol；测试引用 server 的测试辅助 |
 
 - 包之间直接引用 TypeScript 源码，没有构建步骤。Server、Computer 与 `crew` 由 electron-vite 作为主进程配置的额外入口打包到 `out/main/`，用 Electron 自带的 Node 运行。
-- Computer 不引用 server，只经 HTTP 访问它。界面只引用 server 的 `AppType`，`hono/client` 由此得到有类型的接口。
+- Computer 与界面都不引用 server，只经 HTTP 访问它。接口的方法、路径、参数与响应由 `packages/protocol/src/api.ts` 的契约定义：Server 按它注册路由，返回值必须符合响应的类型；客户端用 `ApiClient` 按它调用并校验响应。
 - 一个模块只有一个使用方时并进使用方，例如沙箱代码与 `crew` 都在 `packages/computer` 内。
 
 ## 3. 数据与状态归属

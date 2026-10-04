@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 
 function desktop(path: string, method = "GET", body?: unknown) {
-  return t.app.request(path, {
+  return t.request(path, {
     method,
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -110,7 +110,7 @@ describe("ComputerDaemon", () => {
     await until(() => existsSync(tokenFile(agent.id)));
 
     const token = await readFile(tokenFile(agent.id), "utf8");
-    const reply = await t.app.request("/agent/reply", {
+    const reply = await t.request("/agent/reply", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ roomId: agent.roomId, body: "我是 Tokened" }),

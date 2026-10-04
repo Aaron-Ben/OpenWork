@@ -22,7 +22,7 @@
 
 ## 2. 原则
 
-- **只替换昂贵或不确定的边界。** 模型与时钟可以替换，数据库、Redis、Seatbelt 与 HTTP 用真实实现。例如 `packages/computer/test/runner.test.ts` 用内存中的真实 Server 应用与临时数据库，只把 Engine 换成按脚本回复的假 Engine。
+- **只替换昂贵或不确定的边界。** 模型与时钟可以替换，数据库、Redis、Seatbelt 与 HTTP 用真实实现。例如 `packages/computer/test/runner.test.ts` 用真实的 Server 应用与临时数据库，只把 Engine 换成按脚本回复的假 Engine。
 - **验证真实世界，不相信自我报告。** 断言重新读取数据库或文件，不只看被测对象返回了什么。例如 shim 测试从 Server 读回消息，而不是只看命令的输出。失败分支断言没有副作用：没有写库，没有改文件。
 - **走真实入口。** 冒烟测试运行构建产物，由 Electron 以 Node 方式执行，与用户运行的是同一套代码与启动路径。只跑源码测不出打包、模块解析与启动顺序的问题。
 - **测试自己拥有资源。** 测试创建的资源由测试释放，失败时也一样，做法见第 5 节。只在单独运行时才通过的测试，是测试本身的缺陷。
@@ -47,7 +47,7 @@
 vitest 同时运行多个测试文件，`pnpm -r test` 让各包并行；它们共用同一个 PostgreSQL、Redis 与本机端口。每个测试占用的资源都要有私有的分配方式和明确的释放点。
 
 - **数据库：** 每个测试文件用 `createTestDatabase` 建自己的临时数据库，结束时删除。
-- **Server：** 优先用 `createTestApp`：真实的路由与数据库，经 `t.fetch` 在内存中调用，不占端口。需要真实端口时监听 `127.0.0.1:0`，在“已监听”之后读取分配到的端口。
+- **Server：** 用 `createTestApp`：真实的路由与数据库，监听在 `127.0.0.1` 的随机端口上，请求走真实的 HTTP 连接。`t.request(路径)` 直接请求它；`t.fetch` 可以交给客户端，不论 URL 写的是哪个主机都发到这个 Server。自己起服务时监听 `127.0.0.1:0`，在“已监听”之后读取分配到的端口。
 - **目录：** 用 `mkdtemp` 建私有的临时目录。不写真实的 `~/.crew`，路径经参数注入。冒烟测试把构建产物、crew 目录都放在自己的临时目录里，同时运行的两次检查互不影响。
 - **全局状态：** 优先注入依赖，不改全局，例如 `ServerClient` 的 `fetchFn`、`crew` 的 `CliIo`。必须修改 `process.env`、计时器等时，记下原值，在 `finally` 中恢复。
 - **清理：** 资源一创建就注册清理，并等到结束信号：`await runtime.stop()` 等子进程退出，`await` SSE 循环返回。只调用 `abort()` 或 `kill()` 而不等待，清理就没有完成。子进程、流与取消的写法另见 [defensive-patterns.md](defensive-patterns.md)。

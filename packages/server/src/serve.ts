@@ -1,6 +1,5 @@
-import type { Server } from "node:http";
-import { serve } from "@hono/node-server";
-import type { createApp } from "./app";
+import { createServer, type Server } from "node:http";
+import type { Express } from "express";
 
 // HTTP 服务的启动与关闭。从 main.ts 分出来，测试能用真实的 HTTP 连接验证关闭行为。
 
@@ -8,10 +7,17 @@ import type { createApp } from "./app";
 const SHUTDOWN_GRACE_MS = 2_000;
 
 /** 在 `127.0.0.1` 的随机端口上监听。 */
-export function listen(app: ReturnType<typeof createApp>): Promise<{ server: Server; port: number }> {
-  return new Promise((resolve) => {
-    const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (info) => {
-      resolve({ server: server as Server, port: info.port });
+export function listen(app: Express): Promise<{ server: Server; port: number }> {
+  const server = createServer(app);
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("Server 没有监听在 TCP 端口上"));
+        return;
+      }
+      resolve({ server, port: address.port });
     });
   });
 }

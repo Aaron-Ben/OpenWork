@@ -1,8 +1,8 @@
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { api } from "@crew/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { request } from "../src/lib/server";
 import { type BuiltApp, electronPath, startBuiltApp, until } from "./support/built-app";
 
 // 冒烟测试：走真实入口。构建应用，启动构建好的 Server 与 Computer，只把模型换成假 opencode；
@@ -39,21 +39,17 @@ describe.skipIf(process.platform !== "darwin")("built app", () => {
 
     // Computer 启动后上报假 opencode 的模型列表。
     await until(async () => {
-      const models = await request(client.desktop.models.$get());
+      const models = await client.call(api.desktop.listModels);
       return models.includes("fake/model") ? models : undefined;
     }, 30_000);
 
-    const agent = await request(
-      client.desktop.agents.$post({ json: { displayName: "Smoke", persona: "冒烟测试", model: "fake/model" } }),
-    );
-    await request(
-      client.desktop.rooms[":roomId"].messages.$post({ param: { roomId: agent.roomId }, json: { body: "ping" } }),
-    );
+    const agent = await client.call(api.desktop.createAgent, {
+      body: { displayName: "Smoke", persona: "冒烟测试", model: "fake/model" },
+    });
+    await client.call(api.desktop.sendMessage, { params: { roomId: agent.roomId }, body: { body: "ping" } });
 
     const reply = await until(async () => {
-      const messages = await request(
-        client.desktop.rooms[":roomId"].messages.$get({ param: { roomId: agent.roomId } }),
-      );
+      const messages = await client.call(api.desktop.listMessages, { params: { roomId: agent.roomId } });
       return messages.find((message) => message.author.kind === "agent");
     }, 30_000);
     expect(reply.author).toMatchObject({ kind: "agent", id: agent.id, displayName: "Smoke" });
@@ -61,7 +57,7 @@ describe.skipIf(process.platform !== "darwin")("built app", () => {
 
     // Turn 成功结束后，Agent 回到空闲。
     await until(async () => {
-      const agents = await request(client.desktop.agents.$get());
+      const agents = await client.call(api.desktop.listAgents);
       return agents.find((item) => item.id === agent.id && item.status.state === "idle");
     }, 30_000);
   }, 60_000);

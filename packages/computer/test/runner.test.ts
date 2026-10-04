@@ -19,7 +19,7 @@ let client: ServerClient;
 beforeEach(async () => {
   t = await createTestApp();
   root = await realpath(await mkdtemp(join(tmpdir(), "crew-runner-test-")));
-  const created = await t.app.request("/desktop/agents", {
+  const created = await t.request("/desktop/agents", {
     method: "POST",
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({ displayName: "Alice", persona: "代码审查者", model: "opencode-go/deepseek-v4-pro" }),
@@ -47,7 +47,7 @@ async function newRunner(engine: FakeEngine) {
 }
 
 async function send(roomId: RoomId, body: string) {
-  const response = await t.app.request(`/desktop/rooms/${roomId}/messages`, {
+  const response = await t.request(`/desktop/rooms/${roomId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({ body }),

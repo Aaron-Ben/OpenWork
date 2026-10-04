@@ -1,1 +1,1 @@
-export { type AppOptions, type AppType, createApp } from "./app";
+export { type AppOptions, createApp } from "./app";

@@ -1,51 +1,36 @@
-import { MessageBody, RoomId } from "@crew/protocol";
-import { Hono } from "hono";
-import { z } from "zod";
-import { createAgent, listAgents } from "../agents";
+import { api, EVENT_STREAMS } from "@crew/protocol";
+import type { Express } from "express";
+import { type AgentSummary, createAgent, listAgents } from "../agents";
 import { notifyMessage, type ServerContext } from "../context";
-import { eventStream, requireToken, validate } from "../http";
+import { eventStream, route } from "../http";
 import { appendMessage, listMessages } from "../messages";
 
-const NewAgentBody = z.object({
-  displayName: z.string().trim().min(1, "名字不能为空").max(40, "名字最多 40 字符"),
-  persona: z.string().trim().min(1, "人设不能为空").max(4_000, "人设最多 4,000 字符"),
-  model: z.string().min(1, "请选择模型"),
-});
+/** 界面调用的接口。凭证与 CORS 在 app.ts 中按路径前缀统一处理。 */
+export function desktopRoutes(app: Express, ctx: ServerContext): void {
+  const view = (agent: AgentSummary) => ({
+    ...agent,
+    createdAt: agent.createdAt.toISOString(),
+    status: ctx.state.statusOf(agent.id),
+  });
 
-const RoomParam = z.object({ roomId: RoomId });
+  route(app, api.desktop.listAgents, async () => (await listAgents(ctx.db)).map(view));
 
-/** 界面调用的接口，只接受 Desktop 凭证。 */
-export function desktopRoutes(ctx: ServerContext, desktopToken: string) {
-  return new Hono()
-    .use(requireToken(desktopToken))
-    .get("/agents", async (c) => {
-      const agents = await listAgents(ctx.db);
-      return c.json(agents.map((agent) => ({ ...agent, status: ctx.state.statusOf(agent.id) })));
-    })
-    .post("/agents", validate("json", NewAgentBody), async (c) => {
-      const agent = await createAgent(ctx.db, ctx.localUserId, c.req.valid("json"));
-      ctx.events.desktop.publish({ type: "agents" });
-      ctx.events.computer.publish({ type: "agents" });
-      return c.json({ ...agent, status: ctx.state.statusOf(agent.id) }, 201);
-    })
-    .get("/rooms/:roomId/messages", validate("param", RoomParam), async (c) => {
-      return c.json(await listMessages(ctx.db, c.req.valid("param").roomId));
-    })
-    .post(
-      "/rooms/:roomId/messages",
-      validate("param", RoomParam),
-      validate("json", z.object({ body: MessageBody })),
-      async (c) => {
-        const result = await appendMessage(
-          ctx.db,
-          c.req.valid("param").roomId,
-          { kind: "user", id: ctx.localUserId },
-          c.req.valid("json").body,
-        );
-        notifyMessage(ctx, result);
-        return c.json(result.message, 201);
-      },
-    )
-    .get("/models", (c) => c.json(ctx.state.listModels()))
-    .get("/events", (c) => eventStream(c, ctx.events.desktop));
+  route(app, api.desktop.createAgent, async ({ body }) => {
+    const agent = await createAgent(ctx.db, ctx.localUserId, body);
+    ctx.events.desktop.publish({ type: "agents" });
+    ctx.events.computer.publish({ type: "agents" });
+    return view(agent);
+  });
+
+  route(app, api.desktop.listMessages, ({ params }) => listMessages(ctx.db, params.roomId));
+
+  route(app, api.desktop.sendMessage, async ({ params, body }) => {
+    const result = await appendMessage(ctx.db, params.roomId, { kind: "user", id: ctx.localUserId }, body.body);
+    notifyMessage(ctx, result);
+    return result.message;
+  });
+
+  route(app, api.desktop.listModels, () => ctx.state.listModels());
+
+  app.get(EVENT_STREAMS.desktop, (request, response) => eventStream(request, response, ctx.events.desktop));
 }

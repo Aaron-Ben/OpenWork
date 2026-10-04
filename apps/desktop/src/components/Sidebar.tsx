@@ -1,7 +1,6 @@
-import type { AgentId } from "@crew/protocol";
+import type { DesktopAgent as Agent, AgentId } from "@crew/protocol";
 import { cn } from "../lib/cn";
 import type { Connection } from "../lib/events";
-import type { Agent } from "../lib/server";
 import { statusView } from "../lib/status";
 import { StatusTag } from "./StatusTag";
 import { Button } from "./ui/button";

@@ -12,7 +12,8 @@ export interface MessageView {
   seq: number;
   author: { kind: "user" | "agent"; id: string; displayName: string };
   body: string;
-  createdAt: Date;
+  /** ISO 8601 时间。视图直接交给 JSON 响应。 */
+  createdAt: string;
 }
 
 export interface AppendResult {
@@ -112,7 +113,14 @@ function toView(row: MessageRow): MessageView {
   const author = row.authorUserId
     ? { kind: "user" as const, id: row.authorUserId, displayName: row.userName ?? "" }
     : { kind: "agent" as const, id: row.authorAgentId ?? "", displayName: row.agentName ?? "" };
-  return { id: row.id, roomId: row.roomId, seq: row.seq, author, body: row.body, createdAt: row.createdAt };
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    seq: row.seq,
+    author,
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 /** 房间里的全部消息，按序号排列。 */

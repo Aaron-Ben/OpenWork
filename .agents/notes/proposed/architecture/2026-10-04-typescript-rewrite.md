@@ -20,7 +20,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - 现有协作规则（triage 判定、HELD、water-fill 分批等）是做到对应功能时讨论的参考方案之一，不是必须照搬的行为。
 - 具体实现决策在对应步骤开始前逐个讨论，按根 [AGENTS.md](../../../../AGENTS.md) 的规则进行。下文“进程与通信”“包划分”“Agent 运行”“写操作分层”中的实现细节是初步建议，到对应步骤再定。
 
-已经确定的决策：全部代码用 TypeScript；Desktop、Server、Computer 三个进程；PostgreSQL 与 Redis；Hono；Electron；Engine 必须在 Seatbelt 中运行；在 `refactor` 分支开发，新代码与 Rust 代码并存到最后一步。
+已经确定的决策：全部代码用 TypeScript；Desktop、Server、Computer 三个进程；PostgreSQL 与 Redis；Express 5；Electron；Engine 必须在 Seatbelt 中运行；在 `refactor` 分支开发，新代码与 Rust 代码并存到最后一步。
 
 ### 进程与通信
 
@@ -56,7 +56,7 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 
 | 用途 | 选择 |
 |---|---|
-| HTTP 框架 | Hono。界面用 `hono/client` 获得有类型的接口客户端 |
+| HTTP 框架 | Express 5。接口契约（方法、路径、参数、请求体与响应的 zod schema）在 `packages/protocol/src/api.ts`：Server 按它注册路由，界面与 Computer 用 `ApiClient` 按它调用 |
 | 协议校验 | zod |
 | 数据库访问 | drizzle-orm，驱动用 `pg` |
 | Redis | ioredis |
@@ -206,7 +206,7 @@ git hooks 用 lefthook，只做快速检查，做法来自 DSH 的 `dsh:lefthook
 
 **界面连接 Server**
 
-- 界面直接调用 Server，用 `hono/client` 获得有类型的客户端，请求带 `Authorization: Bearer <Desktop 凭证>`。
+- 界面直接调用 Server，按 protocol 的接口契约用 `ApiClient` 调用，请求带 `Authorization: Bearer <Desktop 凭证>`。
 - SSE 用 `fetch` 读取，凭证放在请求头。浏览器的 `EventSource` 不能设置请求头。
 - Server 的 CORS 只允许界面的来源。
 - 主进程先启动 Server 与 Computer 并等到 ready，再创建窗口。preload 用 `ipcRenderer.sendSync` 向主进程索取一次地址与凭证，再经 `contextBridge` 只向页面暴露 `window.crew.serverUrl` 与 `window.crew.desktopToken`。凭证不经过 `additionalArguments`，因为那会把它放进渲染进程的命令行参数，本机其他用户可以用 `ps` 看到。窗口保持 Electron 的默认安全设置：上下文隔离、关闭 Node 集成、启用沙箱。
@@ -319,7 +319,7 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 
 **守护进程用 Rust，Server 用 Go，只有前端用 TypeScript。** 一个功能要改两到三种语言，协议类型要在三种语言间同步，还要维护三套工具链。性能收益落不到用户可感知的地方，也与转向 TypeScript 的初衷相反。
 
-**HTTP 框架用 Express。** raft 与 cumora 都用 Express（各自的 `package.json`）。没有采用，因为 Hono 能让 Server 的路由类型直接约束前端调用。
+**HTTP 框架用 Hono。** 第 1、2 步用过：`hono/client` 让界面直接得到 Server 路由的类型，测试可以在内存中调用应用。后来换成 Express 5，原因有两个。一是 Hono 的 `streamSSE` 用 `c.header()` 写入 `Connection: keep-alive`，Hono 设置响应时又会用上下文里的头覆盖返回的 Response；SSE 结束后连接空闲地留着，Server 关闭时要等满 5 秒，被主进程 SIGKILL，修正它要绕过这些藏起来的行为。二是 raft 与 cumora 都用 Express，并且手写 SSE 响应（`raft:packages/server/src/routes/internalAgentApi.ts`、`cumora:server/src/agents/runtime/wake-bus.ts`）。换掉之后，类型联动改由 protocol 的接口契约保证；测试改为监听随机端口，走真实的 HTTP 连接，也因此能测出连接复用一类的问题（`packages/server/test/serve.test.ts`）。
 
 **保留 Tauri。** Tauri 使用系统 WebView，内存占用低于 Electron。没有采用，因为两个参考项目都用 Electron，而且 Electron 自带的 Node 运行时可以直接运行 shim。
 
@@ -339,9 +339,9 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 
 **重新启动自身并带上角色参数。** raft（`raft:apps/raft-desktop-electron/src/app/index.ts` 的 `findHeadlessMode`）与 Tauri 版都这样做。没有采用：入口必须在任何界面代码之前识别角色参数，raft 的注释记录了漏掉参数时子进程打开第二个窗口的缺陷。
 
-**界面经主进程转发调用 Server。** Tauri 版这样做，凭证不进入页面。没有采用：每个接口多一层 IPC，`hono/client` 的端到端类型断开。页面被攻击时，攻击者同样可以让主进程替它转发请求，转发带来的隔离有限。
+**界面经主进程转发调用 Server。** Tauri 版这样做，凭证不进入页面。没有采用：每个接口多一层 IPC，接口契约的端到端类型要在 IPC 上再接一次。页面被攻击时，攻击者同样可以让主进程替它转发请求，转发带来的隔离有限。
 
-**由主进程拦截请求并自动加上凭证。** Electron 的 `session.webRequest` 可以修改页面发出的请求头，凭证不进入页面，`hono/client` 仍然可用。没有采用：页面代码看不出凭证从哪里来，排查与讲解都更难。
+**由主进程拦截请求并自动加上凭证。** Electron 的 `session.webRequest` 可以修改页面发出的请求头，凭证不进入页面，`ApiClient` 仍然可用。没有采用：页面代码看不出凭证从哪里来，排查与讲解都更难。
 
 **把凭证放在 SSE 的 URL 中。** 可以继续用浏览器的 `EventSource`。没有采用：凭证会出现在 URL 与日志中。
 
@@ -398,7 +398,7 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 - Electron 的内存占用高于 Tauri。
 - 演示前需要安装 Docker 并启动 PostgreSQL 与 Redis。
 - 开发期间 Rust 与 TypeScript 两套代码并存。Rust 代码不再加功能，只修影响旧版本运行的问题。
-- Hono 的生态小于 Express，参考项目中的 Express 路由写法需要转换。
+- 接口契约与 `route()`（`packages/server/src/http.ts`）是自己维护的一层。SSE 接口不在契约里，路径靠 `EVENT_STREAMS` 常量共享。
 - Desktop 凭证存在页面的 JS 中。页面被注入脚本时，凭证可以被读取。凭证只在当前 RuntimeSession 内、只在 loopback 上有效。
 - 应用启动时，窗口要等 Server 就绪后才出现。
 - 从零实现时，现有 Rust 版已经解决的问题可能重新出现。做到对应功能时，先查现有的子系统页与 Agent Note。
