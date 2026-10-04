@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts real-opencode",
-    "test:smoke": "vitest run --config vitest.e2e.config.ts smoke"
+    "test:smoke": "vitest run --config vitest.e2e.config.ts smoke",
+    "preview:shot": "tsx scripts/preview-shot.ts"
   },
   "dependencies": {
     "@crew/protocol": "workspace:*",

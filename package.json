@@ -15,7 +15,8 @@
     "test": "pnpm -r test && vitest run scripts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:smoke",
     "test:smoke": "pnpm --filter @crew/desktop test:smoke",
-    "test:e2e": "pnpm --filter @crew/desktop test:e2e"
+    "test:e2e": "pnpm --filter @crew/desktop test:e2e",
+    "preview:shot": "pnpm --filter @crew/desktop preview:shot"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
