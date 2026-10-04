@@ -1,6 +1,6 @@
 import type { AgentId } from "@crew/protocol";
 import { useState } from "react";
-import { DISPLAY_NAME_MAX, type NewAgentErrors, PERSONA_MAX, validateNewAgent } from "../lib/new-agent";
+import { DISPLAY_NAME_MAX, type NewAgentErrors, PERSONA_MAX, selectedModel, validateNewAgent } from "../lib/new-agent";
 import { useCreateAgent, useModels } from "../lib/queries";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
@@ -36,7 +36,7 @@ function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
   const [errors, setErrors] = useState<NewAgentErrors>({});
 
   const modelList = models.data ?? [];
-  const model = chosenModel ?? modelList[0] ?? "";
+  const model = selectedModel(chosenModel, modelList);
   const noModels = models.isSuccess && modelList.length === 0;
 
   const submit = (event: React.FormEvent) => {
@@ -80,7 +80,9 @@ function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
         label="模型"
         htmlFor="agent-model"
         error={errors.model ?? (models.error ? `读取模型列表失败：${models.error.message}` : undefined)}
-        hint={noModels ? "Computer 还没有上报模型。确认 OpenCode 已登录后重启 Crew。" : undefined}
+        hint={
+          noModels ? "正在等 Computer 读取可用的模型。一直没有出现时，确认 OpenCode 已登录后重启 Crew。" : undefined
+        }
       >
         <Select value={model} onValueChange={setChosenModel} disabled={modelList.length === 0}>
           <SelectTrigger id="agent-model" aria-invalid={errors.model ? true : undefined}>

@@ -46,6 +46,7 @@ export function computerRoutes(ctx: ServerContext, computerToken: string) {
     })
     .post("/models", validate("json", z.object({ models: z.array(z.string().min(1)) })), (c) => {
       ctx.state.setModels(c.req.valid("json").models);
+      ctx.events.desktop.publish({ type: "models" });
       return c.body(null, 204);
     });
 }

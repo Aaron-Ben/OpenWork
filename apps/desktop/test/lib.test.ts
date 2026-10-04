@@ -2,7 +2,7 @@ import { RoomId } from "@crew/protocol";
 import { describe, expect, it } from "vitest";
 import { canSend, shouldSend } from "../src/lib/composer";
 import { keysForEvent, queryKeys } from "../src/lib/keys";
-import { validateNewAgent } from "../src/lib/new-agent";
+import { selectedModel, validateNewAgent } from "../src/lib/new-agent";
 import { isNearBottom } from "../src/lib/scroll";
 import { errorMessage } from "../src/lib/server";
 import { statusView } from "../src/lib/status";
@@ -19,6 +19,10 @@ describe("keysForEvent", () => {
 
   it("refreshes only the room that has new messages", () => {
     expect(keysForEvent({ type: "room.messages", roomId })).toEqual(["messages", roomId]);
+  });
+
+  it("refreshes the model list when the computer reports models", () => {
+    expect(keysForEvent({ type: "models" })).toEqual(queryKeys.models);
   });
 });
 
@@ -97,6 +101,27 @@ describe("validateNewAgent", () => {
       persona: "人设不能为空",
       model: "请选择模型",
     });
+  });
+});
+
+describe("selectedModel", () => {
+  const models = ["a/one", "b/two"];
+
+  it("keeps the model the user chose while it is still listed", () => {
+    expect(selectedModel("b/two", models)).toBe("b/two");
+  });
+
+  it("falls back to the first model when nothing or an empty value was chosen", () => {
+    expect(selectedModel(undefined, models)).toBe("a/one");
+    expect(selectedModel("", models)).toBe("a/one");
+  });
+
+  it("falls back to the first model when the chosen one is no longer listed", () => {
+    expect(selectedModel("c/gone", models)).toBe("a/one");
+  });
+
+  it("is empty while there are no models", () => {
+    expect(selectedModel(undefined, [])).toBe("");
   });
 });
 

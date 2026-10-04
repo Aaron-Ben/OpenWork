@@ -9,7 +9,7 @@ import { createTestDatabase, testEnv } from "@crew/server/testing";
 // 然后关闭应用、删除临时数据库。系统的红黄绿按钮不在截图里，它由 macOS 绘制。
 //
 // 用法：pnpm preview:shot [--out 文件] [--theme light|dark] [--eval 脚本]
-// --eval 在截图前于页面中执行一段 JavaScript，例如点开“新建 agent”对话框。
+// --eval 在截图前于页面中执行一段 JavaScript，例如点开“新建 agent”对话框；它的返回值会打印出来。
 
 const desktop = fileURLToPath(new URL("..", import.meta.url));
 const DEBUG_PORT = 9334;
@@ -141,7 +141,11 @@ try {
         features: [{ name: "prefers-color-scheme", value: values.theme }],
       });
     }
-    if (values.eval) await page.evaluate(values.eval);
+    if (values.eval) {
+      // 脚本的返回值打印出来，方便检查页面状态，而不只是看截图。
+      const result = await page.evaluate(values.eval);
+      if (result !== undefined) console.log(JSON.stringify(result, null, 2));
+    }
     // 等主题切换与脚本触发的渲染完成。
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
     const shot = await page.send("Page.captureScreenshot", { format: "png" });

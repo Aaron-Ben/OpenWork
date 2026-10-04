@@ -15,6 +15,8 @@ export function keysForEvent(event: DesktopEvent): readonly unknown[] {
       return queryKeys.agents;
     case "room.messages":
       return queryKeys.messages(event.roomId);
+    case "models":
+      return queryKeys.models;
     default:
       return assertNever(event);
   }

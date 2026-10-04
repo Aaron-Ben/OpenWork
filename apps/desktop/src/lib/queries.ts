@@ -31,7 +31,10 @@ export function useMessages(roomId: RoomId) {
   });
 }
 
-/** 模型列表没有对应的 SSE 提示，每次打开“新建 agent”时重新获取。 */
+/**
+ * 每次打开“新建 agent”时重新获取。Computer 启动后要几秒才上报模型，期间对话框可能已经打开，
+ * 上报时的 SSE 提示 `models` 让它自动刷新。
+ */
 export function useModels(enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.models,

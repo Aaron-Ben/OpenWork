@@ -187,8 +187,11 @@ describe("status and models", () => {
     expect(list.find((a) => a.id === agent.id)?.status).toEqual({ state: "working" });
   });
 
-  it("serve the model list reported by the computer", async () => {
-    await computer("/computer/models", "POST", { models: ["opencode-go/deepseek-v4-pro", "deepseek/deepseek-v4-pro"] });
+  it("serve the model list reported by the computer and tell the desktop to refresh it", async () => {
+    const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () =>
+      computer("/computer/models", "POST", { models: ["opencode-go/deepseek-v4-pro", "deepseek/deepseek-v4-pro"] }),
+    );
+    expect(events).toEqual([{ type: "models" }]);
     expect(await (await desktop("/desktop/models")).json()).toEqual([
       "opencode-go/deepseek-v4-pro",
       "deepseek/deepseek-v4-pro",

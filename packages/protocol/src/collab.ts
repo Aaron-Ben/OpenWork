@@ -53,6 +53,8 @@ export const DesktopEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("room.messages"), roomId: RoomId }),
   /** Agent 列表或某个 Agent 的状态变了。 */
   z.object({ type: z.literal("agents") }),
+  /** Computer 上报了新的可用模型列表。 */
+  z.object({ type: z.literal("models") }),
 ]);
 export type DesktopEvent = z.infer<typeof DesktopEvent>;
 

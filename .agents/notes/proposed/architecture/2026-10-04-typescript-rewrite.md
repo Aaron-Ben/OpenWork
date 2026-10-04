@@ -293,7 +293,7 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 - 系统的红黄绿按钮放进侧栏顶部（`titleBarStyle: "hiddenInset"`）。窗口只显示界面自己的页面：消息里的 http 与 https 链接交给系统浏览器打开，其余导航一律丢弃（`apps/desktop/electron/navigation.ts`）。
 - 组件按 shadcn/ui 的做法，第 2 步只需要按钮、输入框、文本域与对话框。
 - 来自 Server 的数据用 TanStack Query 获取与缓存。收到 SSE 失效提示时，`invalidateQueries` 让对应的数据重新获取。cumora（`cumora:src/stores/messages.ts` 的 `applyEvent`）与 raft 把推送来的消息正文合并进 zustand store，每种事件都要写合并逻辑。
-- Server 提供 `/desktop/events`（SSE），只发“某房间有新消息”与“Agent 列表或状态变了”两类提示。SSE 的解析用 eventsource-parser，重连循环自己写（从 1 秒开始指数退避，最长 30 秒），放在 protocol 包中，Computer 与界面共用。推送代码集中在一个模块里，以后改用 WebSocket 时只改这里。
+- Server 提供 `/desktop/events`（SSE），只发三类提示：某房间有新消息、Agent 列表或状态变了、Computer 上报了新的模型列表。SSE 的解析用 eventsource-parser，重连循环自己写（从 1 秒开始指数退避，最长 30 秒），放在 protocol 包中，Computer 与界面共用。推送代码集中在一个模块里，以后改用 WebSocket 时只改这里。
 - 新建 Agent 时填名字、人设与模型。Computer 启动时运行 `opencode models`，把可用模型列表上报给 Server，界面用下拉框显示。
 - Server 在内存中保存每个 Agent 的状态：空闲、回复中、出错（附原因）。Computer 在 Turn 开始、结束与失败时上报。界面在聊天底部显示“正在回复”，出错时在对话里写明原因与下一步。失败的 Turn 不推进已读位置，下一条消息到来时自动重试，所以不需要单独的重试按钮。
 - 消息正文按 Markdown 渲染，不渲染原始 HTML。代码块按围栏上写的语言高亮，不自动猜语言；高亮颜色同样是设计变量。highlight.js 输出类名，颜色交给 CSS，这一点与 cumora（`cumora:src/components/Message.tsx`）相同；raft 用 shiki（`raft:packages/web/src/components/markdown/shikiHighlighter.ts`），它异步加载，配色来自自带主题。
