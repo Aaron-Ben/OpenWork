@@ -30,6 +30,8 @@ export interface RuntimeOptions {
   executable: string;
   serverEntry: string;
   computerEntry: string;
+  /** drizzle-kit 生成的迁移目录，Server 启动时执行其中的迁移。 */
+  migrationsDir: string;
   /** 已经读入 `.env` 的环境变量，原样传给 Server。 */
   env: NodeJS.ProcessEnv;
   /** 渲染进程的 origin，Server 只允许它跨域调用。 */
@@ -66,7 +68,12 @@ export async function startRuntime(options: RuntimeOptions): Promise<Runtime> {
     name: "Server",
     executable: options.executable,
     entry: options.serverEntry,
-    env: { ...options.env, ...nodeEnv, CREW_RENDERER_ORIGIN: options.rendererOrigin },
+    env: {
+      ...options.env,
+      ...nodeEnv,
+      CREW_RENDERER_ORIGIN: options.rendererOrigin,
+      CREW_MIGRATIONS_DIR: options.migrationsDir,
+    },
     bootstrap: { runtimeSessionId, desktopToken, computerToken },
     readySchema: ServerReady,
   });

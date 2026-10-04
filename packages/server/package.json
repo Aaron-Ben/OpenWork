@@ -6,6 +6,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },

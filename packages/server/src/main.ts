@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server";
 import { Redis } from "ioredis";
 import pg from "pg";
 import { createApp } from "./app";
+import { createDatabase, ensureLocalUser, migrateDatabase } from "./db";
 
 // Server 进程入口，由 Desktop 主进程启动。stdout 只用来写 ready 消息，日志一律写 stderr。
 
@@ -53,10 +54,14 @@ async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
   const redisUrl = requireEnv("REDIS_URL");
   const rendererOrigin = requireEnv("CREW_RENDERER_ORIGIN");
+  const migrationsDir = requireEnv("CREW_MIGRATIONS_DIR");
 
   const bootstrap = await readMessage(createInterface({ input: process.stdin }), ServerBootstrap);
 
   const pool = await connectPostgres(databaseUrl);
+  const db = createDatabase(pool);
+  await migrateDatabase(db, migrationsDir);
+  await ensureLocalUser(db);
   const redis = await connectRedis(redisUrl);
 
   const app = createApp({

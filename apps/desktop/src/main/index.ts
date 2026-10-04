@@ -37,6 +37,7 @@ async function start(): Promise<void> {
     executable: process.execPath,
     serverEntry: join(import.meta.dirname, "server.js"),
     computerEntry: join(import.meta.dirname, "computer.js"),
+    migrationsDir: join(import.meta.dirname, "drizzle"),
     env: process.env,
     rendererOrigin: new URL(rendererUrl).origin,
   });

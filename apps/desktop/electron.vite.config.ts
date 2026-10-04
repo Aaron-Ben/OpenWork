@@ -1,3 +1,4 @@
+import { cpSync } from "node:fs";
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -22,9 +23,19 @@ function stubPgNative(): Plugin {
   };
 }
 
+/** 把 Server 的迁移目录复制到 `out/main/drizzle`，主进程经 `CREW_MIGRATIONS_DIR` 告诉 Server。 */
+function copyMigrations(): Plugin {
+  return {
+    name: "crew:copy-migrations",
+    writeBundle: () => {
+      cpSync(resolve(repoRoot, "packages/server/drizzle"), resolve(desktop, "out/main/drizzle"), { recursive: true });
+    },
+  };
+}
+
 export default defineConfig({
   main: {
-    plugins: [stubPgNative()],
+    plugins: [stubPgNative(), copyMigrations()],
     build: {
       // Server 与 Computer 用 Electron 自带的 Node 运行，不能在运行时加载 workspace 包的 TS 源码，
       // 所以把全部依赖打包进产物。
