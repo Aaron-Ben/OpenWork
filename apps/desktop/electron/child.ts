@@ -81,8 +81,11 @@ export async function startChild<Ready>(options: ChildOptions<Ready>): Promise<C
     throw new ChildStartError(`${options.name} 启动失败：${reason}`, stderr);
   }
 
+  // 记下意外退出：退出之后才注册的监听也要收到，否则这次崩溃就丢了。
+  let unexpectedExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   child.once("exit", (code, signal) => {
     if (stopping) return;
+    unexpectedExit = { code, signal };
     for (const listener of unexpectedExitListeners) listener(code, signal);
   });
 
@@ -92,7 +95,8 @@ export async function startChild<Ready>(options: ChildOptions<Ready>): Promise<C
     ready,
     stderrTail: () => stderr,
     onUnexpectedExit: (listener) => {
-      unexpectedExitListeners.push(listener);
+      if (unexpectedExit) listener(unexpectedExit.code, unexpectedExit.signal);
+      else unexpectedExitListeners.push(listener);
     },
     stop: async () => {
       stopping = true;

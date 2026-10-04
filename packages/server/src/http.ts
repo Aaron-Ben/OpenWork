@@ -32,17 +32,23 @@ export function validate<Target extends "json" | "param", Schema extends z.ZodTy
 /** SSE 连接空闲时发送注释行的间隔，避免中间层把连接当作空闲关闭。 */
 export const SSE_KEEPALIVE_MS = 15_000;
 
-/** 把一个事件通道转成 SSE 响应。连接断开时取消订阅。 */
+/** 把一个事件通道转成 SSE 响应。连接断开或通道关闭时结束，并取消订阅。 */
 export function eventStream<T>(c: Context, channel: Channel<T>): Response {
-  return streamSSE(c, async (stream) => {
+  const response = streamSSE(c, async (stream) => {
     const unsubscribe = channel.subscribe((event) => {
       void stream.writeSSE({ data: JSON.stringify(event) });
     });
     const keepalive = setInterval(() => {
       void stream.write(": keepalive\n\n");
     }, SSE_KEEPALIVE_MS);
-    await new Promise<void>((resolve) => stream.onAbort(resolve));
+    // 客户端断开，或 Server 关闭通道：两者都结束这个响应。
+    await Promise.race([new Promise<void>((resolve) => stream.onAbort(resolve)), channel.closed]);
     clearInterval(keepalive);
     unsubscribe();
   });
+  // 响应结束时同时关闭连接：否则 SSE 结束后连接空闲地留着，Server 关闭时 server.close() 要等它的 keep-alive
+  // 超时（5 秒），超过主进程给的宽限，被 SIGKILL。streamSSE 用 c.header() 写入 keep-alive，Hono 设置响应时
+  // 会把上下文里的响应头复制上去，所以要在它之后用 c.header() 改掉。
+  c.header("Connection", "close");
+  return response;
 }

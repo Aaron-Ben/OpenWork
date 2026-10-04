@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentId, ComputerAgent, type RoomId, RuntimeSessionId } from "@crew/protocol";
@@ -136,6 +136,23 @@ describe("ComputerDaemon", () => {
     await until(() => t.ctx.state.statusOf(agent.id).state === "error");
     expect(t.ctx.state.statusOf(agent.id)).toEqual({ state: "error", reason: "沙箱不可用：测试中关闭了沙箱" });
     expect(engine.requests).toHaveLength(0);
+  });
+
+  it("reports an unsafe agent directory and keeps serving the other agents", async () => {
+    const unsafe = await newAgent("Unsafe");
+    const safe = await newAgent("Safe");
+    // Agent 上一次运行时把自己的 work 目录换成了指向沙箱外的链接。
+    const outside = join(root, "outside");
+    await mkdir(outside);
+    await mkdir(join(root, "crew", "agents", unsafe.id), { recursive: true });
+    await symlink(outside, join(root, "crew", "agents", unsafe.id, "work"));
+    const engine = new FakeEngine([]);
+    await startDaemon(engine);
+
+    await until(() => t.ctx.state.statusOf(unsafe.id).state === "error");
+    expect(t.ctx.state.statusOf(unsafe.id)).toMatchObject({ state: "error" });
+    await send(safe.roomId, "你还在吗");
+    await until(() => engine.requests.length === 1);
   });
 
   it("removes this run's directory when it stops", async () => {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { AgentId, RuntimeSessionId } from "@crew/protocol";
@@ -50,6 +50,39 @@ export interface AgentLayout {
 async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
   await chmod(path, 0o700);
+}
+
+/** Agent 的目录里出现了符号链接或特殊文件。Computer 不受沙箱约束，不顺着这类路径操作。 */
+export class UnsafePathError extends Error {}
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/**
+ * 在 `base` 下逐级建好 `path`，权限 0700。
+ *
+ * `base` 是 Agent 的持久目录或本次运行目录，由 Computer 建立，Agent 改不了它的位置；它以下的每一级
+ * Agent 在沙箱里都能改，可能换成指向沙箱外的符号链接。所以每一级都用 lstat 确认是真正的目录。
+ */
+async function ensureDirUnder(base: string, path: string): Promise<void> {
+  const levels = [base];
+  for (const segment of relative(base, path).split("/").filter(Boolean)) {
+    levels.push(join(levels[levels.length - 1] ?? base, segment));
+  }
+  for (const [index, level] of levels.entries()) {
+    const info = await lstat(level).catch((error: unknown) => {
+      if (isMissing(error)) return undefined;
+      throw error;
+    });
+    if (!info) {
+      // base 的上级由 Computer 建立，可以递归创建；base 以下逐级创建。
+      await mkdir(level, { recursive: index === 0, mode: 0o700 });
+    } else if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new UnsafePathError(`${level} 不是普通目录`);
+    }
+    await chmod(level, 0o700);
+  }
 }
 
 /** 先写同目录下的临时文件再改名，读者看到的要么是旧内容，要么是新内容。 */
@@ -121,14 +154,14 @@ export function agentLayout(runtime: RuntimeLayout, agentId: AgentId): AgentLayo
 /** 建好 Agent 的持久目录与本次运行的目录，写入最新的 `AGENTS.md`。可以重复调用。 */
 export async function prepareAgent(runtime: RuntimeLayout, agent: AgentIdentity): Promise<AgentLayout> {
   const layout = agentLayout(runtime, agent.id);
-  for (const dir of [layout.workDir, layout.engineDataDir, layout.configDir, layout.cacheDir, layout.stateDir]) {
-    await ensureDir(dir);
-  }
+  for (const dir of [layout.workDir, layout.engineDataDir]) await ensureDirUnder(layout.home, dir);
+  for (const dir of [layout.configDir, layout.cacheDir, layout.stateDir]) await ensureDirUnder(layout.runtimeDir, dir);
   await writeFileAtomic(layout.instructionsFile, standingInstructions(agent), 0o600);
   return layout;
 }
 
 export async function writeAgentToken(layout: AgentLayout, token: string): Promise<void> {
+  await ensureDirUnder(layout.runtimeDir, layout.runtimeDir);
   await writeFileAtomic(layout.tokenFile, token, 0o600);
 }
 
@@ -154,12 +187,19 @@ function digest(text: string): string {
 
 /** 可以继续的 session ID。没有记录、记录损坏或条件变了时返回 `undefined`，调用方开新 session。 */
 export async function resumableSession(layout: AgentLayout, key: SessionKey): Promise<string | undefined> {
-  if (!existsSync(layout.sessionFile)) return undefined;
   let record: SessionRecord;
   try {
+    await ensureDirUnder(layout.home, dirname(layout.sessionFile));
+    const info = await lstat(layout.sessionFile).catch((error: unknown) => {
+      if (isMissing(error)) return undefined;
+      throw error;
+    });
+    if (!info) return undefined;
+    // 命名管道会让读取永远等下去，符号链接会读到别处：只读普通文件。
+    if (!info.isFile()) throw new UnsafePathError(`${layout.sessionFile} 不是普通文件`);
     record = SessionRecord.parse(JSON.parse(await readFile(layout.sessionFile, "utf8")));
   } catch (error) {
-    // 记录损坏时开新 session：丢掉的只是上下文的连续性，不影响正确性。
+    // 记录损坏或路径不安全时开新 session：丢掉的只是上下文的连续性，不影响正确性。
     console.error("[computer] session 记录无法读取，开新 session:", error);
     return undefined;
   }
@@ -177,6 +217,8 @@ export async function saveSession(layout: AgentLayout, key: SessionKey, sessionI
     model: key.model,
     instructionsDigest: digest(key.instructions),
   };
+  // Turn 期间 Agent 可能改了目录：写之前重新确认，不把文件写到沙箱外。
+  await ensureDirUnder(layout.home, dirname(layout.sessionFile));
   await writeFileAtomic(layout.sessionFile, `${JSON.stringify(record, null, 2)}\n`, 0o600);
 }
 

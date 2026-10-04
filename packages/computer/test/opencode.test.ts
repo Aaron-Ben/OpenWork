@@ -123,6 +123,29 @@ describe("OpenCodeAdapter.runTurn", () => {
     expect(() => process.kill(grandchild, 0)).toThrow();
   }, 15_000);
 
+  it("does not start opencode when it was stopped before the turn began", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const started = Date.now();
+    const outcome = await adapter().runTurn({
+      ...base,
+      signal: controller.signal,
+      env: { ...base.env, FAKE_MODE: "hang" },
+    });
+    expect(outcome).toEqual({ ok: false, error: { kind: "cancelled", message: "已停止" } });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  }, 15_000);
+
+  it("reports a login file it cannot read as a failed turn instead of throwing", async () => {
+    const dir = join(root, "auth-is-a-directory");
+    await mkdir(join(dir, "opencode", "auth.json"), { recursive: true });
+    const outcome = await new OpenCodeAdapter({ executable: fakeOpencode, userDataHome: dir }).runTurn({
+      ...base,
+      signal: new AbortController().signal,
+    });
+    expect(outcome).toMatchObject({ ok: false, error: { kind: "unauthenticated" } });
+  });
+
   it("stops an engine that floods its output", async () => {
     const outcome = await run({ env: { ...base.env, FAKE_MODE: "flood" } });
     expect(outcome).toMatchObject({ ok: false, error: { kind: "output-limit" } });

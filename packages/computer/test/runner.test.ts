@@ -136,6 +136,20 @@ describe("AgentRunner", () => {
     expect(engine.requests[1]?.prompt).not.toContain("第一条");
   });
 
+  it("reports an error instead of staying in working when the engine throws", async () => {
+    const engine = new FakeEngine([]);
+    engine.runTurn = async () => {
+      throw new Error("登录文件读不了");
+    };
+    const runner = await newRunner(engine);
+    await send(agent.roomId, "在吗");
+
+    runner.wake();
+    await runner.idle();
+    expect(status(agent.id)).toEqual({ state: "error", reason: "处理失败：登录文件读不了" });
+    expect((await unread(agent.id)).map((m) => m.body)).toEqual(["在吗"]);
+  });
+
   it("does nothing when the inbox is empty", async () => {
     const engine = new FakeEngine([]);
     const runner = await newRunner(engine);

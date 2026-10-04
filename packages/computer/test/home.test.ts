@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +128,50 @@ describe("session continuity", () => {
     await saveSession(layout, key, "ses_abc");
     await clearSession(layout);
     expect(await resumableSession(layout, key)).toBeUndefined();
+  });
+});
+
+// Agent 在沙箱里能写自己的目录，可能把其中的目录换成指向别处的符号链接，或把文件换成命名管道。
+// Computer 不受沙箱约束，不能顺着这些路径操作。
+describe("paths the agent controls", () => {
+  const key = { engineId: "opencode", model: "opencode-go/deepseek-v4-pro", instructions: standingInstructions(alice) };
+
+  /** 沙箱外的一个目录，权限 0755。 */
+  function outsideDir(): string {
+    const dir = join(root, "outside");
+    mkdirSync(dir);
+    chmodSync(dir, 0o755);
+    return dir;
+  }
+
+  it("refuses to prepare an agent whose work directory was replaced by a link", async () => {
+    const runtime = await prepareRuntime(root, session);
+    const layout = await prepareAgent(runtime, alice);
+    const outside = outsideDir();
+    await rm(layout.workDir, { recursive: true });
+    symlinkSync(outside, layout.workDir);
+
+    await expect(prepareAgent(runtime, alice)).rejects.toThrow("不是普通目录");
+    expect(mode(outside)).toBe(0o755);
+  });
+
+  it("refuses to save a session through a directory replaced by a link", async () => {
+    const layout = await prepareAgent(await prepareRuntime(root, session), alice);
+    const outside = outsideDir();
+    const engineDir = join(layout.home, "engines", "opencode");
+    await rm(engineDir, { recursive: true });
+    symlinkSync(outside, engineDir);
+
+    await expect(saveSession(layout, key, "ses_abc")).rejects.toThrow("不是普通目录");
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("ignores a session record that is not a regular file instead of blocking on it", async () => {
+    const layout = await prepareAgent(await prepareRuntime(root, session), alice);
+    execFileSync("/usr/bin/mkfifo", [layout.sessionFile]);
+    const started = Date.now();
+    expect(await resumableSession(layout, key)).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

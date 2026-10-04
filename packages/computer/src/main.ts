@@ -24,8 +24,11 @@ async function main(): Promise<void> {
     nodeExecutable: process.execPath,
     shimEntry: bootstrap.shimEntry,
   });
-  const started = daemon.start().catch((error: unknown) => {
+  // 准备失败时退出，不空转：主进程看到意外退出会弹出错误对话框。否则界面上的 Agent 一直空闲，没有人回复。
+  const started = daemon.start().catch(async (error: unknown) => {
     console.error("[computer] 启动 Agent 失败:", error);
+    await daemon.stop().catch((stopError: unknown) => console.error("[computer] 清理失败:", stopError));
+    process.exit(1);
   });
 
   let exiting = false;

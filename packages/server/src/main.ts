@@ -1,18 +1,14 @@
-import type { Server } from "node:http";
 import { createInterface } from "node:readline";
 import { encodeMessage, readMessage, ServerBootstrap, type ServerReady } from "@crew/protocol";
-import { serve } from "@hono/node-server";
 import { Redis } from "ioredis";
 import pg from "pg";
 import { createApp } from "./app";
 import { createDatabase, ensureLocalUser, migrateDatabase } from "./db";
 import { EventHub } from "./events";
+import { closeServer, listen } from "./serve";
 import { RuntimeState } from "./state";
 
 // Server 进程入口，由 Desktop 主进程启动。stdout 只用来写 ready 消息，日志一律写 stderr。
-
-/** 关闭时等待连接自然结束的时间，超时后强制断开（例如长连接的 SSE）。 */
-const SHUTDOWN_GRACE_MS = 3_000;
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -37,21 +33,6 @@ async function connectRedis(url: string): Promise<Redis> {
   return redis;
 }
 
-function listen(app: ReturnType<typeof createApp>): Promise<{ server: Server; port: number }> {
-  return new Promise((resolve) => {
-    const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (info) => {
-      resolve({ server: server as Server, port: info.port });
-    });
-  });
-}
-
-async function closeServer(server: Server): Promise<void> {
-  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
-  const forceClose = setTimeout(() => server.closeAllConnections(), SHUTDOWN_GRACE_MS);
-  await closed;
-  clearTimeout(forceClose);
-}
-
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
   const redisUrl = requireEnv("REDIS_URL");
@@ -66,6 +47,7 @@ async function main(): Promise<void> {
   const localUserId = await ensureLocalUser(db);
   const redis = await connectRedis(redisUrl);
 
+  const events = new EventHub();
   const app = createApp({
     desktopToken: bootstrap.desktopToken,
     computerToken: bootstrap.computerToken,
@@ -73,7 +55,7 @@ async function main(): Promise<void> {
     db,
     localUserId,
     state: new RuntimeState(),
-    events: new EventHub(),
+    events,
   });
   const { server, port } = await listen(app);
 
@@ -87,6 +69,8 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // 先结束 SSE 长连接，server.close() 才不用等满宽限期；否则主进程会先发 SIGKILL。
+    events.close();
     await closeServer(server);
     await pool.end();
     await redis.quit();

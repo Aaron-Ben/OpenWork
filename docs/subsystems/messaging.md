@@ -6,7 +6,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 
 - 需要的环境变量：`DATABASE_URL`、`REDIS_URL`、`CREW_RENDERER_ORIGIN`、`CREW_MIGRATIONS_DIR`。缺少任何一个时启动失败。
 - 启动顺序：执行 `CREW_MIGRATIONS_DIR` 中的迁移，确保本机用户存在，检查 Redis 连接，在 `127.0.0.1` 的随机端口上监听，然后向 stdout 写 ready。
-- stdin 关闭或收到 SIGTERM 时关闭；正在进行的连接最多等 3 秒。
+- stdin 关闭或收到 SIGTERM 时关闭：先结束全部 SSE 连接，再关闭 HTTP 服务；其余正在进行的请求最多等 2 秒，小于主进程给的 3 秒宽限（`packages/server/src/serve.ts`）。
 
 ## 2. 数据模型
 
@@ -72,6 +72,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - 错误响应一律是 `{ "error": 原因 }`。请求校验失败时返回 400 与第一条校验错误；未预料的错误返回 500 与 “Server 内部错误”。
 - 只有界面的来源（`CREW_RENDERER_ORIGIN`）可以跨域调用 `/desktop/*`。
 - SSE 每 15 秒发一行注释保持连接。断线期间的提示不补发，客户端重连后重新读取全部数据（`packages/protocol/src/sse.ts`）。
+- SSE 响应带 `Connection: close`：流结束时连接一起关闭，不以 keep-alive 的形式留着拖住关闭。
 
 ## 8. 验收
 
@@ -86,4 +87,5 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | Agent 不能在非成员的房间回复；换发凭证后旧凭证失效 | `api.test.ts` 的 `agent replies` |
 | 状态与模型上报后通知界面 | `api.test.ts` 的 `status and models` |
 | 三类凭证互不通用；CORS 只允许界面来源 | `packages/server/test/app.test.ts` |
-| SSE 能被共用的读取器读到，中止后干净结束 | `api.test.ts` 的 `events over SSE` |
+| SSE 能被共用的读取器读到，中止后干净结束；Server 关闭通道时 SSE 立即结束 | `api.test.ts` 的 `events over SSE` |
+| 界面正在读 SSE 时，Server 也能在 1 秒内关闭 | `packages/server/test/serve.test.ts` |

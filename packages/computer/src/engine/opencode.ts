@@ -20,6 +20,8 @@ const ERROR_TAIL_CHARS = 16 * 1024;
 /** 中止时先发 SIGINT，过这么久仍未退出就发 SIGKILL。 */
 const KILL_GRACE_MS = 2_000;
 
+const CANCELLED: TurnOutcome = { ok: false, error: { kind: "cancelled", message: "已停止" } };
+
 /** `opencode run --format json` 输出的一行事件。只取需要的字段，其余忽略。 */
 const OpenCodeEvent = z.object({
   type: z.string(),
@@ -50,7 +52,11 @@ export async function readAuthContent(userDataHome: string): Promise<string | En
   if (!existsSync(file)) {
     return { kind: "unauthenticated", message: "OpenCode 未登录：在终端运行 opencode auth login" };
   }
-  if ((await stat(file)).size > MAX_AUTH_BYTES) {
+  const info = await stat(file);
+  if (!info.isFile()) {
+    return { kind: "unauthenticated", message: "OpenCode 登录文件不是普通文件：重新运行 opencode auth login" };
+  }
+  if (info.size > MAX_AUTH_BYTES) {
     return { kind: "unauthenticated", message: `OpenCode 登录文件超过 ${MAX_AUTH_BYTES / 1024} KiB，拒绝启动` };
   }
   const content = await readFile(file, "utf8");
@@ -148,12 +154,21 @@ export class OpenCodeAdapter implements EngineAdapter {
       .filter((line) => /^[\w.-]+\/\S+$/.test(line));
   }
 
+  /** 按约定不抛出：任何意外错误都转成失败的结果，Runner 据此上报原因。 */
   async runTurn(request: TurnRequest): Promise<TurnOutcome> {
-    const first = await this.runOnce(request);
-    if (!first.ok && first.error.kind === "session-invalid" && request.sessionId) {
-      return this.runOnce({ ...request, sessionId: undefined });
+    try {
+      const first = await this.runOnce(request);
+      if (!first.ok && first.error.kind === "session-invalid" && request.sessionId) {
+        return await this.runOnce({ ...request, sessionId: undefined });
+      }
+      return first;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: { kind: "process", message: redact(`OpenCode 无法启动：${message}`, request.layout.home) },
+      };
     }
-    return first;
   }
 
   private async runOnce(request: TurnRequest): Promise<TurnOutcome> {
@@ -192,6 +207,8 @@ export class OpenCodeAdapter implements EngineAdapter {
       OPENCODE_CONFIG_CONTENT: derivedConfig(layout.instructionsFile, request.model),
     };
 
+    // 准备期间（probe、读登录文件）已经被停止时不再启动：之后注册的 abort 监听不会再触发。
+    if (request.signal.aborted) return CANCELLED;
     const child = spawn(SANDBOX_EXEC, sandboxArgs(buildProfile(request.confinement), command), {
       cwd: layout.workDir,
       env,
@@ -222,6 +239,8 @@ export class OpenCodeAdapter implements EngineAdapter {
       forceKill = setTimeout(() => killGroup("SIGKILL"), KILL_GRACE_MS);
     };
     request.signal.addEventListener("abort", stop, { once: true });
+    // spawn 与注册监听之间被停止时，监听不会触发，这里补上。
+    if (request.signal.aborted) stop();
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -264,7 +283,7 @@ export class OpenCodeAdapter implements EngineAdapter {
     const lastEvent = parseEvent(pending);
     if (lastEvent) sessionId = lastEvent.sessionID ?? sessionId;
 
-    if (request.signal.aborted) return { ok: false, error: { kind: "cancelled", message: "已停止" } };
+    if (request.signal.aborted) return CANCELLED;
     if (overflow) {
       return {
         ok: false,

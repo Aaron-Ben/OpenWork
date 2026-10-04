@@ -53,6 +53,17 @@ describe("startChild", () => {
     await exited;
   });
 
+  it("reports an exit that happened before the listener was registered", async () => {
+    const child = await start("ready.mjs");
+    process.kill(child.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const reported = await new Promise<boolean>((resolve) => {
+      child.onUnexpectedExit(() => resolve(true));
+      setTimeout(() => resolve(false), 500);
+    });
+    expect(reported).toBe(true);
+  });
+
   it("does not report the exit caused by stop()", async () => {
     const child = await start("ready.mjs");
     let reported = false;

@@ -12,7 +12,9 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
 6. 订阅 `/computer/events`。每次连接成功后同步 Agent 列表，再唤醒全部 Runner，补上断线期间到达的消息。
 
 - 同步 Agent 列表时，为新 Agent 创建 Runner；名字、人设、Engine 或模型变了的 Agent，先停掉旧 Runner 再建新的。创建 Runner 时签发 Agent 凭证并写入凭证文件，写入 `AGENTS.md`。
-- stdin 关闭或收到 SIGTERM、SIGINT 时停止：中止 SSE，停止全部 Runner（中止正在运行的 Turn），删除本次运行目录，然后退出。
+- 某个 Agent 准备失败（例如它的目录里出现了符号链接）时，给它上报 `error` 与原因，其他 Agent 照常运行。
+- 第 4 到 6 步本身失败时（例如建不了本次运行目录），Computer 把原因写到 stderr 并以 1 退出，主进程随之弹出错误对话框。
+- stdin 关闭或收到 SIGTERM、SIGINT 时停止：同时中止全部 Runner 与 SSE（中止正在运行的 Turn），等它们结束，删除本次运行目录，然后退出。
 
 ## 2. Runner 与 Turn
 
@@ -22,7 +24,8 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
 - 一轮 Turn：读取未读消息。没有未读时什么也不做。有未读时上报 `working`，生成本轮输入，运行一次 Engine。
   - **成功：** 保存 session，确认读到本轮最后一条消息，上报 `idle`。
   - **失败：** 上报 `error` 与原因，不确认已读；下一次唤醒时这些消息会和新消息一起重新处理。
-  - **停止：** 中止 Engine，不确认已读，也不上报状态。
+  - **停止：** 中止 Engine，不确认已读，也不上报状态。读取未读消息期间被停止时，不再开始这一轮。
+  - **意外错误**（读取、上报或 Engine 违反约定抛出）：上报 `error` 与“处理失败：…”，下一次唤醒重新读取。
 - 本轮输入按房间列出未读消息，并写明本地时间；文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
 
 ## 3. OpenCode
@@ -38,7 +41,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - `OPENCODE_AUTH_CONTENT` 来自用户的 `$XDG_DATA_HOME/opencode/auth.json`，在沙箱外读取。文件不存在、超过 64 KiB 或不是合法 JSON 时不启动。
 - `OPENCODE_CONFIG_CONTENT` 是派生的配置：常驻规则指向 Agent 的 `AGENTS.md`；放行全部操作，安全边界是 Seatbelt；本次的模型标为 active。
 - session：从输出事件中取 `sessionID`，保存在 `engines/opencode/session.json`，并记下 Engine、模型与 `AGENTS.md` 的摘要。三者都没变时下一轮继续这个 session，否则开新 session。旧 session 不存在时，开新 session 重试一次。
-- 失败分为：未登录、模型不可用、限流、session 失效、沙箱、OpenCode 报告的错误、进程异常、输出超限、已停止。错误信息中隐去 Agent 目录与凭证。
+- 失败分为：未登录、模型不可用、限流、session 失效、沙箱、OpenCode 报告的错误、进程异常、输出超限、已停止。错误信息中隐去 Agent 目录与凭证。`runTurn` 不抛出，意外错误也转成“进程异常”。
+- 准备期间（查找 `opencode`、读取登录文件）已经被停止时，不启动 OpenCode。
 - stdout 超过 8 MiB 时结束进程；停止时向整个进程组发 SIGINT，2 秒后仍未退出就发 SIGKILL。
 
 ## 4. Seatbelt
@@ -69,6 +73,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 ```
 
 - 目录权限 0700，文件 0600。写文件先写临时文件再改名。
+- Agent 在沙箱里能写自己的两个目录，所以 Computer 在建目录、写 session 与凭证之前，逐级用 `lstat` 确认它们是真正的目录；遇到符号链接或其他类型时拒绝。`session.json` 不是普通文件时当作没有记录。
 - `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间；文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - `bin/crew` 以 `ELECTRON_RUN_AS_NODE=1` 运行 Electron 可执行文件与打包后的 `shim.js`。两者都在 `$HOME` 之外，沙箱里可以读取。
 
@@ -90,6 +95,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | 启动前到达的消息、SSE 唤醒、新建的 Agent 都能被处理；退出时删除本次运行目录 | `daemon.test.ts` |
 | Turn 成功后确认已读；失败时保留消息并在下次重试；运行中的唤醒合并成一轮；停止时不确认 | `packages/computer/test/runner.test.ts` |
 | session 在 Engine、模型与 `AGENTS.md` 不变时延续，否则重开 | `packages/computer/test/home.test.ts` 的 `session continuity` |
+| 不顺着 Agent 换成的符号链接或命名管道操作；准备失败的 Agent 上报 error，其他 Agent 不受影响 | `home.test.ts` 的 `paths the agent controls`；`daemon.test.ts` 的 `reports an unsafe agent directory and keeps serving the other agents` |
+| 准备失败时 Computer 退出，不空转 | `packages/computer/test/main.test.ts` 的 `exits with the reason instead of idling when it cannot prepare its directories` |
 | OpenCode 的参数、环境隔离、session 重试、失败分类、进程组停止、输出超限 | `packages/computer/test/opencode.test.ts` |
 | `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
 | `AGENTS.md` 与每轮输入的文本逐字锁定 | `home.test.ts`、`packages/computer/test/prompt.test.ts` |

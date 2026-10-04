@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -33,7 +34,7 @@ async function startStub(status: number): Promise<string> {
   return `http://127.0.0.1:${port}`;
 }
 
-function startComputer(baseUrl: string) {
+function startComputer(baseUrl: string, crewRoot = join(tmpdir(), `crew-main-test-${process.pid}-${Date.now()}`)) {
   const proc = spawn(tsx, [entry], { stdio: ["pipe", "pipe", "pipe"] });
   child = proc;
   proc.stdin.write(
@@ -41,7 +42,7 @@ function startComputer(baseUrl: string) {
       runtimeSessionId: "session-1",
       baseUrl,
       computerToken: "token",
-      crewRoot: join(tmpdir(), `crew-main-test-${process.pid}-${Date.now()}`),
+      crewRoot,
       shimEntry: "/nonexistent/shim.js",
     })}\n`,
   );
@@ -76,5 +77,15 @@ describe("computer process", () => {
 
     expect(await computer.exited).toBe(1);
     expect(computer.stderr()).toContain("Server 拒绝了 Computer 凭证（401）");
+  }, 15_000);
+
+  it("exits with the reason instead of idling when it cannot prepare its directories", async () => {
+    // crew 目录的位置上是一个普通文件，建不了目录。
+    const blocked = join(mkdtempSync(join(tmpdir(), "crew-main-test-")), "crew");
+    writeFileSync(blocked, "");
+    const computer = startComputer(await startStub(204), blocked);
+
+    expect(await computer.exited).toBe(1);
+    expect(computer.stderr()).toContain("启动 Agent 失败");
   }, 15_000);
 });

@@ -63,8 +63,16 @@ export class AgentRunner {
       try {
         await this.handleOnce();
       } catch (error) {
-        // 读 inbox、上报状态或推进已读位置失败：这一轮放弃，下一次唤醒重新读取。
+        // 读 inbox、上报状态、推进已读位置失败，或 Engine 违反约定抛出：这一轮放弃，下一次唤醒重新读取。
         console.error(`[computer] Agent ${this.agentId} 处理失败:`, error);
+        if (this.stopped) continue;
+        // 可能已经上报过 working；补报 error，界面不会一直显示“回复中”。
+        const reason = `处理失败：${error instanceof Error ? error.message : String(error)}`;
+        await this.options.server
+          .reportStatus(this.agentId, { state: "error", reason })
+          .catch((reportError: unknown) => {
+            console.error(`[computer] Agent ${this.agentId} 上报失败状态也失败了:`, reportError);
+          });
       }
     }
   }
@@ -72,7 +80,8 @@ export class AgentRunner {
   private async handleOnce(): Promise<void> {
     const { agent, server, engine, layout } = this.options;
     const inbox = await server.readInbox(agent.id);
-    if (inbox.length === 0) return;
+    // 读取期间被停止时不再开始这一轮。
+    if (inbox.length === 0 || this.stopped) return;
 
     await server.reportStatus(agent.id, { state: "working" });
     const key: SessionKey = { engineId: agent.engineId, model: agent.model, instructions: standingInstructions(agent) };

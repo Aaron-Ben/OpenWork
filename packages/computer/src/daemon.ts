@@ -126,7 +126,19 @@ export class ComputerDaemon {
       const current = this.runners.get(agent.id);
       if (current?.fingerprint === fingerprint(agent)) continue;
       if (current) await current.runner.stop();
-      const runner = await this.createRunner(agent);
+      // 停止开始后不再创建 Runner。
+      if (this.controller.signal.aborted) return;
+      let runner: AgentRunner;
+      try {
+        runner = await this.createRunner(agent);
+      } catch (error) {
+        // 一个 Agent 准备失败（例如它的目录被换成了符号链接）不影响其他 Agent；原因上报给界面。
+        const reason = `准备 Agent 失败：${error instanceof Error ? error.message : String(error)}`;
+        console.error(`[computer] ${reason}`);
+        if (current) this.runners.delete(agent.id);
+        await client.reportStatus(agent.id, { state: "error", reason });
+        continue;
+      }
       this.runners.set(agent.id, { runner, fingerprint: fingerprint(agent) });
       runner.wake();
     }
@@ -162,8 +174,11 @@ export class ComputerDaemon {
   /** 停止 SSE 与全部 Runner（中止正在运行的 Turn），删除本次运行的目录。 */
   async stop(): Promise<void> {
     this.controller.abort();
-    await this.events;
-    await this.reconciling.catch(() => undefined);
+    // 先同时中止全部 Runner，再等 SSE 与正在进行的同步结束。反过来时，一次同步里重建 Runner 的等待
+    // 会推迟其他 Runner 的中止，总时长可能超过主进程给的宽限，Computer 被强制结束，Engine 成为孤儿。
+    const stopping = [...this.runners.values()].map(({ runner }) => runner.stop());
+    await Promise.all([this.events, this.reconciling.catch(() => undefined), ...stopping]);
+    // 同步在停止前创建的 Runner 也要停掉。
     await Promise.all([...this.runners.values()].map(({ runner }) => runner.stop()));
     this.runners.clear();
     if (this.runtime) await removeRuntime(this.runtime);

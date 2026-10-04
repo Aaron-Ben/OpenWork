@@ -239,4 +239,23 @@ describe("events over SSE", () => {
 
     expect(new TextDecoder().decode(value)).toContain(JSON.stringify({ type: "room.messages", roomId: agent.roomId }));
   });
+
+  it("end when the server closes its channels, so shutdown does not wait for clients", async () => {
+    const response = await desktop("/desktop/events");
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("SSE 响应没有 body");
+
+    t.ctx.events.desktop.close();
+    const ended = await Promise.race([
+      (async () => {
+        while (!(await reader.read()).done) {
+          // 读掉结束前可能还在路上的数据。
+        }
+        return true;
+      })(),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+    ]);
+    if (!ended) await reader.cancel();
+    expect(ended).toBe(true);
+  });
 });

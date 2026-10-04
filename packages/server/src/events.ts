@@ -5,11 +5,22 @@ type Listener<T> = (event: T) => void;
 /** 一个事件通道。订阅者抛出的异常只记录，不影响其他订阅者，也不影响发布方。 */
 export class Channel<T> {
   private readonly listeners = new Set<Listener<T>>();
+  private markClosed: () => void = () => {};
+  /** Server 关闭时兑现。SSE 连接据此结束响应，关闭时不必等客户端断开。 */
+  readonly closed = new Promise<void>((resolve) => {
+    this.markClosed = resolve;
+  });
 
   /** @returns 取消订阅的函数。 */
   subscribe(listener: Listener<T>): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** 关闭通道：结束全部 SSE 连接。之后的发布不再送达。 */
+  close(): void {
+    this.listeners.clear();
+    this.markClosed();
   }
 
   publish(event: T): void {
@@ -31,4 +42,9 @@ export class Channel<T> {
 export class EventHub {
   readonly desktop = new Channel<DesktopEvent>();
   readonly computer = new Channel<ComputerEvent>();
+
+  close(): void {
+    this.desktop.close();
+    this.computer.close();
+  }
 }
