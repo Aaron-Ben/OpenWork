@@ -25,7 +25,12 @@ export function nonMembers(group: DesktopGroup, agents: readonly DesktopAgent[])
   return agents.filter((agent) => !ids.has(agent.id));
 }
 
-/** 勾选或取消一个 Agent。 */
-export function toggle(ids: readonly AgentId[], id: AgentId): AgentId[] {
+/** 一个 Agent 还不在的群聊：“加入群聊”的候选。 */
+export function groupsWithout(agentId: AgentId, groups: readonly DesktopGroup[]): DesktopGroup[] {
+  return groups.filter((group) => !group.agentIds.includes(agentId));
+}
+
+/** 勾选或取消一项。 */
+export function toggle<T>(ids: readonly T[], id: T): T[] {
   return ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id];
 }

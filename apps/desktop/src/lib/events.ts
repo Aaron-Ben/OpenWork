@@ -32,9 +32,8 @@ export function useServerEvents(): Connection {
           fetchNewer(queryClient, event.roomId).catch((error: unknown) =>
             console.warn("[crew] 读取新消息失败:", error),
           );
-          return;
         }
-        void queryClient.invalidateQueries({ queryKey: keysForEvent(event) });
+        for (const queryKey of keysForEvent(event)) void queryClient.invalidateQueries({ queryKey });
       },
       onError: (error) => console.warn("[crew] SSE:", error),
     });

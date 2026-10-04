@@ -15,6 +15,13 @@
       "when": 1791141714227,
       "tag": "0001_group_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791144713814,
+      "tag": "0002_user_read_cursors",
+      "breakpoints": true
     }
   ]
 }

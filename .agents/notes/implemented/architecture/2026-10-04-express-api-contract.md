@@ -13,7 +13,7 @@ Status: implemented
 - SSE 响应手写在 `eventStream` 中，带 `Connection: close`；Server 关闭时主动结束全部 SSE 连接。
 - 测试用 `createTestApp` 监听随机端口，请求走真实的 HTTP 连接。
 
-接口列表与错误响应见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 7 节。
+接口列表与错误响应见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 8 节。
 
 ## 考虑过的方案
 

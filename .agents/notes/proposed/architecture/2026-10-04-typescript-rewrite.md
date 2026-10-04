@@ -36,6 +36,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - [私聊界面](../../implemented/feature/2026-10-04-direct-chat-ui.md)
 - [仓库规则、检查与测试流程](../../implemented/process/2026-10-04-repo-rules-and-checks.md)
 - [群聊（第 3a 步）](../../implemented/feature/2026-10-05-group-chat.md)
+- [会话列表、未读数与侧栏导航](../../implemented/feature/2026-10-05-conversation-list.md)
 
 ### 进程与通信
 

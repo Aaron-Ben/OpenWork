@@ -40,11 +40,11 @@ Status: implemented
 
 **界面与增量拉取**
 
-- 侧栏分“群聊”与“同事”两组；群聊视图显示作者的 handle、成员与状态，可以加成员；新建 Agent 时填 handle，按名字给出建议。输入 `@` 没有自动补全。
+- 群聊视图显示作者的 handle、成员与状态，可以加成员；新建 Agent 时填 handle，按名字给出建议。输入 `@` 没有自动补全。侧栏的布局见 [会话列表、未读数与侧栏导航](2026-10-05-conversation-list.md)。
 - 打开房间时取最新 100 条；收到 `room.messages` 提示后用 `after` 只取新消息，合并进缓存（`apps/desktop/src/lib/queries.ts` 的 `fetchNewer`）；顶部有“加载更早的消息”。SSE 仍只传失效提示。
 - 被 HELD 拦下的事件不在界面上显示，放到第 4 步“运行观测”。
 
-行为、数字与验收见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 3 至 5 节与 [agent-runtime.md](../../../../docs/subsystems/agent-runtime.md) 第 2、6 节。
+行为、数字与验收见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 3、4、6 节与 [agent-runtime.md](../../../../docs/subsystems/agent-runtime.md) 第 2、6 节。
 
 ## 考虑过的方案
 

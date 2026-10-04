@@ -50,7 +50,7 @@ Electron 主进程（监管者）
 
 | 数据 | 位置 | 生命周期 |
 |---|---|---|
-| 用户、Agent、房间、成员、消息、Agent 已读位置 | PostgreSQL | 持久 |
+| 用户、Agent、房间、成员、消息、Agent 的已读与已投递位置、用户的已读位置 | PostgreSQL | 持久 |
 | Agent 凭证、Agent 状态、可用模型列表 | Server 内存 | 本次运行；应用重启后清空 |
 | Agent 的常驻规则、工作目录、OpenCode 数据与 session | `~/.crew/agents/<id>/` | 持久 |
 | `crew` 包装脚本、Agent 凭证文件、OpenCode 配置与缓存 | `~/.crew/runtime/<运行 ID>/` | 本次运行；正常退出时删除 |

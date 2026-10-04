@@ -1,11 +1,12 @@
 import type { DesktopAgent as Agent, DesktopGroup as Group, RoomMessage as Message, RoomId } from "@crew/protocol";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canSend, shouldSend } from "../lib/composer";
-import { hasOlder } from "../lib/messages";
-import { useLoadOlder, useMessages, useSendMessage } from "../lib/queries";
+import { hasOlder, newestSeq } from "../lib/messages";
+import { useLoadOlder, useMarkRead, useMessages, useSendMessage } from "../lib/queries";
 import { isNearBottom } from "../lib/scroll";
 import { statusView } from "../lib/status";
 import { formatMessageTime } from "../lib/time";
+import { AgentAvatar, GroupAvatar, UserAvatar } from "./Avatar";
 import { Markdown } from "./Markdown";
 import { StatusTag } from "./StatusTag";
 import { Button } from "./ui/button";
@@ -16,49 +17,77 @@ export type ChatRoom = { kind: "direct"; agent: Agent } | { kind: "group"; group
 const roomIdOf = (room: ChatRoom): RoomId => (room.kind === "direct" ? room.agent.roomId : room.group.id);
 const agentsOf = (room: ChatRoom): Agent[] => (room.kind === "direct" ? [room.agent] : room.members);
 
-/** 右侧：一个房间的消息与输入框。 */
-export function ChatView({ room, onAddMembers }: { room: ChatRoom; onAddMembers(): void }) {
+/**
+ * 右侧：一个房间的消息与输入框。`agents` 是全部 Agent：消息的作者可能已经不在群里，
+ * 头像与 @handle 的高亮都按全部 Agent 查找。
+ */
+export function ChatView({
+  room,
+  agents,
+  onAddMembers,
+  onJoinGroups,
+}: {
+  room: ChatRoom;
+  agents: Agent[];
+  onAddMembers(): void;
+  onJoinGroups(): void;
+}) {
   const roomId = roomIdOf(room);
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       {room.kind === "direct" ? (
-        <DirectHeader agent={room.agent} />
+        <DirectHeader agent={room.agent} onJoinGroups={onJoinGroups} />
       ) : (
         <GroupHeader group={room.group} members={room.members} onAddMembers={onAddMembers} />
       )}
       {/* 换房间时重建消息列表与输入框：滚动位置与草稿属于各自的房间。 */}
-      <MessageList key={roomId} room={room} />
+      <MessageList key={roomId} room={room} agents={agents} />
       <Composer key={`composer-${roomId}`} room={room} />
     </main>
   );
 }
 
-function DirectHeader({ agent }: { agent: Agent }) {
+function DirectHeader({ agent, onJoinGroups }: { agent: Agent; onJoinGroups(): void }) {
   const status = statusView(agent.status);
   return (
-    <header className="drag flex h-[52px] flex-none items-center gap-3 border-b border-line px-7 font-mono">
-      <h1 className="truncate text-sm font-semibold">{agent.displayName}</h1>
+    <header className="drag flex h-[52px] flex-none items-center gap-3 border-b border-line px-6 font-mono">
+      <AgentAvatar name={agent.displayName} handle={agent.handle} size={28} />
+      <h1 className="truncate font-sans text-sm font-semibold">{agent.displayName}</h1>
       <span className="truncate text-xs text-muted">
         @{agent.handle} · {agent.model}
       </span>
       <StatusTag tone={status.tone} className="ml-auto flex-none">
         {status.label}
       </StatusTag>
+      <Button variant="ghost" size="sm" className="flex-none" onClick={onJoinGroups}>
+        加入群聊…
+      </Button>
     </header>
   );
 }
 
 function GroupHeader({ group, members, onAddMembers }: { group: Group; members: Agent[]; onAddMembers(): void }) {
   return (
-    <header className="drag flex h-[52px] flex-none items-center gap-3 border-b border-line px-7 font-mono">
-      <h1 className="flex-none truncate text-sm font-semibold">
+    <header className="drag flex h-[52px] flex-none items-center gap-3 border-b border-line px-6 font-mono">
+      <GroupAvatar members={members.map((agent) => ({ name: agent.displayName, handle: agent.handle }))} size={28} />
+      <h1 className="flex-none truncate font-sans text-sm font-semibold">
         <span className="text-faint">#</span> {group.name}
       </h1>
-      <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+      <span className="flex-none text-xs text-muted">{members.length} 个 agent</span>
+      <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
         {members.map((agent) => (
-          <StatusTag key={agent.id} tone={statusView(agent.status).tone} className="flex-none text-[11px]">
-            <span className="text-text">{agent.displayName}</span>
-          </StatusTag>
+          <span
+            key={agent.id}
+            className="flex flex-none items-center gap-1.5 rounded-full border border-line bg-raised py-[2px] pr-2 pl-[3px] text-[11.5px] text-muted"
+          >
+            <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />
+            {agent.displayName}
+            {agent.status.state !== "idle" && (
+              <StatusTag tone={statusView(agent.status).tone} className="text-[11px]">
+                {statusView(agent.status).label}
+              </StatusTag>
+            )}
+          </span>
         ))}
       </div>
       <Button variant="ghost" size="sm" className="ml-auto flex-none" onClick={onAddMembers}>
@@ -68,10 +97,12 @@ function GroupHeader({ group, members, onAddMembers }: { group: Group; members: 
   );
 }
 
-function MessageList({ room }: { room: ChatRoom }) {
+function MessageList({ room, agents: allAgents }: { room: ChatRoom; agents: Agent[] }) {
   const roomId = roomIdOf(room);
   const agents = agentsOf(room);
   const { data: messages, error, isPending } = useMessages(roomId);
+  const handles = useMemo(() => new Set(allAgents.map((agent) => agent.handle)), [allAgents]);
+  useMarkReadWhileOpen(roomId, messages);
   const loadOlder = useLoadOlder(roomId);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -129,15 +160,15 @@ function MessageList({ room }: { room: ChatRoom }) {
           </div>
         )}
         {messages.map((message) => (
-          <MessageItem key={message.id} message={message} now={now} />
+          <MessageItem key={message.id} message={message} now={now} handles={handles} />
         ))}
         {agents
           .filter((agent) => agent.status.state === "working")
           .map((agent) => (
-            <div key={agent.id} className="mb-[26px]">
-              <div className="mb-1 font-mono text-[13px] font-semibold text-accent">{agent.displayName}</div>
+            <div key={agent.id} className="mb-[22px] flex items-center gap-3">
+              <AgentAvatar name={agent.displayName} handle={agent.handle} size={22} className="ml-[7px]" />
               <span className="font-mono text-[13px] text-muted">
-                正在回复
+                {agent.displayName} 正在回复
                 <span className="cursor-blink ml-1 inline-block h-[15px] w-[7px] bg-accent align-[-3px]" />
               </span>
             </div>
@@ -158,20 +189,25 @@ function MessageList({ room }: { room: ChatRoom }) {
   );
 }
 
-function MessageItem({ message, now }: { message: Message; now: Date }) {
-  const isUser = message.author.kind === "user";
+function MessageItem({ message, now, handles }: { message: Message; now: Date; handles: ReadonlySet<string> }) {
+  const { author } = message;
   return (
-    <article className="mb-[26px]">
-      <div className="mb-1 flex items-baseline gap-2.5 font-mono text-xs">
-        <b className={isUser ? "text-[13px] font-semibold text-user" : "text-[13px] font-semibold text-accent"}>
-          {isUser ? "你" : message.author.displayName}
-        </b>
-        {message.author.handle && <span className="text-faint">@{message.author.handle}</span>}
-        <time className="text-faint" dateTime={message.createdAt}>
-          {formatMessageTime(message.createdAt, now)}
-        </time>
+    <article className="mb-[22px] flex gap-3">
+      {author.kind === "user" ? (
+        <UserAvatar />
+      ) : (
+        <AgentAvatar name={author.displayName} handle={author.handle ?? author.id} ring="var(--bg)" />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2 font-mono text-[11px] text-faint">
+          <b className="font-sans text-[13px] font-semibold text-text">
+            {author.kind === "user" ? "你" : author.displayName}
+          </b>
+          {author.handle && <span>@{author.handle}</span>}
+          <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt, now)}</time>
+        </div>
+        <Markdown handles={handles}>{message.body}</Markdown>
       </div>
-      <Markdown>{message.body}</Markdown>
     </article>
   );
 }
@@ -273,4 +309,36 @@ function Kbd({ children }: { children: string }) {
       {children}
     </kbd>
   );
+}
+
+/**
+ * 房间开着、窗口在前台时，把用户的已读位置推进到最新一条：打开房间时一次，之后每来新消息、
+ * 窗口回到前台时再推进。窗口在后台时到达的消息保持未读，侧栏显示未读数。
+ */
+function useMarkReadWhileOpen(roomId: RoomId, messages: readonly Message[] | undefined) {
+  const markRead = useMarkRead(roomId);
+  const marked = useRef(0);
+  const newest = messages ? newestSeq(messages) : 0;
+  const { mutate } = markRead;
+
+  useEffect(() => {
+    const mark = () => {
+      if (newest <= marked.current || document.visibilityState !== "visible" || !document.hasFocus()) return;
+      const previous = marked.current;
+      marked.current = newest;
+      // 请求失败时退回去，窗口下次回到前台时重试。
+      mutate(newest, {
+        onError: () => {
+          marked.current = previous;
+        },
+      });
+    };
+    mark();
+    window.addEventListener("focus", mark);
+    document.addEventListener("visibilitychange", mark);
+    return () => {
+      window.removeEventListener("focus", mark);
+      document.removeEventListener("visibilitychange", mark);
+    };
+  }, [newest, mutate]);
 }

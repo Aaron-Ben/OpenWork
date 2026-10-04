@@ -6,7 +6,9 @@ import {
   InboxRoom,
   MessageBody,
   MessageView,
+  Participant,
   ReplyOutcome,
+  RoomKind,
   RoomName,
 } from "./collab";
 import { AgentId, MessageId, RoomId } from "./ids";
@@ -89,6 +91,22 @@ const AgentIds = z
 
 export const NewGroup = z.object({ name: RoomName, agentIds: AgentIds });
 
+/** 侧栏会话列表的一项：用户所在的一个房间。 */
+export const Conversation = z.object({
+  roomId: RoomId,
+  kind: RoomKind,
+  /** 群聊的名字；私聊是 Agent 的名字。 */
+  name: z.string(),
+  agentIds: z.array(AgentId),
+  /** 最后一条消息；正文截短为预览。房间还没有消息时为 null。 */
+  lastMessage: z.object({ author: Participant, body: z.string(), createdAt: z.string() }).nullable(),
+  /** 别人发的、用户还没读的消息数。 */
+  unread: z.number().int().nonnegative(),
+  /** 最后活动的时间。列表按它从新到旧排列。 */
+  activeAt: z.string(),
+});
+export type Conversation = z.infer<typeof Conversation>;
+
 /** 读取房间消息时的位置。查询参数在 URL 里是字符串，这里转成整数。 */
 const Seq = z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/, "必须是非负整数").transform(Number)]);
 
@@ -137,6 +155,18 @@ export const api = {
       status: 201,
     }),
     listModels: endpoint({ method: "GET", path: "/desktop/models", response: z.array(z.string()) }),
+    listConversations: endpoint({
+      method: "GET",
+      path: "/desktop/conversations",
+      response: z.array(Conversation),
+    }),
+    /** 用户读到了这个房间的第 `seq` 条。只前进。 */
+    markRead: endpoint({
+      method: "POST",
+      path: "/desktop/rooms/:roomId/read",
+      params: RoomParams,
+      body: z.object({ seq: z.number().int().nonnegative() }),
+    }),
     listGroups: endpoint({ method: "GET", path: "/desktop/groups", response: z.array(DesktopGroup) }),
     createGroup: endpoint({
       method: "POST",

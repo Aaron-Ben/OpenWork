@@ -1,14 +1,14 @@
-import type { AgentId, DesktopAgent, DesktopGroup, RoomId } from "@crew/protocol";
+import type { DesktopAgent, DesktopGroup, RoomId } from "@crew/protocol";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type ChatRoom, ChatView } from "./components/ChatView";
-import { AddMembersDialog, NewGroupDialog } from "./components/GroupDialogs";
+import { AddMembersDialog, JoinGroupsDialog, NewGroupDialog } from "./components/GroupDialogs";
 import { NewAgentDialog } from "./components/NewAgentDialog";
 import { Sidebar } from "./components/Sidebar";
 import { Button } from "./components/ui/button";
 import { useServerEvents } from "./lib/events";
 import { groupMembers } from "./lib/new-group";
-import { createQueryClient, useAgents, useGroups } from "./lib/queries";
+import { createQueryClient, useAgents, useConversations, useGroups } from "./lib/queries";
 
 const queryClient = createQueryClient();
 
@@ -20,104 +20,158 @@ export function App() {
   );
 }
 
-/** 当前打开的房间：某个 Agent 的私聊，或某个群聊。 */
-export type Selection = { kind: "agent"; id: AgentId } | { kind: "group"; id: RoomId };
+type Dialog = "agent" | "group" | "members" | "join";
 
 function Workbench() {
   const connection = useServerEvents();
   const agents = useAgents();
   const groups = useGroups();
-  const [selection, setSelection] = useState<Selection>();
-  const [creatingAgent, setCreatingAgent] = useState(false);
-  const [creatingGroup, setCreatingGroup] = useState(false);
-  const [addingMembers, setAddingMembers] = useState(false);
+  const conversations = useConversations();
+  const [selectedId, setSelectedId] = useState<RoomId>();
+  const [dialog, setDialog] = useState<Dialog>();
 
   const agentList = agents.data ?? [];
   const groupList = groups.data ?? [];
-  const room = openRoom(selection, agentList, groupList);
+  const conversationList = conversations.data ?? [];
+  const loaded = agents.isSuccess && groups.isSuccess && conversations.isSuccess;
+  const firstRoomId = conversationList[0]?.roomId;
+
+  // 三份列表都到齐后，默认打开最近活跃的会话，并且只定这一次：会话列表随新消息重新排序，
+  // 默认房间要是跟着列表第一项走，别的房间来了消息就会把正在看的房间换掉、丢掉草稿，还会把它记为已读。
+  useEffect(() => {
+    if (selectedId === undefined && loaded && firstRoomId) setSelectedId(firstRoomId);
+  }, [selectedId, loaded, firstRoomId]);
+
+  const room = openRoom(selectedId, agentList, groupList);
+  const roomId = room && (room.kind === "group" ? room.group.id : room.agent.roomId);
+
+  const close = (open: boolean) => {
+    if (!open) setDialog(undefined);
+  };
 
   return (
     <div className="flex h-full">
       <Sidebar
         agents={agentList}
         groups={groupList}
-        selected={room && selectionOf(room)}
-        onSelect={setSelection}
-        onCreateAgent={() => setCreatingAgent(true)}
-        onCreateGroup={() => setCreatingGroup(true)}
+        conversations={conversationList}
+        selectedRoomId={roomId}
+        onSelect={setSelectedId}
+        onCreateAgent={() => setDialog("agent")}
+        onCreateGroup={() => setDialog("group")}
         connection={connection}
       />
       {room ? (
-        <ChatView room={room} onAddMembers={() => setAddingMembers(true)} />
+        <ChatView
+          room={room}
+          agents={agentList}
+          onAddMembers={() => setDialog("members")}
+          onJoinGroups={() => setDialog("join")}
+        />
       ) : (
-        <main className="flex flex-1 flex-col">
-          <div className="drag h-[52px] flex-none" />
-          <div className="grid flex-1 place-items-center px-7 pb-[52px] text-center">
-            {agents.error ? (
-              <p className="text-sm text-danger">读取 agent 列表失败：{agents.error.message}</p>
-            ) : agents.isSuccess ? (
-              <div className="max-w-[380px]">
-                <h2 className="font-mono text-[15px] font-semibold">还没有 agent</h2>
-                <p className="mt-2 mb-[18px] text-sm leading-relaxed text-muted">
-                  新建一个 agent。它在本机沙箱里运行 OpenCode，用你已登录的账号调用模型。
-                </p>
-                <Button variant="primary" onClick={() => setCreatingAgent(true)}>
-                  ＋ 新建 agent
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        </main>
+        <Welcome
+          ready={loaded && agentList.length === 0}
+          error={agents.error?.message}
+          onCreate={() => setDialog("agent")}
+        />
       )}
       <NewAgentDialog
-        open={creatingAgent}
-        onOpenChange={setCreatingAgent}
-        onCreated={(id) => {
-          setSelection({ kind: "agent", id });
-          setCreatingAgent(false);
+        open={dialog === "agent"}
+        onOpenChange={close}
+        onCreated={(agent) => {
+          setSelectedId(agent.roomId);
+          setDialog(undefined);
         }}
       />
       <NewGroupDialog
-        open={creatingGroup}
-        onOpenChange={setCreatingGroup}
+        open={dialog === "group"}
+        onOpenChange={close}
         agents={agentList}
         onCreated={(id) => {
-          setSelection({ kind: "group", id });
-          setCreatingGroup(false);
+          setSelectedId(id);
+          setDialog(undefined);
         }}
       />
       {room?.kind === "group" && (
         <AddMembersDialog
-          open={addingMembers}
-          onOpenChange={setAddingMembers}
+          open={dialog === "members"}
+          onOpenChange={close}
           group={room.group}
           agents={agentList}
-          onAdded={() => setAddingMembers(false)}
+          onAdded={() => setDialog(undefined)}
+        />
+      )}
+      {room?.kind === "direct" && (
+        <JoinGroupsDialog
+          open={dialog === "join"}
+          onOpenChange={close}
+          agent={room.agent}
+          groups={groupList}
+          onJoined={() => setDialog(undefined)}
         />
       )}
     </div>
   );
 }
 
-function selectionOf(room: ChatRoom): Selection {
-  return room.kind === "group" ? { kind: "group", id: room.group.id } : { kind: "agent", id: room.agent.id };
+/** 一个房间 ID 对应的聊天：某个群聊，或某个 Agent 的私聊。都找不到时返回 undefined。 */
+function openRoom(roomId: RoomId | undefined, agents: DesktopAgent[], groups: DesktopGroup[]): ChatRoom | undefined {
+  if (!roomId) return undefined;
+  const group = groups.find((candidate) => candidate.id === roomId);
+  if (group) return { kind: "group", group, members: groupMembers(group, agents) };
+  const agent = agents.find((candidate) => candidate.roomId === roomId);
+  return agent && { kind: "direct", agent };
 }
 
-/**
- * 选中的房间。选中的群聊或 Agent 已不在列表里，或者还没选过时，打开第一个 Agent 的私聊；
- * 没有 Agent 时打开第一个群聊。
- */
-function openRoom(
-  selection: Selection | undefined,
-  agents: DesktopAgent[],
-  groups: DesktopGroup[],
-): ChatRoom | undefined {
-  if (selection?.kind === "group") {
-    const group = groups.find((candidate) => candidate.id === selection.id);
-    if (group) return { kind: "group", group, members: groupMembers(group, agents) };
-  }
-  const agent = agents.find((candidate) => selection?.kind === "agent" && candidate.id === selection.id) ?? agents[0];
-  if (agent) return { kind: "direct", agent };
-  const group = groups[0];
-  return group && { kind: "group", group, members: groupMembers(group, agents) };
+/** 还没有 Agent 时的右侧：三步引导。列表还在读取、或默认房间还没定下时是空白。 */
+function Welcome({ ready, error, onCreate }: { ready: boolean; error?: string; onCreate(): void }) {
+  return (
+    <main className="flex flex-1 flex-col">
+      <div className="drag h-[52px] flex-none" />
+      <div className="grid flex-1 place-items-center px-7 pb-[52px]">
+        {error ? (
+          <p className="text-sm text-danger">读取 agent 列表失败：{error}</p>
+        ) : !ready ? null : (
+          <div className="w-full max-w-[460px]">
+            <h2 className="text-xl font-semibold">开始使用 Crew</h2>
+            <p className="mt-1.5 mb-[22px] text-[13.5px] text-muted">
+              agent 在本机沙箱里运行 OpenCode，用你已登录的账号调用模型。
+            </p>
+            <Step n={1} title="新建 agent" detail="名字、handle、人设与模型">
+              <Button variant="primary" onClick={onCreate}>
+                新建
+              </Button>
+            </Step>
+            <Step n={2} title="和它私聊" detail="发一条消息，看它在沙箱里回复" />
+            <Step n={3} title="建一个群聊" detail="几个 agent 一起协作，用 @handle 点名" />
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function Step({
+  n,
+  title,
+  detail,
+  children,
+}: {
+  n: number;
+  title: string;
+  detail: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-2.5 flex items-center gap-3.5 rounded-[10px] border border-line bg-raised px-4 py-3.5">
+      <span className="grid size-[26px] flex-none place-items-center rounded-full border border-line-strong font-mono text-xs font-semibold text-muted">
+        {n}
+      </span>
+      <span className="min-w-0 flex-1">
+        <b className="block text-[13.5px]">{title}</b>
+        <span className="text-[12.5px] text-muted">{detail}</span>
+      </span>
+      {children}
+    </div>
+  );
 }

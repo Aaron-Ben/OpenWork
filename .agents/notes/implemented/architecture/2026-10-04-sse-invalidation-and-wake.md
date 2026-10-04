@@ -17,7 +17,7 @@ Status: implemented
 - SSE 的解析用 eventsource-parser，重连循环自己写，按指数退避，放在 `packages/protocol/src/sse.ts`，Computer 与界面共用。
 - 界面的数据用 TanStack Query 获取与缓存。收到提示时用 `invalidateQueries` 让对应的数据重新获取；“房间有新消息”例外，只取缓存之后的消息合并进去（`fetchNewer`，见 [群聊](../feature/2026-10-05-group-chat.md)）。每次连接成功都让全部缓存失效。缓存不按时间过期（`apps/desktop/src/lib/events.ts`、`apps/desktop/src/lib/queries.ts`）。
 
-接口见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 7 节，Computer 一侧见 [agent-runtime.md](../../../../docs/subsystems/agent-runtime.md) 第 1 节。
+接口见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 8 节，Computer 一侧见 [agent-runtime.md](../../../../docs/subsystems/agent-runtime.md) 第 1 节。
 
 ## 考虑过的方案
 

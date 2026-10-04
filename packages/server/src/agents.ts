@@ -1,7 +1,7 @@
 import type { AgentId, RoomId, UserId } from "@crew/protocol";
 import { asc, eq } from "drizzle-orm";
 import type { Database } from "./db";
-import { agentReadCursors, agents, roomAgents, rooms, roomUsers } from "./db/schema";
+import { agentReadCursors, agents, roomAgents, rooms, roomUsers, userReadCursors } from "./db/schema";
 import { RequestError } from "./errors";
 
 /** 第 1 版只接 OpenCode。 */
@@ -27,7 +27,7 @@ export interface AgentSummary {
 }
 
 /**
- * 创建 Agent，并在同一个事务里建好它与本机用户的私聊房间、双方的成员关系与 Agent 的已读位置。
+ * 创建 Agent，并在同一个事务里建好它与本机用户的私聊房间、双方的成员关系与已读位置。
  *
  * @throws RequestError 409：handle 已被使用。
  */
@@ -50,6 +50,7 @@ export async function createAgent(db: Database, localUserId: UserId, input: NewA
     if (!room) throw new Error("创建私聊房间失败");
 
     await tx.insert(roomUsers).values({ roomId: room.id, userId: localUserId });
+    await tx.insert(userReadCursors).values({ roomId: room.id, userId: localUserId });
     await tx.insert(roomAgents).values({ roomId: room.id, agentId: agent.id });
     await tx.insert(agentReadCursors).values({ agentId: agent.id, roomId: room.id });
 

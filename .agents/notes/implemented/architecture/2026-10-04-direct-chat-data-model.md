@@ -17,7 +17,7 @@ Status: implemented
 - ID 用 UUID，由 PostgreSQL 的 `gen_random_uuid()` 生成。代码里用 branded 类型区分（`packages/protocol/src/ids.ts`）。时间戳用 `timestamptz`。
 - 迁移文件由 `drizzle-kit generate` 生成到 `packages/server/drizzle/`；electron-vite 构建时把它复制到主进程产物旁，主进程经环境变量 `CREW_MIGRATIONS_DIR` 告诉 Server 迁移目录，测试直接传入路径。
 
-写入、已读位置与验收见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 4、5、8 节。
+写入、已读位置与验收见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 4、6、9 节。
 
 ## 考虑过的方案
 

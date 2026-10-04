@@ -1,33 +1,43 @@
-import { AgentId, type DesktopAgent, type DesktopGroup, RoomId, type RoomMessage } from "@crew/protocol";
+import {
+  AgentId,
+  type Conversation,
+  type DesktopAgent,
+  type DesktopGroup,
+  RoomId,
+  type RoomMessage,
+} from "@crew/protocol";
 import { describe, expect, it } from "vitest";
+import { AVATAR_COLORS, avatarColor, avatarInitial, RING_MAX, ringSlots } from "../src/lib/avatar";
 import { canSend, shouldSend } from "../src/lib/composer";
+import { conversationPreview, totalUnread, unreadLabel } from "../src/lib/conversations";
 import { keysForEvent, queryKeys } from "../src/lib/keys";
+import { rehypeMentions, splitMentions } from "../src/lib/mentions";
 import { hasOlder, mergeMessages, newestSeq } from "../src/lib/messages";
 import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-agent";
-import { groupMembers, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
+import { groupMembers, groupsWithout, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
 import { isNearBottom } from "../src/lib/scroll";
 import { statusView } from "../src/lib/status";
-import { formatMessageTime } from "../src/lib/time";
+import { formatListTime, formatMessageTime } from "../src/lib/time";
 
 // 界面里抽出来的纯逻辑。组件本身不写只断言 HTML 的测试。
 
 const roomId = RoomId.parse("6a1f4e2b-8c3d-4b5a-9e7f-0a1b2c3d4e5f");
 
 describe("keysForEvent", () => {
-  it("refreshes the agent list when agents change", () => {
-    expect(keysForEvent({ type: "agents" })).toEqual(queryKeys.agents);
+  it("refreshes the agent and conversation lists when agents change", () => {
+    expect(keysForEvent({ type: "agents" })).toEqual([queryKeys.agents, queryKeys.conversations]);
   });
 
-  it("refreshes only the room that has new messages", () => {
-    expect(keysForEvent({ type: "room.messages", roomId })).toEqual(["messages", roomId]);
+  it("refreshes the conversation list when a room has new messages; the messages come from fetchNewer", () => {
+    expect(keysForEvent({ type: "room.messages", roomId })).toEqual([queryKeys.conversations]);
   });
 
-  it("refreshes the group list when groups or their members change", () => {
-    expect(keysForEvent({ type: "rooms" })).toEqual(queryKeys.groups);
+  it("refreshes the group and conversation lists when groups or their members change", () => {
+    expect(keysForEvent({ type: "rooms" })).toEqual([queryKeys.groups, queryKeys.conversations]);
   });
 
   it("refreshes the model list when the computer reports models", () => {
-    expect(keysForEvent({ type: "models" })).toEqual(queryKeys.models);
+    expect(keysForEvent({ type: "models" })).toEqual([queryKeys.models]);
   });
 });
 
@@ -145,6 +155,11 @@ describe("group members", () => {
     expect(nonMembers(group, agents).map((a) => a.id)).toEqual([agentId(2)]);
   });
 
+  it("offers only the groups an agent is not in yet", () => {
+    const other = { id: roomId, agentIds: [agentId(2)] } as DesktopGroup;
+    expect(groupsWithout(agentId(1), [group, other])).toEqual([other]);
+  });
+
   it("toggles a choice on and off", () => {
     expect(toggle([agentId(1)], agentId(2))).toEqual([agentId(1), agentId(2)]);
     expect(toggle([agentId(1), agentId(2)], agentId(1))).toEqual([agentId(2)]);
@@ -213,5 +228,136 @@ describe("selectedModel", () => {
 
   it("is empty while there are no models", () => {
     expect(selectedModel(undefined, [])).toBe("");
+  });
+});
+
+describe("avatars", () => {
+  it("give an agent the same color everywhere, from the palette", () => {
+    expect(avatarColor("alice")).toBe(avatarColor("alice"));
+    expect(AVATAR_COLORS).toContain(avatarColor("bob"));
+  });
+
+  it("show the first character, uppercase for latin letters", () => {
+    expect(avatarInitial("alice")).toBe("A");
+    expect(avatarInitial(" 小明")).toBe("小");
+    expect(avatarInitial("")).toBe("?");
+  });
+
+  it("place at most five members on a ring inside the avatar", () => {
+    expect(ringSlots(0)).toEqual([]);
+    expect(ringSlots(1)).toEqual([{ x: 0.5, y: 0.5, size: 0.62 }]);
+    const slots = ringSlots(9);
+    expect(slots).toHaveLength(RING_MAX);
+    for (const slot of slots) {
+      expect(slot.x - slot.size / 2).toBeGreaterThanOrEqual(-1e-9);
+      expect(slot.x + slot.size / 2).toBeLessThanOrEqual(1 + 1e-9);
+      expect(slot.y - slot.size / 2).toBeGreaterThanOrEqual(-1e-9);
+      expect(slot.y + slot.size / 2).toBeLessThanOrEqual(1 + 1e-9);
+    }
+    // 相邻的头像不重叠。
+    for (const [i, slot] of slots.entries()) {
+      const next = slots[(i + 1) % slots.length];
+      if (!next) continue;
+      expect(Math.hypot(slot.x - next.x, slot.y - next.y)).toBeGreaterThanOrEqual(slot.size);
+    }
+    // 两个成员沿对角线放。
+    const [first, second] = ringSlots(2);
+    expect(first && second && first.x < second.x && first.y < second.y).toBe(true);
+    // 三个及以上从正上方开始。
+    expect(slots[0]?.x).toBeCloseTo(0.5);
+    expect(slots[0]?.y).toBeLessThan(0.5);
+  });
+});
+
+describe("conversationPreview", () => {
+  const alice = { id: agentId(1), displayName: "Alice", status: { state: "idle" } } as DesktopAgent;
+  const bob = { id: agentId(2), displayName: "Bob", status: { state: "working" } } as DesktopAgent;
+  const base = { roomId, name: "发版", unread: 0, activeAt: "", agentIds: [agentId(1)] };
+  const last = (kind: "user" | "agent", displayName: string, body: string) => ({
+    author: { kind, id: "x", displayName, handle: null },
+    body,
+    createdAt: "",
+  });
+
+  it("says who is replying instead of the last message", () => {
+    const group = { ...base, kind: "group", agentIds: [agentId(1), agentId(2)], lastMessage: null } as Conversation;
+    expect(conversationPreview(group, [alice, bob])).toEqual({ kind: "working", text: "Bob 回复中…" });
+  });
+
+  it("names the author in a group, writes 你 for the user, and keeps it on one line", () => {
+    const group = { ...base, kind: "group", lastMessage: last("agent", "Alice", "第一行\n第二行") } as Conversation;
+    expect(conversationPreview(group, [alice]).text).toBe("Alice：第一行 第二行");
+    const mine = { ...base, kind: "direct", lastMessage: last("user", "User", "在吗") } as Conversation;
+    expect(conversationPreview(mine, [alice]).text).toBe("你：在吗");
+    const direct = { ...base, kind: "direct", lastMessage: last("agent", "Alice", "在") } as Conversation;
+    expect(conversationPreview(direct, [alice]).text).toBe("在");
+  });
+
+  it("says there is nothing yet for an empty room", () => {
+    const empty = { ...base, kind: "direct", lastMessage: null } as Conversation;
+    expect(conversationPreview(empty, [alice])).toEqual({ kind: "empty", text: "还没有消息" });
+  });
+
+  it("adds up unread counts and caps the label at 99+", () => {
+    expect(totalUnread([{ unread: 2 }, { unread: 3 }] as Conversation[])).toBe(5);
+    expect(unreadLabel(7)).toBe("7");
+    expect(unreadLabel(120)).toBe("99+");
+  });
+});
+
+describe("mentions", () => {
+  const handles = new Set(["alice", "bob"]);
+
+  it("splits out known handles and leaves the rest as text", () => {
+    expect(splitMentions("@Alice 看一下，@carol 不认识，me@bob.com 不算", handles)).toEqual([
+      { mention: "alice", text: "@Alice" },
+      { text: " 看一下，@carol 不认识，me@bob.com 不算" },
+    ]);
+  });
+
+  it("keeps a trailing hyphen out of the mention", () => {
+    expect(splitMentions("找@bob-谢谢", handles)).toEqual([
+      { text: "找" },
+      { mention: "bob", text: "@bob" },
+      { text: "-谢谢" },
+    ]);
+  });
+
+  it("wraps mentions in the rendered tree, but not inside code or links", () => {
+    const tree = {
+      type: "root",
+      children: [
+        { type: "element", tagName: "p", children: [{ type: "text", value: "@alice 你好" }] },
+        { type: "element", tagName: "code", children: [{ type: "text", value: "@alice" }] },
+        { type: "element", tagName: "a", children: [{ type: "text", value: "@bob" }] },
+      ],
+    };
+    rehypeMentions({ handles })(tree);
+    expect(tree.children[0]).toEqual({
+      type: "element",
+      tagName: "p",
+      children: [
+        {
+          type: "element",
+          tagName: "span",
+          properties: { className: ["mention"] },
+          children: [{ type: "text", value: "@alice" }],
+        },
+        { type: "text", value: " 你好" },
+      ],
+    });
+    expect(tree.children[1]?.children).toEqual([{ type: "text", value: "@alice" }]);
+    expect(tree.children[2]?.children).toEqual([{ type: "text", value: "@bob" }]);
+  });
+});
+
+describe("formatListTime", () => {
+  const now = new Date(2026, 9, 5, 20, 0);
+
+  it("writes the clock today, 昨天 yesterday, the date this year, and the full date before", () => {
+    expect(formatListTime(new Date(2026, 9, 5, 9, 5).toISOString(), now)).toBe("09:05");
+    expect(formatListTime(new Date(2026, 9, 4, 23, 0).toISOString(), now)).toBe("昨天");
+    expect(formatListTime(new Date(2026, 8, 30, 8, 0).toISOString(), now)).toBe("9月30日");
+    expect(formatListTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe("2025/12/31");
   });
 });

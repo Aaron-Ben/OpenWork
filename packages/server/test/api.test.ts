@@ -279,6 +279,71 @@ describe("messages", () => {
   });
 });
 
+interface ConversationRow {
+  roomId: RoomId;
+  kind: string;
+  name: string;
+  agentIds: AgentId[];
+  lastMessage: { author: { kind: string; displayName: string }; body: string } | null;
+  unread: number;
+}
+
+async function conversations(): Promise<ConversationRow[]> {
+  const response = await desktop("/desktop/conversations");
+  expect(response.status).toBe(200);
+  return (await response.json()) as ConversationRow[];
+}
+
+const conversation = async (roomId: RoomId) => (await conversations()).find((row) => row.roomId === roomId);
+
+describe("conversations", () => {
+  it("list direct and group rooms, most recently active first, with the last message", async () => {
+    const alice = await newAgent("ConvAlice");
+    const bob = await newAgent("ConvBob");
+    const group = await newGroup("会话", [alice, bob]);
+    await sendAsUser(alice.roomId, "先发给 Alice");
+    await sendAsUser(group.id, "再发到群里");
+
+    const rows = await conversations();
+    const order = rows.map((row) => row.roomId);
+    expect(order.indexOf(group.id)).toBeLessThan(order.indexOf(alice.roomId));
+    expect(await conversation(group.id)).toMatchObject({
+      kind: "group",
+      name: "会话",
+      lastMessage: { author: { kind: "user" }, body: "再发到群里" },
+    });
+    expect((await conversation(group.id))?.agentIds.toSorted()).toEqual([alice.id, bob.id].toSorted());
+    expect(await conversation(bob.roomId)).toMatchObject({ kind: "direct", name: "ConvBob", lastMessage: null });
+  });
+
+  it("count only messages from others as unread, until the user reads them", async () => {
+    const agent = await newAgent("Unread");
+    const token = await agentToken(agent.id);
+    await sendAsUser(agent.roomId, "我自己的消息不算未读");
+    expect((await conversation(agent.roomId))?.unread).toBe(0);
+
+    await readInbox(agent.id);
+    await reply(token, agent.roomId, "第一条回复");
+    await reply(token, agent.roomId, "第二条回复");
+    expect((await conversation(agent.roomId))?.unread).toBe(2);
+
+    expect((await desktop(`/desktop/rooms/${agent.roomId}/read`, "POST", { seq: 2 })).status).toBe(204);
+    expect((await conversation(agent.roomId))?.unread).toBe(1);
+    // 只前进；超过最新序号时停在最新一条。
+    await desktop(`/desktop/rooms/${agent.roomId}/read`, "POST", { seq: 1 });
+    expect((await conversation(agent.roomId))?.unread).toBe(1);
+    await desktop(`/desktop/rooms/${agent.roomId}/read`, "POST", { seq: 99 });
+    expect((await conversation(agent.roomId))?.unread).toBe(0);
+    await reply(token, agent.roomId, "之后的回复");
+    expect((await conversation(agent.roomId))?.unread).toBe(1);
+  });
+
+  it("return 404 when marking a room that does not exist as read", async () => {
+    const response = await desktop("/desktop/rooms/00000000-0000-4000-8000-000000000000/read", "POST", { seq: 1 });
+    expect(response.status).toBe(404);
+  });
+});
+
 describe("inbox", () => {
   it("returns messages after the read position until they are acknowledged", async () => {
     const agent = await newAgent("Inbox");

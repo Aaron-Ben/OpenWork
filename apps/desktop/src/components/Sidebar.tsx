@@ -1,17 +1,32 @@
-import type { DesktopAgent as Agent, DesktopGroup as Group } from "@crew/protocol";
-import type { Selection } from "../App";
+import type { DesktopAgent as Agent, Conversation, DesktopGroup as Group, RoomId } from "@crew/protocol";
+import { useState } from "react";
 import { cn } from "../lib/cn";
+import { conversationPreview, totalUnread, unreadLabel } from "../lib/conversations";
 import type { Connection } from "../lib/events";
 import { groupMembers } from "../lib/new-group";
 import { statusView } from "../lib/status";
+import { formatListTime } from "../lib/time";
+import { AgentAvatar, GroupAvatar } from "./Avatar";
 import { StatusTag } from "./StatusTag";
-import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
-/** 左侧栏：群聊、Agent（每个对应一个私聊房间）与连接状态。 */
+type Tab = "messages" | "groups" | "contacts";
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "messages", label: "消息" },
+  { id: "groups", label: "群聊" },
+  { id: "contacts", label: "联系人" },
+];
+
+/**
+ * 左侧栏：顶部用分段切换三个列表，点击任何一项都在右侧打开对应的聊天。
+ * 消息是全部会话，按最后活动排列；群聊与联系人是两份目录。
+ */
 export function Sidebar({
   agents,
   groups,
-  selected,
+  conversations,
+  selectedRoomId,
   onSelect,
   onCreateAgent,
   onCreateGroup,
@@ -19,127 +34,246 @@ export function Sidebar({
 }: {
   agents: Agent[];
   groups: Group[];
-  selected: Selection | undefined;
-  onSelect(selection: Selection): void;
+  conversations: Conversation[];
+  selectedRoomId: RoomId | undefined;
+  onSelect(roomId: RoomId): void;
   onCreateAgent(): void;
   onCreateGroup(): void;
   connection: Connection;
 }) {
+  const [tab, setTab] = useState<Tab>("messages");
+  const unread = totalUnread(conversations);
+  const now = new Date();
+  const membersOf = (agentIds: readonly string[]) =>
+    agents
+      .filter((agent) => agentIds.includes(agent.id))
+      .map((agent) => ({ name: agent.displayName, handle: agent.handle }));
+
   return (
-    <aside className="flex w-62 flex-none flex-col border-r border-line bg-panel font-mono">
-      {/* 顶部留出系统红黄绿按钮的位置，并作为窗口拖动区域。 */}
-      <div className="drag px-[18px] pt-[46px]">
-        <div className="text-[15px] font-semibold">
-          <span className="text-accent">~/</span>crew
-        </div>
-        <div className="mt-1 text-[11px] text-muted">
-          本机 · {agents.length} 个 agent · {groups.length} 个群聊
-        </div>
+    <aside className="flex w-72 flex-none flex-col border-r border-line bg-panel">
+      {/* 第一行左边是系统的红黄绿按钮，右边是“新建”；两行都是窗口拖动区域。 */}
+      <div className="drag flex h-[52px] flex-none items-center justify-end px-2.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="新建"
+              title="新建"
+              className="grid size-7 place-items-center rounded-[7px] text-muted outline-none hover:bg-hover hover:text-text focus-visible:ring-3 focus-visible:ring-accent-soft data-[state=open]:bg-hover data-[state=open]:text-text"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+              </svg>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onCreateAgent}>新建 agent</DropdownMenuItem>
+            <DropdownMenuItem onSelect={onCreateGroup} disabled={agents.length === 0}>
+              新建群聊
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <div className="drag flex items-baseline justify-between px-[18px] pt-0.5 pb-2.5">
+        <h1 className="text-xl font-semibold tracking-[-0.01em]">{TABS.find((item) => item.id === tab)?.label}</h1>
+        <ConnectionTag connection={connection} />
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto pb-2">
-        <SectionHeading title="群聊" onCreate={onCreateGroup} />
-        {groups.length === 0 && <p className="px-[18px] py-2 text-xs text-faint">还没有群聊</p>}
-        {groups.map((group) => {
-          const members = groupMembers(group, agents);
-          const working = members.filter((agent) => agent.status.state === "working").length;
-          return (
-            <Item
-              key={group.id}
-              active={selected?.kind === "group" && selected.id === group.id}
-              onClick={() => onSelect({ kind: "group", id: group.id })}
-              title={
-                <>
-                  <span className="truncate">
-                    <span className="text-faint">#</span> {group.name}
-                  </span>
-                  {working > 0 && (
-                    <StatusTag tone="working" className="flex-none text-[11px]">
-                      {working} 回复中
-                    </StatusTag>
-                  )}
-                </>
-              }
-              subtitle={`${members.length} 个 agent`}
-            />
-          );
-        })}
+      <div role="tablist" className="mx-3.5 mb-1.5 grid grid-cols-3 rounded-[7px] bg-hover p-[3px]">
+        {TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.id}
+            onClick={() => setTab(item.id)}
+            className={cn(
+              "flex items-center justify-center gap-1.5 rounded-[5px] py-[5px] text-[12.5px] text-muted",
+              tab === item.id && "bg-bg font-semibold text-text shadow-[0_1px_2px_rgb(0_0_0/10%)]",
+            )}
+          >
+            {item.label}
+            {item.id === "messages" && unread > 0 && <Badge count={unread} />}
+          </button>
+        ))}
+      </div>
 
-        <SectionHeading title="同事" onCreate={onCreateAgent} />
-        {agents.length === 0 && <p className="px-[18px] py-2 text-xs text-faint">还没有 agent</p>}
-        {agents.map((agent) => {
-          const status = statusView(agent.status);
-          return (
-            <Item
-              key={agent.id}
-              active={selected?.kind === "agent" && selected.id === agent.id}
-              onClick={() => onSelect({ kind: "agent", id: agent.id })}
-              title={
-                <>
-                  <span className="truncate">{agent.displayName}</span>
-                  <StatusTag tone={status.tone} className="flex-none text-[11px]">
-                    {status.label}
-                  </StatusTag>
-                </>
-              }
-              subtitle={`@${agent.handle} · ${agent.model}`}
-            />
-          );
-        })}
+      <nav className="min-h-0 flex-1 overflow-y-auto py-1.5">
+        {tab === "messages" &&
+          (conversations.length === 0 ? (
+            <Empty>还没有会话。新建一个 agent 后，和它的私聊会出现在这里。</Empty>
+          ) : (
+            conversations.map((conversation) => {
+              const preview = conversationPreview(conversation, agents);
+              const agent =
+                conversation.kind === "direct" ? agents.find((a) => a.roomId === conversation.roomId) : undefined;
+              return (
+                <Item
+                  key={conversation.roomId}
+                  active={conversation.roomId === selectedRoomId}
+                  onClick={() => onSelect(conversation.roomId)}
+                  avatar={
+                    agent ? (
+                      <AgentAvatar
+                        name={agent.displayName}
+                        handle={agent.handle}
+                        status={statusView(agent.status).tone}
+                        size={38}
+                      />
+                    ) : (
+                      <GroupAvatar members={membersOf(conversation.agentIds)} size={38} />
+                    )
+                  }
+                  title={conversation.kind === "group" ? `# ${conversation.name}` : conversation.name}
+                  aside={formatListTime(conversation.activeAt, now)}
+                  subtitle={
+                    <span className={cn(preview.kind === "working" && "font-mono text-[11.5px] text-accent")}>
+                      {preview.text}
+                    </span>
+                  }
+                  badge={conversation.unread > 0 ? <Badge count={conversation.unread} tone="accent" /> : undefined}
+                />
+              );
+            })
+          ))}
+
+        {tab === "groups" &&
+          (groups.length === 0 ? (
+            <Empty>还没有群聊。用右上角的“＋ 新建”建一个，让几个 agent 一起协作。</Empty>
+          ) : (
+            groups.map((group) => {
+              const members = groupMembers(group, agents);
+              return (
+                <Item
+                  key={group.id}
+                  active={group.id === selectedRoomId}
+                  onClick={() => onSelect(group.id)}
+                  avatar={<GroupAvatar members={membersOf(group.agentIds)} size={38} />}
+                  title={`# ${group.name}`}
+                  subtitle={members.map((agent) => agent.displayName).join("、") || "还没有成员"}
+                />
+              );
+            })
+          ))}
+
+        {tab === "contacts" &&
+          (agents.length === 0 ? (
+            <Empty>还没有 agent。用右上角的“＋ 新建”建一个。</Empty>
+          ) : (
+            agents.map((agent) => (
+              <Item
+                key={agent.id}
+                active={agent.roomId === selectedRoomId}
+                onClick={() => onSelect(agent.roomId)}
+                avatar={
+                  <AgentAvatar
+                    name={agent.displayName}
+                    handle={agent.handle}
+                    status={statusView(agent.status).tone}
+                    size={38}
+                  />
+                }
+                title={agent.displayName}
+                titleNote={`@${agent.handle}`}
+                subtitle={`${agent.persona.split("\n")[0]} · ${agent.model}`}
+              />
+            ))
+          ))}
       </nav>
-
-      <div className="border-t border-line px-[18px] py-3 text-[11px]">
-        {connection === "reconnecting" ? (
-          <StatusTag tone="reconnecting" className="text-[11px]">
-            正在重新连接…
-          </StatusTag>
-        ) : connection === "connected" ? (
-          <StatusTag tone="working" className="text-[11px]">
-            已连接
-          </StatusTag>
-        ) : (
-          <StatusTag tone="idle" className="text-[11px]">
-            连接中…
-          </StatusTag>
-        )}
-      </div>
     </aside>
   );
 }
 
-function SectionHeading({ title, onCreate }: { title: string; onCreate(): void }) {
+/** 界面与 Server 的 SSE 连接状态。 */
+function ConnectionTag({ connection }: { connection: Connection }) {
+  if (connection === "reconnecting") {
+    return (
+      <StatusTag tone="reconnecting" className="text-[11px]">
+        正在重新连接…
+      </StatusTag>
+    );
+  }
+  if (connection === "connected") {
+    return (
+      <StatusTag tone="working" className="text-[11px]">
+        已连接
+      </StatusTag>
+    );
+  }
   return (
-    <div className="flex items-center justify-between pt-[22px] pr-3 pb-1.5 pl-[18px] text-[11px] tracking-wide text-faint">
-      <span>{title}</span>
-      <Button variant="ghost" size="sm" onClick={onCreate}>
-        ＋ 新建
-      </Button>
-    </div>
+    <StatusTag tone="idle" className="text-[11px]">
+      连接中…
+    </StatusTag>
   );
 }
 
 function Item({
   active,
   onClick,
+  avatar,
   title,
+  titleNote,
+  aside,
   subtitle,
+  badge,
 }: {
   active: boolean;
   onClick(): void;
-  title: React.ReactNode;
-  subtitle: string;
+  avatar: React.ReactNode;
+  title: string;
+  titleNote?: string;
+  aside?: string;
+  subtitle: React.ReactNode;
+  badge?: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "block w-full border-l-2 border-transparent py-2 pr-[18px] pl-4 text-left hover:bg-hover",
-        active && "border-accent bg-hover",
+        "mx-1.5 flex w-[calc(100%-12px)] items-center gap-[11px] rounded-lg py-[9px] pr-3 pl-2.5 text-left hover:bg-hover",
+        active && "bg-bg shadow-[0_0_0_1px_var(--line-strong)] hover:bg-bg",
       )}
     >
-      <span className="flex items-center justify-between gap-2 text-[13px]">{title}</span>
-      <span className="mt-0.5 block truncate text-[11px] text-muted">{subtitle}</span>
+      {avatar}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-1.5">
+          <span className="truncate text-[13.5px] font-semibold">{title}</span>
+          {titleNote && <span className="truncate font-mono text-[11px] text-faint">{titleNote}</span>}
+          {aside && <span className="ml-auto flex-none font-mono text-[11px] text-faint">{aside}</span>}
+        </span>
+        <span className="mt-px flex items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted">{subtitle}</span>
+          {badge}
+        </span>
+      </span>
     </button>
   );
+}
+
+function Badge({ count, tone = "danger" }: { count: number; tone?: "danger" | "accent" }) {
+  return (
+    <span
+      className={cn(
+        "h-4 min-w-4 flex-none rounded-full px-1 text-center font-mono text-[10px] leading-4 font-semibold",
+        tone === "danger" ? "bg-danger text-white" : "bg-accent text-accent-fg",
+      )}
+    >
+      {unreadLabel(count)}
+    </span>
+  );
+}
+
+function Empty({ children }: { children: string }) {
+  return <p className="px-[22px] py-6 text-[12.5px] leading-relaxed text-faint">{children}</p>;
 }

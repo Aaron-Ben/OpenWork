@@ -19,9 +19,11 @@ Electron 应用：主进程启动并监管 Server 与 Computer，窗口里是 Re
 | `apps/desktop/electron/child.ts` | 启动一个子进程并完成握手：等待 ready 有超时；停止时先 SIGTERM，宽限期后 SIGKILL；保留 stderr 的末尾用于报错。时限见 architecture.md 第 1 节 |
 | `apps/desktop/electron/navigation.ts` | 窗口只显示自己的页面，http 与 https 链接交给系统浏览器 |
 | `apps/desktop/electron/contract.ts` | 主进程、preload 与界面共用的 IPC 通道名与 `RendererRuntime` 类型 |
-| `apps/desktop/src/App.tsx` | 两栏布局：侧栏（群聊与 Agent）与打开的房间；选中的房间与各个对话框的开关 |
+| `apps/desktop/src/App.tsx` | 两栏布局：侧栏与打开的房间；选中的房间、各个对话框的开关、没有 Agent 时的引导 |
+| `apps/desktop/src/components/Sidebar.tsx` | 侧栏：“消息 / 群聊 / 联系人”分段、会话列表与未读数、“＋ 新建”菜单 |
+| `apps/desktop/src/components/Avatar.tsx` | Agent、用户与群聊的头像；群聊头像是成员围成的环 |
 | `apps/desktop/src/components/` | 界面组件；`ui/` 下是按 shadcn/ui 做法写的基础组件 |
-| `apps/desktop/src/lib/` | 界面逻辑与数据层：`api.ts` 是 Server 客户端，`queries.ts` 用 TanStack Query 读写，`events.ts` 收到 SSE 提示后取新消息或让对应的缓存失效，`messages.ts` 合并分段取到的消息 |
+| `apps/desktop/src/lib/` | 界面逻辑与数据层：`api.ts` 是 Server 客户端，`queries.ts` 用 TanStack Query 读写，`events.ts` 收到 SSE 提示后取新消息或让对应的缓存失效，`messages.ts` 合并分段取到的消息，`mentions.ts` 高亮正文里的 @handle，`avatar.ts` 算头像的颜色与环上的位置，`conversations.ts` 生成会话的预览 |
 | `apps/desktop/src/index.css` | 颜色与字体的设计变量，浅色与深色两套 |
 | `apps/desktop/scripts/preview-shot.ts` | `pnpm preview:shot`：用临时数据库启动应用并截图 |
 | `apps/desktop/test/support/built-app.ts` | 冒烟测试与真实模型测试共用：启动构建产物 |
@@ -35,4 +37,5 @@ Electron 应用：主进程启动并监管 Server 与 Computer，窗口里是 Re
 - **只能用 `pnpm dev` 运行：** 没有 `ELECTRON_RENDERER_URL` 时主进程报错退出，还没有安装包。启动前要先用 Docker 启动 PostgreSQL。
 - **重连后消息回到最新一批：** SSE 重连成功时全部缓存失效，每个打开的房间重新取最新 100 条，之前加载的更早消息需要再点“加载更早的消息”。
 - **输入 @ 没有自动补全：** 需要照侧栏或成员列表里的 handle 手动输入。
+- **“正在回复”不分房间：** Agent 的状态只有一个，它在群聊里回复时，私聊里也显示“正在回复”。
 - **Desktop 凭证在页面的 JS 中：** 页面被注入脚本时可以读到它。凭证只在本次运行、只在 loopback 上有效。

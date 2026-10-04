@@ -6,8 +6,8 @@ import {
   type RoomId,
 } from "@crew/protocol";
 import { useState } from "react";
-import { type NewGroupErrors, nonMembers, toggle, validateNewGroup } from "../lib/new-group";
-import { useAddGroupMembers, useCreateGroup } from "../lib/queries";
+import { groupsWithout, type NewGroupErrors, nonMembers, toggle, validateNewGroup } from "../lib/new-group";
+import { useAddGroupMembers, useCreateGroup, useJoinGroups } from "../lib/queries";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Field, Input } from "./ui/input";
@@ -196,5 +196,83 @@ function AgentPicker({
       )}
       {error && <p className="text-xs text-danger">{error}</p>}
     </fieldset>
+  );
+}
+
+/** 从私聊把这个 Agent 加进几个群聊。它只看到加入之后的消息。 */
+export function JoinGroupsDialog({
+  open,
+  onOpenChange,
+  agent,
+  groups,
+  onJoined,
+}: {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  agent: Agent;
+  groups: Group[];
+  onJoined(): void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>{open && <JoinGroupsForm agent={agent} groups={groups} onJoined={onJoined} />}</DialogContent>
+    </Dialog>
+  );
+}
+
+function JoinGroupsForm({ agent, groups, onJoined }: { agent: Agent; groups: Group[]; onJoined(): void }) {
+  const join = useJoinGroups(agent.id);
+  const [roomIds, setRoomIds] = useState<RoomId[]>([]);
+  const candidates = groupsWithout(agent.id, groups);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (roomIds.length === 0) return;
+    join.mutate(roomIds, { onSuccess: onJoined });
+  };
+
+  return (
+    <form onSubmit={submit} className="grid gap-3.5" noValidate>
+      <DialogTitle>把 {agent.displayName} 加入群聊</DialogTitle>
+      <DialogDescription>它只看到加入之后的消息。</DialogDescription>
+
+      <fieldset className="grid gap-1.5">
+        <legend className="mb-1.5 font-mono text-[11px] text-muted">群聊</legend>
+        {candidates.length === 0 ? (
+          <p className="text-xs text-muted">
+            {groups.length === 0 ? "还没有群聊。" : `${agent.displayName} 已经在所有群聊里了。`}
+          </p>
+        ) : (
+          <div className="max-h-56 overflow-y-auto rounded border border-line-strong">
+            {candidates.map((group) => (
+              <label
+                key={group.id}
+                className="flex cursor-pointer items-center gap-2.5 border-b border-line px-2.5 py-2 text-[13px] last:border-b-0 hover:bg-hover"
+              >
+                <input
+                  type="checkbox"
+                  className="accent-(--accent)"
+                  checked={roomIds.includes(group.id)}
+                  onChange={() => setRoomIds((ids) => toggle(ids, group.id))}
+                />
+                <span className="truncate"># {group.name}</span>
+                <span className="ml-auto font-mono text-[11px] text-faint">{group.agentIds.length} 个 agent</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </fieldset>
+
+      {join.error && <p className="text-xs text-danger">加入失败：{join.error.message}</p>}
+
+      <div className="mt-1 flex justify-end gap-2">
+        <DialogClose asChild>
+          <Button>取消</Button>
+        </DialogClose>
+        <Button type="submit" variant="primary" disabled={roomIds.length === 0 || join.isPending}>
+          加入
+        </Button>
+      </div>
+    </form>
   );
 }

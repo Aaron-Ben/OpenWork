@@ -1,4 +1,4 @@
-import type { AgentId } from "@crew/protocol";
+import type { DesktopAgent } from "@crew/protocol";
 import { DISPLAY_NAME_MAX, HANDLE_MAX, PERSONA_MAX } from "@crew/protocol";
 import { useState } from "react";
 import { type NewAgentErrors, selectedModel, suggestHandle, validateNewAgent } from "../lib/new-agent";
@@ -16,7 +16,7 @@ export function NewAgentDialog({
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
-  onCreated(id: AgentId): void;
+  onCreated(agent: DesktopAgent): void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -28,7 +28,7 @@ export function NewAgentDialog({
   );
 }
 
-function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
+function NewAgentForm({ onCreated }: { onCreated(agent: DesktopAgent): void }) {
   const models = useModels(true);
   const create = useCreateAgent();
   const [displayName, setDisplayName] = useState("");
@@ -49,7 +49,7 @@ function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
     const found = validateNewAgent(input);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
-    create.mutate(input, { onSuccess: (agent) => onCreated(agent.id) });
+    create.mutate(input, { onSuccess: onCreated });
   };
 
   return (

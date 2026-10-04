@@ -1,6 +1,7 @@
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { rehypeMentions } from "../lib/mentions";
 
 /** 围栏代码块的语言，来自 `language-xxx` 类名。 */
 function codeLanguage(node: ExtraProps["node"]): string | undefined {
@@ -11,6 +12,8 @@ function codeLanguage(node: ExtraProps["node"]): string | undefined {
   const language = classes.map(String).find((name) => name.startsWith("language-"));
   return language?.slice("language-".length);
 }
+
+const NO_HANDLES: ReadonlySet<string> = new Set();
 
 const components: Components = {
   // 链接一律在新窗口打开；主进程把新窗口请求交给系统浏览器（electron/navigation.ts）。
@@ -30,14 +33,17 @@ const components: Components = {
 
 /**
  * 消息正文按 Markdown 渲染。不渲染原始 HTML，`javascript:` 等链接由 react-markdown 默认过滤。
- * 只给写了语言的代码块着色，不自动猜语言。
+ * 只给写了语言的代码块着色，不自动猜语言。`handles` 里的 @handle 高亮。
  */
-export function Markdown({ children }: { children: string }) {
+export function Markdown({ children, handles = NO_HANDLES }: { children: string; handles?: ReadonlySet<string> }) {
   return (
     <div className="prose">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: false }]]}
+        rehypePlugins={[
+          [rehypeHighlight, { detect: false }],
+          [rehypeMentions, { handles }],
+        ]}
         components={components}
       >
         {children}

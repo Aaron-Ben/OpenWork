@@ -19,6 +19,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `messages` | 房间、序号、作者、正文、时间 | 作者恰好是用户或 Agent 之一；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
 | `message_mentions` | 消息 @ 到的 Agent | 只记录写入时是房间成员的 Agent |
 | `agent_read_cursors` | 每个 Agent 在每个房间的已读位置（`last_read_seq`）与已投递位置（`delivered_seq`） | 已投递位置不小于已读位置 |
+| `user_read_cursors` | 用户在每个房间读到的序号，用来算未读数 | |
 
 - ID 都是数据库生成的 UUID，代码中用 branded 类型（`packages/protocol/src/ids.ts`）。
 - 表结构由 `packages/server/src/db/schema.ts` 定义，迁移由 drizzle-kit 生成在 `packages/server/drizzle/`。
@@ -33,10 +34,11 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - 新建群聊：名字去掉首尾空白后 1 到 40 字符，至少一个 Agent，不能重复。成员是本机用户与选中的 Agent。
 - 加成员：只能加到群聊，私聊的房间 ID 返回 404。已经在群里的 Agent 不变。新成员的已读与已投递位置从加入时的最新序号开始，看不到加入前的消息；加成员时锁住房间行，与写消息互斥。
 - 新建群聊与加成员后通知界面：群聊列表变了（`rooms`）。
+- 新建私聊或群聊时，用户的已读位置从 0 开始；迁移 `0002_user_read_cursors.sql` 把已有房间的已读位置设为当时的最新序号。
 
 ## 4. 消息
 
-- 写入一条消息是一个事务（`postMessage`，`packages/server/src/messages.ts`）：用 `SELECT … FOR UPDATE` 锁住房间行，确认作者是房间成员；作者是 Agent 时做 HELD 检查（第 5 节）；把 `next_seq` 加一作为序号，写入消息与它 @ 到的 Agent。并发写入时序号连续、没有空洞，且与提交顺序一致。
+- 写入一条消息是一个事务（`postMessage`，`packages/server/src/messages.ts`）：用 `SELECT … FOR UPDATE` 锁住房间行，确认作者是房间成员；作者是 Agent 时做 HELD 检查（第 6 节）；把 `next_seq` 加一作为序号，写入消息与它 @ 到的 Agent。并发写入时序号连续、没有空洞，且与提交顺序一致。
 - 正文去掉首尾空白后不能为空，最多 20,000 字符。
 - 房间不存在时返回 404，作者不是成员时返回 403。
 - @：正文里的 `@handle`，大小写不敏感；代码块与行内代码里的不算，前面紧挨字母、数字或 `_ . @ / -` 的不算（邮箱、路径）；只认房间里的 Agent 成员（`packages/server/src/mentions.ts`）。
@@ -45,7 +47,14 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
   - Agent 的消息：它 @ 到的其他成员。没有 @ 时不唤醒任何 Agent，Agent 不会唤醒自己。
 - 读取消息：`GET /desktop/rooms/:roomId/messages` 按序号从旧到新返回一段。`after=n` 取序号大于 n 的最早一批；否则取 `before=n` 之前（没有 `before` 时是全部）最新的一批。`limit` 是 1 到 200，默认 200。`after` 与 `before` 不能同时使用。
 
-## 5. 未读消息、已投递位置与 HELD
+## 5. 用户的会话列表与未读数
+
+- `GET /desktop/conversations`：用户所在的全部房间，按最后活动（最后一条消息的时间，没有消息时是房间的创建时间）从新到旧排列。每项有类型、名字（群聊的名字，私聊是 Agent 的名字）、Agent 成员、最后一条消息（正文截到 200 字符）与未读数（`packages/server/src/conversations.ts`）。
+- 未读数：用户已读位置之后、不是用户自己发的消息条数。
+- `POST /desktop/rooms/:roomId/read`：把用户的已读位置推进到 `seq`。只前进；超过房间已有的序号时停在最新一条。用户不在这个房间时返回 404。
+- 界面在房间打开、窗口在前台时调用它：打开房间时一次，之后每来新消息、窗口回到前台时再一次。
+
+## 6. Agent 的未读消息、已投递位置与 HELD
 
 - `POST /computer/agents/:agentId/inbox` 按房间返回已读位置之后的消息，并把每个房间的已投递位置推进到本次返回的最后一条。每个房间附上类型、群聊名字与成员（用户在前，Agent 按名字排列）；每条消息标出是否 @ 了这个 Agent。
 - `POST /computer/agents/:agentId/inbox/ack`：每个房间的已读位置推进到已投递位置。Computer 在 Turn 成功后调用；失败时不调用，下次读取 inbox 仍从已读位置开始。
@@ -53,7 +62,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - Agent 的回复写入后，它的已投递位置推进到这条回复：之前的消息不是看过的就是它自己发的。
 - `POST /agent/reply` 总是返回 200：`{ outcome: "posted", id, seq }` 或 `{ outcome: "held", newMessages, omitted }`。HELD 时不通知界面，也不唤醒任何 Agent。
 
-## 6. 运行期状态
+## 7. 运行期状态
 
 以下状态只存在 Server 内存中，应用重启后清空（`packages/server/src/state.ts`）：
 
@@ -61,7 +70,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - **Agent 状态：** `idle`（默认）、`working`、`error`（带原因），由 Computer 上报。变化时通知界面。
 - **可用模型：** Computer 上报的模型列表。上报时通知界面。
 
-## 7. 接口
+## 8. 接口
 
 | 接口 | 凭证 | 作用 |
 |---|---|---|
@@ -69,6 +78,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `POST /desktop/agents` | Desktop | 新建 Agent |
 | `GET /desktop/rooms/:roomId/messages` | Desktop | 房间的一段消息，查询参数见第 4 节 |
 | `POST /desktop/rooms/:roomId/messages` | Desktop | 以用户身份发消息 |
+| `GET /desktop/conversations` | Desktop | 会话列表：最后一条消息与未读数 |
+| `POST /desktop/rooms/:roomId/read` | Desktop | 推进用户的已读位置 |
 | `GET /desktop/groups` | Desktop | 群聊列表，含成员 |
 | `POST /desktop/groups` | Desktop | 新建群聊 |
 | `POST /desktop/groups/:roomId/members` | Desktop | 把 Agent 加进群聊 |
@@ -93,7 +104,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 
 理由见 [Express 5 与 protocol 的接口契约](../../.agents/notes/implemented/architecture/2026-10-04-express-api-contract.md) 与 [SSE 只传失效提示与 Agent 唤醒](../../.agents/notes/implemented/architecture/2026-10-04-sse-invalidation-and-wake.md)。
 
-## 8. 验收
+## 9. 验收
 
 | 条目 | 测试 |
 |---|---|
@@ -106,6 +117,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | 用户的消息唤醒房间里全部 Agent；Agent 的消息只唤醒它 @ 到的成员，不唤醒自己 | `api.test.ts` 的 `messages`、`agent replies` |
 | @ 的解析：大小写、代码、邮箱与路径 | `packages/server/test/mentions.test.ts` |
 | 未读消息从已读位置之后开始，确认后推进到已投递位置；inbox 带名册与 @ 标记 | `api.test.ts` 的 `inbox` |
+| 会话列表按最后活动排列，带最后一条消息；未读数只算别人的消息，标记已读后减少，已读位置只前进 | `api.test.ts` 的 `conversations` |
+| 已有房间的历史消息在迁移后不算未读 | 手动：2026-10-05 在临时数据库上执行到 `0001`、插入房间，再执行 `0002_user_read_cursors.sql`，已读位置等于房间的最新序号 |
 | HELD：有没看到的新消息时不写入并返回它们，从最早的开始一次最多 20 条，其余的下次回复时返回、确认已读后仍是未读；看过之后能发出；被 HELD 返回过的消息确认后不再出现 | `api.test.ts` 的 `agent replies` |
 | Agent 不能在非成员的房间回复；换发凭证后旧凭证失效 | `api.test.ts` 的 `agent replies` |
 | 状态与模型上报后通知界面 | `api.test.ts` 的 `status and models` |

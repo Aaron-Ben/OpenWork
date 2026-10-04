@@ -15,6 +15,8 @@
 | `ServerBootstrap`、`ServerReady`、`ComputerBootstrap`、`ComputerReady`、`readMessage`、`encodeMessage` | Desktop 主进程、Server、Computer | 启动握手：stdin 上一行 JSON 的 bootstrap，stdout 上一行 JSON 的 ready |
 | `UserId`、`AgentId`、`RoomId`、`MessageId`、`RuntimeSessionId` | 全部 | branded ID |
 | `MESSAGE_BODY_MAX`、`DISPLAY_NAME_MAX`、`PERSONA_MAX`、`ROOM_NAME_MAX`、`Handle` | Server、界面、`crew` 命令 | 消息正文、Agent 名字与人设、群聊名字的长度上限与 handle 的格式，各方用同一份规则 |
+| `Conversation` | Server、界面 | 会话列表的一项：最后一条消息与未读数 |
+| `mentionPattern`、`normalizeHandle` | Server、界面 | 正文里 `@handle` 的写法：Server 据此记录点名，界面据此高亮 |
 | `ReplyOutcome` | Server、`crew` 命令 | `POST /agent/reply` 的结果：发出，或被 HELD 拦下并附上新消息 |
 | `assertNever` | 界面；其他包需要时从这里导入 | 封闭联合的 `switch` 用它结尾：漏掉一个分支时，类型检查在这里报错 |
 

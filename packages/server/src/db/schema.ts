@@ -157,3 +157,26 @@ export const messageMentions = pgTable(
   },
   (t) => [primaryKey({ columns: [t.messageId, t.agentId] })],
 );
+
+/**
+ * 用户在每个房间读到的序号，用来计算未读数。界面打开房间、看到新消息时推进，只前进。
+ * 加入房间时从当时的最新序号开始。
+ */
+export const userReadCursors = pgTable(
+  "user_read_cursors",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" })
+      .$type<UserId>(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" })
+      .$type<RoomId>(),
+    lastReadSeq: bigint("last_read_seq", { mode: "number" }).notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.roomId] }),
+    check("user_read_cursors_seq_non_negative", sql`${t.lastReadSeq} >= 0`),
+  ],
+);

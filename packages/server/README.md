@@ -21,6 +21,7 @@ Collaboration Server：保存用户、Agent、私聊与群聊、消息，提供�
 | `packages/server/src/routes/` | 三组接口：`desktop.ts`、`computer.ts`、`agent.ts` |
 | `packages/server/src/agents.ts` | 新建 Agent（连同私聊房间与成员关系）与列出 Agent |
 | `packages/server/src/groups.ts` | 新建群聊、加成员、列出群聊 |
+| `packages/server/src/conversations.ts` | 用户的会话列表、未读数与标记已读 |
 | `packages/server/src/messages.ts` | 写入消息：分配序号、HELD 检查、记录 @、选出要唤醒的 Agent；按窗口读取消息；inbox、已投递与已读位置 |
 | `packages/server/src/mentions.ts` | 从正文里找出 @ 到的 handle |
 | `packages/server/src/context.ts` | 路由的依赖；消息写入后通知界面与唤醒 Agent |

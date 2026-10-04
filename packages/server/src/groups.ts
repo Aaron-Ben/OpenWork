@@ -1,7 +1,7 @@
 import type { AgentId, RoomId, UserId } from "@crew/protocol";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "./db";
-import { agentReadCursors, agents, roomAgents, rooms, roomUsers } from "./db/schema";
+import { agentReadCursors, agents, roomAgents, rooms, roomUsers, userReadCursors } from "./db/schema";
 import { RequestError } from "./errors";
 
 export interface GroupSummary {
@@ -45,6 +45,7 @@ export async function createGroup(
     const [room] = await tx.insert(rooms).values({ kind: "group", name: input.name }).returning();
     if (!room) throw new Error("创建群聊失败");
     await tx.insert(roomUsers).values({ roomId: room.id, userId: localUserId });
+    await tx.insert(userReadCursors).values({ roomId: room.id, userId: localUserId });
     await addAgents(tx, room.id, room.nextSeq, input.agentIds);
     return groupOf(tx, room.id);
   });

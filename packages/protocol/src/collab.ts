@@ -15,6 +15,20 @@ export const Handle = z
   .regex(/^[a-z0-9][a-z0-9-]*$/, "handle 只能用小写字母、数字与 -，并以字母或数字开头")
   .max(HANDLE_MAX, `handle 最多 ${HANDLE_MAX} 字符`);
 
+/**
+ * 正文里的一个 `@handle`。`@` 前面不能是字母、数字或 `_ . @ / -`，否则是邮箱或路径的一部分，例如 `a@b.com`。
+ * 第 1 组是 handle，大小写不敏感，可能带着句末的 `-`。Server 据此记录点名，界面据此高亮。
+ * 带 g 标志，每次调用返回新的对象：全局正则在 `exec` 之间保存位置，不能共用。
+ */
+export function mentionPattern(): RegExp {
+  return /(?<![A-Za-z0-9_.@/-])@([A-Za-z0-9][A-Za-z0-9-]*)/g;
+}
+
+/** 把匹配到的 handle 规整为存储的写法：小写，去掉句末的 `-`（例如 “@alice-请看”）。 */
+export function normalizeHandle(raw: string): string {
+  return raw.toLowerCase().replace(/-+$/, "");
+}
+
 /** 群聊的名字。 */
 export const ROOM_NAME_MAX = 40;
 export const RoomName = z

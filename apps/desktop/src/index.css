@@ -252,3 +252,12 @@ body {
 .cursor-blink {
   animation: crew-blink 1s steps(1) infinite;
 }
+
+/* 正文里的 @handle，由 lib/mentions.ts 的 rehype 插件标出。 */
+.mention {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 500;
+}

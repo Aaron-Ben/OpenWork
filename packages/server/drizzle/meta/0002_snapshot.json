@@ -1,0 +1,583 @@
+{
+  "id": "c777f366-4ceb-4910-955e-be6958cdeeb0",
+  "prevId": "a4fe8592-2327-4506-8b2a-a5e18bcd78c1",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.agent_read_cursors": {
+      "name": "agent_read_cursors",
+      "schema": "",
+      "columns": {
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_read_seq": {
+          "name": "last_read_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "delivered_seq": {
+          "name": "delivered_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_read_cursors_agent_id_agents_id_fk": {
+          "name": "agent_read_cursors_agent_id_agents_id_fk",
+          "tableFrom": "agent_read_cursors",
+          "tableTo": "agents",
+          "columnsFrom": ["agent_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "agent_read_cursors_room_id_rooms_id_fk": {
+          "name": "agent_read_cursors_room_id_rooms_id_fk",
+          "tableFrom": "agent_read_cursors",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "agent_read_cursors_agent_id_room_id_pk": {
+          "name": "agent_read_cursors_agent_id_room_id_pk",
+          "columns": ["agent_id", "room_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_read_cursors_seq_non_negative": {
+          "name": "agent_read_cursors_seq_non_negative",
+          "value": "\"agent_read_cursors\".\"last_read_seq\" >= 0"
+        },
+        "agent_read_cursors_delivered_not_behind": {
+          "name": "agent_read_cursors_delivered_not_behind",
+          "value": "\"agent_read_cursors\".\"delivered_seq\" >= \"agent_read_cursors\".\"last_read_seq\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agents": {
+      "name": "agents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "handle": {
+          "name": "handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "persona": {
+          "name": "persona",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "engine_id": {
+          "name": "engine_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agents_handle_unique": {
+          "name": "agents_handle_unique",
+          "nullsNotDistinct": false,
+          "columns": ["handle"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agents_display_name_not_blank": {
+          "name": "agents_display_name_not_blank",
+          "value": "btrim(\"agents\".\"display_name\") <> ''"
+        },
+        "agents_persona_not_blank": {
+          "name": "agents_persona_not_blank",
+          "value": "btrim(\"agents\".\"persona\") <> ''"
+        },
+        "agents_handle_format": {
+          "name": "agents_handle_format",
+          "value": "\"agents\".\"handle\" ~ '^[a-z0-9][a-z0-9-]{0,31}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.message_mentions": {
+      "name": "message_mentions",
+      "schema": "",
+      "columns": {
+        "message_id": {
+          "name": "message_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "message_mentions_message_id_messages_id_fk": {
+          "name": "message_mentions_message_id_messages_id_fk",
+          "tableFrom": "message_mentions",
+          "tableTo": "messages",
+          "columnsFrom": ["message_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "message_mentions_agent_id_agents_id_fk": {
+          "name": "message_mentions_agent_id_agents_id_fk",
+          "tableFrom": "message_mentions",
+          "tableTo": "agents",
+          "columnsFrom": ["agent_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "message_mentions_message_id_agent_id_pk": {
+          "name": "message_mentions_message_id_agent_id_pk",
+          "columns": ["message_id", "agent_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.messages": {
+      "name": "messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_user_id": {
+          "name": "author_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "author_agent_id": {
+          "name": "author_agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "messages_room_id_rooms_id_fk": {
+          "name": "messages_room_id_rooms_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "messages_author_user_id_users_id_fk": {
+          "name": "messages_author_user_id_users_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "users",
+          "columnsFrom": ["author_user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "messages_author_agent_id_agents_id_fk": {
+          "name": "messages_author_agent_id_agents_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "agents",
+          "columnsFrom": ["author_agent_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "messages_room_seq_unique": {
+          "name": "messages_room_seq_unique",
+          "nullsNotDistinct": false,
+          "columns": ["room_id", "seq"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "messages_seq_positive": {
+          "name": "messages_seq_positive",
+          "value": "\"messages\".\"seq\" > 0"
+        },
+        "messages_one_author": {
+          "name": "messages_one_author",
+          "value": "num_nonnulls(\"messages\".\"author_user_id\", \"messages\".\"author_agent_id\") = 1"
+        },
+        "messages_body_not_blank": {
+          "name": "messages_body_not_blank",
+          "value": "btrim(\"messages\".\"body\") <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.room_agents": {
+      "name": "room_agents",
+      "schema": "",
+      "columns": {
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "room_agents_room_id_rooms_id_fk": {
+          "name": "room_agents_room_id_rooms_id_fk",
+          "tableFrom": "room_agents",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "room_agents_agent_id_agents_id_fk": {
+          "name": "room_agents_agent_id_agents_id_fk",
+          "tableFrom": "room_agents",
+          "tableTo": "agents",
+          "columnsFrom": ["agent_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "room_agents_room_id_agent_id_pk": {
+          "name": "room_agents_room_id_agent_id_pk",
+          "columns": ["room_id", "agent_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.room_users": {
+      "name": "room_users",
+      "schema": "",
+      "columns": {
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "room_users_room_id_rooms_id_fk": {
+          "name": "room_users_room_id_rooms_id_fk",
+          "tableFrom": "room_users",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "room_users_user_id_users_id_fk": {
+          "name": "room_users_user_id_users_id_fk",
+          "tableFrom": "room_users",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "room_users_room_id_user_id_pk": {
+          "name": "room_users_room_id_user_id_pk",
+          "columns": ["room_id", "user_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rooms": {
+      "name": "rooms",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "direct_key": {
+          "name": "direct_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_seq": {
+          "name": "next_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "rooms_direct_key_unique": {
+          "name": "rooms_direct_key_unique",
+          "nullsNotDistinct": false,
+          "columns": ["direct_key"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "rooms_kind_known": {
+          "name": "rooms_kind_known",
+          "value": "\"rooms\".\"kind\" IN ('direct', 'group')"
+        },
+        "rooms_direct_has_key": {
+          "name": "rooms_direct_has_key",
+          "value": "\"rooms\".\"kind\" <> 'direct' OR \"rooms\".\"direct_key\" IS NOT NULL"
+        },
+        "rooms_group_has_name": {
+          "name": "rooms_group_has_name",
+          "value": "\"rooms\".\"kind\" <> 'group' OR btrim(coalesce(\"rooms\".\"name\", '')) <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.user_read_cursors": {
+      "name": "user_read_cursors",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_read_seq": {
+          "name": "last_read_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "user_read_cursors_user_id_users_id_fk": {
+          "name": "user_read_cursors_user_id_users_id_fk",
+          "tableFrom": "user_read_cursors",
+          "tableTo": "users",
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "user_read_cursors_room_id_rooms_id_fk": {
+          "name": "user_read_cursors_room_id_rooms_id_fk",
+          "tableFrom": "user_read_cursors",
+          "tableTo": "rooms",
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "user_read_cursors_user_id_room_id_pk": {
+          "name": "user_read_cursors_user_id_room_id_pk",
+          "columns": ["user_id", "room_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "user_read_cursors_seq_non_negative": {
+          "name": "user_read_cursors_seq_non_negative",
+          "value": "\"user_read_cursors\".\"last_read_seq\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

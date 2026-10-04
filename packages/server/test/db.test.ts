@@ -64,6 +64,7 @@ describe("migrations", () => {
       "room_agents",
       "room_users",
       "rooms",
+      "user_read_cursors",
       "users",
     ]);
   });

@@ -8,7 +8,7 @@ Status: implemented
 
 ## 决策
 
-- 两栏布局：左侧是 Agent 列表，每个 Agent 对应一个私聊房间，带状态点；右侧是聊天（`apps/desktop/src/App.tsx`）。cumora 的左侧导航栏（`cumora:src/desktop/Rail.tsx`）在有多个页面时再加。
+- 两栏布局：左侧是列表，右侧是聊天（`apps/desktop/src/App.tsx`）。第 3a 步之后侧栏改为“消息 / 群聊 / 联系人”分段，见 [会话列表、未读数与侧栏导航](2026-10-05-conversation-list.md)。cumora 的左侧导航栏（`cumora:src/desktop/Rail.tsx`）在有多个页面时再加。
 - 视觉风格：框架取“控制台”方向，侧栏、顶栏、状态与元信息用等宽字体，绿色强调色只用于回复中、选中与主按钮；正文取“纸面”方向，消息不加气泡，名字和时间在上，正文的字号与行距偏大，行宽有上限。浅色与深色两套主题跟随系统切换。颜色与字体是 `apps/desktop/src/index.css` 中的设计变量，只用系统字体。
 - 系统的红黄绿按钮放进侧栏顶部（`titleBarStyle: "hiddenInset"`）。窗口只显示界面自己的页面：消息里的 http 与 https 链接交给系统浏览器打开，其余导航一律丢弃（`apps/desktop/electron/navigation.ts`）。
 - 组件按 shadcn/ui 的做法写，源码放在 `apps/desktop/src/components/ui/`。

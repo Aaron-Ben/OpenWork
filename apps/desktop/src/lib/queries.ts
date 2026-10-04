@@ -98,7 +98,10 @@ export function useCreateAgent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: NewAgentInput) => server.call(api.desktop.createAgent, { body: input }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.agents }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
   });
 }
 
@@ -106,7 +109,10 @@ export function useCreateGroup() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { name: string; agentIds: AgentId[] }) => server.call(api.desktop.createGroup, { body: input }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.groups }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.groups });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
   });
 }
 
@@ -115,6 +121,41 @@ export function useAddGroupMembers(roomId: RoomId) {
   return useMutation({
     mutationFn: (agentIds: AgentId[]) =>
       server.call(api.desktop.addGroupMembers, { params: { roomId }, body: { agentIds } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.groups }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.groups });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+  });
+}
+
+export function useConversations() {
+  return useQuery({
+    queryKey: queryKeys.conversations,
+    queryFn: () => server.call(api.desktop.listConversations),
+  });
+}
+
+/** 用户读到了房间的第 `seq` 条。成功后刷新会话列表里的未读数。 */
+export function useMarkRead(roomId: RoomId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (seq: number) => server.call(api.desktop.markRead, { params: { roomId }, body: { seq } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+  });
+}
+
+/** 把一个 Agent 加进几个群聊：每个群聊调用一次加成员接口。 */
+export function useJoinGroups(agentId: AgentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (roomIds: RoomId[]) => {
+      for (const roomId of roomIds) {
+        await server.call(api.desktop.addGroupMembers, { params: { roomId }, body: { agentIds: [agentId] } });
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.groups });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
   });
 }

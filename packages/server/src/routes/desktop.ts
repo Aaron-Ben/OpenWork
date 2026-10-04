@@ -2,6 +2,7 @@ import { api, EVENT_STREAMS } from "@crew/protocol";
 import type { Express } from "express";
 import { type AgentSummary, createAgent, listAgents } from "../agents";
 import { notifyMessage, type ServerContext } from "../context";
+import { type Conversation, listConversations, markRead } from "../conversations";
 import { addGroupMembers, createGroup, type GroupSummary, listGroups } from "../groups";
 import { eventStream, route } from "../http";
 import { listMessages, postMessage } from "../messages";
@@ -34,6 +35,21 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
     notifyMessage(ctx, result);
     return result.message;
   });
+
+  const conversationView = (conversation: Conversation) => ({
+    ...conversation,
+    activeAt: conversation.activeAt.toISOString(),
+    lastMessage: conversation.lastMessage && {
+      ...conversation.lastMessage,
+      createdAt: conversation.lastMessage.createdAt.toISOString(),
+    },
+  });
+
+  route(app, api.desktop.listConversations, async () =>
+    (await listConversations(ctx.db, ctx.localUserId)).map(conversationView),
+  );
+
+  route(app, api.desktop.markRead, ({ params, body }) => markRead(ctx.db, ctx.localUserId, params.roomId, body.seq));
 
   route(app, api.desktop.listGroups, async () => (await listGroups(ctx.db)).map(groupView));
 
