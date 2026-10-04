@@ -47,6 +47,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - OpenCode 退出后，向它的进程组发 SIGTERM，2 秒后发 SIGKILL：Agent 在这一轮里起的后台进程不会活过这一轮，也不会因为占着输出管道让这一轮卡住。Agent 因此不能在两轮之间保留后台进程。
 - 停止与完成同时发生时，这一轮按“已停止”处理，不确认已读，下一次运行会重新处理这些消息。
 
+理由见 [每轮一次 OpenCode 与 crew 命令](../../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md)。
+
 ## 4. Seatbelt
 
 规则由 `packages/computer/src/sandbox/profile.ts` 生成，经 `/usr/bin/sandbox-exec -p` 启动 Engine：
@@ -56,6 +58,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - `$HOME` 之内默认不能读取文件内容，只放行 Agent 的持久目录、本次运行目录、`bin/crew` 所在目录与位于 `$HOME` 之内的可执行文件。`$HOME` 之外全部可读。只拒绝读取内容，不拒绝查看文件是否存在。
 - 网络不受限制。
 - 启动自检：用一条拒绝写入的规则在沙箱中运行 `sh`，确认写入确实被拒绝。
+
+理由见 [每轮一次 OpenCode 与 crew 命令](../../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md)。
 
 ## 5. 本机目录
 
@@ -87,6 +91,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - 成功时向 stdout 写 `Message sent to room <room-id>.`，退出码 0。失败时向 stderr 写一行英文 `error: …`，说明原因与下一步，退出码 1；Server 的 401、403、404 由 `crew` 翻译成英文。
 - 请求最多等 10 秒，不重试；超时时提示消息可能已经发出、不要重发。
 - 全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
+
+理由见 [每轮一次 OpenCode 与 crew 命令](../../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md)。
 
 ## 7. 验收
 

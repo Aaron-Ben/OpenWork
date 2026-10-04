@@ -22,6 +22,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - ID 都是数据库生成的 UUID，代码中用 branded 类型（`packages/protocol/src/ids.ts`）。
 - 表结构由 `packages/server/src/db/schema.ts` 定义，迁移由 drizzle-kit 生成在 `packages/server/drizzle/`。
 
+理由见 [私聊的数据模型](../../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md)。
+
 ## 3. Agent 与房间
 
 - 新建 Agent 时，在一个事务里写入 Agent、它与用户的私聊房间、两边的成员关系与已读位置。
@@ -72,8 +74,10 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - 错误响应一律是 `{ "error": 原因 }`。请求校验失败时返回 400 与第一条校验错误；请求体不是合法 JSON 时返回 400；请求体超过 1 MB 时返回 413；没有匹配的接口时返回 404；未预料的错误返回 500 与 “Server 内部错误”。
 - 接口的方法、路径、参数与响应由 `packages/protocol/src/api.ts` 的契约定义，Server 用 `route()` 按契约注册（`packages/server/src/http.ts`）。
 - 只有界面的来源（`CREW_RENDERER_ORIGIN`）可以跨域调用 `/desktop/*`。
-- SSE 每 15 秒发一行注释保持连接。断线期间的提示不补发，客户端重连后重新读取全部数据（`packages/protocol/src/sse.ts`）。
+- SSE 每 15 秒发一行注释保持连接。断线期间的提示不补发，客户端重连后重新读取全部数据。重连从 1 秒开始指数退避，最长 30 秒（`packages/protocol/src/sse.ts`）。
 - SSE 响应带 `Connection: close`：流结束时连接一起关闭，不以 keep-alive 的形式留着拖住关闭。
+
+理由见 [Express 5 与 protocol 的接口契约](../../.agents/notes/implemented/architecture/2026-10-04-express-api-contract.md) 与 [SSE 只传失效提示与 Agent 唤醒](../../.agents/notes/implemented/architecture/2026-10-04-sse-invalidation-and-wake.md)。
 
 ## 8. 验收
 

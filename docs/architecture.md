@@ -1,6 +1,6 @@
 # 架构
 
-本文描述 Crew 的进程、包、依赖方向与领域词汇。各部分的行为与数字见子系统页：[消息与接口](subsystems/messaging.md)、[Agent 运行](subsystems/agent-runtime.md)。设计理由见[重写的 Agent Note](../.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。
+本文描述 Crew 的进程、包、依赖方向与领域词汇。各部分的行为与数字见子系统页：[消息与接口](subsystems/messaging.md)、[Agent 运行](subsystems/agent-runtime.md)。设计理由见各节末尾链接的 Agent Note，总体计划见[重写的路线图](../.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。
 
 ## 1. 进程与通信
 
@@ -15,6 +15,7 @@ Electron 主进程（监管者）
 
 - 全部通信都在本机回环地址上。Server 每次启动使用随机端口。
 - 主进程先启动 Server，再启动 Computer，两者都就绪后才打开窗口。启动握手：主进程向子进程的 stdin 写一行 JSON（bootstrap，含凭证），子进程就绪后向 stdout 写一行 JSON（ready，Server 的 ready 带回端口）。代码在 `apps/desktop/electron/runtime.ts` 与 `apps/desktop/electron/child.ts`。
+- 子进程 30 秒内没有报告 ready 就按启动失败处理。停止时先停 Computer 再停 Server，每个先发 SIGTERM，3 秒后仍未退出就发 SIGKILL。
 - 同一时间只运行一个 Crew：再次启动时，新实例直接退出，已有的窗口切到前台（Electron 的单实例锁）。
 - 子进程的 stdin 关闭时，子进程退出，所以主进程被强制结束也不会留下孤儿进程。任一子进程意外退出时，主进程弹出错误对话框，停止全部进程后退出。
 - 界面经 preload 的 `window.crew` 拿到 Server 地址与凭证，之后直接请求 Server，不经过主进程转发。
@@ -27,6 +28,8 @@ Electron 主进程（监管者）
 | Desktop 凭证 | 界面 | `/desktop/*` |
 | Computer 凭证 | Computer | `/computer/*` |
 | Agent 凭证 | 每个 Agent 一个，存在本次运行目录的文件里 | `/agent/*` |
+
+理由见 [主进程监管 Server 与 Computer](../.agents/notes/implemented/architecture/2026-10-04-process-supervision.md)、[界面直接连接 Server](../.agents/notes/implemented/architecture/2026-10-04-renderer-connects-to-server.md) 与 [SSE 只传失效提示与 Agent 唤醒](../.agents/notes/implemented/architecture/2026-10-04-sse-invalidation-and-wake.md)。
 
 ## 2. 包与依赖方向
 
@@ -41,6 +44,8 @@ Electron 主进程（监管者）
 - Computer 与界面都不引用 server，只经 HTTP 访问它。接口的方法、路径、参数与响应由 `packages/protocol/src/api.ts` 的契约定义：Server 按它注册路由，返回值必须符合响应的类型；客户端用 `ApiClient` 按它调用并校验响应。
 - 一个模块只有一个使用方时并进使用方，例如沙箱代码与 `crew` 都在 `packages/computer` 内。
 
+理由见 [workspace、包划分与构建](../.agents/notes/implemented/architecture/2026-10-04-workspace-and-build.md) 与 [Express 5 与 protocol 的接口契约](../.agents/notes/implemented/architecture/2026-10-04-express-api-contract.md)。
+
 ## 3. 数据与状态归属
 
 | 数据 | 位置 | 生命周期 |
@@ -52,6 +57,8 @@ Electron 主进程（监管者）
 
 Redis 目前只在启动时检查连接，还没有读写。
 
+理由见 [私聊的数据模型](../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md)。
+
 ## 4. 一条消息的路径
 
 1. 用户在界面发消息，界面调用 `POST /desktop/rooms/:roomId/messages`。
@@ -60,6 +67,8 @@ Redis 目前只在启动时检查连接，还没有读写。
 4. 模型决定回复时运行 `crew reply <room-id>`，正文从 stdin 读入；`crew` 带着 Agent 凭证调用 `POST /agent/reply`。
 5. Server 写入回复，向界面发“房间有新消息”，界面重新读取并显示。
 6. Turn 成功结束后，Runner 确认已读，并上报 Agent 回到空闲。
+
+理由见 [每轮一次 OpenCode 与 crew 命令](../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md)。
 
 ## 5. 领域词汇
 

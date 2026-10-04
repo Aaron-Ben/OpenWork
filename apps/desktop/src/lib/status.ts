@@ -1,5 +1,4 @@
-import type { AgentStatus } from "@crew/protocol";
-import { assertNever } from "./assert";
+import { type AgentStatus, assertNever } from "@crew/protocol";
 
 export type StatusTone = "working" | "idle" | "error";
 

@@ -2,7 +2,7 @@
 
 本页描述协作模式的桌面界面：Shell 与导航、Tauri 监督进程、命令与事件、各页面的结构与行为。React 代码在 `desktop/src/features/collab/` 与 `desktop/src/bridge/`。Tauri host 的协作部分在 `desktop/src-tauri/src/collab_client.rs`、`collab_event_bridge.rs` 与 `commands/collab.rs`。命令与视图类型由 `openwork-collab::protocol` 定义。
 
-业务语义与存储见 [collaboration.md](collaboration.md)。界面结构以 Cumora 桌面端为参照，对照表与差异见 [Agent Note：协作界面参照 Cumora](../../.agents/notes/implemented/feature/2026-09-25-collab-desktop-follows-cumora.md)。
+业务语义与存储见 [collaboration.md](collaboration.md)。界面结构以 Cumora 桌面端为参照，对照表与差异见 [Agent Note：协作界面参照 Cumora](../../.agents/notes/legacy/feature/2026-09-25-collab-desktop-follows-cumora.md)。
 
 ## 1. 边界
 
@@ -16,7 +16,7 @@
 | 显示 Runtime、Engine、Agent 当前状态、Message、Card 状态与运行记录 | 不在房间里显示运行细节 |
 | 把 Desktop SSE invalidation 转成 Tauri event | 不把 SSE 当成业务事实 |
 
-房间、Agent 与看板页面显示当前状态：谁在工作，谁出错了，哪张卡片在等谁。房间里的说明行解释为什么有人没回复（§7.3）。一次 Run 的过程只在运行记录页显示（§10）。理由见 [Agent Note：运行记录页](../../.agents/notes/implemented/feature/2026-09-24-run-records-page.md)。
+房间、Agent 与看板页面显示当前状态：谁在工作，谁出错了，哪张卡片在等谁。房间里的说明行解释为什么有人没回复（§7.3）。一次 Run 的过程只在运行记录页显示（§10）。理由见 [Agent Note：运行记录页](../../.agents/notes/legacy/feature/2026-09-24-run-records-page.md)。
 
 只支持当前 Mac。界面没有远程机器、Computer 选择器或后台 Runtime 开关。Desktop 正常退出时停止 Collaboration Runtime（§3.3）。
 
@@ -121,7 +121,7 @@ Agent 命令都返回 `AgentView`：profile 与配置字段，另加当前状态
 
 多种条件同时满足时，按这个顺序取第一种：归档 → 工作中 → 出错 → 排队 → 空闲。时间是带 `+08:00` 的 RFC 3339。私聊房间没有 `title`，所以 `roomTitle` 对私聊房间为空。
 
-限流、未登录等 Runner 退避不上报（collaboration.md §5）。退避期间，Agent 按其他条件显示，通常是排队或空闲。理由见 [Agent Note：不上报 Runner 暂停](../../.agents/notes/implemented/simplification/2026-09-25-no-runner-pause-reporting.md)。
+限流、未登录等 Runner 退避不上报（collaboration.md §5）。退避期间，Agent 按其他条件显示，通常是排队或空闲。理由见 [Agent Note：不上报 Runner 暂停](../../.agents/notes/legacy/simplification/2026-09-25-no-runner-pause-reporting.md)。
 
 ### 4.2 Room 与 Message
 
@@ -151,7 +151,7 @@ collab_room_viewed            { roomId, upToSeq }
 - `collab_room_pin` 写入 `collab_rooms.user_pinned_at`。已经置顶时，不改置顶时间。房间不存在时返回 `NOT_FOUND`。
 - 创建私聊的语义是“创建或返回已有房间”。创建群组至少要两个 Agent。成员命令只接受 Agent ID；Server 始终管理 `local-user`。每次成员变动写入一条系统消息。
 
-房间页使用专用视图，Agent 命令的 `RoomView` 与 `MessageView` 不变。理由见 [Agent Note：Desktop 房间页使用专用视图](../../.agents/notes/implemented/architecture/2026-09-25-desktop-room-views.md)。引用见 [Agent Note：引用回复](../../.agents/notes/implemented/feature/2026-09-24-message-quotes.md)。
+房间页使用专用视图，Agent 命令的 `RoomView` 与 `MessageView` 不变。理由见 [Agent Note：Desktop 房间页使用专用视图](../../.agents/notes/legacy/architecture/2026-09-25-desktop-room-views.md)。引用见 [Agent Note：引用回复](../../.agents/notes/legacy/feature/2026-09-24-message-quotes.md)。
 
 ### 4.3 Board、Column 与 Card
 
@@ -172,7 +172,7 @@ collab_card_delete                    → 被删除的 id
 ```
 
 - 新建的看板有三列：`Todo`、`Doing`、`Done`，类型分别是 `todo`、`doing`、`done`。
-- `BoardColumnView.kind` 取 `todo`、`doing`、`done` 或 `null`（未分类）。理由见 [Agent Note：Column 类型与领取](../../.agents/notes/implemented/architecture/2026-09-24-column-kind-and-card-claim.md)。
+- `BoardColumnView.kind` 取 `todo`、`doing`、`done` 或 `null`（未分类）。理由见 [Agent Note：Column 类型与领取](../../.agents/notes/legacy/architecture/2026-09-24-column-kind-and-card-claim.md)。
 - `collab_board_list` 给每张卡片加上两个字段，Agent 命令返回的卡片不带它们：
   - `agentState`：负责人的 running Run 正在处理这张卡片时为 `working`；负责人对它有未结算的卡片唤醒时为 `queued`；否则不发这个字段；
   - `updatedAt`：最近更新时间，带 `+08:00`。
@@ -300,7 +300,7 @@ Desktop SSE 断开后，Tauri host 自己重连。间隔从 1 秒起翻倍，上
   - 胶囊显示看板图标与卡片标题，标题从已加载的 Board 中查找。卡片已删除时，胶囊只显示 id，且不可点击。
   - 消息下方为每张找得到的卡片附一张摘要卡：看板图标、“看板卡片 · `card-` 加 id 前 8 位”、标题、“<看板名> → <列名>”、负责人、多久前更新。
   - 点击胶囊或摘要卡时，右侧栏显示这张卡片的预览（§7.5），对应的胶囊与摘要卡描边变为 clay。
-  - 理由见 [Agent Note：卡片链接](../../.agents/notes/implemented/architecture/2026-09-24-card-links-instead-of-board-events.md)。
+  - 理由见 [Agent Note：卡片链接](../../.agents/notes/legacy/architecture/2026-09-24-card-links-instead-of-board-events.md)。
 - 悬停消息时显示浮动工具条：引用回复、复制。只读房间没有引用回复。
 - 视口离底部不到 72px 时，消息流跟随新消息滚到底部。否则显示“回到最新消息”按钮。发送消息后，消息流滚到最新。
 
@@ -311,7 +311,7 @@ Desktop SSE 断开后，Tauri host 自己重连。间隔从 1 秒起翻倍，上
 - `upToSeq` 取快照中最新一条消息的 sequence。只有它大于上次成功上报的值时，才上报。
 - 失败时不记录，下次读到快照或回到前台时重试。
 
-用户查看房间算作人类关注。理由见 [Agent Note：lap floor](../../.agents/notes/implemented/architecture/2026-09-24-lap-floor.md)。
+用户查看房间算作人类关注。理由见 [Agent Note：lap floor](../../.agents/notes/legacy/architecture/2026-09-24-lap-floor.md)。
 
 ### 7.3 说明行
 
@@ -436,11 +436,11 @@ Agent 资料：64px 头像与识别色、显示名与 `@id`、role、状态标�
 - 改派负责人，或在描述里新增 `@<agent-id>`，会叫醒对应的 Agent。保存后，详情里提示“已通知 <名字>”。
 - Column move 与 Card move 只发送 `before_*_id` 或追加到末尾。UI 不自行保存 position，每次修改后重新读取 Board。删除冲突、非空 Column/Board 等错误由 Server 判断，显示在页面顶部。
 
-接手规则的理由见 [Agent Note：Column 类型与领取](../../.agents/notes/implemented/architecture/2026-09-24-column-kind-and-card-claim.md)。
+接手规则的理由见 [Agent Note：Column 类型与领取](../../.agents/notes/legacy/architecture/2026-09-24-column-kind-and-card-claim.md)。
 
 ## 10. 运行记录页
 
-页面在 Rail 的第五项，标题“运行观测”（`features/collab/observability/`）。它只用于观察，不提供重试、取消或编辑。理由见 [Agent Note：运行记录页](../../.agents/notes/implemented/feature/2026-09-24-run-records-page.md)。
+页面在 Rail 的第五项，标题“运行观测”（`features/collab/observability/`）。它只用于观察，不提供重试、取消或编辑。理由见 [Agent Note：运行记录页](../../.agents/notes/legacy/feature/2026-09-24-run-records-page.md)。
 
 - 左侧是 Run 列表，默认宽 360px，可拖动 280–560。顶部有两个筛选：Agent，以及状态（`running`、`completed`、`failed`、`cancelled`、`interrupted`）。
 - 每行显示 Agent 名、状态、`stage`、开始时间、用时；失败时另显示错误信息。

@@ -12,7 +12,7 @@
 - 多个 Agent，每个 Agent 独立选择 `engine_id`、主模型与 triage 模型；
 - Room、Message、Climate、Board、Column、Card、Run 与 Agenda。
 
-不提供：远程 Computer、共享真实项目目录、离线补跑、审批、MCP、Memory、Notes、Skills、Calendar、steer、reaction、convene、投票、文档、卡片评论、Agent 管理群成员。steer 的提议见 [Agent Note：为 steer 改用常驻 opencode serve](../../.agents/notes/proposed/architecture/2026-09-24-opencode-serve-for-steer.md)。
+不提供：远程 Computer、共享真实项目目录、离线补跑、审批、MCP、Memory、Notes、Skills、Calendar、steer、reaction、convene、投票、文档、卡片评论、Agent 管理群成员。steer 的提议见 [Agent Note：为 steer 改用常驻 opencode serve](../../.agents/notes/legacy/architecture/2026-09-24-opencode-serve-for-steer.md)。
 
 ```text
 OpenWork Desktop
@@ -94,7 +94,7 @@ Desktop 持有两个 `Child` handle，每 250 ms 检查一次。Server 或 Compu
 5. 删除旧 runtime 目录。
 6. 生成全新的 RuntimeSession 与凭证，成组启动新的 Server 与 Computer。启动失败时每 2 秒重试。
 
-**不要只替换一个子进程并复用旧 RuntimeSession。** 旧 Agent JWT、旧 trigger 与旧 Agenda candidate set 都绑定旧的 `runtime_session_id`，新 Server 拒绝它们。理由见 [Agent Note：成组替换 RuntimeSession](../../.agents/notes/implemented/architecture/2026-09-01-runtime-session-group-replacement.md)。
+**不要只替换一个子进程并复用旧 RuntimeSession。** 旧 Agent JWT、旧 trigger 与旧 Agenda candidate set 都绑定旧的 `runtime_session_id`，新 Server 拒绝它们。理由见 [Agent Note：成组替换 RuntimeSession](../../.agents/notes/legacy/architecture/2026-09-01-runtime-session-group-replacement.md)。
 
 正常退出时，Desktop 按同样的顺序停止两个子进程，整个过程最多等 30 秒。每个 Runner 接收两种信号：
 
@@ -152,7 +152,7 @@ Engine 进程指 OpenCode 及它启动的全部子进程，包括 shim。它们�
 - Computer 启动时做一次 Seatbelt 自检。沙箱不可用时，OpenCode 的 probe 返回错误，inventory 为 `error`，所有 Runner 都不启动。没有无沙箱的运行路径。
 - 沙箱挡不住：模型能读到本 Agent 的 JWT 与 Provider 登录信息。OpenCode 必须是 `$HOME` 之外的可执行文件，或单文件可执行文件。依赖 `$HOME` 下解释器的安装方式（例如 nvm 中的 npm 包）不能在沙箱内启动。
 
-理由见 [Agent Note：OpenCode Engine 围栏](../../.agents/notes/implemented/architecture/2026-09-24-opencode-engine-confinement.md)。
+理由见 [Agent Note：OpenCode Engine 围栏](../../.agents/notes/legacy/architecture/2026-09-24-opencode-engine-confinement.md)。
 
 ## 4. HTTP 与 SSE
 
@@ -171,7 +171,7 @@ Computer            1 条 management SSE    /computer/events
 - Computer 每 60 秒获取一次完整的 desired snapshot。Runner 每 20 秒读一次 durable inbox。
 - SSE 与 Redis Pub/Sub 只传 invalidation，不传业务正文。
 
-事件可以重复或丢失。正确性依靠 PostgreSQL 中的事实与周期重读，没有事件重放日志。理由见 [Agent Note：SSE 只传失效提示](../../.agents/notes/implemented/architecture/2026-09-01-sse-invalidation-only.md)。
+事件可以重复或丢失。正确性依靠 PostgreSQL 中的事实与周期重读，没有事件重放日志。理由见 [Agent Note：SSE 只传失效提示](../../.agents/notes/legacy/architecture/2026-09-01-sse-invalidation-only.md)。
 
 ## 5. Agent desired state 与 reconcile
 
@@ -199,7 +199,7 @@ desired agents + current Engine readiness
 ```
 
 - heartbeat 每 30 秒上报一次，状态变化时立即上报。内容是每个 Engine 的就绪状态，以及每个 Runner 的 `running` 或 `error`（附最后一次错误，最多 1,000 字符）。Server 只在内存中保存当前 RuntimeSession 的这份状态。
-- §6 与 §8.3 的退避只在 Computer 本地生效，不上报，Desktop 也不显示暂停。导致退避的 Run 照常以失败结算。理由见 [Agent Note：不上报 Runner 暂停](../../.agents/notes/implemented/simplification/2026-09-25-no-runner-pause-reporting.md)。
+- §6 与 §8.3 的退避只在 Computer 本地生效，不上报，Desktop 也不显示暂停。导致退避的 Run 照常以失败结算。理由见 [Agent Note：不上报 Runner 暂停](../../.agents/notes/legacy/simplification/2026-09-25-no-runner-pause-reporting.md)。
 - assignment 的任何字段变化（显示名、role、persona、Engine、两个模型、Agenda 开关、config revision）时，Computer 停止旧 Runner（同时发出 `stop_requested` 与 `force_cancel`），再按新配置重建。
 - 一个 Agent 的 home 或 Engine 初始化失败时，只把该 Runner 标为 error，不阻塞其他 Agent。
 - 归档 Agent 时，停止它的 Runner，保留历史、home 与 Engine continuity。恢复 Agent 后，用新的 config revision 重建 Runner。
@@ -230,13 +230,13 @@ OpenCode adapter：
 - 正式 Turn 每次启动一个进程：`opencode run --pure --format json --auto [--session <id>] --model <主模型>`，prompt 经 stdin 写入。cwd 是 `agents/<id>/work`。
 - 分类调用（triage、路由题、Agenda）：`opencode run --pure --format json --agent openwork-triage [--model <triage 模型>]`。`openwork-triage` 经 `OPENCODE_CONFIG_CONTENT` 注入，拒绝全部工具。分类调用有 60 秒上限。
 - 派生配置以 `OPENCODE_DISABLE_PROJECT_CONFIG=1` 运行，内容是 `permission: {"*": "allow"}`。正式 Turn 的配置用 `instructions` 引用 `agents/<id>/AGENTS.md` 的绝对路径。分类调用使用 `classify/` 下单独的配置，不加载 persona。
-- 派生配置把本次使用的模型写成 `provider.<p>.models.<m>.status = "active"`，模型 id 按第一个 `/` 拆分。理由见 [Agent Note：派生配置把模型标为 active](../../.agents/notes/implemented/bug-fix/2026-09-24-opencode-models-pinned-active.md)。
+- 派生配置把本次使用的模型写成 `provider.<p>.models.<m>.status = "active"`，模型 id 按第一个 `/` 拆分。理由见 [Agent Note：派生配置把模型标为 active](../../.agents/notes/legacy/bug-fix/2026-09-24-opencode-models-pinned-active.md)。
 - 输出上限：stdout 8 MiB，stderr 1 MiB，单行 JSONL 1 MiB。错误文本取 stderr 末尾 16 KiB，把 cwd 换成 `<agent-home>`，把 `Bearer `、`token=` 之后的值换成 `<redacted>`。
 - session continuity 存在 `agents/<id>/engines/opencode/session.json`，记录 Engine、模型与 `AGENTS.md` 内容摘要。三者之一变化时，不恢复旧 session。
 
 adapter 把错误映射成通用的 `EngineError`：`NotRegistered`、`Missing`、`Unauthenticated`、`RateLimited`、`Process`、`Protocol`、`Reported`、`SessionInvalid`、`Sandbox`、`Io`、`Cancelled`、`Timeout`、`OutputLimit`。
 
-正式 Turn 默认没有“无输出”超时，也没有总时长超时。只有 `EngineRuntimeConfig.turn_timeout` 有值时才启用总超时，Computer 当前传 `None`。用户停止 Agent 或退出 Desktop 时，取消路径先发 SIGINT 给 Engine 进程组，2 秒后 SIGKILL。理由见 [Agent Note：正式 Turn 默认没有超时](../../.agents/notes/implemented/architecture/2026-09-01-no-default-turn-timeout.md)。
+正式 Turn 默认没有“无输出”超时，也没有总时长超时。只有 `EngineRuntimeConfig.turn_timeout` 有值时才启用总超时，Computer 当前传 `None`。用户停止 Agent 或退出 Desktop 时，取消路径先发 SIGINT 给 Engine 进程组，2 秒后 SIGKILL。理由见 [Agent Note：正式 Turn 默认没有超时](../../.agents/notes/legacy/architecture/2026-09-01-no-default-turn-timeout.md)。
 
 每个 `AgentRunner` 是一个 actor：
 
@@ -246,11 +246,11 @@ adapter 把错误映射成通用的 `EngineError`：`NotRegistered`、`Missing`�
 - Turn 结束后重新读取 durable inbox，不在内存中积累消息正文。
 - 运行中的 Run 每 30 秒向 Server 发一次 heartbeat。
 - 所有 Engine 调用经同一个 pacer：调用间隔从 250 ms 起；限流时间隔翻倍（最多 10 秒），并按 retry-after 或 60 秒推迟下一次调用。
-- 正式 Turn 失败后，`engine_backoff_after`（`computer/scheduling.rs`）决定暂停：`Unauthenticated` 暂停 15 分钟；`RateLimited` 按 retry-after，没有时 60 秒；其他错误不暂停。暂停期间该 Agent 不读 inbox，聊天、卡片 Turn 与 Agenda 都不启动。理由见 [Agent Note：Engine 失败暂停](../../.agents/notes/implemented/feature/2026-09-24-engine-failure-backoff.md)。
+- 正式 Turn 失败后，`engine_backoff_after`（`computer/scheduling.rs`）决定暂停：`Unauthenticated` 暂停 15 分钟；`RateLimited` 按 retry-after，没有时 60 秒；其他错误不暂停。暂停期间该 Agent 不读 inbox，聊天、卡片 Turn 与 Agenda 都不启动。理由见 [Agent Note：Engine 失败暂停](../../.agents/notes/legacy/feature/2026-09-24-engine-failure-backoff.md)。
 
 ## 7. 每轮 Turn 的输入
 
-主模型每轮读到两部分：`AGENTS.md` 中的固定契约，与 prompt 中的增量。理由见 [Agent Note：模型可见的消息上限与原文](../../.agents/notes/implemented/architecture/2026-09-24-model-visible-message-limits.md)。
+主模型每轮读到两部分：`AGENTS.md` 中的固定契约，与 prompt 中的增量。理由见 [Agent Note：模型可见的消息上限与原文](../../.agents/notes/legacy/architecture/2026-09-24-model-visible-message-limits.md)。
 
 ### 7.1 固定契约
 
@@ -269,7 +269,7 @@ Computer 写入 `agents/<id>/AGENTS.md`（`standing_prompt`，`computer/home.rs`
 - 开头一段与五条规则照搬 Cumora `standingPrompt` 与 `glance-protocol.ts` 的 `GLANCE_YIELD_RULES`，只做三处替换：`cumora` 换成 `openwork`；原文“react / 👀”的出路改为保持沉默；共享交付物只有 Card。
 - `DRIVE_YOUR_WORK` 照搬 Cumora `standingPrompt`，去掉 “and schedule your own check-back” 与 `calendar create` 示例。
 
-消息里的卡片 id 是房间与看板之间唯一的连接，Server 不把看板事件写进房间。理由见 [Agent Note：卡片链接](../../.agents/notes/implemented/architecture/2026-09-24-card-links-instead-of-board-events.md)。CLI 写法的理由见 [Agent Note：CLI 正文写法与帮助](../../.agents/notes/implemented/feature/2026-09-24-cli-message-body-and-help.md)。
+消息里的卡片 id 是房间与看板之间唯一的连接，Server 不把看板事件写进房间。理由见 [Agent Note：卡片链接](../../.agents/notes/legacy/architecture/2026-09-24-card-links-instead-of-board-events.md)。CLI 写法的理由见 [Agent Note：CLI 正文写法与帮助](../../.agents/notes/legacy/feature/2026-09-24-cli-message-body-and-help.md)。
 
 ### 7.2 每轮增量
 
@@ -383,7 +383,7 @@ Computer 用本 Agent 的 triage 模型回答，再带 `routed=me|each` 取一�
 - 答 `each`：参与（`source = routing`）。
 - 模型出错、超时或答案无法解析：按 `each` 处理。只有明确的 `"me"` 才收窄（`parse_route`）。
 
-路由题的答案随最终结论写入 `collab_triages.response_mode`。理由见 [Agent Note：每个 Agent 各自判断点名](../../.agents/notes/implemented/architecture/2026-09-24-per-agent-triage-for-unaddressed-messages.md)。
+路由题的答案随最终结论写入 `collab_triages.response_mode`。理由见 [Agent Note：每个 Agent 各自判断点名](../../.agents/notes/legacy/architecture/2026-09-24-per-agent-triage-for-unaddressed-messages.md)。
 
 ### 8.3 triage 判定顺序
 
@@ -399,7 +399,7 @@ Server 构造 triage payload（`InboxTriage::payload`，`server/triage.rs`）。
 | 5 | 每个未读房间都满足 `n > k` | 跳过（`lap_floor`） | 否 |
 | 6 | 其余（群里 Agent 之间的对话、私聊检查点） | triage 模型判断（`local_model`） | 是 |
 
-`n` 是最近一次人类关注之后该房间的非 system Agent 消息数，`k` 是发这些消息的不同 Agent 数。`n > k` 表示有 Agent 开始第二次发言。人类关注取两者中较大的 sequence：最后一条非 Agent 消息；`collab_rooms.user_viewed_seq`（§13.3.4）。理由见 [Agent Note：lap floor](../../.agents/notes/implemented/architecture/2026-09-24-lap-floor.md)。
+`n` 是最近一次人类关注之后该房间的非 system Agent 消息数，`k` 是发这些消息的不同 Agent 数。`n > k` 表示有 Agent 开始第二次发言。人类关注取两者中较大的 sequence：最后一条非 Agent 消息；`collab_rooms.user_viewed_seq`（§13.3.4）。理由见 [Agent Note：lap floor](../../.agents/notes/legacy/architecture/2026-09-24-lap-floor.md)。
 
 `reply` 与 `dm` 写入时，也按同样的人类关注检查 20 条硬上限，超过时拒绝（`LOOP_CAP`）。lap floor 只在 triage 时判断。
 
@@ -412,7 +412,7 @@ triage 模型失败时（`handle_failure`，`computer/runner/classify.rs`）：
 - 输出无法解析或其他 Engine 错误：结论为 `actionable = false`、`source = fail_closed`，原因保留错误的前 120 字符。delivery 以 `triage_false` 结算，不退避。
 - 成功的 triage 清零退避。Server 拒绝 actionable 的 `system_only`、`loop_cap`、`lap_floor` 与 `fail_closed`，也拒绝不 actionable 的 `agent_dm_engage`。
 
-人类消息在第 2 步确定性参与，路由题失败时按参与处理。所以 triage 失败不会让人类消息丢失。理由见 [Agent Note：triage 失败处理](../../.agents/notes/implemented/architecture/2026-09-24-triage-failure-handling.md)。
+人类消息在第 2 步确定性参与，路由题失败时按参与处理。所以 triage 失败不会让人类消息丢失。理由见 [Agent Note：triage 失败处理](../../.agents/notes/legacy/architecture/2026-09-24-triage-failure-handling.md)。
 
 ### 8.4 durable inbox 与 delivery
 
@@ -421,7 +421,7 @@ Runner 读 durable inbox（`Messages::inbox`），Server 返回本批消息与�
 - 单批最多 200 条消息。分配方法是 quietest-first water-fill：先给每个有未读的房间一个窗口，再把余量分给繁忙的房间。每个窗口从该房间最旧的未读消息开始。
 - 超出本批预算的消息不推进 `last_read_seq`，在后续 Run 中出现。这时 trigger 的 `carried_over` 为真（§7.2 的最后一行）。
 
-Run 以 `completed` 结束时，Server 把 `eligible_reason` 为空的 delivery 记为 `completed`，然后结算本 Run 的全部 delivery，推进 `last_read_seq`。Agent 回复、`ack` 或保持沉默都算处理过。triage 判定跳过时，delivery 以 `triage_false` 结算。失败、取消或中断的 Run 不结算，下次重新读取。所以失败路径上的模型调用与回复是 at-least-once。理由见 [Agent Note：成功的 Run 结算全部 delivery](../../.agents/notes/implemented/architecture/2026-09-24-settle-deliveries-on-successful-run.md)。
+Run 以 `completed` 结束时，Server 把 `eligible_reason` 为空的 delivery 记为 `completed`，然后结算本 Run 的全部 delivery，推进 `last_read_seq`。Agent 回复、`ack` 或保持沉默都算处理过。triage 判定跳过时，delivery 以 `triage_false` 结算。失败、取消或中断的 Run 不结算，下次重新读取。所以失败路径上的模型调用与回复是 at-least-once。理由见 [Agent Note：成功的 Run 结算全部 delivery](../../.agents/notes/legacy/architecture/2026-09-24-settle-deliveries-on-successful-run.md)。
 
 ## 9. 发布：连发、HELD、逐字重复与引用
 
@@ -434,7 +434,7 @@ Run 以 `completed` 结束时，Server 把 `eligible_reason` 为空的 delivery 
 3. 20 条硬上限（`LOOP_CAP`，§8.3）。
 4. 房间成员超过 2 人时：连发（§9.4）、HELD（§9.1）、逐字重复（§9.2）。`--continue` 跳过连发与 HELD，不跳过逐字重复。
 
-全部通过后，Server 分配 sequence、插入消息，并把该房间的 delivery 记为 `action`。`dm` 自动创建或复用 Direct Room，只检查 20 条硬上限。被拒绝的发布不算 action，不推进 delivery。理由见 [Agent Note：发布前的三道闸](../../.agents/notes/implemented/architecture/2026-09-24-reply-gates.md)。
+全部通过后，Server 分配 sequence、插入消息，并把该房间的 delivery 记为 `action`。`dm` 自动创建或复用 Direct Room，只检查 20 条硬上限。被拒绝的发布不算 action，不推进 delivery。理由见 [Agent Note：发布前的三道闸](../../.agents/notes/legacy/architecture/2026-09-24-reply-gates.md)。
 
 ### 9.1 HELD
 
@@ -448,7 +448,7 @@ HELD 处理并行回复的新鲜度：
 6. 带 token 重试时，Server 先按 `request_id` 原子预留 token，再提交 PostgreSQL 命令与幂等结果，提交后才消费 token。SQL 失败后，同一 `request_id` 可以恢复；其他请求不能抢占预留。
 7. Redis 不可用时，签发与预留都失败，`reply` 返回 `RATE_LIMITED`（`coordination is temporarily unavailable`）。
 
-HELD 不是全局锁，也不选举唯一回答者。理由见 [Agent Note：HELD 后直接重发](../../.agents/notes/implemented/architecture/2026-09-24-held-resend.md)。
+HELD 不是全局锁，也不选举唯一回答者。理由见 [Agent Note：HELD 后直接重发](../../.agents/notes/legacy/architecture/2026-09-24-held-resend.md)。
 
 ### 9.2 逐字重复
 
@@ -468,7 +468,7 @@ Server 去掉正文首尾空白，再与本房间最近一条他人发的 `norma
 - 被引用消息的作者是 Agent 时，它算 §8.2 的点名对象。
 - inbox、`glance`、`messages` 与每轮增量的每条消息都带消息 id；带引用的消息在下一行显示被引用消息的前 180 字符。
 
-理由见 [Agent Note：引用回复](../../.agents/notes/implemented/feature/2026-09-24-message-quotes.md)。
+理由见 [Agent Note：引用回复](../../.agents/notes/legacy/feature/2026-09-24-message-quotes.md)。
 
 ### 9.4 连发
 
@@ -525,7 +525,7 @@ Agent 可以静音自己所在的 Group（`server/room_mutes.rs`）：
 - 回执：`Muted <room-id> ("<title>") until <time>.`（一直静音时写 `until you follow it again.`）`New group messages will not wake you or enter your inbox. A direct @<id> mention or a reply quoting your message still gets through. Resume with: openwork follow <room-id>`。恢复时：`Following <room-id> again. New messages will resume normal inbox delivery.`；本来没有静音时：`<room-id> was not muted; normal delivery is already active.`。时间带 `+08:00`。
 - Desktop 没有静音入口。
 
-理由见 [Agent Note：静音](../../.agents/notes/implemented/feature/2026-09-25-room-mutes.md)。
+理由见 [Agent Note：静音](../../.agents/notes/legacy/feature/2026-09-25-room-mutes.md)。
 
 ## 11. Board、Column 与 Card
 
@@ -543,7 +543,7 @@ Desktop 用户可以：
 - 创建、重命名、设置 `kind`、重排与删除空 Column；
 - 创建、编辑（标题与描述）、移动（换列或同列重排）、分配与删除 Card。
 
-Desktop 创建或编辑卡片时，改派与新增的 `@<agent-id>` 同样产生卡片唤醒（§11.4）。发起者是 `local-user`，不受每分钟 30 次的限额。理由见 [Agent Note：Desktop 直接处理卡片](../../.agents/notes/implemented/feature/2026-09-25-desktop-card-editing.md)。
+Desktop 创建或编辑卡片时，改派与新增的 `@<agent-id>` 同样产生卡片唤醒（§11.4）。发起者是 `local-user`，不受每分钟 30 次的限额。理由见 [Agent Note：Desktop 直接处理卡片](../../.agents/notes/legacy/feature/2026-09-25-desktop-card-editing.md)。
 
 Agent 的 typed command 只允许：读取 Board 与 Card；创建 Card；原子领取 Card；分配、更新与移动 Card。Agent 不能创建、重排或删除 Column，也不能删除 Board 或 Card。
 
@@ -560,7 +560,7 @@ Server 在事务中按固定顺序锁定 Board、Column、Card。Column 与 Card
 3. 不满足时返回 `CONFLICT`：`card <id> is already being worked by @<holder> — move on to another card.`
 4. 领取即推进：卡片当前列的 `kind` 为 `todo` 时，移到本 Board 最左的 `doing` 列末尾。卡片在未分类列，或 Board 没有 `doing` 列时，不移动。
 
-“更新”指这张卡片本身的创建、修改、改派、领取或移动。同列其他卡片进出只改变它的 position，不刷新它的 `updated_at`。“负责人没有 running Run”按 Agent 判断，不按卡片判断。理由见 [Agent Note：Column 类型与卡片领取](../../.agents/notes/implemented/architecture/2026-09-24-column-kind-and-card-claim.md)。
+“更新”指这张卡片本身的创建、修改、改派、领取或移动。同列其他卡片进出只改变它的 position，不刷新它的 `updated_at`。“负责人没有 running Run”按 Agent 判断，不按卡片判断。理由见 [Agent Note：Column 类型与卡片领取](../../.agents/notes/legacy/architecture/2026-09-24-column-kind-and-card-claim.md)。
 
 ### 11.4 卡片唤醒
 
@@ -612,7 +612,7 @@ Your team (use these ids for @mentions and `openwork dm`):
 - 超过 10 张时，卡片列表后加一行 `N more card(s) are waiting; they will arrive in a later turn.`。
 - 没有未读消息时，省略那一节。本批之外还有未读时，加一行 `More unread messages are waiting; they will arrive in a later turn.`。
 
-理由见 [Agent Note：卡片唤醒持久化](../../.agents/notes/implemented/architecture/2026-09-24-persistent-card-wakes.md)。
+理由见 [Agent Note：卡片唤醒持久化](../../.agents/notes/legacy/architecture/2026-09-24-persistent-card-wakes.md)。
 
 ## 12. Agenda
 
@@ -797,7 +797,7 @@ Participant 是消息作者、Room 成员、Card assignee 与来源字段的统�
 
 `collab_triages` 保存 triage 结论：每个 Run 在每个 delivery 房间写一行，结论写入后不能改为相反的值。列包括 `up_to_seq`、`actionable`、`response_mode`（`me` / `each`；CHECK 还允许 `one_of_us`，代码不写它）、`source`、`reason`、`prompt_note`、Engine 与模型、用量与 latency。`source` 的 CHECK 允许 12 个值：`empty_inbox`、`system_only`、`rate_limited`、`deterministic`、`routing`、`agent_dm_engage`、`lap_floor`、`loop_cap`、`local_model`、`fail_closed`、`engine_error`、`human_dm`。Server 只接受其中 8 个：`local_model`、`deterministic`、`system_only`、`agent_dm_engage`、`loop_cap`、`lap_floor`、`routing`、`fail_closed`。`run_id` 可空，Run 删除时置空。
 
-`collab_run_events` 保存 Run 的过程事件：`source` 为 `runner` 或 `engine`；`kind` 只有 `triage.started`、`engine.started`、`engine.completed`、`engine.failed`、`engine.cancelled`；`level`；JSON object `data`。限流信息写在 `engine.failed` 的 `data` 中。Desktop 的运行记录页展示这些事件（[collaboration-desktop.md](collaboration-desktop.md) §10）。结算、路由与一轮上限的判定都不读这张表。理由见 [Agent Note：运行记录页](../../.agents/notes/implemented/feature/2026-09-24-run-records-page.md)。
+`collab_run_events` 保存 Run 的过程事件：`source` 为 `runner` 或 `engine`；`kind` 只有 `triage.started`、`engine.started`、`engine.completed`、`engine.failed`、`engine.cancelled`；`level`；JSON object `data`。限流信息写在 `engine.failed` 的 `data` 中。Desktop 的运行记录页展示这些事件（[collaboration-desktop.md](collaboration-desktop.md) §10）。结算、路由与一轮上限的判定都不读这张表。理由见 [Agent Note：运行记录页](../../.agents/notes/legacy/feature/2026-09-24-run-records-page.md)。
 
 #### 13.3.8 命令幂等与 Engine inventory
 

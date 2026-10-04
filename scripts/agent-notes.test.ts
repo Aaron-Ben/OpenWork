@@ -10,11 +10,15 @@ describe("checkAgentNote", () => {
     expect(checkAgentNote("proposed/architecture/2026-10-04-topic.md", note("Status: proposed"))).toEqual([]);
     expect(checkAgentNote("implemented/feature/2026-10-04-topic.md", note("Status: implemented"))).toEqual([]);
     expect(checkAgentNote("rejected/process/2026-10-04-topic.md", note("Status: rejected — 成本太高"))).toEqual([]);
+    expect(checkAgentNote("legacy/architecture/2026-09-24-topic.md", note("Status: legacy"))).toEqual([]);
   });
 
   it("rejects a status that does not match the directory", () => {
     expect(checkAgentNote("implemented/feature/2026-10-04-topic.md", note("Status: proposed"))).toEqual([
       "implemented/feature/2026-10-04-topic.md：第 3 行的状态与所在目录 implemented/ 不一致",
+    ]);
+    expect(checkAgentNote("legacy/feature/2026-09-24-topic.md", note("Status: implemented"))).toEqual([
+      "legacy/feature/2026-09-24-topic.md：第 3 行的状态与所在目录 legacy/ 不一致",
     ]);
   });
 

@@ -13,12 +13,11 @@ const root = resolve(import.meta.dirname, "..");
 const notesDir = resolve(root, ".agents/notes");
 
 /**
- * 不检查行内代码路径的文档：已实现与已归档的 Note、旧版的子系统页记录的是当时的路径；
+ * 不检查行内代码路径的文档：Rust 版的 Note 与旧版的子系统页记录的是当时的路径；
  * 任务文件写的是计划中、还没建的文件。
  */
 const PATH_CHECK_EXEMPT = [
-  ".agents/notes/implemented/",
-  ".agents/notes/archived/",
+  ".agents/notes/legacy/",
   ".agents/tasks/",
   "docs/subsystems/collaboration.md",
   "docs/subsystems/collaboration-desktop.md",

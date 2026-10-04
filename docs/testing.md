@@ -17,8 +17,12 @@
 - `pnpm check` 依次运行 lint、类型检查、`pnpm test` 与 `pnpm test:smoke`，全量约 17 秒。
 - 集成与冒烟测试需要 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL`，由 `@crew/server/testing` 的 `testEnv()` 读取，环境变量没有设置时读根目录的 `.env`。缺少时测试直接失败，不跳过。
 - 依赖 Seatbelt 的测试只在 macOS 上运行。
-- 改了界面后，用 `pnpm preview:shot --theme light` 与 `--theme dark` 截图自查。它启动的是一个新的 Crew 实例，不能和正在运行的 `pnpm dev` 同时使用：单实例锁会让它直接退出，截图默认保存在 `apps/desktop/out/preview/`。例如 `--eval` 传入点击“新建 agent”的脚本，可以截到对话框。
-- 真实模型测试不进 `pnpm check`。没有指定 `CREW_E2E_MODEL`、没有 `opencode` 或没有登录时整组跳过，模型由运行的人选。改动 Engine 调用或模型可见的行为时运行它，并在汇报中写明结果。
+- 改了界面后，用 `pnpm preview:shot --theme light` 与 `--theme dark` 截图自查：
+  - 它用临时数据库启动一个新的 Crew，不能和正在运行的 `pnpm dev` 同时使用：单实例锁会让它直接退出。
+  - 截图默认保存在 `apps/desktop` 下的 `out/preview/`。
+  - `--eval` 在截图前在页面里执行一段脚本，例如点击“新建 agent”后截到对话框。
+- 真实模型测试不进 `pnpm check`。没有指定 `CREW_E2E_MODEL`、没有 `opencode` 或没有登录时整组跳过。
+- **改动 Engine 调用或模型可见的行为时，先问用户是否运行真实模型测试、用哪个模型**：它调用付费模型，模型由运行的人选。运行后在汇报中写明模型与结果。
 
 ## 2. 原则
 
@@ -72,4 +76,4 @@ pnpm --filter @crew/server test                                   # 一个包的
 pnpm --filter @crew/computer exec vitest run test/shim.test.ts    # 一个测试文件
 ```
 
-开发时先运行改动相关的测试；提交前运行 `pnpm check`，步骤见 [crew-commit](../.agents/skills/crew-commit/SKILL.md)。
+开发时可以先运行改动相关的测试，改完代码运行 `pnpm check`。提交步骤见 [crew-commit](../.agents/skills/crew-commit/SKILL.md)。

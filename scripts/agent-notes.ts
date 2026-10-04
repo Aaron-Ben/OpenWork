@@ -1,6 +1,7 @@
 // Agent Note 的位置与格式，规则见 .agents/notes/README.md。
 
-const LIFECYCLES = ["proposed", "implemented", "rejected"] as const;
+/** `legacy` 是 Rust 版的决策记录，只作参考，见 .agents/notes/README.md。 */
+const LIFECYCLES = ["proposed", "implemented", "rejected", "legacy"] as const;
 const CATEGORIES = ["feature", "bug-fix", "simplification", "architecture", "process", "testing"];
 const FILE_NAME = /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
 
@@ -12,6 +13,8 @@ function expectedStatus(lifecycle: (typeof LIFECYCLES)[number], line: string): b
       return line === "Status: implemented";
     case "rejected":
       return /^Status: rejected — \S/.test(line);
+    case "legacy":
+      return line === "Status: legacy";
   }
 }
 
@@ -26,7 +29,7 @@ export function checkAgentNote(path: string, content: string): string[] {
   const [lifecycle, category, fileName, ...rest] = path.split("/");
 
   if (!LIFECYCLES.includes(lifecycle as (typeof LIFECYCLES)[number]) || !fileName || rest.length > 0) {
-    return [`${path}：路径应为 {proposed|implemented|rejected}/{类别}/yyyy-mm-dd-主题.md`];
+    return [`${path}：路径应为 {${LIFECYCLES.join("|")}}/{类别}/yyyy-mm-dd-主题.md`];
   }
   if (!category || !CATEGORIES.includes(category)) {
     problems.push(`${path}：类别应为 ${CATEGORIES.join("、")} 之一`);

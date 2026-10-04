@@ -11,6 +11,13 @@ pre-commit:
     - name: 空白字符（暂存内容）
       run: git diff --cached --check
 
+    # 两者检查仓库里的全部文件，不只暂存的文件：改名代码文件会让没有改动的文档里的路径失效。合计不到 1 秒。
+    - name: 文档检查
+      run: pnpm exec tsx scripts/verify-docs.ts
+
+    - name: 代码约定检查
+      run: pnpm exec tsx scripts/verify-code.ts
+
 commit-msg:
   jobs:
     - name: 提交说明格式

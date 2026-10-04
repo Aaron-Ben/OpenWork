@@ -27,6 +27,7 @@ export type ParamsOf<E extends Endpoint> = E["params"] extends z.ZodType ? z.inp
 /** 请求体（调用方传入的值）。 */
 export type BodyOf<E extends Endpoint> = E["body"] extends z.ZodType ? z.input<E["body"]> : undefined;
 /** 响应：Server 返回的值。 */
+// biome-ignore lint/suspicious/noConfusingVoidType: 没有响应体的接口，处理函数不写 return，推导出的返回类型是 void，写成 undefined 时它们无法通过类型检查。
 export type ReplyOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.input<E["response"]> : void;
 /** 响应：客户端校验后得到的值。 */
 export type ResponseOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.output<E["response"]> : undefined;

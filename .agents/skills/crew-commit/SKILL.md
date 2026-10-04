@@ -16,14 +16,17 @@ git diff --stat
 
 - 用具体路径暂存本次改动。工作区里有与本次无关的改动（包括用户自己的改动）时，先问用户是否一起提交。
 - 看一遍暂存区的文件列表，确认没有密钥、凭证与构建产物。
+- 有本次任务的任务文件时，做完的块打勾并写证据，与代码一起提交；全部完成时按 [任务文件的规则](../../tasks/README.md) 核对后删除。
 
 ## 2. 自查并运行检查
 
 - 对照 [docs/defensive-patterns.md](../../../docs/defensive-patterns.md) 看本次的子进程、流与清理代码；对照 [docs/testing.md](../../../docs/testing.md) 看测试是否够、能否失败。
-- 改动较大时，交给一个全新上下文的 subagent 评审 diff：只列会阻止合并的问题，每条给出文件与行号、错在哪、怎样证明它会失败。核对它给的证据后再采纳。
+- 改了代码（含测试、脚本与配置）时，交给一个全新上下文的 subagent 评审 diff：只列会阻止合并的问题，每条给出文件与行号、错在哪、怎样证明它会失败。核对它给的证据后再采纳。只改 Markdown 时跳过。
+- 改了 Markdown 时，对照 [docs/AGENTS.md](../../../docs/AGENTS.md) 第 4 节的低质量写法清单自查。
 - 运行 `pnpm check`。用户说“只做语法检查”时，只运行 `pnpm lint` 与 `pnpm typecheck`，并在汇报中写明没有跑测试。
 - 检查失败时不提交，修好后重新运行。
-- 改了模型可见的文本：确认快照的 diff 已经逐行看过。改了 Engine 调用：问用户是否运行一次真实模型测试。改了旧版 Rust 代码：另外运行 [docs/legacy-rust.md](../../../docs/legacy-rust.md) 中的检查。
+- 改了命令参数、默认值、数字或行为时，用 `git grep` 在 `docs/` 与 `.agents/notes/proposed/` 中搜索旧的写法，一起更新。路径检查只能发现被删除的文件，发现不了这类过时的描述。
+- 改了模型可见的文本：确认快照的 diff 已经逐行看过。改了 Engine 调用或模型可见的行为：按 [testing.md](../../../docs/testing.md) 第 1 节先问用户是否运行真实模型测试。改了旧版 Rust 代码：另外运行 [docs/legacy-rust.md](../../../docs/legacy-rust.md) 中的检查。
 
 ## 3. 写提交说明
 
@@ -35,7 +38,7 @@ git diff --stat
 ```
 
 - type 用 `feat`、`fix`、`refactor`、`docs`、`test`、`chore`；scope 写包或区域，例如 `server`、`computer`、`desktop`、`notes`。
-- 正文按模块分条，写改了什么与为什么，不逐行复述 diff。范例：`git show -s d93f71c`。只改一处文字时可以只写标题。
+- 正文按模块分条，写改了什么与为什么，不逐行复述 diff。范例：`git show -s e7708c5`。只改一处文字时可以只写标题。
 - 多行说明写进临时文件，用 `git commit -F <文件>` 提交。commit-msg 钩子会检查标题格式与空行，不合格时拒绝提交。
 
 ## 4. 汇报

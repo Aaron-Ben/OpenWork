@@ -12,7 +12,7 @@
 | [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷与对应的写法 |
 | [legacy-rust.md](legacy-rust.md) | 旧版 Rust 代码的检查命令 |
 | [AGENTS.md](AGENTS.md) | 文档标准 |
-| [templates/crate-readme.md](templates/crate-readme.md) | 旧版 crate README 的结构与写法 |
+| [templates/package-readme.md](templates/package-readme.md) | 包 README 的结构与写法 |
 
 ## 子系统
 
@@ -22,6 +22,17 @@
 | [agent-runtime.md](subsystems/agent-runtime.md) | Computer：启动与停止、Runner 与 Turn、OpenCode、Seatbelt、本机目录、`crew` 命令 |
 | [collaboration.md](subsystems/collaboration.md) | 旧版 Rust 的协作 Runtime，开发期间保留作参考 |
 | [collaboration-desktop.md](subsystems/collaboration-desktop.md) | 旧版 Tauri 的协作界面，开发期间保留作参考 |
+
+## 包
+
+每个包的入口、源码地图与对模型上下文的影响。
+
+| 包 | 内容 |
+|---|---|
+| [@crew/protocol](../packages/protocol/README.md) | 接口契约、branded ID、启动握手、SSE 读取 |
+| [@crew/server](../packages/server/README.md) | Collaboration Server |
+| [@crew/computer](../packages/computer/README.md) | Agent 宿主与 `crew` 命令 |
+| [@crew/desktop](../apps/desktop/README.md) | Electron 主进程与界面 |
 
 ## 事实来源
 

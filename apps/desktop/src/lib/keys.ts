@@ -1,5 +1,4 @@
-import type { DesktopEvent, RoomId } from "@crew/protocol";
-import { assertNever } from "./assert";
+import { assertNever, type DesktopEvent, type RoomId } from "@crew/protocol";
 
 /** TanStack Query 的缓存键。SSE 提示按 `keysForEvent` 让对应的键失效。 */
 export const queryKeys = {

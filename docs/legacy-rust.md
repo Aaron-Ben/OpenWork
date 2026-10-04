@@ -7,8 +7,11 @@
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --no-fail-fast
 pnpm --dir desktop typecheck
-scripts/check.sh    # 全量测试，先设置 TEST_DATABASE_URL 与 TEST_REDIS_URL
+pnpm --dir desktop test
 ```
 
-旧版的子系统页是 [collaboration.md](subsystems/collaboration.md) 与 [collaboration-desktop.md](subsystems/collaboration-desktop.md)，开发期间保留作参考。
+运行 `cargo test` 前先设置 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL`。没有设置时，依赖 PostgreSQL 的测试会静默跳过，结果不可信。
+
+旧版的子系统页是 [collaboration.md](subsystems/collaboration.md) 与 [collaboration-desktop.md](subsystems/collaboration-desktop.md)，决策记录在 `.agents/notes/legacy/`，开发期间都保留作参考。

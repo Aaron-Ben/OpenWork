@@ -1,6 +1,6 @@
 # openwork-sandbox
 
-本 crate 定义一个进程能读写什么，并用 Seatbelt 在内核中强制执行。路径分档的理由见 [Agent Note：路径四档](../../.agents/notes/implemented/architecture/2026-08-01-path-tiers-and-credential-read-deny.md)。
+本 crate 定义一个进程能读写什么，并用 Seatbelt 在内核中强制执行。路径分档的理由见 [Agent Note：路径四档](../../.agents/notes/legacy/architecture/2026-08-01-path-tiers-and-credential-read-deny.md)。
 
 本 crate 不依赖其他 OpenWork crate。它不启动被限制的进程（启动自检除外）。
 

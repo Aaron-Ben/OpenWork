@@ -1,4 +1,5 @@
 export * from "./api";
+export * from "./assert";
 export * from "./client";
 export * from "./collab";
 export * from "./ids";
