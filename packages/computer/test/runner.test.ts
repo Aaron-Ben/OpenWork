@@ -5,42 +5,11 @@ import { type AgentId, ComputerAgent, type RoomId, RuntimeSessionId } from "@cre
 import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "@crew/server/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ServerClient } from "../src/client";
-import type { EngineAdapter, TurnOutcome, TurnRequest } from "../src/engine/types";
 import { prepareAgent, prepareRuntime } from "../src/home";
 import { AgentRunner } from "../src/runner";
+import { FakeEngine } from "./support/fake-engine";
 
 // 真实的 Server 应用（内存中，临时数据库）加上按脚本回复的假 Engine。
-
-/** 按顺序返回预设结果的 Engine；记录每次收到的请求。`hold` 让 Turn 等到测试放行或被中止。 */
-class FakeEngine implements EngineAdapter {
-  readonly id = "fake";
-  readonly requests: TurnRequest[] = [];
-  private release: (() => void) | undefined;
-  constructor(
-    private readonly outcomes: TurnOutcome[],
-    private readonly hold = false,
-  ) {}
-  async probe() {
-    return { ready: true as const, executable: "/usr/bin/true" };
-  }
-  async listModels() {
-    return [];
-  }
-  async runTurn(request: TurnRequest): Promise<TurnOutcome> {
-    this.requests.push(request);
-    if (this.hold) {
-      const aborted = await new Promise<boolean>((resolve) => {
-        this.release = () => resolve(false);
-        request.signal.addEventListener("abort", () => resolve(true), { once: true });
-      });
-      if (aborted) return { ok: false, error: { kind: "cancelled", message: "已停止" } };
-    }
-    return this.outcomes.shift() ?? { ok: true, sessionId: "ses_default" };
-  }
-  finishTurn() {
-    this.release?.();
-  }
-}
 
 let t: TestApp;
 let root: string;

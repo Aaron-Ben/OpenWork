@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -34,7 +36,15 @@ async function startStub(status: number): Promise<string> {
 function startComputer(baseUrl: string) {
   const proc = spawn(tsx, [entry], { stdio: ["pipe", "pipe", "pipe"] });
   child = proc;
-  proc.stdin.write(`${JSON.stringify({ runtimeSessionId: "session-1", baseUrl, computerToken: "token" })}\n`);
+  proc.stdin.write(
+    `${JSON.stringify({
+      runtimeSessionId: "session-1",
+      baseUrl,
+      computerToken: "token",
+      crewRoot: join(tmpdir(), `crew-main-test-${process.pid}-${Date.now()}`),
+      shimEntry: "/nonexistent/shim.js",
+    })}\n`,
+  );
   let stderr = "";
   proc.stderr.on("data", (chunk) => {
     stderr += chunk;

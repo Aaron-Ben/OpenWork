@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { type RendererRuntime, RUNTIME_CHANNEL } from "../shared/runtime";
@@ -38,6 +39,8 @@ async function start(): Promise<void> {
     serverEntry: join(import.meta.dirname, "server.js"),
     computerEntry: join(import.meta.dirname, "computer.js"),
     migrationsDir: join(import.meta.dirname, "drizzle"),
+    shimEntry: join(import.meta.dirname, "shim.js"),
+    crewRoot: join(homedir(), ".crew"),
     env: process.env,
     rendererOrigin: new URL(rendererUrl).origin,
   });

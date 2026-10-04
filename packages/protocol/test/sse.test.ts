@@ -173,3 +173,25 @@ describe("runEventStream", () => {
     expect(Date.now() - before).toBeLessThan(100);
   });
 });
+
+describe("runEventStream when aborted early", () => {
+  it("returns when aborted right after the connection opens", async () => {
+    const connection = new FakeConnection();
+    const controller = new AbortController();
+    const fetchFn: typeof fetch = async () => {
+      // 在返回响应之前中止：读取开始时信号已经是中止状态。
+      controller.abort();
+      return new Response(connection.body);
+    };
+    const before = Date.now();
+    await runEventStream({
+      url: "http://server/events",
+      headers: {},
+      schema: Event,
+      onEvent: () => {},
+      signal: controller.signal,
+      fetch: fetchFn,
+    });
+    expect(Date.now() - before).toBeLessThan(500);
+  });
+});

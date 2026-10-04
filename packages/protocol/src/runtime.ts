@@ -25,6 +25,10 @@ export const ComputerBootstrap = z.object({
   runtimeSessionId: RuntimeSessionId,
   baseUrl: z.url(),
   computerToken: z.string().min(1),
+  /** Computer 的根目录，通常是 `~/.crew`。 */
+  crewRoot: z.string().min(1),
+  /** 打包后的 shim 入口（`shim.js`），由 Electron 以 Node 方式运行。 */
+  shimEntry: z.string().min(1),
 });
 export type ComputerBootstrap = z.infer<typeof ComputerBootstrap>;
 

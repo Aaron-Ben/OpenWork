@@ -97,6 +97,8 @@ async function readOnce<T>(fetchFn: typeof fetch, options: EventStreamOptions<T>
     void reader.cancel();
   };
   options.signal.addEventListener("abort", cancel, { once: true });
+  // 连接建立之后、注册监听之前就已经中止时，监听不会再触发，这里补上。
+  if (options.signal.aborted) cancel();
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -113,6 +115,10 @@ async function readOnce<T>(fetchFn: typeof fetch, options: EventStreamOptions<T>
 /** 等待 `ms` 毫秒；`signal` 中止时立即返回。 */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
     const timer = setTimeout(done, ms);
     signal.addEventListener("abort", done, { once: true });
     function done() {

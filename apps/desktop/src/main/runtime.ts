@@ -32,6 +32,10 @@ export interface RuntimeOptions {
   computerEntry: string;
   /** drizzle-kit 生成的迁移目录，Server 启动时执行其中的迁移。 */
   migrationsDir: string;
+  /** 打包后的 shim 入口，Computer 用它生成 `bin/crew`。 */
+  shimEntry: string;
+  /** Computer 的根目录，通常是 `~/.crew`。 */
+  crewRoot: string;
   /** 已经读入 `.env` 的环境变量，原样传给 Server。 */
   env: NodeJS.ProcessEnv;
   /** 渲染进程的 origin，Server 只允许它跨域调用。 */
@@ -85,7 +89,13 @@ export async function startRuntime(options: RuntimeOptions): Promise<Runtime> {
       executable: options.executable,
       entry: options.computerEntry,
       env: { ...computerEnv(options.env), ...nodeEnv },
-      bootstrap: { runtimeSessionId, baseUrl: server.ready.baseUrl, computerToken },
+      bootstrap: {
+        runtimeSessionId,
+        baseUrl: server.ready.baseUrl,
+        computerToken,
+        crewRoot: options.crewRoot,
+        shimEntry: options.shimEntry,
+      },
       readySchema: ComputerReady,
     });
   } catch (error) {

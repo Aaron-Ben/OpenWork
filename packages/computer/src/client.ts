@@ -47,11 +47,12 @@ export class ServerClient {
     await this.request("POST", "/computer/models", { models });
   }
 
-  /** SSE 接口的地址与请求头，交给 `runEventStream`。 */
-  eventStream(): { url: string; headers: Record<string, string> } {
+  /** SSE 接口的地址、请求头与本客户端使用的 fetch，交给 `runEventStream`。 */
+  eventStream(): { url: string; headers: Record<string, string>; fetch: typeof fetch } {
     return {
       url: new URL("/computer/events", this.baseUrl).toString(),
       headers: { Authorization: `Bearer ${this.computerToken}` },
+      fetch: this.fetchFn,
     };
   }
 
