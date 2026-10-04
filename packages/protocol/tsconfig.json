@@ -1,5 +1,10 @@
 {
-  // protocol 同时被 Node 进程与渲染进程导入，所以不引入 Node 或 DOM 类型。
+  // protocol 同时被 Node 进程与渲染进程导入，所以不引入 Node 类型。
+  // 加入 DOM 库只为 fetch、流与 AbortSignal 的类型；这些 API 在 Node 24 与浏览器中都有。
+  // 不要在这里使用 window、document 等只有浏览器才有的 API。
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"]
+  },
   "include": ["src", "test"]
 }

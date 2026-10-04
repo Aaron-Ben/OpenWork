@@ -1,4 +1,4 @@
-import { type AgentId, type ComputerEvent, type DesktopEvent, RoomId } from "@crew/protocol";
+import { type AgentId, type ComputerEvent, DesktopEvent, RoomId, runEventStream } from "@crew/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "./support/app";
 
@@ -197,6 +197,32 @@ describe("status and models", () => {
 });
 
 describe("events over SSE", () => {
+  it("reach the shared SSE reader, which stops cleanly when aborted", async () => {
+    const agent = await newAgent("Reader");
+    const received: DesktopEvent[] = [];
+    let opened = false;
+    const controller = new AbortController();
+    const done = runEventStream({
+      url: "http://127.0.0.1:1/desktop/events",
+      headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}` },
+      schema: DesktopEvent,
+      onEvent: (event) => received.push(event),
+      onOpen: () => {
+        opened = true;
+      },
+      signal: controller.signal,
+      fetch: t.fetch,
+    });
+
+    for (let i = 0; i < 100 && !opened; i++) await new Promise((r) => setTimeout(r, 10));
+    await sendAsUser(agent.roomId, "经过共享读取器");
+    for (let i = 0; i < 100 && received.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    await done;
+
+    expect(received).toContainEqual({ type: "room.messages", roomId: agent.roomId });
+  });
+
   it("deliver a room refresh to the desktop after a message is written", async () => {
     const agent = await newAgent("Streamed");
     const response = await desktop("/desktop/events");

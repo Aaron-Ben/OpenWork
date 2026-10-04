@@ -13,5 +13,29 @@
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 120
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/protocol/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "window": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。",
+                  "document": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。",
+                  "localStorage": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。",
+                  "process": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。",
+                  "Buffer": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。",
+                  "__dirname": "protocol 同时运行在 Node 与浏览器中，只能使用两边都有的 API。"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
