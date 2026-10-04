@@ -20,7 +20,6 @@
   <p>
     <a href="README.md">简体中文</a> ·
     <a href="docs/README.md">Documentation</a> ·
-    <a href="docs/architecture.md">Architecture</a> ·
     <a href="https://github.com/Aaron-Ben/OpenWork/issues">Issues</a>
   </p>
 </div>
@@ -182,7 +181,6 @@ Use OpenWork only with trusted local agent configurations. Before you use it, ma
 ## Documentation
 
 - [Documentation index](docs/README.md)
-- [System architecture](docs/architecture.md)
 - [Collaboration runtime and data model](docs/subsystems/collaboration.md)
 - [Collaboration Desktop](docs/subsystems/collaboration-desktop.md)
 

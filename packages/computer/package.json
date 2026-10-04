@@ -1,0 +1,15 @@
+{
+  "name": "@crew/computer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@crew/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@crew/server": "workspace:*"
+  }
+}

@@ -1,0 +1,17 @@
+# git hooks 只做快速检查，不修改文件或暂存区；完整检查用 pnpm check。
+# 安装：pnpm install 时由根 package.json 的 prepare 脚本执行 lefthook install。
+
+pre-commit:
+  jobs:
+    # 只检查，不自动修复：自动修复会改写暂存内容，与部分暂存的文件冲突。格式问题用 pnpm format 修复。
+    - name: biome（暂存文件）
+      glob: "*.{ts,tsx,js,mjs,cjs,json,jsonc,css}"
+      run: pnpm exec biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+
+    - name: 空白字符（暂存内容）
+      run: git diff --cached --check
+
+pre-push:
+  jobs:
+    - name: 类型检查
+      run: pnpm typecheck

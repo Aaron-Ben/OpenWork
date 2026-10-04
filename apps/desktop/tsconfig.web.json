@@ -1,0 +1,11 @@
+{
+  // 渲染进程：运行在浏览器环境中，没有 Node 类型，代码无法通过类型检查使用 Node API。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // Vite 的客户端类型声明了 `import "./x.css"` 这类资源导入。
+    "types": ["vite/client"]
+  },
+  "include": ["src/renderer", "src/shared"]
+}

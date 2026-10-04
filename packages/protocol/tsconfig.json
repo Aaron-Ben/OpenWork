@@ -1,0 +1,5 @@
+{
+  // protocol 同时被 Node 进程与渲染进程导入，所以不引入 Node 或 DOM 类型。
+  "extends": "../../tsconfig.base.json",
+  "include": ["src", "test"]
+}

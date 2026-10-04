@@ -2,14 +2,11 @@
 
 `docs/subsystems/` 每页描述一个子系统已经实现的行为、边界与验收。决策理由与还没实现的设计写在 [Agent Notes](../.agents/notes/README.md)。文档分层与写作规则见 [AGENTS.md](AGENTS.md)。
 
-跨功能的领域术语以 [architecture.md](architecture.md) 为准。
-
 ## 根目录
 
 | 文档 | 内容 |
 |---|---|
-| [architecture.md](architecture.md) | crate 划分、依赖方向、核心不变量、领域词汇 |
-| [local-postgres.md](local-postgres.md) | 本地数据库启动、迁移、检查与重建 |
+| [local-services.md](local-services.md) | 本地 PostgreSQL 与 Redis 的启动、检查与重建 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 |
 | [AGENTS.md](AGENTS.md) | 文档标准 |
 | [templates/crate-readme.md](templates/crate-readme.md) | crate README 的结构与写法 |
@@ -36,6 +33,5 @@
 
 第一次接触这个项目：
 
-1. [architecture.md](architecture.md)：建立词汇和边界。
-2. [collaboration.md](subsystems/collaboration.md)：协作 Runtime 怎样工作。
-3. [collaboration-desktop.md](subsystems/collaboration-desktop.md)：界面怎样驱动 Runtime。
+1. [collaboration.md](subsystems/collaboration.md)：协作 Runtime 怎样工作。
+2. [collaboration-desktop.md](subsystems/collaboration-desktop.md)：界面怎样驱动 Runtime。

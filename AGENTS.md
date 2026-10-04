@@ -1,24 +1,28 @@
-# OpenWork
+# Crew
 
-本文只放每个会话都需要的常驻规则。产品与架构的事实见 [docs/architecture.md](docs/architecture.md)，这里不重复。
+本文只放每个会话都需要的常驻规则。其他文档见 [docs/README.md](docs/README.md)，这里不重复。
 
 ## 项目目的与优先级
 
 - 这是求职作品，目标岗位是全栈与 AI 应用工程师。产品是本地多 Agent 协作工作台。
 - 优先级从高到低：**能跑 → 能演示 → 能讲清楚设计取舍 → 架构整洁**。
 - 判断一项工作值不值得做，先问：它能不能让面试官更快看到效果，或让我更好地讲清楚一个设计。都不能时，先不做。
-- 项目正在参考 cumora 与 raft，用 TypeScript 从零实现，设计见 [Agent Note](.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。开发期间不给 Rust 代码加功能，只修影响旧版本运行的问题。
+- 项目正在参考 cumora 与 raft，用 TypeScript 从零实现新版本 Crew，设计见 [Agent Note](.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。开发期间不给 Rust 代码加功能，只修影响旧版本运行的问题。
 
 ## 运行与检查
 
-启动需要 PostgreSQL、Redis、已登录的 `opencode` CLI，以及根目录的 `.env`。步骤见 [README 快速开始](README.md#快速开始)。
+启动 Crew：先运行 `docker compose up -d --wait` 启动 PostgreSQL 与 Redis，再在根目录运行 `pnpm dev`。数据库地址来自根目录的 `.env`，见 [docs/local-services.md](docs/local-services.md)。
 
 检查分两级：
 
-- **日常改动**：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`pnpm --dir desktop typecheck`。
-- **提交或合并前**：设置 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL` 后运行 `scripts/check.sh`。用户说“只做语法检查”时，只跑日常一级，并在汇报中写明没有跑测试。
+- **日常改动**：`pnpm lint`、`pnpm typecheck`。
+- **提交或合并前**：`pnpm check`，即 lint、类型检查与全部测试。用户说“只做语法检查”时，只跑日常一级，并在汇报中写明没有跑测试。
 
-前端不写只断言静态 HTML 的组件测试。逻辑抽成纯函数，写 `.test.ts`。测试细节见 [docs/testing.md](docs/testing.md)。
+lefthook 在提交时检查暂存文件的格式与空白，在推送前运行类型检查。
+
+旧版 Rust 代码的检查：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`pnpm --dir desktop typecheck`；全量测试在设置 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL` 后运行 `scripts/check.sh`。
+
+代码约定见 [packages/AGENTS.md](packages/AGENTS.md)。前端不写只断言静态 HTML 的组件测试。逻辑抽成纯函数，写 `.test.ts`。测试细节见 [docs/testing.md](docs/testing.md)。
 
 ## 设计原则
 

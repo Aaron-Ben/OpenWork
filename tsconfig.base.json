@@ -1,0 +1,18 @@
+{
+  // 每个包的 tsconfig 都 extends 本文件。这里不写 include，也不写 types：
+  // 包自己声明运行环境，Node 包加 ["node"]，渲染进程加 DOM lib。
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}

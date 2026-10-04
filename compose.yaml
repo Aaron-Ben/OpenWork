@@ -1,23 +1,36 @@
-name: openwork
+name: crew
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: openwork-postgres
+    container_name: crew-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: openwork
-      POSTGRES_PASSWORD: openwork
-      POSTGRES_DB: openwork
+      POSTGRES_USER: crew
+      POSTGRES_PASSWORD: crew
+      POSTGRES_DB: crew
     ports:
       - "5432:5432"
     volumes:
-      - openwork-postgres-data:/var/lib/postgresql/data
+      - crew-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U openwork -d openwork"]
+      test: ["CMD-SHELL", "pg_isready -U crew -d crew"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Redis 只保存可过期、可重建的协调数据，不挂数据卷。
+  redis:
+    image: redis:7-alpine
+    container_name: crew-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
 
 volumes:
-  openwork-postgres-data:
+  crew-postgres-data:

@@ -20,7 +20,6 @@
   <p>
     <a href="README.en.md">English</a> ·
     <a href="docs/README.md">文档</a> ·
-    <a href="docs/architecture.md">架构</a> ·
     <a href="https://github.com/Aaron-Ben/OpenWork/issues">Issues</a>
   </p>
 </div>
@@ -182,7 +181,6 @@ pnpm tauri dev
 ## 文档
 
 - [文档索引](docs/README.md)
-- [总体架构](docs/architecture.md)
 - [协作 Runtime 与数据模型](docs/subsystems/collaboration.md)
 - [协作 Desktop](docs/subsystems/collaboration-desktop.md)
 
