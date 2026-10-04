@@ -19,7 +19,7 @@
   完成标准：每项都有测试证明它拒绝违规输入；`pnpm check` 通过；已提交。
 - [x] 界面截图命令 `pnpm preview:shot`：用临时数据库启动应用并截图，结束时清理。
   完成标准：截图能显示空状态；没有残留进程与临时库。
-- [ ] 文档：`docs/architecture.md`、`docs/subsystems/messaging.md`、`docs/subsystems/agent-runtime.md`、根目录 `README.md`。
+- [x] 文档：`docs/architecture.md`、`docs/subsystems/messaging.md`、`docs/subsystems/agent-runtime.md`、根目录 `README.md`。
   完成标准：路径检查通过；文档索引已更新。
 - [ ] 对照 DSH 的 defensive-patterns 复查子进程与清理代码（交给 subagent，核对每条证据）。
   完成标准：问题已修复或记录在汇报中。

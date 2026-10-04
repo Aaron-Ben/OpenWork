@@ -1,4 +1,4 @@
-# OpenWork 文档
+# Crew 文档
 
 `docs/subsystems/` 每页描述一个子系统已经实现的行为、边界与验收。决策理由与还没实现的设计写在 [Agent Notes](../.agents/notes/README.md)。文档分层与写作规则见 [AGENTS.md](AGENTS.md)。
 
@@ -6,28 +6,30 @@
 
 | 文档 | 内容 |
 |---|---|
+| [architecture.md](architecture.md) | 进程与通信、包与依赖方向、数据归属、领域词汇 |
 | [local-services.md](local-services.md) | 本地 PostgreSQL 与 Redis 的启动、检查与重建 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 |
 | [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷与对应的写法 |
 | [legacy-rust.md](legacy-rust.md) | 旧版 Rust 代码的检查命令 |
 | [AGENTS.md](AGENTS.md) | 文档标准 |
-| [templates/crate-readme.md](templates/crate-readme.md) | crate README 的结构与写法 |
+| [templates/crate-readme.md](templates/crate-readme.md) | 旧版 crate README 的结构与写法 |
 
 ## 子系统
 
 | 文档 | 内容 |
 |---|---|
-| [collaboration.md](subsystems/collaboration.md) | 协作 Runtime：身份、通信、AgentRunner、消息与唤醒、发布规则、Board、Agenda、存储 |
-| [collaboration-desktop.md](subsystems/collaboration-desktop.md) | 协作界面：Tauri 监督进程与命令、事件与刷新、房间、Agent、看板、运行记录 |
+| [messaging.md](subsystems/messaging.md) | Server：数据模型、消息与序号、已读位置、运行期状态、接口与 SSE |
+| [agent-runtime.md](subsystems/agent-runtime.md) | Computer：启动与停止、Runner 与 Turn、OpenCode、Seatbelt、本机目录、`crew` 命令 |
+| [collaboration.md](subsystems/collaboration.md) | 旧版 Rust 的协作 Runtime，开发期间保留作参考 |
+| [collaboration-desktop.md](subsystems/collaboration-desktop.md) | 旧版 Tauri 的协作界面，开发期间保留作参考 |
 
 ## 事实来源
 
 | 问题 | 看哪里 |
 |---|---|
-| 现在实际是什么 | 源码与各 crate 的 `migrations/`；子系统页与它们一致 |
-| 为什么这样设计 | [`.agents/notes/implemented/`](../.agents/notes/README.md) |
-| 打算怎样改 | `.agents/notes/proposed/` |
-| 怎样运行、有哪些命令 | 仓库根 [README.md](../README.md) 的“快速开始” |
+| 现在实际是什么 | 源码与 `packages/server/drizzle/` 中的迁移；子系统页与它们一致 |
+| 为什么这样设计 | [`.agents/notes/`](../.agents/notes/README.md) |
+| 怎样运行、有哪些命令 | 仓库根 [README.md](../README.md) 与 [AGENTS.md](../AGENTS.md) |
 
 子系统页与代码不一致时，以代码为准，并在同一个改动里修正子系统页。
 
@@ -35,5 +37,6 @@
 
 第一次接触这个项目：
 
-1. [collaboration.md](subsystems/collaboration.md)：协作 Runtime 怎样工作。
-2. [collaboration-desktop.md](subsystems/collaboration-desktop.md)：界面怎样驱动 Runtime。
+1. [architecture.md](architecture.md)：整体怎样组成。
+2. [messaging.md](subsystems/messaging.md)：消息怎样保存与通知。
+3. [agent-runtime.md](subsystems/agent-runtime.md)：Agent 怎样被唤醒、运行与回复。

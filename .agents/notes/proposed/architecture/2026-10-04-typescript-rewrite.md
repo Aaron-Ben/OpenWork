@@ -103,9 +103,9 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 
 ### 文档
 
-- 新实现的子系统页随功能编写，放在 `docs/subsystems/`。怎样拆分页面，做到对应功能时决定。
+- 新实现的子系统页随功能编写，放在 `docs/subsystems/`。第 2 步按 Server 与 Computer 分为 `docs/subsystems/messaging.md` 与 `docs/subsystems/agent-runtime.md`；以后的功能按同样的边界扩展这两页，看板等独立的功能另起一页。
 - 现有的 `collaboration.md` 与 `collaboration-desktop.md` 描述 Rust 版，开发期间保留作参考，最后一步删除。
-- 旧的 docs/architecture.md 描述 Rust 版的 crate 与依赖方向，已经删除。第 2 步结束前为 Crew 新写一份，内容是进程、包、依赖方向与领域词汇，并在 `docs/AGENTS.md` 的分层表中恢复它。
+- `docs/architecture.md` 描述 Crew 的进程、包、依赖方向、数据归属与领域词汇，第 2 步写成，已列入 `docs/AGENTS.md` 的分层表。描述 Rust 版的旧文件已删除。
 
 ### 仓库规则文件
 

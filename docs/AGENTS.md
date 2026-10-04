@@ -13,6 +13,7 @@
 | 根 [AGENTS.md](../AGENTS.md)（`CLAUDE.md` 是指向它的软链接） | 每个会话都需要的常驻规则。每条一到三行，并链接负责的文件 | 例子、理由、操作步骤、从其他文件复制的内容 |
 | 本文 | 文档标准 | 代码规范 |
 | [README.md](README.md) | 文档索引与阅读顺序 | 规则 |
+| [architecture.md](architecture.md) | 进程、包、依赖方向、数据归属与领域词汇 | 单个子系统的细节、决策理由 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 | 单个子系统的验收条目 |
 | [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷：现象、规则、出处 | 没有发生过的假想问题 |
 | `.agents/tasks/<任务>.md` | 分多块的长任务：每块的完成标准与进度 | 决策理由、规则 |
