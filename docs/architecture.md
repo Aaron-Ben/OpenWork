@@ -15,6 +15,7 @@ Electron 主进程（监管者）
 
 - 全部通信都在本机回环地址上。Server 每次启动使用随机端口。
 - 主进程先启动 Server，再启动 Computer，两者都就绪后才打开窗口。启动握手：主进程向子进程的 stdin 写一行 JSON（bootstrap，含凭证），子进程就绪后向 stdout 写一行 JSON（ready，Server 的 ready 带回端口）。代码在 `apps/desktop/electron/runtime.ts` 与 `apps/desktop/electron/child.ts`。
+- 同一时间只运行一个 Crew：再次启动时，新实例直接退出，已有的窗口切到前台（Electron 的单实例锁）。
 - 子进程的 stdin 关闭时，子进程退出，所以主进程被强制结束也不会留下孤儿进程。任一子进程意外退出时，主进程弹出错误对话框，停止全部进程后退出。
 - 界面经 preload 的 `window.crew` 拿到 Server 地址与凭证，之后直接请求 Server，不经过主进程转发。
 - SSE 只传失效提示（“某部分数据变了”），不传业务数据；收到提示的一方重新读取。界面与 Computer 共用 `packages/protocol/src/sse.ts` 的读取与重连。

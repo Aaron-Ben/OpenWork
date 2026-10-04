@@ -44,6 +44,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - 失败分为：未登录、模型不可用、限流、session 失效、沙箱、OpenCode 报告的错误、进程异常、输出超限、已停止。错误信息中隐去 Agent 目录与凭证。`runTurn` 不抛出，意外错误也转成“进程异常”。
 - 准备期间（查找 `opencode`、读取登录文件）已经被停止时，不启动 OpenCode。
 - stdout 超过 8 MiB 时结束进程；停止时向整个进程组发 SIGINT，2 秒后仍未退出就发 SIGKILL。
+- OpenCode 退出后，向它的进程组发 SIGTERM，2 秒后发 SIGKILL：Agent 在这一轮里起的后台进程不会活过这一轮，也不会因为占着输出管道让这一轮卡住。Agent 因此不能在两轮之间保留后台进程。
+- 停止与完成同时发生时，这一轮按“已停止”处理，不确认已读，下一次运行会重新处理这些消息。
 
 ## 4. Seatbelt
 
@@ -97,7 +99,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | session 在 Engine、模型与 `AGENTS.md` 不变时延续，否则重开 | `packages/computer/test/home.test.ts` 的 `session continuity` |
 | 不顺着 Agent 换成的符号链接或命名管道操作；准备失败的 Agent 上报 error，其他 Agent 不受影响 | `home.test.ts` 的 `paths the agent controls`；`daemon.test.ts` 的 `reports an unsafe agent directory and keeps serving the other agents` |
 | 准备失败时 Computer 退出，不空转 | `packages/computer/test/main.test.ts` 的 `exits with the reason instead of idling when it cannot prepare its directories` |
-| OpenCode 的参数、环境隔离、session 重试、失败分类、进程组停止、输出超限 | `packages/computer/test/opencode.test.ts` |
+| OpenCode 的参数、环境隔离、session 重试、失败分类、进程组停止、输出超限；一轮结束后不留下后台进程，也不被占着管道的后台进程卡住 | `packages/computer/test/opencode.test.ts` |
 | `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
 | `AGENTS.md` 与每轮输入的文本逐字锁定 | `home.test.ts`、`packages/computer/test/prompt.test.ts` |
 | 构建产物的完整链路：用户发消息，Seatbelt 中的 Engine 经构建好的 `crew` 回复并落库 | `apps/desktop/test/smoke.e2e.ts` |

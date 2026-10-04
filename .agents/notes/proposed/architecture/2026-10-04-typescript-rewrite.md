@@ -369,6 +369,8 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 
 **shim 也接受写在命令行上的正文。** cumora 的 `reply <convo_id> "<body>"` 这样做（`cumora:server/src/agents/cli.ts`）。没有采用：命令行上的正文先经过 shell，反引号与 `$` 会被展开，消息被悄悄改写；用单引号时 `\n` 又不会变成换行，cumora 为此写了 `unescapeChat`，再用 `--stdin` 与 `--file` 绕开它对代码片段的破坏（`cumora:server/src/agents/cli-parse.ts`）。raft 只接受 stdin（`raft:packages/cli/src/commands/message/send.ts`）。
 
+**停止与完成同时发生时按完成处理。** 能避免停止后重新处理已经回复过的消息、重复回复。没有采用：OpenCode 被 SIGINT 打断时的退出码没有确认，如果也是 0，被打断的一轮会被当成完成并确认已读，消息就丢了，这比重复回复更糟。raft 与 cumora 也都让停止优先（`raft:packages/daemon/src/drivers/runtimeSession.ts`、`cumora:server/src/agents/computer/engine.ts`）。以后加入修改 Agent 的接口时，与幂等一起重新考虑。
+
 **用模型最后的文字输出作为回复。** 第 2 步可以省掉 shim。没有采用：shim 已经验证可行，它让 Agent 可以选择沉默，也为第 3 步群聊的协调留出余地。
 
 **界面数据用 zustand store 手动管理。** raft 与 cumora 这样做。没有采用：它们推送消息正文，需要逐个事件合并；Crew 只推送失效提示，TanStack Query 的“失效后重新获取”正好对应。

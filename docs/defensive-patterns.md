@@ -49,3 +49,9 @@
 - **现象：** 接口客户端把全局的 `fetch` 存成自己的属性，再用 `this.fetchFn(...)` 调用。Node 里一切正常，测试全部通过；界面里却报 “Failed to execute 'fetch' on 'Window': Illegal invocation”，Agent 列表读不出来。浏览器的 `fetch` 只能以 `window` 为 `this` 调用。
 - **规则：** 存起来的 `fetch` 一类浏览器 API，先取到局部变量再当作普通函数调用。只在 Node 里跑的测试测不出这一类问题，改了界面用到的代码要在真实界面里跑一次（`pnpm preview:shot`）。
 - **出处：** `packages/protocol/src/client.ts` 的 `ApiClient.call`；`packages/protocol/test/client.test.ts` 用一个检查 `this` 的假 `fetch` 防止回退。
+
+## 进程退出后清理它留下的进程
+
+- **现象：** OpenCode 正常结束一轮后，Agent 在这一轮里用 `cmd &` 起的后台进程还活着，在沙箱里继续联网；后台进程如果继承了 OpenCode 的 stdout，管道一直不关，`close` 事件不来，这一轮卡到后台进程自己退出为止。cumora 的注释记录了同样的现象，但只在中止时处理（`cumora:server/src/agents/computer/engine.ts` 的 `spawnEngine`）。
+- **规则：** 子进程退出（`exit` 事件）后，结束它所在的整个进程组，再等 `close`。不要只靠 `close` 判断一轮结束。
+- **出处：** `packages/computer/src/engine/opencode.ts` 的 `runOnce`；`packages/computer/test/opencode.test.ts` 的 `ends processes the agent left running when the turn finishes`。

@@ -267,6 +267,14 @@ export class OpenCodeAdapter implements EngineAdapter {
       if (stderrBytes <= MAX_STDERR_BYTES) stderr = (stderr + chunk).slice(-ERROR_TAIL_CHARS);
     });
 
+    // OpenCode 退出后，结束它留在进程组里的全部进程（Agent 用 `cmd &` 起的后台进程等）：
+    // 它们在沙箱里能联网，不该活过这一轮；继承了 stdout 的还会让 close 一直不来，这一轮因此卡住。
+    let leftoverKill: NodeJS.Timeout | undefined;
+    child.once("exit", () => {
+      killGroup("SIGTERM");
+      leftoverKill = setTimeout(() => killGroup("SIGKILL"), KILL_GRACE_MS);
+    });
+
     const exitCode = await new Promise<number>((resolve) => {
       child.on("error", (error) => {
         stderr += `\n${error.message}`;
@@ -279,6 +287,7 @@ export class OpenCodeAdapter implements EngineAdapter {
       child.stdin.end(request.prompt);
     });
     clearTimeout(forceKill);
+    clearTimeout(leftoverKill);
     request.signal.removeEventListener("abort", stop);
     const lastEvent = parseEvent(pending);
     if (lastEvent) sessionId = lastEvent.sessionID ?? sessionId;

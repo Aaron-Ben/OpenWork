@@ -59,6 +59,16 @@ process.stdin.on("end", () => {
     setInterval(() => {}, 1_000);
     return;
   }
+  if (mode === "background" || mode === "background-holding-stdout") {
+    // Agent 用 `cmd &` 起了一个后台进程，然后这一轮正常结束。
+    // holding-stdout 时后台进程继承了 opencode 的 stdout，管道因此一直不关。
+    const stdio = mode === "background" ? "ignore" : ["ignore", "inherit", "ignore"];
+    const background = spawn("/bin/sleep", ["30"], { stdio });
+    writeFileSync("background.pid", String(background.pid));
+    emit({ type: "step_start", sessionID });
+    emit({ type: "step_finish", sessionID });
+    process.exit(0);
+  }
   if (mode === "flood") {
     const line = `${JSON.stringify({ type: "text", sessionID, part: { text: "x".repeat(1000) } })}\n`;
     const write = () => {

@@ -9,6 +9,7 @@ import { type Runtime, startRuntime } from "./runtime";
 // Electron 主进程：启动 Server 与 Computer，两者 ready 后打开窗口；任一意外退出时停止整组并报错退出。
 
 let runtime: Runtime | undefined;
+let window: BrowserWindow | undefined;
 let quitting = false;
 
 /** 弹出错误对话框，停止整组进程，然后退出应用。 */
@@ -61,7 +62,7 @@ async function start(): Promise<void> {
     event.returnValue = rendererRuntime;
   });
 
-  const window = new BrowserWindow({
+  window = new BrowserWindow({
     width: 1100,
     height: 720,
     minWidth: 760,
@@ -81,6 +82,26 @@ async function start(): Promise<void> {
   await window.loadURL(rendererUrl);
 }
 
+// 只运行一个 Crew：第二个实例会删掉第一个实例的本次运行目录，两个 Computer 还会处理同一批消息。
+// 拿不到锁的实例直接退出，已有的实例把窗口切到前台。raft 与 cumora 都这样做
+// （raft:apps/raft-desktop-electron/src/app/index.ts、cumora:electron/main.cjs）。
+if (!app.requestSingleInstanceLock()) {
+  quitting = true;
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+
+  app
+    .whenReady()
+    .then(start)
+    .catch((error: unknown) => fail("Crew 无法启动", describeError(error)));
+}
+
 app.on("before-quit", (event) => {
   if (quitting || !runtime) return;
   event.preventDefault();
@@ -89,8 +110,3 @@ app.on("before-quit", (event) => {
 });
 
 app.on("window-all-closed", () => app.quit());
-
-app
-  .whenReady()
-  .then(start)
-  .catch((error: unknown) => fail("Crew 无法启动", describeError(error)));

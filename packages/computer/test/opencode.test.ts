@@ -146,6 +146,18 @@ describe("OpenCodeAdapter.runTurn", () => {
     expect(outcome).toMatchObject({ ok: false, error: { kind: "unauthenticated" } });
   });
 
+  it.each(["background", "background-holding-stdout"])(
+    "ends processes the agent left running when the turn finishes (%s)",
+    async (mode) => {
+      const outcome = await run({ env: { ...base.env, FAKE_MODE: mode } });
+      expect(outcome).toMatchObject({ ok: true, sessionId: "ses_fake_new" });
+      const background = Number(await readFile(join(layout.workDir, "background.pid"), "utf8"));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(() => process.kill(background, 0)).toThrow();
+    },
+    10_000,
+  );
+
   it("stops an engine that floods its output", async () => {
     const outcome = await run({ env: { ...base.env, FAKE_MODE: "flood" } });
     expect(outcome).toMatchObject({ ok: false, error: { kind: "output-limit" } });

@@ -17,7 +17,7 @@
 - `pnpm check` 依次运行 lint、类型检查、`pnpm test` 与 `pnpm test:smoke`，全量约 17 秒。
 - 集成与冒烟测试需要 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL`，由 `@crew/server/testing` 的 `testEnv()` 读取，环境变量没有设置时读根目录的 `.env`。缺少时测试直接失败，不跳过。
 - 依赖 Seatbelt 的测试只在 macOS 上运行。
-- 改了界面后，用 `pnpm preview:shot --theme light` 与 `--theme dark` 截图自查，截图默认保存在 `apps/desktop/out/preview/`。例如 `--eval` 传入点击“新建 agent”的脚本，可以截到对话框。
+- 改了界面后，用 `pnpm preview:shot --theme light` 与 `--theme dark` 截图自查。它启动的是一个新的 Crew 实例，不能和正在运行的 `pnpm dev` 同时使用：单实例锁会让它直接退出，截图默认保存在 `apps/desktop/out/preview/`。例如 `--eval` 传入点击“新建 agent”的脚本，可以截到对话框。
 - 真实模型测试不进 `pnpm check`。没有指定 `CREW_E2E_MODEL`、没有 `opencode` 或没有登录时整组跳过，模型由运行的人选。改动 Engine 调用或模型可见的行为时运行它，并在汇报中写明结果。
 
 ## 2. 原则
