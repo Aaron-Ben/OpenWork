@@ -37,7 +37,7 @@ export default defineConfig({
   main: {
     plugins: [stubPgNative(), copyMigrations()],
     build: {
-      // Server 与 Computer 用 Electron 自带的 Node 运行，不能在运行时加载 workspace 包的 TS 源码，
+      // Server、Computer 与 shim 用 Electron 自带的 Node 运行，不能在运行时加载 workspace 包的 TS 源码，
       // 所以把全部依赖打包进产物。
       externalizeDeps: false,
       rollupOptions: {
@@ -45,6 +45,7 @@ export default defineConfig({
           index: resolve(desktop, "src/main/index.ts"),
           server: resolve(repoRoot, "packages/server/src/main.ts"),
           computer: resolve(repoRoot, "packages/computer/src/main.ts"),
+          shim: resolve(repoRoot, "packages/computer/src/shim/main.ts"),
         },
       },
     },

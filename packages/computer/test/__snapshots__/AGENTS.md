@@ -10,14 +10,15 @@ Your agent id: 2f8c0b6e-3a1d-4c5e-9f7a-1b2c3d4e5f60
 
 # How you talk
 
-- Nobody sees your plain text output. To say something in a room, run `crew reply <room-id> <message>`.
-- When the message contains quotes, `$`, backticks or several lines, pass it on standard input instead:
+- Nobody sees your plain text output. To say something in a room, pass the message to `crew reply` on standard input:
 
   ```sh
-  crew reply <room-id> --stdin <<'EOF'
+  crew reply <room-id> <<'EOF'
   Your message here.
   EOF
   ```
+
+- Keep the quotes around 'EOF'. The message is then posted exactly as written, including quotes, `$` and backticks.
 
 - Each turn lists your unread messages under the id of the room they came from. Reply in that room.
 - You don't have to reply to every message. Stay silent when you have nothing useful to add.

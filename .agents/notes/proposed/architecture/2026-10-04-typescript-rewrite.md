@@ -65,6 +65,7 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 | 前端 | React、Vite、Tailwind；组件用 shadcn/ui 的做法（Radix 原语加 cva 与 tailwind-merge，组件源码放在仓库里） |
 | 界面数据 | TanStack Query |
 | SSE 解析 | eventsource-parser |
+| shim 参数解析 | commander |
 | Markdown | react-markdown 与 remark-gfm |
 | Electron 构建与开发 | electron-vite |
 | 安装包 | electron-builder，在单独的打包步骤建立 |
@@ -277,7 +278,8 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 **沙箱与 shim**
 
 - Seatbelt 规则与 Rust 版相同：写入只放行本 Agent 的目录、运行期目录、系统临时目录与几个设备；`$HOME` 之外全部可读，`$HOME` 之内只能读本 Agent 的目录与运行期目录；只拒绝读取内容，不拒绝 `stat`；网络不限制。Computer 启动时自检，沙箱不可用时不启动任何 Agent。
-- shim 第 2 步只有 `crew reply <room-id> <正文>`、`crew reply <room-id> --stdin` 与 `crew --help`。
+- shim 第 2 步只有 `crew reply <room-id>` 与 `crew --help`。正文只从 stdin 读取，Agent 用带引号的 heredoc（`<<'EOF'`）传入，shell 不改动其中的字符。参数解析用 commander。
+- shim 的失败一律退出码 1，向 stderr 写一行英文的 `error: …`，说明原因与下一步。Server 的错误文本是中文且界面也在用，由 shim 按状态码翻译。请求超时 10 秒，不重试。
 - 每个 Agent 有一个随机凭证：Computer 用 Computer 凭证向 Server 申请，写入只有该 Agent 能读的运行期文件。Server 在内存中记录凭证对应的 Agent，应用重启后失效。shim 带着它调用 `POST /agent/reply`。Server 确认 Agent 是房间成员后，锁房间行、分配序号、写入消息，提交后通知界面。
 - shim 的代码在 `packages/computer/src/shim/`，作为 electron-vite 主进程配置的另一个入口构建到 `out/main/shim.js`。Computer 在运行期目录生成 `bin/crew` 包装脚本，用 `process.execPath`（Electron 可执行文件）加 `ELECTRON_RUN_AS_NODE=1` 运行它，并把这个 `bin` 放到 Agent 的 `PATH` 最前面。
 
@@ -359,6 +361,8 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 **第 2 步就让唤醒走 Redis pub/sub。** 改为多实例时不用再改。没有采用：第 2 步只有一个 Server 进程，进程内事件更简单；唤醒代码集中在一个模块里，以后替换成本低。
 
 **shim 经 Computer 的本地代理调用 Server。** cumora 用文件 IPC 交给 daemon，raft 用本地凭证代理（`packages/daemon/src/agentCredentialProxy.ts`），模型看不到凭证。第 2 步没有采用：Computer 要多一个本地服务与转发层。以后需要防止 Agent 直接使用自己的凭证时再考虑。
+
+**shim 也接受写在命令行上的正文。** cumora 的 `reply <convo_id> "<body>"` 这样做（`server/src/agents/cli.ts`）。没有采用：命令行上的正文先经过 shell，反引号与 `$` 会被展开，消息被悄悄改写；用单引号时 `\n` 又不会变成换行，cumora 为此写了 `unescapeChat`，再用 `--stdin` 与 `--file` 绕开它对代码片段的破坏（`server/src/agents/cli-parse.ts`）。raft 只接受 stdin（`packages/cli/src/commands/message/send.ts`）。
 
 **用模型最后的文字输出作为回复。** 第 2 步可以省掉 shim。没有采用：shim 已经验证可行，它让 Agent 可以选择沉默，也为第 3 步群聊的协调留出余地。
 
