@@ -23,18 +23,18 @@ function bearer(token: string) {
 
 describe("desktop routes", () => {
   it("reject a request without a token with a JSON error", async () => {
-    const response = await t.app.request("/desktop/status");
+    const response = await t.app.request("/desktop/models");
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "凭证无效" });
   });
 
   it("reject the computer token", async () => {
-    const response = await t.app.request("/desktop/status", { headers: bearer(TEST_COMPUTER_TOKEN) });
+    const response = await t.app.request("/desktop/models", { headers: bearer(TEST_COMPUTER_TOKEN) });
     expect(response.status).toBe(401);
   });
 
   it("reject a token of a different length", async () => {
-    const response = await t.app.request("/desktop/status", { headers: bearer(`${TEST_DESKTOP_TOKEN}x`) });
+    const response = await t.app.request("/desktop/models", { headers: bearer(`${TEST_DESKTOP_TOKEN}x`) });
     expect(response.status).toBe(401);
   });
 });
@@ -45,15 +45,9 @@ describe("computer routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("mark the computer as connected for later status requests", async () => {
-    const before = await t.app.request("/desktop/status", { headers: bearer(TEST_DESKTOP_TOKEN) });
-    expect(await before.json()).toEqual({ computerConnected: false });
-
-    const connect = await t.app.request("/computer/connect", { method: "POST", headers: bearer(TEST_COMPUTER_TOKEN) });
-    expect(connect.status).toBe(204);
-
-    const after = await t.app.request("/desktop/status", { headers: bearer(TEST_DESKTOP_TOKEN) });
-    expect(await after.json()).toEqual({ computerConnected: true });
+  it("accept the computer token", async () => {
+    const response = await t.app.request("/computer/connect", { method: "POST", headers: bearer(TEST_COMPUTER_TOKEN) });
+    expect(response.status).toBe(204);
   });
 });
 
@@ -68,7 +62,7 @@ describe("agent routes", () => {
 
 describe("CORS", () => {
   it("answer a preflight from the renderer origin without a token", async () => {
-    const response = await t.app.request("/desktop/status", {
+    const response = await t.app.request("/desktop/models", {
       method: "OPTIONS",
       headers: {
         Origin: TEST_RENDERER_ORIGIN,
@@ -81,14 +75,14 @@ describe("CORS", () => {
   });
 
   it("allow the renderer origin to read responses", async () => {
-    const response = await t.app.request("/desktop/status", {
+    const response = await t.app.request("/desktop/models", {
       headers: { ...bearer(TEST_DESKTOP_TOKEN), Origin: TEST_RENDERER_ORIGIN },
     });
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(TEST_RENDERER_ORIGIN);
   });
 
   it("give no CORS header to another origin", async () => {
-    const response = await t.app.request("/desktop/status", {
+    const response = await t.app.request("/desktop/models", {
       headers: { ...bearer(TEST_DESKTOP_TOKEN), Origin: "http://localhost:3000" },
     });
     expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();

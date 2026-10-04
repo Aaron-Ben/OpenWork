@@ -1,4 +1,4 @@
-import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "@crew/server/testing";
+import { createTestApp, TEST_COMPUTER_TOKEN, type TestApp } from "@crew/server/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectToServer } from "../src/connect";
 
@@ -13,13 +13,8 @@ afterEach(async () => {
 });
 
 describe("connectToServer", () => {
-  it("marks the computer as connected on the server", async () => {
-    await connectToServer(baseUrl, TEST_COMPUTER_TOKEN, t.fetch);
-
-    const status = await t.app.request("/desktop/status", {
-      headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}` },
-    });
-    expect(await status.json()).toEqual({ computerConnected: true });
+  it("succeeds with the computer token", async () => {
+    await expect(connectToServer(baseUrl, TEST_COMPUTER_TOKEN, t.fetch)).resolves.toBeUndefined();
   });
 
   it("reports a rejected token", async () => {

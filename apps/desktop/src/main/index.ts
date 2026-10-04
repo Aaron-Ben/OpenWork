@@ -1,8 +1,9 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { type RendererRuntime, RUNTIME_CHANNEL } from "../shared/runtime";
 import { ChildStartError } from "./child";
+import { confineNavigation } from "./navigation";
 import { type Runtime, startRuntime } from "./runtime";
 
 // Electron 主进程：启动 Server 与 Computer，两者 ready 后打开窗口；任一意外退出时停止整组并报错退出。
@@ -31,6 +32,8 @@ async function start(): Promise<void> {
     throw new Error("第 1 步只支持用 pnpm dev 启动（缺少 ELECTRON_RENDERER_URL）");
   }
 
+  const rendererOrigin = new URL(rendererUrl).origin;
+
   // 开发模式下 app.getAppPath() 是 apps/desktop，.env 在仓库根目录。
   process.loadEnvFile(resolve(app.getAppPath(), "../../.env"));
 
@@ -42,7 +45,7 @@ async function start(): Promise<void> {
     shimEntry: join(import.meta.dirname, "shim.js"),
     crewRoot: join(homedir(), ".crew"),
     env: process.env,
-    rendererOrigin: new URL(rendererUrl).origin,
+    rendererOrigin,
   });
 
   runtime.onCrash((crashed) => {
@@ -61,6 +64,12 @@ async function start(): Promise<void> {
   const window = new BrowserWindow({
     width: 1100,
     height: 720,
+    minWidth: 760,
+    minHeight: 480,
+    // 系统的红黄绿按钮放进侧栏顶部；背景色与侧栏一致，页面加载前不闪白。
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0c0e" : "#f1f2ee",
     webPreferences: {
       preload: join(import.meta.dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -68,6 +77,7 @@ async function start(): Promise<void> {
       sandbox: true,
     },
   });
+  confineNavigation(window.webContents, rendererOrigin, (url) => shell.openExternal(url));
   await window.loadURL(rendererUrl);
 }
 

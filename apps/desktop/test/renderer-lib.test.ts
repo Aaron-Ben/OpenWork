@@ -1,0 +1,112 @@
+import { RoomId } from "@crew/protocol";
+import { describe, expect, it } from "vitest";
+import { canSend, shouldSend } from "../src/renderer/lib/composer";
+import { keysForEvent, queryKeys } from "../src/renderer/lib/keys";
+import { validateNewAgent } from "../src/renderer/lib/new-agent";
+import { isNearBottom } from "../src/renderer/lib/scroll";
+import { errorMessage } from "../src/renderer/lib/server";
+import { statusView } from "../src/renderer/lib/status";
+import { formatMessageTime } from "../src/renderer/lib/time";
+
+// 界面里抽出来的纯逻辑。组件本身不写只断言 HTML 的测试。
+
+const roomId = RoomId.parse("6a1f4e2b-8c3d-4b5a-9e7f-0a1b2c3d4e5f");
+
+describe("keysForEvent", () => {
+  it("refreshes the agent list when agents change", () => {
+    expect(keysForEvent({ type: "agents" })).toEqual(queryKeys.agents);
+  });
+
+  it("refreshes only the room that has new messages", () => {
+    expect(keysForEvent({ type: "room.messages", roomId })).toEqual(["messages", roomId]);
+  });
+});
+
+describe("statusView", () => {
+  it("labels each state", () => {
+    expect(statusView({ state: "idle" })).toEqual({ label: "空闲", tone: "idle" });
+    expect(statusView({ state: "working" })).toEqual({ label: "回复中", tone: "working" });
+    expect(statusView({ state: "error", reason: "OpenCode 未登录" })).toEqual({ label: "出错", tone: "error" });
+  });
+});
+
+describe("shouldSend", () => {
+  const key = { key: "Enter", shiftKey: false, isComposing: false, keyCode: 13 };
+
+  it("sends on Enter", () => {
+    expect(shouldSend(key)).toBe(true);
+  });
+
+  it("inserts a newline on Shift+Enter", () => {
+    expect(shouldSend({ ...key, shiftKey: true })).toBe(false);
+  });
+
+  it("leaves Enter to the input method while it is composing", () => {
+    expect(shouldSend({ ...key, isComposing: true })).toBe(false);
+    expect(shouldSend({ ...key, keyCode: 229 })).toBe(false);
+  });
+
+  it("ignores other keys", () => {
+    expect(shouldSend({ ...key, key: "a", keyCode: 65 })).toBe(false);
+  });
+});
+
+describe("canSend", () => {
+  it("refuses a draft that is only whitespace", () => {
+    expect(canSend(" \n\t")).toBe(false);
+    expect(canSend(" hi ")).toBe(true);
+  });
+});
+
+describe("isNearBottom", () => {
+  it("treats the last 80 pixels as the bottom", () => {
+    expect(isNearBottom({ scrollTop: 920, scrollHeight: 1500, clientHeight: 500 })).toBe(true);
+    expect(isNearBottom({ scrollTop: 919, scrollHeight: 1500, clientHeight: 500 })).toBe(false);
+  });
+
+  it("treats content shorter than the viewport as the bottom", () => {
+    expect(isNearBottom({ scrollTop: 0, scrollHeight: 300, clientHeight: 500 })).toBe(true);
+  });
+});
+
+describe("formatMessageTime", () => {
+  // 用本地时间构造，结果不依赖运行环境的时区。
+  const now = new Date(2026, 9, 4, 18, 30);
+
+  it("shows only the time for today", () => {
+    expect(formatMessageTime(new Date(2026, 9, 4, 9, 5).toISOString(), now)).toBe("09:05");
+  });
+
+  it("adds the month and day for an earlier day this year", () => {
+    expect(formatMessageTime(new Date(2026, 9, 3, 23, 59).toISOString(), now)).toBe("10月3日 23:59");
+  });
+
+  it("adds the year for an earlier year", () => {
+    expect(formatMessageTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe("2025年12月31日 08:00");
+  });
+});
+
+describe("validateNewAgent", () => {
+  it("accepts a complete form", () => {
+    expect(validateNewAgent({ displayName: "Alice", persona: "代码审查者", model: "a/b" })).toEqual({});
+  });
+
+  it("reports every missing field with the server's wording", () => {
+    expect(validateNewAgent({ displayName: "  ", persona: "", model: "" })).toEqual({
+      displayName: "名字不能为空",
+      persona: "人设不能为空",
+      model: "请选择模型",
+    });
+  });
+});
+
+describe("errorMessage", () => {
+  it("uses the server's reason", () => {
+    expect(errorMessage({ error: "名字不能为空" }, 400)).toBe("名字不能为空");
+  });
+
+  it("falls back to the status code", () => {
+    expect(errorMessage("Internal Server Error", 500)).toBe("Server 返回 500");
+    expect(errorMessage(undefined, 502)).toBe("Server 返回 502");
+  });
+});

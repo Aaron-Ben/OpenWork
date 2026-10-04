@@ -6,9 +6,6 @@ import type { AgentId, AgentStatus } from "@crew/protocol";
  * 这些状态随之清空：Agent 凭证失效，状态回到空闲，模型列表等 Computer 重新上报。
  */
 export class RuntimeState {
-  /** 本 Server 进程启动以来，Computer 至少连接过一次。不表示 Computer 现在仍在运行。 */
-  computerConnected = false;
-
   private readonly agentByToken = new Map<string, AgentId>();
   private readonly tokenByAgent = new Map<AgentId, string>();
   private readonly statuses = new Map<AgentId, AgentStatus>();

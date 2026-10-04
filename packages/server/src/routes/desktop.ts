@@ -18,7 +18,6 @@ const RoomParam = z.object({ roomId: RoomId });
 export function desktopRoutes(ctx: ServerContext, desktopToken: string) {
   return new Hono()
     .use(requireToken(desktopToken))
-    .get("/status", (c) => c.json({ computerConnected: ctx.state.computerConnected }))
     .get("/agents", async (c) => {
       const agents = await listAgents(ctx.db);
       return c.json(agents.map((agent) => ({ ...agent, status: ctx.state.statusOf(agent.id) })));

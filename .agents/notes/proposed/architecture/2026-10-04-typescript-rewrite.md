@@ -66,7 +66,7 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 | 界面数据 | TanStack Query |
 | SSE 解析 | eventsource-parser |
 | shim 参数解析 | commander |
-| Markdown | react-markdown 与 remark-gfm |
+| Markdown | react-markdown 与 remark-gfm；代码高亮用 rehype-highlight |
 | Electron 构建与开发 | electron-vite |
 | 安装包 | electron-builder，在单独的打包步骤建立 |
 
@@ -286,13 +286,15 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 **界面**
 
 - 两栏布局：左侧是 Agent 列表（每个 Agent 对应一个私聊房间，带状态点），右侧是聊天。cumora 的左侧导航栏（`src/desktop/Rail.tsx`）在有多个页面时再加。
-- 视觉风格按设计稿 v2：冷色中性灰、白色主区、紫蓝色强调色只用于状态与选中；浅色与深色两套主题，跟随系统切换。
+- 视觉风格：框架取“控制台”方向（侧栏、顶栏、状态与元信息用等宽字体，绿色强调色只用于回复中、选中与主按钮），正文取“纸面”方向（消息不加气泡，名字和时间在上，正文 15px、行距 1.8、最宽 680px）。浅色与深色两套主题跟随系统切换。颜色与字体是 `apps/desktop/src/renderer/index.css` 中的设计变量，只用系统字体。
+- 系统的红黄绿按钮放进侧栏顶部（`titleBarStyle: "hiddenInset"`）。窗口只显示界面自己的页面：消息里的 http 与 https 链接交给系统浏览器打开，其余导航一律丢弃（`apps/desktop/src/main/navigation.ts`）。
 - 组件按 shadcn/ui 的做法，第 2 步只需要按钮、输入框、文本域与对话框。
 - 来自 Server 的数据用 TanStack Query 获取与缓存。收到 SSE 失效提示时，`invalidateQueries` 让对应的数据重新获取。cumora（`src/stores/messages.ts` 的 `applyEvent`）与 raft 把推送来的消息正文合并进 zustand store，每种事件都要写合并逻辑。
 - Server 提供 `/desktop/events`（SSE），只发“某房间有新消息”与“Agent 列表或状态变了”两类提示。SSE 的解析用 eventsource-parser，重连循环自己写（从 1 秒开始指数退避，最长 30 秒），放在 protocol 包中，Computer 与界面共用。推送代码集中在一个模块里，以后改用 WebSocket 时只改这里。
 - 新建 Agent 时填名字、人设与模型。Computer 启动时运行 `opencode models`，把可用模型列表上报给 Server，界面用下拉框显示。
 - Server 在内存中保存每个 Agent 的状态：空闲、回复中、出错（附原因）。Computer 在 Turn 开始、结束与失败时上报。界面在聊天底部显示“正在回复”，出错时在对话里写明原因与下一步。失败的 Turn 不推进已读位置，下一条消息到来时自动重试，所以不需要单独的重试按钮。
-- 消息正文按 Markdown 渲染。
+- 消息正文按 Markdown 渲染，不渲染原始 HTML。代码块按围栏上写的语言高亮，不自动猜语言；高亮颜色同样是设计变量。highlight.js 输出类名，颜色交给 CSS，这一点与 cumora（`src/components/Message.tsx`）相同；raft 用 shiki（`packages/web/src/components/markdown/shikiHighlighter.ts`），它异步加载，配色来自自带主题。
+- 侧栏底部显示界面与 Server 的 SSE 连接状态。没有“Computer 是否连接”的显示：主进程等 Computer 连上 Server 后才打开窗口，Computer 退出时整个应用随之退出，所以窗口存在期间它总是已连接。
 
 **打包**
 

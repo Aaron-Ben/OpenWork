@@ -1,41 +1,72 @@
-import { useEffect, useState } from "react";
-import { type ConnectionStatus, createServerClient, loadStatus } from "./status";
+import type { AgentId } from "@crew/protocol";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
+import { ChatView } from "./components/ChatView";
+import { NewAgentDialog } from "./components/NewAgentDialog";
+import { Sidebar } from "./components/Sidebar";
+import { Button } from "./components/ui/button";
+import { useServerEvents } from "./lib/events";
+import { createQueryClient, useAgents } from "./lib/queries";
 
-const client = createServerClient(window.crew.serverUrl, window.crew.desktopToken);
+const queryClient = createQueryClient();
 
-function Row({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
+export function App() {
   return (
-    <div className="flex items-center justify-between gap-6 py-2">
-      <span className="text-neutral-700">{label}</span>
-      <span className={ok ? "text-emerald-600" : "text-amber-600"}>{detail}</span>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <Workbench />
+    </QueryClientProvider>
   );
 }
 
-export function App() {
-  const [status, setStatus] = useState<ConnectionStatus | undefined>();
+function Workbench() {
+  const connection = useServerEvents();
+  const agents = useAgents();
+  const [selectedId, setSelectedId] = useState<AgentId>();
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    void loadStatus(client).then(setStatus);
-  }, []);
+  const list = agents.data ?? [];
+  // 默认选第一个；选中的 Agent 不在列表里时同样回到第一个。
+  const selected = list.find((agent) => agent.id === selectedId) ?? list[0];
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-neutral-50 font-sans">
-      <section className="w-80 rounded-lg border border-neutral-200 bg-white p-6 shadow-sm">
-        <h1 className="mb-4 text-lg font-semibold text-neutral-900">Crew</h1>
-        {status === undefined && <p className="text-neutral-500">连接中…</p>}
-        {status?.kind === "connected" && (
-          <div className="divide-y divide-neutral-100">
-            <Row label="Server" ok detail="已连接" />
-            <Row
-              label="Computer"
-              ok={status.computerConnected}
-              detail={status.computerConnected ? "已连接" : "未连接"}
-            />
+    <div className="flex h-full">
+      <Sidebar
+        agents={list}
+        selectedId={selected?.id}
+        onSelect={setSelectedId}
+        onCreate={() => setCreating(true)}
+        connection={connection}
+      />
+      {selected ? (
+        <ChatView agent={selected} />
+      ) : (
+        <main className="flex flex-1 flex-col">
+          <div className="drag h-[52px] flex-none" />
+          <div className="grid flex-1 place-items-center px-7 pb-[52px] text-center">
+            {agents.error ? (
+              <p className="text-sm text-danger">读取 agent 列表失败：{agents.error.message}</p>
+            ) : agents.isSuccess ? (
+              <div className="max-w-[380px]">
+                <h2 className="font-mono text-[15px] font-semibold">还没有 agent</h2>
+                <p className="mt-2 mb-[18px] text-sm leading-relaxed text-muted">
+                  新建一个 agent。它在本机沙箱里运行 OpenCode，用你已登录的账号调用模型。
+                </p>
+                <Button variant="primary" onClick={() => setCreating(true)}>
+                  ＋ 新建 agent
+                </Button>
+              </div>
+            ) : null}
           </div>
-        )}
-        {status?.kind === "failed" && <p className="text-red-600">无法连接 Server：{status.reason}</p>}
-      </section>
-    </main>
+        </main>
+      )}
+      <NewAgentDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={(id) => {
+          setSelectedId(id);
+          setCreating(false);
+        }}
+      />
+    </div>
   );
 }

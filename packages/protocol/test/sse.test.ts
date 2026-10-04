@@ -80,13 +80,18 @@ describe("runEventStream", () => {
     const second = new FakeConnection();
     const { fetchFn, calls } = fakeFetch([sse(first), sse(second)]);
     let opens = 0;
+    const lifecycle: string[] = [];
     const controller = new AbortController();
     const done = runEventStream({
       url: "http://server/events",
       headers: {},
       schema: Event,
       onEvent: () => {},
-      onOpen: () => opens++,
+      onOpen: () => {
+        opens++;
+        lifecycle.push("open");
+      },
+      onDisconnect: () => lifecycle.push("disconnect"),
       signal: controller.signal,
       fetch: fetchFn,
       backoff: fastBackoff,
@@ -99,6 +104,7 @@ describe("runEventStream", () => {
     await done;
 
     expect(calls).toHaveLength(2);
+    expect(lifecycle).toEqual(["open", "disconnect", "open"]);
   });
 
   it("keeps the stream open when an event does not match the schema", async () => {

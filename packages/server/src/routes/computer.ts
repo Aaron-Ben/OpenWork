@@ -17,7 +17,7 @@ export function computerRoutes(ctx: ServerContext, computerToken: string) {
   return new Hono()
     .use(requireToken(computerToken))
     .post("/connect", (c) => {
-      ctx.state.computerConnected = true;
+      // Computer 启动时调用，确认地址与凭证可用。
       return c.body(null, 204);
     })
     .get("/agents", async (c) => c.json(await listAgents(ctx.db)))

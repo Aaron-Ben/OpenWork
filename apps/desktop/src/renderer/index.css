@@ -1,1 +1,254 @@
 @import "tailwindcss";
+
+/*
+ * 设计变量。来源是设计稿 out/mockups/step2-design-system.html：框架取“控制台”方向，正文取“纸面”方向。
+ * 浅色与深色跟随系统切换；组件只引用这些变量，不写死颜色。
+ */
+:root {
+  --bg: #fbfbf9;
+  --panel: #f1f2ee;
+  --raised: #f5f6f2;
+  --hover: #e8eae4;
+  --line: #e1e3dd;
+  --line-strong: #cfd3cb;
+  --text: #1a1e23;
+  --muted: #5f6873;
+  --faint: #8a929b;
+  --accent: #15803d;
+  --accent-soft: rgb(21 128 61 / 10%);
+  --accent-fg: #ffffff;
+  --user: #b45309;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --danger-soft: #fbe9e7;
+  --overlay: rgb(20 24 28 / 35%);
+  --code-keyword: #7c3aed;
+  --code-string: #15803d;
+  --code-number: #c2410c;
+  --code-function: #0369a1;
+  --code-type: #a21caf;
+  --code-comment: #8a929b;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1013;
+    --panel: #0a0c0e;
+    --raised: #13171c;
+    --hover: #151a20;
+    --line: #1d2229;
+    --line-strong: #2a313a;
+    --text: #d5dce4;
+    --muted: #8590a0;
+    --faint: #5b6573;
+    --accent: #4ade80;
+    --accent-soft: rgb(74 222 128 / 14%);
+    --accent-fg: #06210f;
+    --user: #fbbf24;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --danger-soft: rgb(248 113 113 / 10%);
+    --overlay: rgb(0 0 0 / 55%);
+    --code-keyword: #c4a7ff;
+    --code-string: #9fdfb4;
+    --code-number: #fdba74;
+    --code-function: #7cc4fa;
+    --code-type: #f0abfc;
+    --code-comment: #5b6573;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-user: var(--user);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-overlay: var(--overlay);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  /* Chromium 不认 ui-monospace，SF Mono 也不是系统级字体；Menlo 保证落到等宽字体。 */
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* 消息正文可以选中复制，界面框架不可以。 */
+.prose,
+.selectable {
+  user-select: text;
+}
+
+/* 窗口顶部与侧栏顶部是拖动区域；其中的控件仍然可以点击。 */
+.drag {
+  -webkit-app-region: drag;
+}
+.drag button,
+.drag a,
+.drag input {
+  -webkit-app-region: no-drag;
+}
+
+/* 正文排版：Agent 与用户的 Markdown 消息。 */
+.prose {
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.prose > * + * {
+  margin-top: 12px;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 20px;
+}
+.prose h1 {
+  font-size: 18px;
+}
+.prose ul {
+  list-style: disc;
+  padding-left: 22px;
+}
+.prose ol {
+  list-style: decimal;
+  padding-left: 22px;
+}
+.prose li + li {
+  margin-top: 2px;
+}
+.prose strong {
+  font-weight: 600;
+}
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.prose pre {
+  position: relative;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+.prose pre code {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.prose blockquote {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 14px;
+  color: var(--muted);
+}
+.prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.prose table {
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.prose th {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+}
+.prose th,
+.prose td {
+  padding: 6px 16px 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* highlight.js 的类名映射到设计变量。 */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-meta .hljs-keyword,
+.hljs-doctag {
+  color: var(--code-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-selector-attr {
+  color: var(--code-string);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--code-number);
+}
+.hljs-title.function_,
+.hljs-title,
+.hljs-section,
+.hljs-built_in {
+  color: var(--code-function);
+}
+.hljs-type,
+.hljs-title.class_,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-class {
+  color: var(--code-type);
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion,
+.hljs-meta {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+@keyframes crew-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.cursor-blink {
+  animation: crew-blink 1s steps(1) infinite;
+}

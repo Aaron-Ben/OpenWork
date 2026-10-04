@@ -28,6 +28,8 @@ export interface EventStreamOptions<T> {
    * 每次连接成功后调用，包括重连。断线期间的事件不会补发，调用方在这里重新读取完整状态。
    */
   onOpen?(): void;
+  /** 连接失败或断开后、等待重连之前调用。界面用它显示“正在重新连接”。 */
+  onDisconnect?(): void;
   /** 连接失败、断开或收到无法解析的事件时调用。循环不会因此停止。 */
   onError?(error: unknown): void;
   /** 中止后循环结束，`runEventStream` 返回。 */
@@ -57,6 +59,7 @@ export async function runEventStream<T>(options: EventStreamOptions<T>): Promise
       if (options.signal.aborted) return;
       options.onError?.(error);
     }
+    options.onDisconnect?.();
     if (Date.now() - startedAt >= backoff.resetAfterMs) failures = 0;
     const delay = Math.min(backoff.initialMs * 2 ** failures, backoff.maxMs);
     failures += 1;

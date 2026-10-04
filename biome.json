@@ -9,6 +9,9 @@
     "ignoreUnknown": true,
     "includes": ["**", "!crates", "!desktop", "!target", "!pnpm-lock.yaml"]
   },
+  "css": {
+    "parser": { "tailwindDirectives": true }
+  },
   "formatter": {
     "indentStyle": "space",
     "indentWidth": 2,
