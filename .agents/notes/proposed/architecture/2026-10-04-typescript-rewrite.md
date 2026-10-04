@@ -62,10 +62,12 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 | Redis | ioredis |
 | 测试 | vitest |
 | lint 与格式化 | Biome，两者都开启 |
-| 前端 | React、Vite、zustand、Tailwind |
+| 前端 | React、Vite、Tailwind；组件用 shadcn/ui 的做法（Radix 原语加 cva 与 tailwind-merge，组件源码放在仓库里） |
+| 界面数据 | TanStack Query |
+| SSE 解析 | eventsource-parser |
+| Markdown | react-markdown 与 remark-gfm |
 | Electron 构建与开发 | electron-vite |
-
-安装包工具在第 2 步讨论决定。
+| 安装包 | electron-builder，在单独的打包步骤建立 |
 
 ### 存储
 
@@ -74,6 +76,7 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 - `compose.yaml` 同时定义 `postgres` 与 `redis`。`docker compose up -d` 起全部依赖。
 - 表结构随功能逐步设计，用 drizzle schema 定义。迁移由 `drizzle-kit generate` 生成并提交，Server 启动时执行。表名不加前缀。
 - Redis 读写集中在 Server 的一个模块里。
+- 第 2 步的唤醒走 Server 进程内的事件。Server 改为多实例部署时，再改走 Redis pub/sub。
 - 事务里不 await 网络调用或 Engine 调用。
 
 ### 写操作分层
@@ -82,7 +85,7 @@ apps/desktop/        Electron 主进程、preload 与 React 界面
 
 1. 判断：纯函数。输入已加载的状态，输出允许、拒绝或要写入的内容。不访问数据库和 Redis。
 2. 落库：一个事务。加锁，加载状态，调用判断，写入。
-3. 通知：事务提交后尽力发布 Redis 事件与 SSE 失效提示。失败不回滚。
+3. 通知：事务提交后尽力发布进程内事件与 SSE 失效提示。失败不回滚。
 
 复杂的协调规则写成纯函数，脱离数据库测试。cumora 的 `server/src/agents/triage-core.ts` 是同样的做法。
 
@@ -157,11 +160,12 @@ git hooks 用 lefthook，只做快速检查，做法来自 DSH 的 `lefthook.yml
 每一步开始前讨论这一步的实现决策；每一步结束时应用都能启动和演示：
 
 1. 骨架：范围见下文“第 1 步的实现决策”。
-2. 最小私聊：用户给一个 Agent 发消息，Server 保存消息并唤醒 Agent，Computer 在 Seatbelt 中启动 OpenCode，Agent 经 shim 回复，界面显示回复。每个环节只做最简单的版本：一个房间，没有 triage、退避与幂等。同一步建立数据库迁移与安装包，设计聊天界面，并加入 shim 的打包产物冒烟测试、Turn 输入的快照与提交前检查的 skill。写 Computer 时，按 DSH `docs/defensive-patterns.md` 检查子进程与清理代码；本仓库的 `docs/defensive-patterns.md` 只记录实际出现过的缺陷。
+2. 最小私聊：用户给一个 Agent 发消息，Server 保存消息并唤醒 Agent，Computer 在 Seatbelt 中启动 OpenCode，Agent 经 shim 回复，界面显示回复。每个环节只做最简单的版本：一对一私聊，没有 triage、退避与幂等。范围见下文“第 2 步的实现决策”。同一步建立数据库迁移，并加入 shim 的构建产物冒烟测试、Turn 输入的快照与提交前检查的 skill。写 Computer 时，按 DSH `docs/defensive-patterns.md` 检查子进程与清理代码；本仓库的 `docs/defensive-patterns.md` 只记录实际出现过的缺陷。
 3. 群聊协调：多个 Agent、triage、点名路由、HELD、连发与逐字重复，以及 triage 题面的快照。
 4. 看板：Board、Column、Card、领取与卡片唤醒。
 5. 其余功能：Agenda、Climate、静音、运行观测。
-6. 删除 Rust：删除 `crates/`、Tauri、旧 `desktop/`、`scripts/check.sh` 与描述 Rust 版的文档，卸载 rust-analyzer 相关工具，更新 README、testing.md 与本 Agent Note。
+6. 打包：electron-builder 安装包，见下文“第 2 步的实现决策”中的打包部分。
+7. 删除 Rust：删除 `crates/`、Tauri、旧 `desktop/`、`scripts/check.sh` 与描述 Rust 版的文档，卸载 rust-analyzer 相关工具，更新 README、testing.md 与本 Agent Note。
 
 功能对齐后接入新的 Engine 时，写一份“新增 Engine adapter”的操作指南，放在 `docs/cookbook/`。做法来自 DSH 的 `docs/cookbook/adding-an-llm-adapter.md`。
 
@@ -215,7 +219,7 @@ git hooks 用 lefthook，只做快速检查，做法来自 DSH 的 `lefthook.yml
 | 工程 | workspace、tsconfig、electron-vite、Biome、lefthook、三个检查脚本、`packages/AGENTS.md`、根 `AGENTS.md` 中 TypeScript 的命令 |
 
 - 数据库迁移在第 2 步出现第一张表时建立。
-- 安装包在第 2 步需要打包产物时建立。第 1 步只保证 `pnpm dev` 可以运行。
+- 安装包在第 6 步（打包）建立。第 1 步只保证 `pnpm dev` 可以运行。
 - 界面的布局、组件库与视觉风格在第 2 步设计聊天界面时讨论。第 1 步只搭好 React、Vite 与 Tailwind。
 
 **其他**
@@ -225,13 +229,82 @@ git hooks 用 lefthook，只做快速检查，做法来自 DSH 的 `lefthook.yml
 - 每个包用 `vitest run` 运行测试，根目录用 `pnpm -r test` 运行全部测试。
 - 第 1 步的 `protocol` 包只包含 bootstrap 与 ready 消息的 schema，以及几个 branded ID 类型。
 
+### 第 2 步的实现决策
+
+**数据模型**
+
+```text
+users               id, display_name, created_at
+agents              id, display_name, persona, engine_id, model, created_at
+rooms               id, kind(direct), direct_key（唯一）, next_seq, created_at
+room_users          room_id, user_id（组合主键）
+room_agents         room_id, agent_id（组合主键）
+messages            id, room_id, seq, author_user_id, author_agent_id, body, created_at
+                    （room_id 与 seq 唯一；两个作者列恰好一个不为空）
+agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
+```
+
+- 用户与 Agent 分成两张表。本机只有一个用户，由一行固定的记录表示。成员关系也分成 `room_users` 与 `room_agents`，做法来自 raft 的 `channel_humans` 与 `channel_agents`（`packages/server/src/db/schema.ts`）。
+- 消息的作者用两个可空外键加“恰好一个不为空”的约束，数据库保证作者真实存在。
+- 消息序号按房间递增：写入时锁住房间行，`next_seq` 加一。同一房间内序号连续、不跳号，Agent 的已读位置才可靠。同一房间的写入因此排队，不同房间互不影响。
+- Agent 的已读位置单独存在 `agent_read_cursors`，做法来自 raft 的 `agent_channel_read_cursors`。
+- ID 用 UUID，由 PostgreSQL 的 `gen_random_uuid()` 生成。代码里用 branded 类型区分 `UserId`、`AgentId`、`RoomId` 与 `MessageId`。
+- 时间戳用 `timestamptz`。
+- 第 3 步群聊需要的 `handle`（`@alice`）、triage、投递与运行记录，到对应步骤再加。
+- 迁移文件由 `drizzle-kit generate` 生成到 `packages/server/drizzle/`。electron-vite 构建时把它复制到 `out/main/drizzle`，主进程经环境变量 `CREW_MIGRATIONS_DIR` 告诉 Server 迁移目录，测试直接传入路径。
+
+**唤醒**
+
+- Computer 整体建立一条 SSE 连接（`/computer/events`）。事件只说明哪个 Agent 可能有新消息，或 Agent 列表变了，不带消息正文。
+- Computer 用 `GET /computer/agents/:agentId/inbox` 取已读位置之后的消息，Turn 成功后用 `POST /computer/agents/:agentId/inbox/ack` 推进已读位置。Turn 失败时已读位置不动，下次唤醒重新处理，消息可能被处理两次，但不会丢。
+- 每次连接或重连成功后，Computer 为每个 Agent 读一次 inbox，补上断线期间丢失的事件。第 2 步不做定时轮询。
+- Computer 连接时用 `GET /computer/agents` 取 Agent 列表，收到“列表变了”的事件时重新获取。
+- Server 内部用进程内事件把“消息已写入”传给 SSE 连接。
+
+**Engine**
+
+- 每个 Turn 启动一次 `opencode run --pure --format json --auto --session <id> --model <模型>`，prompt 写入 stdin，工作目录是 Agent 的 `work/`。`--auto` 自动批准文件与命令操作，安全边界是 Seatbelt。raft（`packages/daemon/src/drivers/opencode.ts`）与 cumora（`server/src/agents/computer/engine.ts`）都按 Turn 启动 OpenCode。
+- 一个 Turn 处理一次唤醒时的全部未读消息，Agent 可以在其中多次调用 `crew reply`。Agent 正在运行时到达的消息不立即处理，Turn 结束后合并成一轮再处理。第 2 步不做 cumora 的 2.5 秒等待。
+- session ID 存在 `~/.crew/agents/<id>/engines/opencode/session.json`，下次以 `--session` 继续同一段对话。模型或规则变化时开新 session。
+- Agent 目录是 `~/.crew/agents/<id>/`：`AGENTS.md`（身份与规则）、`work/`、`engines/opencode/data/`（OpenCode 的数据目录，每个 Agent 独立）。
+- `AGENTS.md` 只写身份、人设、用 `crew reply` 发言（文字输出没人看到）与可以保持沉默。`OPENCODE_CONFIG_CONTENT` 的 `instructions` 指向它。
+- 每轮 prompt 只有唤醒说明、当前时间与按房间分组的未读消息。
+- 每次启动 OpenCode 前，Computer 在沙箱外读取用户的 `~/.local/share/opencode/auth.json`，经环境变量传入。raft 与 cumora 让 OpenCode 自己读这个文件，因为它们不把 OpenCode 关进沙箱。用户重新登录后，下一轮自动使用新凭证；创建 Agent 不涉及凭证。
+- 第 2 步只从输出中取三样：成功与否、session ID、失败时的错误信息。
+- 正式 Turn 没有总时长上限。停止时向整个进程组发 SIGINT，2 秒后发 SIGKILL。raft 只结束单个进程（`drivers/runtimeSession.ts`），OpenCode 启动的子命令可能残留。每个 Agent 同一时间只跑一个 Turn。
+- 环境变量 `OPENCODE_AUTH_CONTENT` 与 `OPENCODE_CONFIG_CONTENT` 沿用 Rust 版的做法，实现时先在 OpenCode 1.18.18 上验证；输出中 session ID 的字段名同样待验证。
+
+**沙箱与 shim**
+
+- Seatbelt 规则与 Rust 版相同：写入只放行本 Agent 的目录、运行期目录、系统临时目录与几个设备；`$HOME` 之外全部可读，`$HOME` 之内只能读本 Agent 的目录与运行期目录；只拒绝读取内容，不拒绝 `stat`；网络不限制。Computer 启动时自检，沙箱不可用时不启动任何 Agent。
+- shim 第 2 步只有 `crew reply <room-id> <正文>`、`crew reply <room-id> --stdin` 与 `crew --help`。
+- 每个 Agent 有一个随机凭证：Computer 用 Computer 凭证向 Server 申请，写入只有该 Agent 能读的运行期文件。Server 在内存中记录凭证对应的 Agent，应用重启后失效。shim 带着它调用 `POST /agent/reply`。Server 确认 Agent 是房间成员后，锁房间行、分配序号、写入消息，提交后通知界面。
+- shim 的代码在 `packages/computer/src/shim/`，作为 electron-vite 主进程配置的另一个入口构建到 `out/main/shim.js`。Computer 在运行期目录生成 `bin/crew` 包装脚本，用 `process.execPath`（Electron 可执行文件）加 `ELECTRON_RUN_AS_NODE=1` 运行它，并把这个 `bin` 放到 Agent 的 `PATH` 最前面。
+
+**界面**
+
+- 两栏布局：左侧是 Agent 列表（每个 Agent 对应一个私聊房间，带状态点），右侧是聊天。cumora 的左侧导航栏（`src/desktop/Rail.tsx`）在有多个页面时再加。
+- 视觉风格按设计稿 v2：冷色中性灰、白色主区、紫蓝色强调色只用于状态与选中；浅色与深色两套主题，跟随系统切换。
+- 组件按 shadcn/ui 的做法，第 2 步只需要按钮、输入框、文本域与对话框。
+- 来自 Server 的数据用 TanStack Query 获取与缓存。收到 SSE 失效提示时，`invalidateQueries` 让对应的数据重新获取。cumora（`src/stores/messages.ts` 的 `applyEvent`）与 raft 把推送来的消息正文合并进 zustand store，每种事件都要写合并逻辑。
+- Server 提供 `/desktop/events`（SSE），只发“某房间有新消息”与“Agent 列表或状态变了”两类提示。SSE 的解析用 eventsource-parser，重连循环自己写（从 1 秒开始指数退避，最长 30 秒），放在 protocol 包中，Computer 与界面共用。推送代码集中在一个模块里，以后改用 WebSocket 时只改这里。
+- 新建 Agent 时填名字、人设与模型。Computer 启动时运行 `opencode models`，把可用模型列表上报给 Server，界面用下拉框显示。
+- Server 在内存中保存每个 Agent 的状态：空闲、回复中、出错（附原因）。Computer 在 Turn 开始、结束与失败时上报。界面在聊天底部显示“正在回复”，出错时在对话里写明原因与下一步。失败的 Turn 不推进已读位置，下一条消息到来时自动重试，所以不需要单独的重试按钮。
+- 消息正文按 Markdown 渲染。
+
+**打包**
+
+- 第 2 步不做安装包，用 `pnpm dev` 运行。shim 的冒烟测试用 `electron-vite build` 的产物。
+- `apps/desktop/package.json` 现在就设置 `"productName": "Crew"`，应用数据目录因此是 `~/Library/Application Support/Crew`。
+- 第 6 步打包时：用 electron-builder；Server、Computer、shim 与迁移文件经 `extraResources` 放在 asar 之外，做法来自 raft 把 CLI 放在 `Resources/cli/index.js`（`apps/raft-desktop-electron/electron-builder.yml`）；界面经自定义协议 `app://crew` 加载，CORS 来源随之改为它，raft 与 cumora 都用 `app://`；保留 `runAsNode` fuse；打包后的配置来源届时再定。
+
 ## 考虑过的方案
 
 **用内嵌 SQLite 替代 PostgreSQL。** 单用户、单写者时 SQLite 足够，也不需要 Docker。没有采用，因为以后可能部署到多机或云端，PostgreSQL 是之后最难替换的部分。
 
 **本机默认用 PGlite，配置 `DATABASE_URL` 时用 PostgreSQL。** PGlite 是编译成 WASM 的 PostgreSQL，raft 用它跑测试（`packages/server/src/db/index.ts`）。它免去 Docker，SQL 方言不变。没有采用，选择统一使用真实 PostgreSQL。
 
-**用 Server 进程内状态替代 Redis。** Node 单线程事件循环下，无需加锁就能原子地完成 claim。没有采用，因为以后 Server 多实例部署时，wake 与事件需要跨实例传递。
+**用 Server 进程内状态替代 Redis。** Node 单线程事件循环下，无需加锁就能原子地完成 claim。没有采用，因为以后 Server 多实例部署时，协调数据与事件需要跨实例共享。第 2 步的唤醒先走进程内事件，是因为它只需要单个 Server 进程。
 
 **Server 与 Computer 合并为一个进程，或全部放进 Electron 主进程。** 进程更少。没有采用，因为以后 Computer 要留在用户机器上，而 Server 可能迁到云端。全部放进主进程时，Engine 管理、数据库写入与界面通信无法隔离。
 
@@ -267,21 +340,52 @@ git hooks 用 lefthook，只做快速检查，做法来自 DSH 的 `lefthook.yml
 
 **先做人与人的聊天，再接 Agent。** 没有采用。人与人的聊天不是产品的核心，按这个顺序要到第三步才能演示 Agent 回复。最小私聊让第二步就能演示核心效果。
 
+**用户与 Agent 共用一张参与者表。** Rust 版与 cumora 这样做，消息与成员只需要一个外键。没有采用：用户与 Agent 的属性差别大，分表后各自的约束更清楚；外键完整性改由“两个可空外键”保证。
+
+**消息作者用 `sender_type` 加 `sender_id`。** raft 的 `messages` 这样做，写起来简单。没有采用：`sender_id` 没有外键，类型与 ID 不匹配、作者不存在或已删除时数据库都不会拒绝。
+
+**全局自增的消息序号。** raft 用 `bigserial`，不需要锁房间行。没有采用：并发写入时序号可能与提交顺序不一致，读者按“某序号之后”取消息会漏掉后提交的小序号，raft 为此另有 `packages/sync-core` 检查缺号。
+
+**Agent 的已读位置放在成员表上。** Rust 版的 `room_members.last_read_seq` 这样做，少一张表。没有采用：用户与 Agent 分表后成员表也分成两张，单独的已读表更自然，成员关系与每轮都在更新的已读位置也就分开了。
+
+**由代码生成 UUID。** 插入前就知道 ID，便于乐观更新与重试去重。没有采用：第 2 步还没有这类需求，数据库生成更简单；需要时只要把默认值换成代码里的一行。
+
+**每个 Agent 一条 SSE 连接。** Rust 版与 cumora（`server/src/agents/runtime/server.ts` 的 `/wake-stream`）这样做，因为它们的每个 Agent 是独立进程或容器，持有自己的凭证。没有采用：Crew 只有一个 Computer 进程管理全部 Agent。
+
+**用 WebSocket 推送消息正文并要求确认。** raft 的 `agent:deliver` 与 `agent:deliver:ack`（`packages/shared/src/index.ts`）这样做。raft 的 Server 在云端，要向用户机器发送十几种命令并等待回答，需要双向通道。没有采用：Crew 的 Server 只需要向 Computer 与界面单向发出“有新东西”的提示，推送正文还要自己实现确认与重发。Server 需要向客户端提问并等待回答时，再改用 WebSocket。
+
+**用 Socket.IO。** 自带重连、房间与确认。没有采用：它有自己的协议，前后端都必须使用它；单向的失效提示用 SSE 就够了。
+
+**第 2 步就让唤醒走 Redis pub/sub。** 改为多实例时不用再改。没有采用：第 2 步只有一个 Server 进程，进程内事件更简单；唤醒代码集中在一个模块里，以后替换成本低。
+
+**shim 经 Computer 的本地代理调用 Server。** cumora 用文件 IPC 交给 daemon，raft 用本地凭证代理（`packages/daemon/src/agentCredentialProxy.ts`），模型看不到凭证。第 2 步没有采用：Computer 要多一个本地服务与转发层。以后需要防止 Agent 直接使用自己的凭证时再考虑。
+
+**用模型最后的文字输出作为回复。** 第 2 步可以省掉 shim。没有采用：shim 已经验证可行，它让 Agent 可以选择沉默，也为第 3 步群聊的协调留出余地。
+
+**界面数据用 zustand store 手动管理。** raft 与 cumora 这样做。没有采用：它们推送消息正文，需要逐个事件合并；Crew 只推送失效提示，TanStack Query 的“失效后重新获取”正好对应。
+
+**模型名用文本框填写。** 简单，但容易填错。没有采用：Computer 运行 `opencode models` 就能拿到可用列表。
+
+**第 2 步建立安装包。** 原计划用打包产物做 shim 冒烟测试。没有采用：冒烟测试用 `electron-vite build` 的产物就能覆盖 shim 在沙箱中的运行；“asar 内的 shim 能否读取”由打包时放在 asar 之外解决；安装包带来的自定义协议、打包后的配置与签名问题第 2 步用不上。
+
 ## 验收条件
 
-- 第 1 至 5 步每一步结束时，`docker compose up -d` 与 `pnpm dev` 能启动应用，已完成的功能可以演示。
+- 第 1 至 6 步每一步结束时，`docker compose up -d` 与 `pnpm dev` 能启动应用，已完成的功能可以演示。
 - 第 2 步结束时，用户在私聊中给 Agent 发消息，Agent 在 Seatbelt 中运行 OpenCode，并经 shim 回复。
 - Seatbelt 不可用时，Computer 不启动任何 Agent。
 - 修改一个 Server 路由的响应字段后，`pnpm typecheck` 在使用该字段的前端代码处报错。
 - `pnpm check` 通过：lint、类型检查、单元、集成与冒烟测试。
 - 三个检查脚本各有一个测试，证明它会拒绝违规输入：失效的链接、状态行与目录不一致的 Agent Note、超出字数上限的根 `AGENTS.md`。
 - `CLAUDE.md` 是指向 `AGENTS.md` 的软链接。
-- 打包后的 shim 在 Seatbelt 中能调用 Server，由冒烟测试覆盖。
-- 第 6 步结束后，仓库中没有 Rust 与 Tauri 代码，文档中没有 Rust 路径。
+- 构建后的 shim（`electron-vite build` 的产物）在 Seatbelt 中能调用 Server，由冒烟测试覆盖。
+- 第 7 步结束后，仓库中没有 Rust 与 Tauri 代码，文档中没有 Rust 路径。
 
 ## 风险
 
-- shim 依赖 Electron 的 `runAsNode` fuse。关闭这个 fuse 的打包配置会让 shim 无法启动。shim 在 Seatbelt 中经 `ELECTRON_RUN_AS_NODE` 启动的行为与启动耗时都没有实测。
+- shim 依赖 Electron 的 `runAsNode` fuse。关闭这个 fuse 的打包配置会让 shim 无法启动。2026-10-04 的验证中，shim 在与 Rust 版同构的 Seatbelt 规则下经 `ELECTRON_RUN_AS_NODE` 启动，能调用本机 HTTP 服务，单次约 180 ms（系统 Node 约 114 ms）。沙箱只拒绝了 `~/.CFUserTextEncoding` 的读取与 `/dev/dtracehelper` 的写入，都不影响运行。
+- Agent 能读到自己的 Agent 凭证，可以绕过 OpenCode 直接以自己的身份调用 Server。沙箱保证它读不到其他 Agent 的凭证。
+- 界面收到失效提示后重新获取整个消息列表。数据多时要改为只取某个序号之后的消息。
+- Server 迁到云端后，反向代理默认缓冲响应会推迟 SSE 事件，需要关闭缓冲。
 - Electron 的内存占用高于 Tauri。
 - 演示前需要安装 Docker 并启动 PostgreSQL 与 Redis。
 - 开发期间 Rust 与 TypeScript 两套代码并存。Rust 代码不再加功能，只修影响旧版本运行的问题。

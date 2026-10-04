@@ -1,5 +1,6 @@
 {
   "name": "@crew/desktop",
+  "productName": "Crew",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
