@@ -1,8 +1,13 @@
 import { Hono } from "hono";
-import { bearerAuth } from "hono/bearer-auth";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
+import type { ServerContext } from "./context";
+import { RequestError } from "./errors";
+import { agentRoutes } from "./routes/agent";
+import { computerRoutes } from "./routes/computer";
+import { desktopRoutes } from "./routes/desktop";
 
-export interface AppOptions {
+export interface AppOptions extends ServerContext {
   desktopToken: string;
   computerToken: string;
   /** 唯一允许跨域调用 `/desktop/*` 的来源，即渲染进程的 origin。 */
@@ -10,24 +15,11 @@ export interface AppOptions {
 }
 
 /**
- * 构建 Server 的 Hono 应用。不读取环境变量，不访问网络与数据库，测试可以直接调用。
+ * 构建 Server 的 Hono 应用。不读取环境变量，依赖全部由参数传入，测试可以直接调用。
  *
- * `/desktop/*` 只接受 Desktop 凭证，`/computer/*` 只接受 Computer 凭证。
+ * `/desktop/*` 只接受 Desktop 凭证，`/computer/*` 只接受 Computer 凭证，`/agent/*` 只接受 Agent 凭证。
  */
 export function createApp(options: AppOptions) {
-  // 含义是“本 Server 进程启动以来，Computer 至少连接过一次”，不表示 Computer 现在仍在运行。
-  // Server 退出时整组进程与 RuntimeSession 一起替换，新进程从 false 开始。
-  let computerConnected = false;
-
-  const desktop = new Hono()
-    .use(bearerAuth({ token: options.desktopToken }))
-    .get("/status", (c) => c.json({ computerConnected }));
-
-  const computer = new Hono().use(bearerAuth({ token: options.computerToken })).post("/connect", (c) => {
-    computerConnected = true;
-    return c.body(null, 204);
-  });
-
   return new Hono()
     .use(
       "/desktop/*",
@@ -36,8 +28,15 @@ export function createApp(options: AppOptions) {
         allowHeaders: ["Authorization", "Content-Type"],
       }),
     )
-    .route("/desktop", desktop)
-    .route("/computer", computer);
+    .route("/desktop", desktopRoutes(options, options.desktopToken))
+    .route("/computer", computerRoutes(options, options.computerToken))
+    .route("/agent", agentRoutes(options))
+    .onError((error, c) => {
+      if (error instanceof RequestError) return c.json({ error: error.message }, error.status);
+      if (error instanceof HTTPException) return error.getResponse();
+      console.error("[server] 请求处理失败:", error);
+      return c.json({ error: "Server 内部错误" }, 500);
+    });
 }
 
 /** 渲染进程用它创建有类型的 `hono/client`。 */

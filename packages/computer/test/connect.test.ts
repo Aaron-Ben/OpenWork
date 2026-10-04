@@ -1,33 +1,36 @@
-import { createApp } from "@crew/server";
-import { describe, expect, it } from "vitest";
+import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "@crew/server/testing";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectToServer } from "../src/connect";
 
-const computerToken = "computer-token-0123456789";
 const baseUrl = "http://127.0.0.1:1";
 
-function inMemoryServer() {
-  const app = createApp({ desktopToken: "desktop-token", computerToken, rendererOrigin: "http://localhost:5173" });
-  const fetchFn: typeof fetch = async (input, init) => app.request(input, init);
-  return { app, fetchFn };
-}
+let t: TestApp;
+beforeEach(async () => {
+  t = await createTestApp();
+});
+afterEach(async () => {
+  await t.close();
+});
 
 describe("connectToServer", () => {
   it("marks the computer as connected on the server", async () => {
-    const { app, fetchFn } = inMemoryServer();
-    await connectToServer(baseUrl, computerToken, fetchFn);
+    await connectToServer(baseUrl, TEST_COMPUTER_TOKEN, t.fetch);
 
-    const status = await app.request("/desktop/status", { headers: { Authorization: "Bearer desktop-token" } });
+    const status = await t.app.request("/desktop/status", {
+      headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}` },
+    });
     expect(await status.json()).toEqual({ computerConnected: true });
   });
 
   it("reports a rejected token", async () => {
-    const { fetchFn } = inMemoryServer();
-    await expect(connectToServer(baseUrl, "wrong-token", fetchFn)).rejects.toThrow(
+    await expect(connectToServer(baseUrl, "wrong-token", t.fetch)).rejects.toThrow(
       "Server 拒绝了 Computer 凭证（401）",
     );
   });
 
   it("reports an unreachable server", async () => {
-    await expect(connectToServer(baseUrl, computerToken)).rejects.toThrow("无法连接 Server（http://127.0.0.1:1）");
+    await expect(connectToServer(baseUrl, TEST_COMPUTER_TOKEN)).rejects.toThrow(
+      "无法连接 Server（http://127.0.0.1:1）",
+    );
   });
 });

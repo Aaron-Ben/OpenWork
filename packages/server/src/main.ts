@@ -6,6 +6,8 @@ import { Redis } from "ioredis";
 import pg from "pg";
 import { createApp } from "./app";
 import { createDatabase, ensureLocalUser, migrateDatabase } from "./db";
+import { EventHub } from "./events";
+import { RuntimeState } from "./state";
 
 // Server 进程入口，由 Desktop 主进程启动。stdout 只用来写 ready 消息，日志一律写 stderr。
 
@@ -61,13 +63,17 @@ async function main(): Promise<void> {
   const pool = await connectPostgres(databaseUrl);
   const db = createDatabase(pool);
   await migrateDatabase(db, migrationsDir);
-  await ensureLocalUser(db);
+  const localUserId = await ensureLocalUser(db);
   const redis = await connectRedis(redisUrl);
 
   const app = createApp({
     desktopToken: bootstrap.desktopToken,
     computerToken: bootstrap.computerToken,
     rendererOrigin,
+    db,
+    localUserId,
+    state: new RuntimeState(),
+    events: new EventHub(),
   });
   const { server, port } = await listen(app);
 

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./test/support/index.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
@@ -16,7 +17,8 @@
     "drizzle-orm": "^0.45.3",
     "hono": "^4.13.12",
     "ioredis": "^6.0.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
