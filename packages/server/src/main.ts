@@ -1,6 +1,5 @@
 import { createInterface } from "node:readline";
 import { encodeMessage, readMessage, ServerBootstrap, type ServerReady } from "@crew/protocol";
-import { Redis } from "ioredis";
 import pg from "pg";
 import { createApp } from "./app";
 import { createDatabase, ensureLocalUser, migrateDatabase } from "./db";
@@ -24,18 +23,8 @@ async function connectPostgres(connectionString: string): Promise<pg.Pool> {
   return pool;
 }
 
-async function connectRedis(url: string): Promise<Redis> {
-  // 第 1 步只在启动时检查 Redis，连不上就让启动失败，所以关闭自动重连。
-  const redis = new Redis(url, { lazyConnect: true, retryStrategy: () => null });
-  redis.on("error", (error) => console.error("[server] Redis 错误:", error.message));
-  await redis.connect();
-  await redis.ping();
-  return redis;
-}
-
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
-  const redisUrl = requireEnv("REDIS_URL");
   const rendererOrigin = requireEnv("CREW_RENDERER_ORIGIN");
   const migrationsDir = requireEnv("CREW_MIGRATIONS_DIR");
 
@@ -45,7 +34,6 @@ async function main(): Promise<void> {
   const db = createDatabase(pool);
   await migrateDatabase(db, migrationsDir);
   const localUserId = await ensureLocalUser(db);
-  const redis = await connectRedis(redisUrl);
 
   const events = new EventHub();
   const app = createApp({
@@ -73,7 +61,6 @@ async function main(): Promise<void> {
     events.close();
     await closeServer(server);
     await pool.end();
-    await redis.quit();
     process.exit(0);
   };
   process.once("SIGTERM", shutdown);

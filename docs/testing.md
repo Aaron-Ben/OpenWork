@@ -15,7 +15,7 @@
 | 手动 | `pnpm dev` | 界面：新建 Agent、发消息、看到回复与状态变化 | — |
 
 - `pnpm check` 依次运行 lint、类型检查、`pnpm test` 与 `pnpm test:smoke`，全量约 17 秒。
-- 集成与冒烟测试需要 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL`，由 `@crew/server/testing` 的 `testEnv()` 读取，环境变量没有设置时读根目录的 `.env`。缺少时测试直接失败，不跳过。
+- 集成与冒烟测试需要 `TEST_DATABASE_URL`，由 `@crew/server/testing` 的 `createTestDatabase` 读取，环境变量没有设置时读根目录的 `.env`。缺少时测试直接失败，不跳过。
 - 依赖 Seatbelt 的测试只在 macOS 上运行。
 - 改了界面后，用 `pnpm preview:shot --theme light` 与 `--theme dark` 截图自查：
   - 它用临时数据库启动一个新的 Crew，不能和正在运行的 `pnpm dev` 同时使用：单实例锁会让它直接退出。
@@ -26,7 +26,7 @@
 
 ## 2. 原则
 
-- **只替换昂贵或不确定的边界。** 模型与时钟可以替换，数据库、Redis、Seatbelt 与 HTTP 用真实实现。例如 `packages/computer/test/runner.test.ts` 用真实的 Server 应用与临时数据库，只把 Engine 换成按脚本回复的假 Engine。
+- **只替换昂贵或不确定的边界。** 模型与时钟可以替换，数据库、Seatbelt 与 HTTP 用真实实现。例如 `packages/computer/test/runner.test.ts` 用真实的 Server 应用与临时数据库，只把 Engine 换成按脚本回复的假 Engine。
 - **验证真实世界，不相信自我报告。** 断言重新读取数据库或文件，不只看被测对象返回了什么。例如 shim 测试从 Server 读回消息，而不是只看命令的输出。失败分支断言没有副作用：没有写库，没有改文件。
 - **走真实入口。** 冒烟测试运行构建产物，由 Electron 以 Node 方式执行，与用户运行的是同一套代码与启动路径。只跑源码测不出打包、模块解析与启动顺序的问题。
 - **测试自己拥有资源。** 测试创建的资源由测试释放，失败时也一样，做法见第 5 节。只在单独运行时才通过的测试，是测试本身的缺陷。
@@ -48,7 +48,7 @@
 
 ## 5. 隔离与资源
 
-vitest 同时运行多个测试文件，`pnpm -r test` 让各包并行；它们共用同一个 PostgreSQL、Redis 与本机端口。每个测试占用的资源都要有私有的分配方式和明确的释放点。
+vitest 同时运行多个测试文件，`pnpm -r test` 让各包并行；它们共用同一个 PostgreSQL 与本机端口。每个测试占用的资源都要有私有的分配方式和明确的释放点。
 
 - **数据库：** 每个测试文件用 `createTestDatabase` 建自己的临时数据库，结束时删除。
 - **Server：** 用 `createTestApp`：真实的路由与数据库，监听在 `127.0.0.1` 的随机端口上，请求走真实的 HTTP 连接。`t.request(路径)` 直接请求它；`t.fetch` 可以交给客户端，不论 URL 写的是哪个主机都发到这个 Server。自己起服务时监听 `127.0.0.1:0`，在“已监听”之后读取分配到的端口。

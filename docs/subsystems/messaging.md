@@ -4,8 +4,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 
 ## 1. 启动
 
-- 需要的环境变量：`DATABASE_URL`、`REDIS_URL`、`CREW_RENDERER_ORIGIN`、`CREW_MIGRATIONS_DIR`。缺少任何一个时启动失败。
-- 启动顺序：执行 `CREW_MIGRATIONS_DIR` 中的迁移，确保本机用户存在，检查 Redis 连接，在 `127.0.0.1` 的随机端口上监听，然后向 stdout 写 ready。
+- 需要的环境变量：`DATABASE_URL`、`CREW_RENDERER_ORIGIN`、`CREW_MIGRATIONS_DIR`。缺少任何一个时启动失败。
+- 启动顺序：执行 `CREW_MIGRATIONS_DIR` 中的迁移，确保本机用户存在，在 `127.0.0.1` 的随机端口上监听，然后向 stdout 写 ready。
 - stdin 关闭或收到 SIGTERM 时关闭：先结束全部 SSE 连接，再关闭 HTTP 服务；其余正在进行的请求最多等 2 秒，小于主进程给的 3 秒宽限（`packages/server/src/serve.ts`）。
 
 ## 2. 数据模型

@@ -37,7 +37,7 @@ Next, in order: group coordination (several agents, deciding who speaks), boards
 
 ```text
 Electron main process (supervisor)
- ├── UI (React)       ── HTTP + SSE ──→  Server (Express) ── PostgreSQL, Redis
+ ├── UI (React)       ── HTTP + SSE ──→  Server (Express) ── PostgreSQL
  └── Computer         ── HTTP + SSE ──→  Server
       └── OpenCode (one process per turn, in Seatbelt) ── crew ──→  Server
 ```
@@ -54,7 +54,7 @@ See [docs/architecture.md](docs/architecture.md) (Chinese).
 
 - macOS;
 - Node.js 24 and pnpm 10;
-- Docker (for PostgreSQL and Redis);
+- Docker (for PostgreSQL);
 - the `opencode` CLI, installed and logged in, so that `opencode models` works in a terminal.
 
 ### 2. Install and configure

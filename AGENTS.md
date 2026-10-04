@@ -11,7 +11,7 @@
 
 ## 运行与检查
 
-启动 Crew：先运行 `docker compose up -d --wait` 启动 PostgreSQL 与 Redis，再在根目录运行 `pnpm dev`。数据库地址来自根目录的 `.env`，见 [docs/local-services.md](docs/local-services.md)。
+启动 Crew：先运行 `docker compose up -d --wait` 启动 PostgreSQL，再在根目录运行 `pnpm dev`。数据库地址来自根目录的 `.env`，见 [docs/local-services.md](docs/local-services.md)。
 
 - 改了代码后跑 `pnpm check`，只改文档时跑 `pnpm lint`。
 - 提交流程见 [crew-commit](.agents/skills/crew-commit/SKILL.md)。提交与推送时 lefthook 会运行检查，见 [lefthook.yml](lefthook.yml)。

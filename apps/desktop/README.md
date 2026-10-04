@@ -32,6 +32,6 @@ Electron 应用：主进程启动并监管 Server 与 Computer，窗口里是 Re
 
 ## 已知限制
 
-- **只能用 `pnpm dev` 运行：** 没有 `ELECTRON_RENDERER_URL` 时主进程报错退出，还没有安装包。启动前要先用 Docker 启动 PostgreSQL 与 Redis。
+- **只能用 `pnpm dev` 运行：** 没有 `ELECTRON_RENDERER_URL` 时主进程报错退出，还没有安装包。启动前要先用 Docker 启动 PostgreSQL。
 - **每次提示都重新获取整个消息列表：** 收到“房间有新消息”时，界面重新读取这个房间的全部消息。消息多时要改为只取某个序号之后的消息。
 - **Desktop 凭证在页面的 JS 中：** 页面被注入脚本时可以读到它。凭证只在本次运行、只在 loopback 上有效。

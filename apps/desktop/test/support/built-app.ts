@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { ApiClient } from "@crew/protocol";
-import { createTestDatabase, testEnv } from "@crew/server/testing";
+import { createTestDatabase } from "@crew/server/testing";
 import { type Runtime, startRuntime } from "../../electron/runtime";
 
 // 冒烟测试与真实模型 e2e 共用：构建应用，再用主进程同一份 startRuntime 启动构建好的 Server 与 Computer。
@@ -27,7 +27,6 @@ export interface BuiltApp {
 export async function startBuiltApp(
   env: (root: string) => Promise<NodeJS.ProcessEnv> | NodeJS.ProcessEnv,
 ): Promise<BuiltApp> {
-  const { redisUrl } = testEnv();
   const root = await realpath(await mkdtemp(join(tmpdir(), "crew-built-")));
   const removeRoot = () => rm(root, { recursive: true, force: true });
 
@@ -60,7 +59,7 @@ export async function startBuiltApp(
       migrationsDir: join(outDir, "main/drizzle"),
       shimEntry: join(outDir, "main/shim.js"),
       crewRoot: join(root, "crew"),
-      env: { ...process.env, DATABASE_URL: database.url, REDIS_URL: redisUrl, ...(await env(root)) },
+      env: { ...process.env, DATABASE_URL: database.url, ...(await env(root)) },
       rendererOrigin: "http://localhost:5173",
     });
     return {

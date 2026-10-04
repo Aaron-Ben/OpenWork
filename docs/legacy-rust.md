@@ -12,6 +12,12 @@ pnpm --dir desktop typecheck
 pnpm --dir desktop test
 ```
 
+旧版还需要 Redis。它在 `compose.yaml` 的 `legacy` profile 里，默认不启动：
+
+```bash
+docker compose --profile legacy up -d --wait
+```
+
 运行 `cargo test` 前先设置 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL`。没有设置时，依赖 PostgreSQL 的测试会静默跳过，结果不可信。
 
 旧版的子系统页是 [collaboration.md](subsystems/collaboration.md) 与 [collaboration-desktop.md](subsystems/collaboration-desktop.md)，决策记录在 `.agents/notes/legacy/`，开发期间都保留作参考。

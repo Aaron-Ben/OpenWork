@@ -37,7 +37,7 @@ export class Channel<T> {
 /**
  * Server 进程内的事件总线，把“数据变了”传给 SSE 连接。
  *
- * 只在单个 Server 进程内有效。Server 改为多实例部署时，换成 Redis pub/sub。
+ * 只在单个 Server 进程内有效。Server 改为多实例部署时，换成跨进程的发布订阅，例如 Redis pub/sub。
  */
 export class EventHub {
   readonly desktop = new Channel<DesktopEvent>();

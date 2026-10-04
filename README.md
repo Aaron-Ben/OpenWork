@@ -37,7 +37,7 @@
 
 ```text
 Electron 主进程（监管者）
- ├── 界面（React）      ── HTTP + SSE ──→  Server（Express）── PostgreSQL、Redis
+ ├── 界面（React）      ── HTTP + SSE ──→  Server（Express）── PostgreSQL
  └── Computer            ── HTTP + SSE ──→  Server
       └── OpenCode（每轮一个进程，在 Seatbelt 中）── crew ──→  Server
 ```
@@ -54,7 +54,7 @@ Electron 主进程（监管者）
 
 - macOS；
 - Node.js 24 与 pnpm 10；
-- Docker（用来运行 PostgreSQL 与 Redis）；
+- Docker（用来运行 PostgreSQL）；
 - `opencode` CLI：已安装、已登录，能在终端运行 `opencode models`。
 
 ### 2. 安装与配置

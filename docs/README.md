@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 |---|---|
 | [architecture.md](architecture.md) | 进程与通信、包与依赖方向、数据归属、领域词汇 |
-| [local-services.md](local-services.md) | 本地 PostgreSQL 与 Redis 的启动、检查与重建 |
+| [local-services.md](local-services.md) | 本地 PostgreSQL 的启动、检查与重建 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 |
 | [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷与对应的写法 |
 | [legacy-rust.md](legacy-rust.md) | 旧版 Rust 代码的检查命令 |

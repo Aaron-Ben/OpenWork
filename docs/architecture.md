@@ -7,7 +7,7 @@
 ```text
 Electron 主进程（监管者）
  ├── 窗口：界面（React）  ── HTTP + SSE ──┐
- ├── Server 子进程         ←───────────────┘  PostgreSQL、Redis
+ ├── Server 子进程         ←───────────────┘  PostgreSQL
  └── Computer 子进程       ── HTTP + SSE ──→  Server
       └── 每轮 Turn 一个 OpenCode 进程（在 Seatbelt 中）
            └── crew（shim）── HTTP ──→  Server
@@ -54,8 +54,6 @@ Electron 主进程（监管者）
 | Agent 凭证、Agent 状态、可用模型列表 | Server 内存 | 本次运行；应用重启后清空 |
 | Agent 的常驻规则、工作目录、OpenCode 数据与 session | `~/.crew/agents/<id>/` | 持久 |
 | `crew` 包装脚本、Agent 凭证文件、OpenCode 配置与缓存 | `~/.crew/runtime/<运行 ID>/` | 本次运行；正常退出时删除 |
-
-Redis 目前只在启动时检查连接，还没有读写。
 
 理由见 [私聊的数据模型](../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md)。
 

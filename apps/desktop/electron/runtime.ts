@@ -5,9 +5,7 @@ import { type Child, startChild } from "./child";
 /** Computer 只经 Server 的 HTTP 接口访问数据，启动它时删除这些数据库相关的环境变量。 */
 const DATABASE_ENV_NAMES = [
   "DATABASE_URL",
-  "REDIS_URL",
   "TEST_DATABASE_URL",
-  "TEST_REDIS_URL",
   "PGHOST",
   "PGHOSTADDR",
   "PGPORT",

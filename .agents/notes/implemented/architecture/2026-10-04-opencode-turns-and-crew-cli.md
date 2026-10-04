@@ -38,7 +38,15 @@ Agent 被唤醒后要调用模型，并且能在房间里发言。需要决定�
 
 ## 考虑过的方案
 
-**`crew` 经 Computer 的本地代理调用 Server。** cumora 用文件 IPC 交给 daemon，raft 用本地凭证代理（`raft:packages/daemon/src/agentCredentialProxy.ts`），模型看不到凭证。没有采用：Computer 要多一个本地服务与转发层。以后需要防止 Agent 直接使用自己的凭证时再考虑。
+**`crew` 经 Computer 的本地代理调用 Server。** cumora 用文件 IPC 交给 daemon，raft 用本地凭证代理（`raft:packages/daemon/src/agentCredentialProxy.ts`），模型看不到凭证。没有采用，2026-10-05 读过两者的源码后再次确认：
+
+- raft 的 Engine 不在任何 OS 沙箱里（OpenCode 带 `--dangerously-skip-permissions`，见 `raft:packages/daemon/src/drivers/opencode.ts`），代理是它唯一的边界；模型仍能读到每次启动生成的代理令牌，只是令牌只能在本机用、进程结束就失效。
+- cumora 的文件 IPC 以工具子进程断网为前提（`cumora:server/src/agents/computer/daemon.ts` 中 `RuntimeCliBroker` 前的注释）。Crew 不限网络，模型可以直接往交换目录写请求。
+- Crew 的 Agent 凭证只代表这个 Agent，只在本次运行内有效，Server 只监听 `127.0.0.1`。加代理后模型读到的从凭证变成代理令牌，能做的事一样，还要多一个本地服务与转发层。
+
+真正值钱的是经 `OPENCODE_AUTH_CONTENT` 传入的服务商登录信息，两个参考项目同样把服务商密钥原样交给 Engine。保护它要靠网络管控，不是代理。
+
+**每个 Agent 一个常驻的 `opencode serve`。** 常驻进程省掉每轮的启动时间，Turn 进行中还能把新消息送进同一轮（steer）。Rust 版提议过（`.agents/notes/legacy/architecture/2026-09-24-opencode-serve-for-steer.md`），没有实现。没有采用：2026-10-05 在沙箱外粗测，`opencode run` 在调用模型前退出约 0.65 秒，模型响应要几秒到几十秒，启动不是瓶颈；raft 与 cumora 都只对 Claude、Codex 用常驻进程，OpenCode 都按 Turn 启动（`cumora:server/src/agents/computer/engine.ts` 称它为 “ONE-SHOT engine”）。常驻进程还要管理启动、健康检查、崩溃重建与关闭。
 
 **`crew` 也接受写在命令行上的正文。** cumora 的 `reply <convo_id> "<body>"` 这样做（`cumora:server/src/agents/cli.ts`）。没有采用：命令行上的正文先经过 shell，反引号与 `$` 会被展开，消息被悄悄改写；用单引号时 `\n` 又不会变成换行，cumora 为此写了 `unescapeChat`，再用 `--stdin` 与 `--file` 绕开它对代码片段的破坏（`cumora:server/src/agents/cli-parse.ts`）。raft 只接受 stdin（`raft:packages/cli/src/commands/message/send.ts`）。
 
@@ -53,4 +61,5 @@ Agent 被唤醒后要调用模型，并且能在房间里发言。需要决定�
 - 停止优先：被打断的一轮不确认已读，下一轮重新处理，可能重复回复，但不会丢消息。
 - 依赖 Electron 的 `runAsNode` fuse。2026-10-04 的验证中，`crew` 在与 Rust 版同构的 Seatbelt 规则下经 `ELECTRON_RUN_AS_NODE` 启动，能调用本机 HTTP 服务，单次约 180 ms（系统 Node 约 114 ms）。沙箱只拒绝了 `~/.CFUserTextEncoding` 的读取与 `/dev/dtracehelper` 的写入，都不影响运行。
 - Agent 能读到自己的 Agent 凭证，可以绕过 OpenCode 直接以自己的身份调用 Server。沙箱保证它读不到其他 Agent 的凭证。
+- 模型能读到 OpenCode 的服务商登录信息；网络不限制，它可以把登录信息发出去。
 - 沙箱不可用时 Computer 不启动任何 Agent（`packages/computer/test/daemon.test.ts`）；构建后的 `crew` 在 Seatbelt 中能调用 Server，由冒烟测试 `apps/desktop/test/smoke.e2e.ts` 覆盖。

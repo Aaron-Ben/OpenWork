@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { createTestDatabase, testEnv } from "@crew/server/testing";
+import { createTestDatabase } from "@crew/server/testing";
 
 // 给界面截图，让 Agent 也能看到改动后的样子：用临时数据库启动开发模式的应用，经 DevTools 协议截图，
 // 然后关闭应用、删除临时数据库。系统的红黄绿按钮不在截图里，它由 macOS 绘制。
@@ -110,7 +110,6 @@ async function stop(child: ChildProcess): Promise<void> {
   clearTimeout(timer);
 }
 
-const { redisUrl } = testEnv();
 const database = await createTestDatabase();
 let app: ChildProcess | undefined;
 let appOutput = "";
@@ -118,7 +117,7 @@ try {
   app = spawn(join(desktop, "node_modules/.bin/electron-vite"), ["dev", "--remoteDebuggingPort", String(DEBUG_PORT)], {
     cwd: desktop,
     // 主进程读 .env 时不覆盖已有的环境变量，所以这里的临时数据库优先。
-    env: { ...process.env, DATABASE_URL: database.url, REDIS_URL: redisUrl },
+    env: { ...process.env, DATABASE_URL: database.url },
     detached: true,
     stdio: ["ignore", "ignore", "pipe"],
   });

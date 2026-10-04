@@ -19,8 +19,9 @@ services:
       timeout: 5s
       retries: 10
 
-  # Redis 只保存可过期、可重建的协调数据，不挂数据卷。
+  # 只有旧版 Rust 代码用 Redis，Crew 不用。启动它：docker compose --profile legacy up -d --wait
   redis:
+    profiles: [legacy]
     image: redis:7-alpine
     container_name: crew-redis
     restart: unless-stopped
