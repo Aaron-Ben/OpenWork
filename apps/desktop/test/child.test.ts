@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { ComputerReady } from "@crew/protocol";
 import { afterEach, describe, expect, it } from "vitest";
-import { type Child, ChildStartError, startChild } from "../src/main/child";
+import { type Child, ChildStartError, startChild } from "../electron/child";
 
 // 用 node 运行 test/fixtures 下的小脚本代替 Server 与 Computer，测试启动、失败与停止的监管逻辑。
 

@@ -1,6 +1,6 @@
 import { createTestApp, TEST_DESKTOP_TOKEN, type TestApp } from "@crew/server/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createServerClient, request } from "../src/renderer/lib/server";
+import { createServerClient, request } from "../src/lib/server";
 
 // 用内存中的真实 Server 应用测试界面的客户端：凭证随请求发送，失败时抛出 Server 给出的原因。
 

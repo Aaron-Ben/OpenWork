@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { externalUrl } from "../src/main/navigation";
+import { externalUrl } from "../electron/navigation";
 
 const origin = "http://localhost:5173";
 

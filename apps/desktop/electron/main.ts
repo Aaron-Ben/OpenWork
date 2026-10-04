@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
-import { type RendererRuntime, RUNTIME_CHANNEL } from "../shared/runtime";
 import { ChildStartError } from "./child";
+import { type RendererRuntime, RUNTIME_CHANNEL } from "./contract";
 import { confineNavigation } from "./navigation";
 import { type Runtime, startRuntime } from "./runtime";
 

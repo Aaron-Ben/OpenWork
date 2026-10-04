@@ -1,8 +1,8 @@
 {
-  // 主进程、preload 与构建配置：运行在 Node（Electron 主进程）中。
+  // electron/ 下的主进程与 preload、测试与构建配置：运行在 Node 中。
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src/main", "src/preload", "src/shared", "test", "electron.vite.config.ts"]
+  "include": ["electron", "test", "electron.vite.config.ts"]
 }

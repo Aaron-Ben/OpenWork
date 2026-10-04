@@ -286,8 +286,8 @@ agent_read_cursors  agent_id, room_id, last_read_seq（组合主键）
 **界面**
 
 - 两栏布局：左侧是 Agent 列表（每个 Agent 对应一个私聊房间，带状态点），右侧是聊天。cumora 的左侧导航栏（`src/desktop/Rail.tsx`）在有多个页面时再加。
-- 视觉风格：框架取“控制台”方向（侧栏、顶栏、状态与元信息用等宽字体，绿色强调色只用于回复中、选中与主按钮），正文取“纸面”方向（消息不加气泡，名字和时间在上，正文 15px、行距 1.8、最宽 680px）。浅色与深色两套主题跟随系统切换。颜色与字体是 `apps/desktop/src/renderer/index.css` 中的设计变量，只用系统字体。
-- 系统的红黄绿按钮放进侧栏顶部（`titleBarStyle: "hiddenInset"`）。窗口只显示界面自己的页面：消息里的 http 与 https 链接交给系统浏览器打开，其余导航一律丢弃（`apps/desktop/src/main/navigation.ts`）。
+- 视觉风格：框架取“控制台”方向（侧栏、顶栏、状态与元信息用等宽字体，绿色强调色只用于回复中、选中与主按钮），正文取“纸面”方向（消息不加气泡，名字和时间在上，正文 15px、行距 1.8、最宽 680px）。浅色与深色两套主题跟随系统切换。颜色与字体是 `apps/desktop/src/index.css` 中的设计变量，只用系统字体。
+- 系统的红黄绿按钮放进侧栏顶部（`titleBarStyle: "hiddenInset"`）。窗口只显示界面自己的页面：消息里的 http 与 https 链接交给系统浏览器打开，其余导航一律丢弃（`apps/desktop/electron/navigation.ts`）。
 - 组件按 shadcn/ui 的做法，第 2 步只需要按钮、输入框、文本域与对话框。
 - 来自 Server 的数据用 TanStack Query 获取与缓存。收到 SSE 失效提示时，`invalidateQueries` 让对应的数据重新获取。cumora（`src/stores/messages.ts` 的 `applyEvent`）与 raft 把推送来的消息正文合并进 zustand store，每种事件都要写合并逻辑。
 - Server 提供 `/desktop/events`（SSE），只发“某房间有新消息”与“Agent 列表或状态变了”两类提示。SSE 的解析用 eventsource-parser，重连循环自己写（从 1 秒开始指数退避，最长 30 秒），放在 protocol 包中，Computer 与界面共用。推送代码集中在一个模块里，以后改用 WebSocket 时只改这里。

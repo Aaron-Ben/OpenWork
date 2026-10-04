@@ -1,12 +1,12 @@
 import { RoomId } from "@crew/protocol";
 import { describe, expect, it } from "vitest";
-import { canSend, shouldSend } from "../src/renderer/lib/composer";
-import { keysForEvent, queryKeys } from "../src/renderer/lib/keys";
-import { validateNewAgent } from "../src/renderer/lib/new-agent";
-import { isNearBottom } from "../src/renderer/lib/scroll";
-import { errorMessage } from "../src/renderer/lib/server";
-import { statusView } from "../src/renderer/lib/status";
-import { formatMessageTime } from "../src/renderer/lib/time";
+import { canSend, shouldSend } from "../src/lib/composer";
+import { keysForEvent, queryKeys } from "../src/lib/keys";
+import { validateNewAgent } from "../src/lib/new-agent";
+import { isNearBottom } from "../src/lib/scroll";
+import { errorMessage } from "../src/lib/server";
+import { statusView } from "../src/lib/status";
+import { formatMessageTime } from "../src/lib/time";
 
 // 界面里抽出来的纯逻辑。组件本身不写只断言 HTML 的测试。
 

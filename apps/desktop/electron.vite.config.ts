@@ -42,7 +42,7 @@ export default defineConfig({
       externalizeDeps: false,
       rollupOptions: {
         input: {
-          index: resolve(desktop, "src/main/index.ts"),
+          index: resolve(desktop, "electron/main.ts"),
           server: resolve(repoRoot, "packages/server/src/main.ts"),
           computer: resolve(repoRoot, "packages/computer/src/main.ts"),
           shim: resolve(repoRoot, "packages/computer/src/shim/main.ts"),
@@ -53,17 +53,17 @@ export default defineConfig({
   preload: {
     build: {
       rollupOptions: {
-        input: { index: resolve(desktop, "src/preload/index.ts") },
+        input: { index: resolve(desktop, "electron/preload.ts") },
         // 启用沙箱的窗口只能加载 CommonJS 格式的 preload。
         output: { format: "cjs", entryFileNames: "[name].cjs" },
       },
     },
   },
   renderer: {
-    root: resolve(desktop, "src/renderer"),
+    root: resolve(desktop, "src"),
     plugins: [react(), tailwindcss()],
     build: {
-      rollupOptions: { input: resolve(desktop, "src/renderer/index.html") },
+      rollupOptions: { input: resolve(desktop, "src/index.html") },
     },
   },
 });

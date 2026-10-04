@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computerEnv } from "../src/main/runtime";
+import { computerEnv } from "../electron/runtime";
 
 describe("computerEnv", () => {
   it("removes database credentials and keeps everything else", () => {

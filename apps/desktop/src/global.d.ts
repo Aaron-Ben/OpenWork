@@ -1,4 +1,4 @@
-import type { RendererRuntime } from "../shared/runtime";
+import type { RendererRuntime } from "../electron/contract";
 
 declare global {
   interface Window {

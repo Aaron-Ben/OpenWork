@@ -13,7 +13,7 @@ function codeLanguage(node: ExtraProps["node"]): string | undefined {
 }
 
 const components: Components = {
-  // 链接一律在新窗口打开；主进程把新窗口请求交给系统浏览器（main/navigation.ts）。
+  // 链接一律在新窗口打开；主进程把新窗口请求交给系统浏览器（electron/navigation.ts）。
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
   pre: ({ node, children, ...props }) => {
     const language = codeLanguage(node);
