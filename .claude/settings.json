@@ -3,12 +3,21 @@
   "permissions": {
     "ask": [
       "Bash(git push *)",
+      "Bash(git -C * push)",
+      "Bash(git -C * push *)",
       "Bash(git reset --hard *)",
+      "Bash(git -C * reset --hard)",
+      "Bash(git -C * reset --hard *)",
       "Bash(git clean *)",
+      "Bash(git -C * clean *)",
       "Bash(git branch -D *)",
-      "Bash(rm -r *)",
-      "Bash(rm -rf *)",
-      "Bash(rm -fr *)",
+      "Bash(git -C * branch -D *)",
+      "Bash(rm -r*)",
+      "Bash(rm -R*)",
+      "Bash(rm -fr*)",
+      "Bash(rm -fR*)",
+      "Bash(rm -f -r*)",
+      "Bash(rm -f -R*)",
       "Bash(docker compose down *)"
     ]
   }

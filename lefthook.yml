@@ -6,7 +6,7 @@ pre-commit:
     # 只检查，不自动修复：自动修复会改写暂存内容，与部分暂存的文件冲突。格式问题用 pnpm format 修复。
     - name: biome（暂存文件）
       glob: "*.{ts,tsx,js,mjs,cjs,json,jsonc,css}"
-      run: pnpm exec biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      run: pnpm exec biome check --error-on-warnings --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
 
     - name: 空白字符（暂存内容）
       run: git diff --cached --check

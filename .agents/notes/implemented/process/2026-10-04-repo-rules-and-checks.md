@@ -18,7 +18,7 @@ Status: implemented
 - 修改任何规则文件都先问用户，文件清单见根 [AGENTS.md](../../../../AGENTS.md)“何时直接做，何时先问”。用户只是提问时，AI 只回答，不改文件。
 - `assertNever` 放在 `packages/protocol/src/assert.ts`，各包共用一份。
 - 提交流程写成 skill `.agents/skills/crew-commit/SKILL.md`，`.claude/skills` 是指向 `.agents/skills` 的软链接，做法来自 DSH。测试与写法的规则只写在 `docs/testing.md` 与 `docs/defensive-patterns.md`，skill 只写流程并链接它们，避免同一条规则写在几处。
-- `.claude/settings.json` 让推送、硬重置、删除目录等命令执行前询问。规则按命令文本匹配，只覆盖常见写法，例如拦不住 `git -C <路径> push`。
+- `.claude/settings.json` 让推送、硬重置、删除目录等命令执行前询问。规则按命令文本匹配，覆盖常见写法与 `git -C <路径>` 的写法；包在 `sh -c` 里的命令拦不住，所以它不是严格的安全边界。
 
 **Agent Note**
 
