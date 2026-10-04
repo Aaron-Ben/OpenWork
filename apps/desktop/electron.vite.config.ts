@@ -1,5 +1,5 @@
 import { cpSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
@@ -23,17 +23,21 @@ function stubPgNative(): Plugin {
   };
 }
 
-/** 把 Server 的迁移目录复制到 `out/main/drizzle`，主进程经 `CREW_MIGRATIONS_DIR` 告诉 Server。 */
+/**
+ * 把 Server 的迁移目录复制到主进程产物旁的 `drizzle/`，主进程经 `CREW_MIGRATIONS_DIR` 告诉 Server。
+ * 跟随实际的输出目录：冒烟测试用 `--outDir` 构建到单独的目录。
+ */
 function copyMigrations(): Plugin {
   return {
     name: "crew:copy-migrations",
-    writeBundle: () => {
-      cpSync(resolve(repoRoot, "packages/server/drizzle"), resolve(desktop, "out/main/drizzle"), { recursive: true });
+    writeBundle: (options) => {
+      if (!options.dir) throw new Error("主进程构建缺少输出目录");
+      cpSync(resolve(repoRoot, "packages/server/drizzle"), join(options.dir, "drizzle"), { recursive: true });
     },
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   main: {
     plugins: [stubPgNative(), copyMigrations()],
     build: {
@@ -59,11 +63,16 @@ export default defineConfig({
       },
     },
   },
-  renderer: {
-    root: resolve(desktop, "src"),
-    plugins: [react(), tailwindcss()],
-    build: {
-      rollupOptions: { input: resolve(desktop, "src/index.html") },
-    },
-  },
-});
+  // 冒烟测试不打开窗口，`--mode smoke` 时不构建界面。
+  ...(mode === "smoke"
+    ? {}
+    : {
+        renderer: {
+          root: resolve(desktop, "src"),
+          plugins: [react(), tailwindcss()],
+          build: {
+            rollupOptions: { input: resolve(desktop, "src/index.html") },
+          },
+        },
+      }),
+}));

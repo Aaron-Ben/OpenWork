@@ -8,6 +8,8 @@
 |---|---|
 | [local-services.md](local-services.md) | 本地 PostgreSQL 与 Redis 的启动、检查与重建 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 |
+| [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷与对应的写法 |
+| [legacy-rust.md](legacy-rust.md) | 旧版 Rust 代码的检查命令 |
 | [AGENTS.md](AGENTS.md) | 文档标准 |
 | [templates/crate-readme.md](templates/crate-readme.md) | crate README 的结构与写法 |
 

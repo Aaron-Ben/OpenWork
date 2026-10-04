@@ -145,15 +145,15 @@ git hooks 用 lefthook，只做快速检查，做法来自 DSH 的 `lefthook.yml
 |---|---|---|
 | 单元 | 纯判断函数、前端纯函数 | 无 |
 | 集成 | Server 的 HTTP 与事务，Computer 与 Server 的协议往返 | `TEST_DATABASE_URL`、`TEST_REDIS_URL` |
-| 冒烟 | 起 Server 与 Computer，用脚本化的假 Engine 发一条消息，断言回复落库 | 同上 |
+| 冒烟 | 构建应用，用主进程的 `startRuntime` 起构建好的 Server 与 Computer；假 opencode 在 Seatbelt 里经构建好的 `crew` 回复，断言回复落库。单独的 `pnpm test:smoke`，`pnpm check` 包含它 | 同上；macOS |
 
 - 每个集成测试文件使用独立的临时数据库，Redis key 加测试专属前缀。
-- 假 Engine 是一个正式的 Engine adapter 实现。
-- 真实 OpenCode 与 Seatbelt 测试只在 macOS 上手动运行。
+- 单元与集成测试的假 Engine 实现 Engine 接口（`packages/computer/test/support/fake-engine.ts`）。冒烟测试不往构建产物里注入假 adapter，而是在 `PATH` 中放一个假 opencode：发布的代码里没有只给测试用的开关，做法来自 DSH `docs/testing.md`“Keep opt-ins out of shipped defaults”。
+- 依赖 Seatbelt 的测试只在 macOS 上运行。真实模型的 e2e 用 `pnpm test:e2e` 运行，不进 `pnpm check`；没有指定 `CREW_E2E_MODEL` 或没有登录 OpenCode 时跳过；做法来自 DSH 的真实 API 通道（缺少 key 时自动跳过）。
 - 冒烟测试运行打包后的产物，不运行源码。shim 的冒烟测试用 Electron 可执行文件与打包后的 `shim.js`，在 Seatbelt 中启动。做法来自 DSH `docs/testing.md` 的“Test the real entry path”。
 - 模型可见的文本（每轮 Turn 的输入、triage 题面、shim 的输出）用 vitest 文件快照逐字锁定。改动这些文本时，快照的 diff 进入代码审查。
 - 日常检查：`pnpm lint`、`pnpm typecheck`。提交或合并前：`pnpm check`。
-- 提交前按改动选择能覆盖它的最小测试集，只汇报实际运行的命令。做法来自 DSH 的 `.agents/skills/dsh-pre-push-checks/SKILL.md`，写成本仓库的 `.agents/skills/` 中的一个 skill。
+- 提交流程写成 skill：`.agents/skills/crew-commit/SKILL.md`，`.claude/skills` 是指向 `.agents/skills` 的软链接，做法来自 DSH。DSH 的 `dsh-pre-push-checks` 按改动挑最小测试集，因为它的全量测试慢、有 CI 兜底；本仓库全量 `pnpm check` 约 17 秒且没有 CI，所以提交前总是跑全量，只汇报实际运行的命令。测试与写法的规则只写在 `docs/testing.md` 与 `docs/defensive-patterns.md`，skill 只写流程并链接它们，避免同一条规则写在几处。
 - 本地开发：`docker compose up -d` 后运行 `pnpm dev`。
 
 ### 实现顺序

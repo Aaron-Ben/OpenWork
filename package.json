@@ -13,7 +13,9 @@
     "format": "biome check --write .",
     "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json",
     "test": "pnpm -r test && vitest run scripts",
-    "check": "pnpm lint && pnpm typecheck && pnpm test"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:smoke",
+    "test:smoke": "pnpm --filter @crew/desktop test:smoke",
+    "test:e2e": "pnpm --filter @crew/desktop test:e2e"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -13,16 +13,12 @@
 
 启动 Crew：先运行 `docker compose up -d --wait` 启动 PostgreSQL 与 Redis，再在根目录运行 `pnpm dev`。数据库地址来自根目录的 `.env`，见 [docs/local-services.md](docs/local-services.md)。
 
-检查分两级：
+- **改动后**：`pnpm lint`、`pnpm typecheck`，以及与改动相关的测试。
+- **提交前**：`pnpm check`，即 lint、类型检查、测试与冒烟测试。用户说“只做语法检查”时，只跑 lint 与类型检查，并在汇报中写明没有跑测试。提交流程见 [crew-commit](.agents/skills/crew-commit/SKILL.md)。
+- lefthook 在提交时检查暂存文件的格式与空白，在推送前运行类型检查。
+- 改旧版 Rust 代码前，先看 [docs/legacy-rust.md](docs/legacy-rust.md)。
 
-- **日常改动**：`pnpm lint`、`pnpm typecheck`。
-- **提交或合并前**：`pnpm check`，即 lint、类型检查与全部测试。用户说“只做语法检查”时，只跑日常一级，并在汇报中写明没有跑测试。
-
-lefthook 在提交时检查暂存文件的格式与空白，在推送前运行类型检查。
-
-旧版 Rust 代码的检查：`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`pnpm --dir desktop typecheck`；全量测试在设置 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL` 后运行 `scripts/check.sh`。
-
-代码约定见 [packages/AGENTS.md](packages/AGENTS.md)。前端不写只断言静态 HTML 的组件测试。逻辑抽成纯函数，写 `.test.ts`。测试细节见 [docs/testing.md](docs/testing.md)。
+代码约定见 [packages/AGENTS.md](packages/AGENTS.md)，测试规则见 [docs/testing.md](docs/testing.md)。
 
 ## 设计原则
 
@@ -40,22 +36,27 @@ lefthook 在提交时检查暂存文件的格式与空白，在推送前运行�
 - 不重新讨论 implemented Note 的决策。发现新事实时，先说明新事实，再提出重议。
 - 改动 Note 提到的路径、符号或默认值时，在同一个改动里更新它。
 
+## 任务与完成标准
+
+- 开始一项任务前写清“完成”是什么：哪些检查通过、能演示什么。
+- 分多块的长任务在 `.agents/tasks/` 建任务文件：每块写完成标准，做完打勾。进度以文件为准，不以聊天记录为准。
+
 ## 何时直接做，何时先问
 
-不需要用户决定的步骤直接做。把进度和下一步放在同一条消息里，不用“要我继续吗”结尾。
+不需要用户决定的步骤直接做，在汇报中写明选了什么、为什么。把进度和下一步放在同一条消息里，不用“要我继续吗”结尾。
 
 以下情况先停下来，写清现状、选项和建议：
 
 - **用户能看到的界面或行为会改变**，包括删掉一个入口或一项显示；
-- 新增或删除 crate、包、依赖；
+- 数据模型、协议或包边界的设计；
+- 新增或删除包、依赖；
 - 设计与现实冲突、有歧义或做不到；
-- 开始实现一个功能前：先列出其中的实现决策点，逐个讨论定下来再写代码；
 - 任何提交、推送、合并；
+- 破坏性操作：删除数据或数据库、`git reset --hard`、force push、删除不是本次创建的文件；
 - 改动仓库以外的内容；
 - 修改本文件（`AGENTS.md`）。`CLAUDE.md` 是指向它的软链接，改真实文件。
 
-用户说“暂时不改”时，只回答问题。
-
+开始实现一个功能前，把属于上面几类的决策点一次列出，每个给出推荐；其余实现细节按推荐直接做。用户说“暂时不改”时，只回答问题。
 
 ## 参考项目
 
@@ -74,4 +75,4 @@ lefthook 在提交时检查暂存文件的格式与空白，在推送前运行�
 
 - 用中文回答。代码注释的语言跟随所在文件。
 - 写文档：短句，主动语态，一段一个主题。文档分层见 [docs/AGENTS.md](docs/AGENTS.md)。
-- 改了代码或文件后，按顺序汇报：**需要你决定**、**改了什么**、**发现了什么**、**未确认**、**其他需要补充的**。没有内容的小节直接省略。纯讨论的问题不用这个格式。
+- 改了代码或文件后，按顺序汇报：**需要你决定**、**改了什么**、**发现了什么**、**未确认**。没有内容的小节直接省略。纯讨论的问题不用这个格式。

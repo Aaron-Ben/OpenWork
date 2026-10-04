@@ -14,6 +14,9 @@
 | 本文 | 文档标准 | 代码规范 |
 | [README.md](README.md) | 文档索引与阅读顺序 | 规则 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 | 单个子系统的验收条目 |
+| [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷：现象、规则、出处 | 没有发生过的假想问题 |
+| `.agents/tasks/<任务>.md` | 分多块的长任务：每块的完成标准与进度 | 决策理由、规则 |
+| `.agents/skills/<名字>/SKILL.md` | 在某个时刻照着做的流程，例如提交。规则只链接，不复述 | 常驻规则、测试与写法的规则、子系统的事实 |
 | `docs/subsystems/<子系统>.md` | 一个子系统已实现的行为、数据结构、数字、边界与验收清单 | 决策理由、备选方案、目标状态、迁移叙事 |
 | [Agent Notes](../.agents/notes/README.md) | 决策理由、放弃的方案、代价；还没实现的设计（`proposed/`） | 当前行为的完整规则 |
 | crate README | 每个 crate 一份，按[模板](templates/crate-readme.md)写：对外提供什么、怎样使用、对模型上下文的影响 | 子系统页已有的规则 |
