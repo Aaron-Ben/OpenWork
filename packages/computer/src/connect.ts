@@ -1,3 +1,5 @@
+import { ServerClient } from "./client";
+
 /**
  * 用 Computer 凭证调用 Server 一次，证明地址与凭证有效。
  *
@@ -11,19 +13,5 @@ export async function connectToServer(
   computerToken: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<void> {
-  let response: Response;
-  try {
-    response = await fetchFn(new URL("/computer/connect", baseUrl), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${computerToken}` },
-    });
-  } catch (error) {
-    throw new Error(`无法连接 Server（${baseUrl}）`, { cause: error });
-  }
-  if (response.status === 401) {
-    throw new Error("Server 拒绝了 Computer 凭证（401）");
-  }
-  if (!response.ok) {
-    throw new Error(`Server 返回 ${response.status}`);
-  }
+  await new ServerClient(baseUrl, computerToken, fetchFn).connect();
 }

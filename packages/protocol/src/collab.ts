@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AgentId, RoomId } from "./ids";
+import { AgentId, MessageId, RoomId } from "./ids";
 
 /** 消息正文：去掉首尾空白后不能为空，最多 20,000 字符。 */
 export const MESSAGE_BODY_MAX = 20_000;
@@ -15,6 +15,36 @@ export const AgentStatus = z.discriminatedUnion("state", [
   z.object({ state: z.literal("error"), reason: z.string().min(1) }),
 ]);
 export type AgentStatus = z.infer<typeof AgentStatus>;
+
+// Computer 读取的响应。Computer 与 Server 是两个进程，按约定在 HTTP 边界校验。
+
+/** `GET /computer/agents` 的一项。 */
+export const ComputerAgent = z.object({
+  id: AgentId,
+  displayName: z.string(),
+  persona: z.string(),
+  engineId: z.string(),
+  model: z.string(),
+  roomId: RoomId,
+});
+export type ComputerAgent = z.infer<typeof ComputerAgent>;
+
+export const InboxMessage = z.object({
+  id: MessageId,
+  seq: z.number().int().positive(),
+  author: z.object({ kind: z.enum(["user", "agent"]), id: z.string(), displayName: z.string() }),
+  body: z.string(),
+  createdAt: z.string(),
+});
+export type InboxMessage = z.infer<typeof InboxMessage>;
+
+/** `GET /computer/agents/:id/inbox` 的一项：一个房间里已读位置之后的消息。 */
+export const InboxRoom = z.object({
+  roomId: RoomId,
+  kind: z.literal("direct"),
+  messages: z.array(InboxMessage).min(1),
+});
+export type InboxRoom = z.infer<typeof InboxRoom>;
 
 // SSE 只传失效提示，不传业务正文。收到提示的一方重新读取对应的数据。
 
