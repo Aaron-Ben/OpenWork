@@ -40,7 +40,12 @@ function desktop(path: string, method = "GET", body?: unknown) {
 }
 
 async function newAgent(displayName: string): Promise<ComputerAgent> {
-  const response = await desktop("/desktop/agents", "POST", { displayName, persona: "同事", model: "fake/model" });
+  const response = await desktop("/desktop/agents", "POST", {
+    displayName,
+    handle: displayName.toLowerCase(),
+    persona: "同事",
+    model: "fake/model",
+  });
   return ComputerAgent.parse(await response.json());
 }
 
@@ -115,7 +120,7 @@ describe("ComputerDaemon", () => {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ roomId: agent.roomId, body: "我是 Tokened" }),
     });
-    expect(reply.status).toBe(201);
+    expect(reply.status).toBe(200);
 
     await send(agent.roomId, "检查环境");
     await until(() => engine.requests.length === 1);

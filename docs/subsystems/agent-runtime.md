@@ -21,12 +21,12 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
 每个 Agent 一个 Runner，内部是一个串行循环（`packages/computer/src/runner.ts`）：
 
 - Turn 运行期间到达的唤醒合并成下一轮，不并发运行。
-- 一轮 Turn：读取未读消息。没有未读时什么也不做。有未读时上报 `working`，生成本轮输入，运行一次 Engine。
-  - **成功：** 保存 session，确认读到本轮最后一条消息，上报 `idle`。
+- 一轮 Turn：读取未读消息（同时记为已投递）。没有未读时什么也不做。有未读时上报 `working`，生成本轮输入，运行一次 Engine。
+  - **成功：** 保存 session，确认已读（已读位置推进到已投递位置，包括被 HELD 返回过的消息），上报 `idle`。
   - **失败：** 上报 `error` 与原因，不确认已读；下一次唤醒时这些消息会和新消息一起重新处理。
   - **停止：** 中止 Engine，不确认已读，也不上报状态。读取未读消息期间被停止时，不再开始这一轮。
   - **意外错误**（读取、上报或 Engine 违反约定抛出）：上报 `error` 与“处理失败：…”，下一次唤醒重新读取。
-- 本轮输入按房间列出未读消息，并写明本地时间；文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
+- 本轮输入按房间列出未读消息，并写明本地时间。群聊写出名字与成员名册；作者写成 `User (user)` 或 `名字 (@handle)`，本 Agent 加 `you`；@ 到本 Agent 的消息标 `[mentions you]`。文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
 
 ## 3. OpenCode
 
@@ -37,7 +37,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 ```
 
 - 本轮输入写入 stdin，工作目录是 Agent 的 `work/`。进程在独立的进程组中运行。
-- 环境变量只有：`PATH`、`LANG`、`TMPDIR`；`HOME` 与各个 `XDG_*` 目录指向 Agent 自己的目录；`OPENCODE_DISABLE_PROJECT_CONFIG=1`；`OPENCODE_AUTH_CONTENT`；`OPENCODE_CONFIG_CONTENT`；以及 `crew` 需要的 `CREW_SERVER_URL`、`CREW_TOKEN_FILE`，并把 `bin/crew` 所在目录放在 `PATH` 最前面。没有数据库相关的变量。
+- 环境变量只有：`PATH`、`LANG`、`TMPDIR`；`TMPPREFIX` 指向可写的临时目录（zsh 在这里写 heredoc 的临时文件，默认的 `/tmp/zsh` 沙箱不让写）；`HOME` 与各个 `XDG_*` 目录指向 Agent 自己的目录；`OPENCODE_DISABLE_PROJECT_CONFIG=1`；`OPENCODE_AUTH_CONTENT`；`OPENCODE_CONFIG_CONTENT`；以及 `crew` 需要的 `CREW_SERVER_URL`、`CREW_TOKEN_FILE`，并把 `bin/crew` 所在目录放在 `PATH` 最前面。没有数据库相关的变量。
 - `OPENCODE_AUTH_CONTENT` 来自用户的 `$XDG_DATA_HOME/opencode/auth.json`，在沙箱外读取。文件不存在、超过 64 KiB 或不是合法 JSON 时不启动。
 - `OPENCODE_CONFIG_CONTENT` 是派生的配置：常驻规则指向 Agent 的 `AGENTS.md`；放行全部操作，安全边界是 Seatbelt；本次的模型标为 active。
 - session：从输出事件中取 `sessionID`，保存在 `engines/opencode/session.json`，并记下 Engine、模型与 `AGENTS.md` 的摘要。三者都没变时下一轮继续这个 session，否则开新 session。旧 session 不存在时，开新 session 重试一次。
@@ -80,7 +80,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 
 - 目录权限 0700，文件 0600。写文件先写临时文件再改名。
 - Agent 在沙箱里能写自己的两个目录，所以 Computer 在建目录、写 session 与凭证之前，逐级用 `lstat` 确认它们是真正的目录；遇到符号链接或其他类型时拒绝。`session.json` 不是普通文件时当作没有记录。
-- `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间；文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
+- `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间：身份与 handle、人设、怎样用 `crew reply` 发言、HELD 时怎么做、群聊的发言约束。文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - `bin/crew` 以 `ELECTRON_RUN_AS_NODE=1` 运行 Electron 可执行文件与打包后的 `shim.js`。两者都在 `$HOME` 之外，沙箱里可以读取。
 
 ## 6. crew 命令
@@ -89,6 +89,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - `crew --help`：用法与 heredoc 示例。
 - 本地先检查：房间 ID 是 UUID，正文不为空且不超过 20,000 字符。
 - 成功时向 stdout 写 `Message sent to room <room-id>.`，退出码 0。失败时向 stderr 写一行英文 `error: …`，说明原因与下一步，退出码 1；Server 的 401、403、404 由 `crew` 翻译成英文。
+- 被 HELD 拦下时，向 stdout 写“没有发出”、新消息（格式与每轮输入相同）与下一步：再运行一次 `crew reply`，或什么也不做。退出码 1。
 - 请求最多等 10 秒，不重试；超时时提示消息可能已经发出、不要重发。
 - 全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
 
@@ -105,8 +106,9 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | session 在 Engine、模型与 `AGENTS.md` 不变时延续，否则重开 | `packages/computer/test/home.test.ts` 的 `session continuity` |
 | 不顺着 Agent 换成的符号链接或命名管道操作；准备失败的 Agent 上报 error，其他 Agent 不受影响 | `home.test.ts` 的 `paths the agent controls`；`daemon.test.ts` 的 `reports an unsafe agent directory and keeps serving the other agents` |
 | 准备失败时 Computer 退出，不空转 | `packages/computer/test/main.test.ts` 的 `exits with the reason instead of idling when it cannot prepare its directories` |
-| OpenCode 的参数、环境隔离、session 重试、失败分类、进程组停止、输出超限；一轮结束后不留下后台进程，也不被占着管道的后台进程卡住 | `packages/computer/test/opencode.test.ts` |
-| `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
+| OpenCode 的参数、环境隔离、session 重试、失败分类、进程组停止、输出超限；一轮结束后不留下后台进程，也不被占着管道的后台进程卡住；沙箱里的 zsh 能运行 heredoc | `packages/computer/test/opencode.test.ts` |
+| `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；被 HELD 拦下时打印新消息，再次运行后发出；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
 | `AGENTS.md` 与每轮输入的文本逐字锁定 | `home.test.ts`、`packages/computer/test/prompt.test.ts` |
 | 构建产物的完整链路：用户发消息，Seatbelt 中的 Engine 经构建好的 `crew` 回复并落库 | `apps/desktop/test/smoke.e2e.ts` |
 | 真实模型的完整链路 | 手动：`CREW_E2E_MODEL=<模型> pnpm test:e2e` |
+| 真实模型的群聊：全员唤醒、Agent 之间的 @、HELD 后改写再发 | 手动：2026-10-05 用 `deepseek/deepseek-flash` 跑一个两人群聊，Alice 被 HELD 后把补充的信息写进回复再发出 |

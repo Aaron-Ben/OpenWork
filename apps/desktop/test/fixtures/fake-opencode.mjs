@@ -18,8 +18,8 @@ let prompt = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (prompt += chunk));
 process.stdin.on("end", () => {
-  // 每轮输入按房间列出未读消息，房间标题是 `# <room-id> [direct]`。
-  const roomId = prompt.match(/^# ([0-9a-f-]{36}) /m)?.[1];
+  // 每轮输入按房间列出未读消息，房间标题是 `# Room <room-id> (direct)`。
+  const roomId = prompt.match(/^# Room ([0-9a-f-]{36}) /m)?.[1];
   if (!roomId) {
     process.stderr.write("prompt 里没有房间\n");
     process.exit(1);

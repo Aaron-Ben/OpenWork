@@ -30,9 +30,19 @@ async function newAgent(displayName: string): Promise<ComputerAgent> {
   const response = await t.request("/desktop/agents", {
     method: "POST",
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ displayName, persona: "同事", model: "fake/model" }),
+    body: JSON.stringify({ displayName, handle: displayName.toLowerCase(), persona: "同事", model: "fake/model" }),
   });
   return ComputerAgent.parse(await response.json());
+}
+
+/** 以用户的身份发一条消息，返回它的 ID。 */
+async function sendAsUser(roomId: RoomId, body: string): Promise<string> {
+  const response = await t.request(`/desktop/rooms/${roomId}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+  return ((await response.json()) as { id: string }).id;
 }
 
 interface Run {
@@ -102,6 +112,21 @@ describe("crew reply", () => {
     expect(await bodies(alice.roomId)).toEqual([]);
   });
 
+  it("does not post while the person has written something Alice has not seen, and shows it instead", async () => {
+    await sendAsUser(alice.roomId, "等等，还有一件事");
+
+    const held = await crew(["reply", alice.roomId], { stdin: "好的" });
+    expect(held.code).toBe(1);
+    expect(held.stdout).toContain("Not sent: 1 new message");
+    expect(held.stdout).toContain("User (user): 等等，还有一件事");
+    expect(await bodies(alice.roomId)).toEqual(["等等，还有一件事"]);
+
+    // 新消息已经给 Alice 看过，再发一次就能发出。
+    const retried = await crew(["reply", alice.roomId], { stdin: "好的，我一起看" });
+    expect(retried.code).toBe(0);
+    expect(await bodies(alice.roomId)).toEqual(["等等，还有一件事", "好的，我一起看"]);
+  });
+
   it("does not post in a room the agent is not a member of", async () => {
     const result = await crew(["reply", bob.roomId], { stdin: "hi" });
     expect(result.code).toBe(1);
@@ -138,14 +163,38 @@ describe("crew output", () => {
     ];
 
     const sections: string[] = [];
-    for (const [title, args, run] of cases) {
+    const record = async (title: string, args: string[], run?: Run) => {
       const result = await crew(args, run);
       const output = [result.stdout && `stdout:\n${result.stdout}`, result.stderr && `stderr:\n${result.stderr}`]
         .filter(Boolean)
         .join("\n");
       sections.push(`## ${title} (exit ${result.code})\n\n\`\`\`text\n${output.trimEnd()}\n\`\`\`\n`);
-    }
-    const text = sections.join("\n").replaceAll(alice.roomId, "<alice-room>").replaceAll(bob.roomId, "<bob-room>");
+    };
+    for (const [title, args, run] of cases) await record(title, args, run);
+    // 最后：用户发了 Alice 还没看到的消息，回复被拦下。
+    const unseen = await sendAsUser(alice.roomId, "Wait, one more thing:\ncheck the tests too.");
+    await record("held", ["reply", alice.roomId], { stdin: "On it." });
+    // 新消息多于一次能返回的条数：Server 先返回最早的一批，并说明后面还有几条。
+    const heldWithMore: typeof fetch = async () =>
+      Response.json({
+        outcome: "held",
+        newMessages: [
+          {
+            id: unseen,
+            seq: 2,
+            author: { kind: "user", id: "u", displayName: "User", handle: null },
+            body: "First of many.",
+            createdAt: "2026-10-05T10:00:00.000Z",
+          },
+        ],
+        omitted: 2,
+      });
+    await record("held, more to come", ["reply", alice.roomId], { stdin: "On it.", fetch: heldWithMore });
+    const text = sections
+      .join("\n")
+      .replaceAll(alice.roomId, "<alice-room>")
+      .replaceAll(bob.roomId, "<bob-room>")
+      .replaceAll(unseen, "<message-id>");
     await expect(`# crew output\n\n${text}`).toMatchFileSnapshot("./__snapshots__/shim-output.md");
   });
 });

@@ -1,4 +1,12 @@
-import { type BodyOf, type Endpoint, ErrorBody, endpointPath, type ParamsOf, type ResponseOf } from "./api";
+import {
+  type BodyOf,
+  type Endpoint,
+  ErrorBody,
+  endpointPath,
+  type ParamsOf,
+  type QueryOf,
+  type ResponseOf,
+} from "./api";
 
 // 按接口契约调用 Server 的客户端。界面与 Computer 共用：Node 与浏览器都有 fetch。
 
@@ -25,15 +33,19 @@ export interface ApiClientOptions {
 }
 
 type CallInput<E extends Endpoint> = (ParamsOf<E> extends undefined ? unknown : { params: ParamsOf<E> }) &
+  (QueryOf<E> extends undefined ? unknown : { query?: QueryOf<E> }) &
   (BodyOf<E> extends undefined ? unknown : { body: BodyOf<E> });
 
-/** 没有参数也没有请求体的接口不需要第二个参数。 */
+/** 没有路径参数也没有请求体的接口不需要第二个参数；查询参数总是可选的。 */
 export type CallArgs<E extends Endpoint> = [ParamsOf<E>, BodyOf<E>] extends [undefined, undefined]
-  ? []
+  ? QueryOf<E> extends undefined
+    ? []
+    : [input?: CallInput<E>]
   : [input: CallInput<E>];
 
 interface LooseInput {
   params?: Record<string, string>;
+  query?: Record<string, string | number | undefined>;
   body?: unknown;
 }
 
@@ -55,6 +67,9 @@ export class ApiClient {
   call<E extends Endpoint>(endpoint: E, ...args: CallArgs<E>): Promise<ResponseOf<E>>;
   async call(endpoint: Endpoint, input?: LooseInput): Promise<unknown> {
     const url = new URL(endpointPath(endpoint.path, input?.params), this.options.baseUrl);
+    for (const [name, value] of Object.entries(input?.query ?? {})) {
+      if (value !== undefined) url.searchParams.set(name, String(value));
+    }
     // 浏览器的 fetch 只能以 window 为 this 调用：经 this.fetchFn(...) 调用会抛出 Illegal invocation，
     // 所以先取出来，当作普通函数调用。传入的 fetch 也可能是原生的，同样处理。
     const send = this.fetchFn;

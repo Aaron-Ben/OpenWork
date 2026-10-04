@@ -11,11 +11,11 @@ Status: implemented
 - SSE 只传失效提示（“某部分数据变了”），不传业务数据；收到提示的一方重新读取。事件的 schema 在 `packages/protocol/src/collab.ts`：
   - `/desktop/events` 只发三类提示：某房间有新消息、Agent 列表或状态变了、Computer 上报了新的模型列表。
   - `/computer/events` 发两类：某个 Agent 可能有新消息、Agent 列表变了。
-- Computer 整体建立一条 SSE 连接。它用 `GET /computer/agents/:agentId/inbox` 取已读位置之后的消息，Turn 成功后用 `POST /computer/agents/:agentId/inbox/ack` 推进已读位置。Turn 失败时已读位置不动，下次唤醒重新处理。
+- Computer 整体建立一条 SSE 连接。它用 `POST /computer/agents/:agentId/inbox` 取已读位置之后的消息，Turn 成功后用 `POST /computer/agents/:agentId/inbox/ack` 推进已读位置（第 3a 步起推进到已投递位置，见 [群聊](../feature/2026-10-05-group-chat.md)）。Turn 失败时已读位置不动，下次唤醒重新处理。
 - 每次连接或重连成功后，Computer 同步 Agent 列表，再唤醒全部 Runner，补上断线期间丢失的事件。不做定时轮询。
 - Server 内部用进程内事件 `EventHub`（`packages/server/src/events.ts`）把“数据变了”传给 SSE 连接。推送代码集中在它与 `packages/server/src/http.ts` 的 `eventStream`，以后改用 WebSocket 或 Redis pub/sub 时只改这两处。
 - SSE 的解析用 eventsource-parser，重连循环自己写，按指数退避，放在 `packages/protocol/src/sse.ts`，Computer 与界面共用。
-- 界面的数据用 TanStack Query 获取与缓存。收到提示时用 `invalidateQueries` 让对应的数据重新获取；每次连接成功都让全部缓存失效。缓存不按时间过期（`apps/desktop/src/lib/events.ts`、`apps/desktop/src/lib/queries.ts`）。
+- 界面的数据用 TanStack Query 获取与缓存。收到提示时用 `invalidateQueries` 让对应的数据重新获取；“房间有新消息”例外，只取缓存之后的消息合并进去（`fetchNewer`，见 [群聊](../feature/2026-10-05-group-chat.md)）。每次连接成功都让全部缓存失效。缓存不按时间过期（`apps/desktop/src/lib/events.ts`、`apps/desktop/src/lib/queries.ts`）。
 
 接口见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 7 节，Computer 一侧见 [agent-runtime.md](../../../../docs/subsystems/agent-runtime.md) 第 1 节。
 
@@ -35,6 +35,5 @@ Status: implemented
 
 - 丢一个事件的代价只是晚一点刷新：重连后重新读取完整状态，不需要事件重放。
 - 失败的 Turn 不推进已读位置，消息可能被处理两次，但不会丢。
-- 界面收到“房间有新消息”后重新获取整个消息列表。数据多时要改为只取某个序号之后的消息。
 - 只适用于单个 Server 进程。
 - Server 迁到云端后，反向代理默认缓冲响应会推迟 SSE 事件，需要关闭缓冲。

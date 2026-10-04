@@ -1,14 +1,14 @@
 import type { AgentId } from "@crew/protocol";
-import { DISPLAY_NAME_MAX, PERSONA_MAX } from "@crew/protocol";
+import { DISPLAY_NAME_MAX, HANDLE_MAX, PERSONA_MAX } from "@crew/protocol";
 import { useState } from "react";
-import { type NewAgentErrors, selectedModel, validateNewAgent } from "../lib/new-agent";
+import { type NewAgentErrors, selectedModel, suggestHandle, validateNewAgent } from "../lib/new-agent";
 import { useCreateAgent, useModels } from "../lib/queries";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Field, Input, Textarea } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
-/** 新建 Agent：名字、人设与模型。模型列表来自 Computer 上报。 */
+/** 新建 Agent：名字、handle、人设与模型。模型列表来自 Computer 上报。 */
 export function NewAgentDialog({
   open,
   onOpenChange,
@@ -32,6 +32,9 @@ function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
   const models = useModels(true);
   const create = useCreateAgent();
   const [displayName, setDisplayName] = useState("");
+  /** 用户改过 handle 之前，它跟着名字给出建议。 */
+  const [handleInput, setHandleInput] = useState<string>();
+  const handle = handleInput ?? suggestHandle(displayName);
   const [persona, setPersona] = useState("");
   const [chosenModel, setChosenModel] = useState<string>();
   const [errors, setErrors] = useState<NewAgentErrors>({});
@@ -42,7 +45,7 @@ function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
-    const input = { displayName, persona, model };
+    const input = { displayName, handle, persona, model };
     const found = validateNewAgent(input);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
@@ -63,6 +66,25 @@ function NewAgentForm({ onCreated }: { onCreated(id: AgentId): void }) {
           placeholder="例如 Alice"
           aria-invalid={errors.displayName ? true : undefined}
           onChange={(event) => setDisplayName(event.target.value)}
+        />
+      </Field>
+
+      <Field
+        label="handle"
+        htmlFor="agent-handle"
+        error={errors.handle}
+        hint="在群聊里用 @handle 点名它。小写字母、数字与 -，创建后不能修改。"
+      >
+        <Input
+          id="agent-handle"
+          value={handle}
+          maxLength={HANDLE_MAX}
+          placeholder="例如 alice"
+          spellCheck={false}
+          autoCapitalize="off"
+          className="font-mono"
+          aria-invalid={errors.handle ? true : undefined}
+          onChange={(event) => setHandleInput(event.target.value)}
         />
       </Field>
 

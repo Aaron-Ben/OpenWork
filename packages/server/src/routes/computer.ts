@@ -14,11 +14,7 @@ export function computerRoutes(app: Express, ctx: ServerContext): void {
 
   route(app, api.computer.readInbox, ({ params }) => readInbox(ctx.db, params.agentId));
 
-  route(app, api.computer.acknowledge, async ({ params, body }) => {
-    for (const { roomId, seq } of body.acks) {
-      await acknowledge(ctx.db, params.agentId, roomId, seq);
-    }
-  });
+  route(app, api.computer.acknowledge, ({ params }) => acknowledge(ctx.db, params.agentId));
 
   route(app, api.computer.issueAgentToken, async ({ params }) => {
     await assertAgentExists(ctx.db, params.agentId);

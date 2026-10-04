@@ -50,12 +50,14 @@ type Parsed<S> = S extends z.ZodType ? z.output<S> : undefined;
 
 export interface HandlerInput<E extends Endpoint> {
   params: Parsed<E["params"]>;
+  query: Parsed<E["query"]>;
   body: Parsed<E["body"]>;
   response: Response;
 }
 
 interface LooseInput {
   params: unknown;
+  query: unknown;
   body: unknown;
   response: Response;
 }
@@ -68,7 +70,7 @@ function parseInput(schema: z.ZodType | undefined, value: unknown): unknown {
 }
 
 /**
- * 按契约注册一个接口：校验路径参数与请求体，不合法时返回 400 与第一条错误；
+ * 按契约注册一个接口：校验路径参数、查询参数与请求体，不合法时返回 400 与第一条错误；
  * 处理函数的返回值必须符合响应 schema 的类型。处理函数抛出的错误交给 `errorHandler`。
  */
 export function route<E extends Endpoint>(
@@ -79,8 +81,9 @@ export function route<E extends Endpoint>(
 export function route(app: Express, endpoint: Endpoint, handler: (input: LooseInput) => unknown): void {
   const handle: RequestHandler = async (request, response) => {
     const params = parseInput(endpoint.params, request.params);
+    const query = parseInput(endpoint.query, request.query);
     const body = parseInput(endpoint.body, request.body);
-    const reply = await handler({ params, body, response });
+    const reply = await handler({ params, query, body, response });
     if (endpoint.response) response.status(endpoint.status ?? 200).json(reply);
     else response.status(204).end();
   };

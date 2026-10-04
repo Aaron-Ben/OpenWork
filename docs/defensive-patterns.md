@@ -55,3 +55,9 @@
 - **现象：** OpenCode 正常结束一轮后，Agent 在这一轮里用 `cmd &` 起的后台进程还活着，在沙箱里继续联网；后台进程如果继承了 OpenCode 的 stdout，管道一直不关，`close` 事件不来，这一轮卡到后台进程自己退出为止。cumora 的注释记录了同样的现象，但只在中止时处理（`cumora:server/src/agents/computer/engine.ts` 的 `spawnEngine`）。
 - **规则：** 子进程退出（`exit` 事件）后，结束它所在的整个进程组，再等 `close`。不要只靠 `close` 判断一轮结束。
 - **出处：** `packages/computer/src/engine/opencode.ts` 的 `runOnce`；`packages/computer/test/opencode.test.ts` 的 `ends processes the agent left running when the turn finishes`。
+
+## 沙箱里验证模型真正会用的写法
+
+- **现象：** 常驻规则教 Agent 用 heredoc 运行 `crew reply`，真实模型照做时，沙箱里的 zsh 报 `can't create temp file for here document: operation not permitted`，模型只好改用 `printf`。zsh 把 heredoc 写进以 `TMPPREFIX` 开头的临时文件，默认是沙箱不让写的 `/tmp/zsh`。冒烟测试的假 opencode 直接启动 `crew` 并写 stdin，没有经过 shell，所以没测出来。
+- **规则：** 提示词教给模型的写法，要在同样的沙箱、同样的环境变量下真正跑一遍，不只测被调用的程序本身。
+- **出处：** `packages/computer/src/engine/opencode.ts` 设置 `TMPPREFIX`；`packages/computer/test/opencode.test.ts` 的 `lets the shell inside the sandbox run a heredoc, as the standing instructions tell the agent to`，去掉 `TMPPREFIX` 时它报出同样的错误。2026-10-05 用真实模型演示群聊时发现。

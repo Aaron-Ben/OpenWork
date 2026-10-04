@@ -3,6 +3,7 @@ import { assertNever, type DesktopEvent, type RoomId } from "@crew/protocol";
 /** TanStack Query 的缓存键。SSE 提示按 `keysForEvent` 让对应的键失效。 */
 export const queryKeys = {
   agents: ["agents"] as const,
+  groups: ["groups"] as const,
   messages: (roomId: RoomId) => ["messages", roomId] as const,
   models: ["models"] as const,
 };
@@ -12,6 +13,8 @@ export function keysForEvent(event: DesktopEvent): readonly unknown[] {
   switch (event.type) {
     case "agents":
       return queryKeys.agents;
+    case "rooms":
+      return queryKeys.groups;
     case "room.messages":
       return queryKeys.messages(event.roomId);
     case "models":

@@ -2,7 +2,7 @@ import type { AgentId, MessageId, RoomId, UserId } from "@crew/protocol";
 import { sql } from "drizzle-orm";
 import { bigint, check, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
-// 表结构的取舍见设计 Agent Note 的“第 2 步的实现决策 → 数据模型”。
+// 表结构的取舍见 Agent Note：私聊的数据模型（2026-10-04-direct-chat-data-model），群聊（2026-10-05-group-chat）。
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -18,6 +18,8 @@ export const agents = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom().$type<AgentId>(),
     displayName: text("display_name").notNull(),
+    /** 在消息里点名用的 `@handle`。格式由 `agents_handle_format` 约束，与 protocol 的 `Handle` 一致。 */
+    handle: text("handle").notNull().unique(),
     persona: text("persona").notNull(),
     engineId: text("engine_id").notNull(),
     model: text("model").notNull(),
@@ -26,26 +28,30 @@ export const agents = pgTable(
   (t) => [
     check("agents_display_name_not_blank", sql`btrim(${t.displayName}) <> ''`),
     check("agents_persona_not_blank", sql`btrim(${t.persona}) <> ''`),
+    check("agents_handle_format", sql`${t.handle} ~ '^[a-z0-9][a-z0-9-]{0,31}$'`),
   ],
 );
 
 /**
- * 房间。`next_seq` 是下一条消息的序号来源：写消息时锁住房间行并加一，
- * 同一房间内的序号因此连续、不跳号。
+ * 房间：私聊（`direct`，一个用户与一个 Agent）或群聊（`group`，有名字，Agent 成员可以增加）。
+ * `next_seq` 是下一条消息的序号来源：写消息时锁住房间行并加一，同一房间内的序号因此连续、不跳号。
  */
 export const rooms = pgTable(
   "rooms",
   {
     id: uuid("id").primaryKey().defaultRandom().$type<RoomId>(),
-    kind: text("kind", { enum: ["direct"] }).notNull(),
+    kind: text("kind", { enum: ["direct", "group"] }).notNull(),
+    /** 群聊的名字。私聊没有名字，界面显示 Agent 的名字。 */
+    name: text("name"),
     /** 私聊双方的组合键，保证同一对用户与 Agent 只有一个私聊房间。 */
     directKey: text("direct_key").unique(),
     nextSeq: bigint("next_seq", { mode: "number" }).notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [
-    check("rooms_kind_known", sql`${t.kind} IN ('direct')`),
+    check("rooms_kind_known", sql`${t.kind} IN ('direct', 'group')`),
     check("rooms_direct_has_key", sql`${t.kind} <> 'direct' OR ${t.directKey} IS NOT NULL`),
+    check("rooms_group_has_name", sql`${t.kind} <> 'group' OR btrim(coalesce(${t.name}, '')) <> ''`),
   ],
 );
 
@@ -106,7 +112,15 @@ export const messages = pgTable(
   ],
 );
 
-/** Agent 在每个房间处理到的序号。Turn 成功后才推进，失败时下次重新处理。 */
+/**
+ * Agent 在每个房间的两个位置：
+ *
+ * - `delivered_seq`：已经交给 Agent 看过的最后一条。Computer 读取 inbox、HELD 返回新消息时推进。
+ *   Agent 回复时，这之后别人发的消息会让回复被拦下（HELD）。
+ * - `last_read_seq`：已经处理完的最后一条。Turn 成功后推进到 `delivered_seq`；失败时不动，下次重新处理。
+ *
+ * 加入群聊时两者都从当时的最新序号开始，新成员看不到加入前的消息。
+ */
 export const agentReadCursors = pgTable(
   "agent_read_cursors",
   {
@@ -119,9 +133,27 @@ export const agentReadCursors = pgTable(
       .references(() => rooms.id, { onDelete: "cascade" })
       .$type<RoomId>(),
     lastReadSeq: bigint("last_read_seq", { mode: "number" }).notNull().default(0),
+    deliveredSeq: bigint("delivered_seq", { mode: "number" }).notNull().default(0),
   },
   (t) => [
     primaryKey({ columns: [t.agentId, t.roomId] }),
     check("agent_read_cursors_seq_non_negative", sql`${t.lastReadSeq} >= 0`),
+    check("agent_read_cursors_delivered_not_behind", sql`${t.deliveredSeq} >= ${t.lastReadSeq}`),
   ],
+);
+
+/** 消息 @ 到的 Agent。只记录写入时是房间成员的 Agent；代码里的 `@` 不算。 */
+export const messageMentions = pgTable(
+  "message_mentions",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" })
+      .$type<MessageId>(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" })
+      .$type<AgentId>(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.agentId] })],
 );

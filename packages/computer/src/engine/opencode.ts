@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { z } from "zod";
@@ -196,6 +196,9 @@ export class OpenCodeAdapter implements EngineAdapter {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       LANG: process.env.LANG ?? "en_US.UTF-8",
       ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
+      // zsh 把 heredoc 写进以 TMPPREFIX 开头的临时文件，默认是 /tmp/zsh，沙箱不让写；
+      // 改到可写的临时目录，否则 Agent 照常驻规则用 heredoc 运行 `crew reply` 会失败。
+      TMPPREFIX: join(tmpdir(), "zsh"),
       ...request.env,
       HOME: layout.home,
       XDG_DATA_HOME: layout.engineDataDir,

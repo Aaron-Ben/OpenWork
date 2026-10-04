@@ -44,7 +44,7 @@ describe.skipIf(process.platform !== "darwin")("built app", () => {
     }, 30_000);
 
     const agent = await client.call(api.desktop.createAgent, {
-      body: { displayName: "Smoke", persona: "冒烟测试", model: "fake/model" },
+      body: { displayName: "Smoke", handle: "smoke", persona: "冒烟测试", model: "fake/model" },
     });
     await client.call(api.desktop.sendMessage, { params: { roomId: agent.roomId }, body: { body: "ping" } });
 

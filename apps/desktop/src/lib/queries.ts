@@ -1,7 +1,8 @@
-import { api, type RoomId } from "@crew/protocol";
+import { type AgentId, api, MESSAGE_PAGE_MAX, type RoomId, type RoomMessage } from "@crew/protocol";
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { server } from "./api";
 import { queryKeys } from "./keys";
+import { MESSAGE_PAGE, mergeMessages, newestSeq } from "./messages";
 import type { NewAgentInput } from "./new-agent";
 
 /**
@@ -23,10 +24,51 @@ export function useAgents() {
   });
 }
 
+export function useGroups() {
+  return useQuery({
+    queryKey: queryKeys.groups,
+    queryFn: () => server.call(api.desktop.listGroups),
+  });
+}
+
+/** 房间的消息。第一次取最新的一批；之后由 `fetchNewer` 与 `useLoadOlder` 往缓存里合并。 */
 export function useMessages(roomId: RoomId) {
   return useQuery({
     queryKey: queryKeys.messages(roomId),
-    queryFn: () => server.call(api.desktop.listMessages, { params: { roomId } }),
+    queryFn: () => server.call(api.desktop.listMessages, { params: { roomId }, query: { limit: MESSAGE_PAGE } }),
+  });
+}
+
+/**
+ * 只取缓存里最新一条之后的消息并合并进去。一次取满上限时接着取，直到取完。
+ * 缓存里还没有数据时，第一次读取可能正在进行、结果里没有这条新消息，所以让它重新开始；
+ * 没有打开过这个房间时什么也不发生。
+ */
+export async function fetchNewer(queryClient: QueryClient, roomId: RoomId): Promise<void> {
+  const key = queryKeys.messages(roomId);
+  for (;;) {
+    const cached = queryClient.getQueryData<RoomMessage[]>(key);
+    if (!cached) {
+      await queryClient.invalidateQueries({ queryKey: key });
+      return;
+    }
+    const batch = await server.call(api.desktop.listMessages, {
+      params: { roomId },
+      query: { after: newestSeq(cached) },
+    });
+    queryClient.setQueryData<RoomMessage[]>(key, (current) => mergeMessages(current, batch));
+    if (batch.length < MESSAGE_PAGE_MAX) return;
+  }
+}
+
+/** 取缓存里最早一条之前的一批消息，合并到前面。 */
+export function useLoadOlder(roomId: RoomId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (before: number) =>
+      server.call(api.desktop.listMessages, { params: { roomId }, query: { before, limit: MESSAGE_PAGE } }),
+    onSuccess: (batch) =>
+      queryClient.setQueryData<RoomMessage[]>(queryKeys.messages(roomId), (current) => mergeMessages(current, batch)),
   });
 }
 
@@ -48,7 +90,7 @@ export function useSendMessage(roomId: RoomId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: string) => server.call(api.desktop.sendMessage, { params: { roomId }, body: { body } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.messages(roomId) }),
+    onSuccess: () => fetchNewer(queryClient, roomId),
   });
 }
 
@@ -57,5 +99,22 @@ export function useCreateAgent() {
   return useMutation({
     mutationFn: (input: NewAgentInput) => server.call(api.desktop.createAgent, { body: input }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.agents }),
+  });
+}
+
+export function useCreateGroup() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; agentIds: AgentId[] }) => server.call(api.desktop.createGroup, { body: input }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.groups }),
+  });
+}
+
+export function useAddGroupMembers(roomId: RoomId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (agentIds: AgentId[]) =>
+      server.call(api.desktop.addGroupMembers, { params: { roomId }, body: { agentIds } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.groups }),
   });
 }

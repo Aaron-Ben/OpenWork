@@ -9,6 +9,7 @@ export const DEFAULT_ENGINE_ID = "opencode";
 
 export interface NewAgent {
   displayName: string;
+  handle: string;
   persona: string;
   model: string;
 }
@@ -16,6 +17,7 @@ export interface NewAgent {
 export interface AgentSummary {
   id: AgentId;
   displayName: string;
+  handle: string;
   persona: string;
   engineId: string;
   model: string;
@@ -26,9 +28,15 @@ export interface AgentSummary {
 
 /**
  * 创建 Agent，并在同一个事务里建好它与本机用户的私聊房间、双方的成员关系与 Agent 的已读位置。
+ *
+ * @throws RequestError 409：handle 已被使用。
  */
 export async function createAgent(db: Database, localUserId: UserId, input: NewAgent): Promise<AgentSummary> {
   return db.transaction(async (tx) => {
+    // 本机只有一个用户，两个请求同时用同一个 handle 的竞争可以忽略：唯一约束仍会拒绝后到的那个。
+    const [taken] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.handle, input.handle));
+    if (taken) throw new RequestError(409, `handle @${input.handle} 已被使用`);
+
     const [agent] = await tx
       .insert(agents)
       .values({ ...input, engineId: DEFAULT_ENGINE_ID })
@@ -61,6 +69,7 @@ export async function listAgents(db: Database): Promise<AgentSummary[]> {
     .select({
       id: agents.id,
       displayName: agents.displayName,
+      handle: agents.handle,
       persona: agents.persona,
       engineId: agents.engineId,
       model: agents.model,

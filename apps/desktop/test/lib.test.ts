@@ -1,8 +1,10 @@
-import { RoomId } from "@crew/protocol";
+import { AgentId, type DesktopAgent, type DesktopGroup, RoomId, type RoomMessage } from "@crew/protocol";
 import { describe, expect, it } from "vitest";
 import { canSend, shouldSend } from "../src/lib/composer";
 import { keysForEvent, queryKeys } from "../src/lib/keys";
-import { selectedModel, validateNewAgent } from "../src/lib/new-agent";
+import { hasOlder, mergeMessages, newestSeq } from "../src/lib/messages";
+import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-agent";
+import { groupMembers, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
 import { isNearBottom } from "../src/lib/scroll";
 import { statusView } from "../src/lib/status";
 import { formatMessageTime } from "../src/lib/time";
@@ -18,6 +20,10 @@ describe("keysForEvent", () => {
 
   it("refreshes only the room that has new messages", () => {
     expect(keysForEvent({ type: "room.messages", roomId })).toEqual(["messages", roomId]);
+  });
+
+  it("refreshes the group list when groups or their members change", () => {
+    expect(keysForEvent({ type: "rooms" })).toEqual(queryKeys.groups);
   });
 
   it("refreshes the model list when the computer reports models", () => {
@@ -91,15 +97,101 @@ describe("formatMessageTime", () => {
 
 describe("validateNewAgent", () => {
   it("accepts a complete form", () => {
-    expect(validateNewAgent({ displayName: "Alice", persona: "代码审查者", model: "a/b" })).toEqual({});
+    expect(validateNewAgent({ displayName: "Alice", handle: "alice", persona: "代码审查者", model: "a/b" })).toEqual(
+      {},
+    );
   });
 
   it("reports every missing field with the server's wording", () => {
-    expect(validateNewAgent({ displayName: "  ", persona: "", model: "" })).toEqual({
+    expect(validateNewAgent({ displayName: "  ", handle: "", persona: "", model: "" })).toEqual({
       displayName: "名字不能为空",
+      handle: "handle 不能为空",
       persona: "人设不能为空",
       model: "请选择模型",
     });
+  });
+
+  it("reports a handle in the wrong format with the server's wording", () => {
+    expect(validateNewAgent({ displayName: "A", handle: "Alice", persona: "p", model: "a/b" })).toEqual({
+      handle: "handle 只能用小写字母、数字与 -，并以字母或数字开头",
+    });
+  });
+});
+
+describe("suggestHandle", () => {
+  it("lowercases the name and joins words with hyphens", () => {
+    expect(suggestHandle("Code Reviewer!")).toBe("code-reviewer");
+    expect(suggestHandle("  Alice ")).toBe("alice");
+  });
+
+  it("gives nothing for a name without latin letters or digits", () => {
+    expect(suggestHandle("小明")).toBe("");
+  });
+
+  it("keeps the latin part of a mixed name and stays within the length limit", () => {
+    expect(suggestHandle("测试 QA")).toBe("qa");
+    expect(suggestHandle("a".repeat(40))).toHaveLength(32);
+  });
+});
+
+const agentId = (n: number) => AgentId.parse(`00000000-0000-4000-8000-00000000000${n}`);
+const agent = (n: number) => ({ id: agentId(n) }) as DesktopAgent;
+const group = { agentIds: [agentId(1), agentId(3)] } as DesktopGroup;
+
+describe("group members", () => {
+  it("lists members and non-members in the agent list's order", () => {
+    const agents = [agent(1), agent(2), agent(3)];
+    expect(groupMembers(group, agents).map((a) => a.id)).toEqual([agentId(1), agentId(3)]);
+    expect(nonMembers(group, agents).map((a) => a.id)).toEqual([agentId(2)]);
+  });
+
+  it("toggles a choice on and off", () => {
+    expect(toggle([agentId(1)], agentId(2))).toEqual([agentId(1), agentId(2)]);
+    expect(toggle([agentId(1), agentId(2)], agentId(1))).toEqual([agentId(2)]);
+  });
+
+  it("requires a name and at least one agent", () => {
+    expect(validateNewGroup({ name: " ", agentIds: [] })).toEqual({
+      name: "群聊名字不能为空",
+      agentIds: "至少选择一个 agent",
+    });
+    expect(validateNewGroup({ name: "发版", agentIds: [agentId(1)] })).toEqual({});
+  });
+});
+
+const message = (seq: number, body = `第 ${seq} 条`) => ({ seq, body }) as RoomMessage;
+
+describe("mergeMessages", () => {
+  it("appends newer messages and prepends older ones in sequence order", () => {
+    const current = [message(5), message(6)];
+    expect(mergeMessages(current, [message(7)]).map((m) => m.seq)).toEqual([5, 6, 7]);
+    expect(mergeMessages(current, [message(3), message(4)]).map((m) => m.seq)).toEqual([3, 4, 5, 6]);
+  });
+
+  it("drops duplicates when batches overlap, keeping the newer copy", () => {
+    const merged = mergeMessages([message(1), message(2)], [message(2, "新"), message(3)]);
+    expect(merged.map((m) => [m.seq, m.body])).toEqual([
+      [1, "第 1 条"],
+      [2, "新"],
+      [3, "第 3 条"],
+    ]);
+  });
+
+  it("starts from nothing when there is no cache yet", () => {
+    expect(mergeMessages(undefined, [message(2), message(1)]).map((m) => m.seq)).toEqual([1, 2]);
+  });
+});
+
+describe("hasOlder and newestSeq", () => {
+  it("knows there is more before the first message unless it is message 1", () => {
+    expect(hasOlder([message(2), message(3)])).toBe(true);
+    expect(hasOlder([message(1)])).toBe(false);
+    expect(hasOlder([])).toBe(false);
+  });
+
+  it("gives the newest sequence number, or 0 for an empty room", () => {
+    expect(newestSeq([message(1), message(4)])).toBe(4);
+    expect(newestSeq([])).toBe(0);
   });
 });
 

@@ -10,7 +10,6 @@ import {
   EVENT_STREAMS,
   type InboxRoom,
   type ResponseOf,
-  type RoomId,
 } from "@crew/protocol";
 import { ZodError } from "zod";
 
@@ -38,12 +37,14 @@ export class ServerClient {
     return this.call(api.computer.listAgents);
   }
 
+  /** 取出未读消息，同时记为已投递：之后 Agent 的回复只会被更新的消息拦下。 */
   readInbox(agentId: AgentId): Promise<InboxRoom[]> {
     return this.call(api.computer.readInbox, { params: { agentId } });
   }
 
-  async acknowledge(agentId: AgentId, acks: Array<{ roomId: RoomId; seq: number }>): Promise<void> {
-    await this.call(api.computer.acknowledge, { params: { agentId }, body: { acks } });
+  /** 每个房间的已读位置推进到已投递位置。 */
+  async acknowledge(agentId: AgentId): Promise<void> {
+    await this.call(api.computer.acknowledge, { params: { agentId } });
   }
 
   async issueAgentToken(agentId: AgentId): Promise<string> {

@@ -23,6 +23,7 @@ import { standingInstructions } from "../src/instructions";
 const alice = {
   id: AgentId.parse("2f8c0b6e-3a1d-4c5e-9f7a-1b2c3d4e5f60"),
   displayName: "Alice",
+  handle: "alice",
   persona: "你是一位严谨的代码审查者。",
 };
 const session = RuntimeSessionId.parse("session-1");

@@ -60,23 +60,26 @@ Electron 主进程（监管者）
 ## 4. 一条消息的路径
 
 1. 用户在界面发消息，界面调用 `POST /desktop/rooms/:roomId/messages`。
-2. Server 在一个事务里锁住房间行，分配房间内的序号并写入消息；提交后向界面发“房间有新消息”，向 Computer 发“唤醒这个 Agent”。
-3. Computer 的 Runner 读取 Agent 已读位置之后的消息，生成本轮输入，在 Seatbelt 中启动一次 OpenCode。
+2. Server 在一个事务里锁住房间行，分配房间内的序号并写入消息；提交后向界面发“房间有新消息”，向 Computer 发“唤醒”：用户的消息唤醒房间里全部 Agent，Agent 的消息只唤醒它 @ 到的 Agent。
+3. Computer 的 Runner 读取 Agent 已读位置之后的消息（同时记为已投递），生成本轮输入，在 Seatbelt 中启动一次 OpenCode。
 4. 模型决定回复时运行 `crew reply <room-id>`，正文从 stdin 读入；`crew` 带着 Agent 凭证调用 `POST /agent/reply`。
-5. Server 写入回复，向界面发“房间有新消息”，界面重新读取并显示。
+5. Server 检查房间里有没有已投递位置之后、别人发的消息。有就不写入，把它们返回给 Agent（HELD），Agent 看完再决定；没有就写入回复，向界面发“房间有新消息”。界面只取它缓存之后的新消息。
 6. Turn 成功结束后，Runner 确认已读，并上报 Agent 回到空闲。
 
-理由见 [每轮一次 OpenCode 与 crew 命令](../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md)。
+理由见 [每轮一次 OpenCode 与 crew 命令](../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md) 与 [群聊](../.agents/notes/implemented/feature/2026-10-05-group-chat.md)。
 
 ## 5. 领域词汇
 
 | 词 | 含义 |
 |---|---|
 | User | 使用本机的人。本机只有一个用户。 |
-| Agent | 长期存在的 AI 同事：名字、人设、Engine 与模型。 |
-| Room | 人与 Agent 交流的房间。目前只有私聊（direct）：每个 Agent 一个。 |
+| Agent | 长期存在的 AI 同事：名字、handle、人设、Engine 与模型。 |
+| handle | Agent 在消息里被点名用的名字，例如 `@alice`。全局唯一。 |
+| Room | 人与 Agent 交流的房间。私聊（direct）：用户与一个 Agent，每个 Agent 一个；群聊（group）：有名字，用户与多个 Agent。 |
 | Message | 房间里的一条消息。作者是用户或 Agent；序号在房间内连续递增。 |
-| 已读位置 | 每个 Agent 在每个房间读到的最后一个序号。只前进，不后退。 |
+| 已读位置 | 每个 Agent 在每个房间处理完的最后一个序号。Turn 成功后推进。 |
+| 已投递位置 | 每个 Agent 在每个房间已经看过的最后一个序号。读取 inbox 与 HELD 时推进。 |
+| HELD | Agent 的回复因为房间里有它没看过的新消息而没有发出；它看完新消息后再决定。 |
 | RuntimeSession | 一次应用运行。它的 ID 用于本次运行目录；凭证与运行期状态只在本次运行内有效。 |
 | Computer | 在本机运行 Agent 的进程。 |
 | Engine | 实际调用模型的程序。目前只有 OpenCode。 |

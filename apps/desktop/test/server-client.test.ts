@@ -17,7 +17,7 @@ const client = (token = TEST_DESKTOP_TOKEN) => new ApiClient({ baseUrl: t.baseUr
 describe("ApiClient against the server", () => {
   it("returns the validated data of a successful response", async () => {
     const agent = await client().call(api.desktop.createAgent, {
-      body: { displayName: "Alice", persona: "代码审查者", model: "a/b" },
+      body: { displayName: "Alice", handle: "alice", persona: "代码审查者", model: "a/b" },
     });
     expect(agent).toMatchObject({ displayName: "Alice", status: { state: "idle" } });
     expect(await client().call(api.desktop.listAgents)).toHaveLength(1);
@@ -25,7 +25,9 @@ describe("ApiClient against the server", () => {
 
   it("throws the server's reason for a rejected request", async () => {
     await expect(
-      client().call(api.desktop.createAgent, { body: { displayName: " ", persona: "x", model: "a/b" } }),
+      client().call(api.desktop.createAgent, {
+        body: { displayName: " ", handle: "blank", persona: "x", model: "a/b" },
+      }),
     ).rejects.toThrow("名字不能为空");
   });
 

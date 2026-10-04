@@ -1,6 +1,7 @@
-import { MESSAGE_BODY_MAX, RoomId } from "@crew/protocol";
+import { MESSAGE_BODY_MAX, ReplyOutcome, RoomId } from "@crew/protocol";
 import { Command, CommanderError } from "commander";
 import { z } from "zod";
+import { messageLines } from "../prompt";
 
 // `crew` 命令：Agent 在沙箱里用它向 Server 发言。它输出的每一行都会被模型读到，
 // 改动措辞后快照 test/__snapshots__/shim-output.md 随之变化，进入代码审查。
@@ -26,6 +27,9 @@ const EXAMPLE_HELP = `\nExample:\n${indent(HEREDOC_EXAMPLE)}\n\nKeep the quotes 
 
 /** 一次可以向 Agent 解释的失败：写一行 `error: …` 到 stderr，退出码 1。 */
 class CliFailure extends Error {}
+
+/** 回复被 HELD 拦下：说明已经写到 stdout，只需要退出码 1。 */
+class CliHeld extends Error {}
 
 const ErrorBody = z.object({ error: z.string() });
 
@@ -56,6 +60,7 @@ export async function runCli(args: string[], io: CliIo): Promise<number> {
   } catch (error) {
     // commander 已经把它的错误或帮助写到了 stderr。
     if (error instanceof CommanderError) return error.exitCode;
+    if (error instanceof CliHeld) return 1;
     const message = error instanceof CliFailure ? error.message : `unexpected failure: ${String(error)}`;
     io.stderr(`error: ${message}\n`);
     return 1;
@@ -97,11 +102,35 @@ async function reply(roomIdArg: string, io: CliIo): Promise<void> {
     throw new CliFailure(`could not reach Crew (${String(error)}). The message was not posted.`);
   }
 
-  if (response.status === 201) {
+  if (response.status !== 200) throw new CliFailure(await failureMessage(response, roomId.data));
+  const outcome = ReplyOutcome.safeParse(await response.json().catch(() => undefined));
+  if (!outcome.success) {
+    throw new CliFailure(
+      "Crew answered in an unexpected format. The message may have been posted; do not send it again.",
+    );
+  }
+  if (outcome.data.outcome === "posted") {
     io.stdout(`Message sent to room ${roomId.data}.\n`);
     return;
   }
-  throw new CliFailure(await failureMessage(response, roomId.data));
+  io.stdout(heldText(roomId.data, outcome.data));
+  throw new CliHeld();
+}
+
+/** HELD：回复没有发出。把新消息（从最早的开始）与下一步写到 stdout，退出码 1。 */
+function heldText(roomId: RoomId, held: Extract<ReplyOutcome, { outcome: "held" }>): string {
+  const count = held.newMessages.length + held.omitted;
+  const noun = count === 1 ? "message" : "messages";
+  const more =
+    held.omitted > 0
+      ? `\n  (${held.omitted} more new ${held.omitted === 1 ? "message comes" : "messages come"} after these. Running crew reply again shows ${held.omitted === 1 ? "it" : "them"} first.)\n`
+      : "";
+  return `Not sent: ${count} new ${noun} arrived in room ${roomId} after the ones you were given.
+
+${held.newMessages.map((message) => messageLines(message)).join("\n")}
+${more}
+Read them and decide again. To post, run crew reply again with a revised or the same message. If nothing needs saying any more, do nothing.
+`;
 }
 
 /** Server 的地址与本 Agent 的凭证，由 Computer 经环境变量与运行期文件提供。 */

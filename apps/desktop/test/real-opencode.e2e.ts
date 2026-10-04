@@ -46,7 +46,7 @@ describe.skipIf(!opencodeReady())("built app with the real OpenCode", () => {
     expect(models, `本机 OpenCode 列出的模型里没有 ${model}`).toContain(model);
 
     const agent = await client.call(api.desktop.createAgent, {
-      body: { displayName: "E2E", persona: "你在参加一次自动化测试，照指令回复。", model },
+      body: { displayName: "E2E", handle: `e2e-${Date.now()}`, persona: "你在参加一次自动化测试，照指令回复。", model },
     });
     await client.call(api.desktop.sendMessage, {
       params: { roomId: agent.roomId },

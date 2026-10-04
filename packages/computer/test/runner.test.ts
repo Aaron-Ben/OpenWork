@@ -22,7 +22,12 @@ beforeEach(async () => {
   const created = await t.request("/desktop/agents", {
     method: "POST",
     headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ displayName: "Alice", persona: "代码审查者", model: "opencode-go/deepseek-v4-pro" }),
+    body: JSON.stringify({
+      displayName: "Alice",
+      handle: "alice",
+      persona: "代码审查者",
+      model: "opencode-go/deepseek-v4-pro",
+    }),
   });
   agent = ComputerAgent.parse(await created.json());
   client = new ServerClient("http://127.0.0.1:1", TEST_COMPUTER_TOKEN, t.fetch);

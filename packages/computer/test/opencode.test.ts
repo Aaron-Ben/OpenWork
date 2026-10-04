@@ -38,6 +38,7 @@ beforeAll(async () => {
   layout = await prepareAgent(runtime, {
     id: AgentId.parse("2f8c0b6e-3a1d-4c5e-9f7a-1b2c3d4e5f60"),
     displayName: "Alice",
+    handle: "alice",
     persona: "代码审查者",
   });
   base = {
@@ -90,6 +91,11 @@ describe("OpenCodeAdapter.runTurn", () => {
       permission: { "*": "allow" },
       provider: { deepseek: { models: { "deepseek-v4-pro": { status: "active" } } } },
     });
+  });
+
+  it("lets the shell inside the sandbox run a heredoc, as the standing instructions tell the agent to", async () => {
+    expect((await run({ env: { ...base.env, FAKE_MODE: "heredoc" } })).ok).toBe(true);
+    expect(await readFile(join(layout.workDir, "heredoc.txt"), "utf8")).toBe("hello from heredoc\n");
   });
 
   it("continues the given session", async () => {

@@ -29,20 +29,20 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 
 ### Agent 的 `AGENTS.md`
 
-- **模型看到什么：** Agent 的身份（名字、id、人设），用 `crew reply` 发言，可以保持沉默，工作目录与沙箱的说明。它经 OpenCode 配置的 `instructions` 进入系统提示词。原文由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
+- **模型看到什么：** Agent 的身份（名字、id、handle、人设），用 `crew reply` 发言，可以保持沉默，回复被 HELD 拦下时怎么做，群聊的发言约束与 @ 的作用，工作目录与沙箱的说明。它经 OpenCode 配置的 `instructions` 进入系统提示词。原文由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - **Token：** 固定的说明，加上名字与人设；两者的长度上限见 [messaging.md](../../docs/subsystems/messaging.md) 第 3 节。
 - **缓存：** 文本不含时间、路径与运行期状态，只随 Agent 的设置变化。它的摘要是继续 session 的条件之一：改了名字或人设，这个 Agent 下一轮开新 session；改了 `instructions.ts` 的文本，全部 Agent 都开新 session。
 
 ### 每轮输入
 
-- **模型看到什么：** 唤醒说明、当前本地时间、按房间分组的未读消息，每条带消息 id、作者的显示名与类型。它经 stdin 交给 `opencode run`。原文由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
-- **Token：** 随未读消息增长，没有上限：Server 的 inbox 返回已读位置之后的全部消息，单条正文的上限见 messaging.md 第 4 节。失败的一轮不确认已读，下一轮带上同样的消息，再加上新消息。
+- **模型看到什么：** 唤醒说明、当前本地时间、按房间分组的未读消息。群聊带名字与成员名册；每条消息带消息 id、作者的显示名与 handle（用户写 `user`），@ 到本 Agent 的标 `[mentions you]`。它经 stdin 交给 `opencode run`。原文由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
+- **Token：** 随未读消息增长，没有上限：Server 的 inbox 返回已读位置之后的全部消息，单条正文的上限见 messaging.md 第 4 节。群聊每轮多一行名册，随成员数增长。失败的一轮不确认已读，下一轮带上同样的消息，再加上新消息。
 - **缓存：** 用 `--session` 继续时，每轮输入追加在之前的对话之后，前面的内容不变；时间只出现在本轮输入里。实际是否命中缓存由 OpenCode 与模型服务商决定。
 
 ### `crew` 命令的输出
 
-- **模型看到什么：** `crew reply` 成功时输出一行 `Message sent to room <room-id>.`；失败时向 stderr 写英文的 `error: …`，说明原因与下一步，参数用错时还附上用法；`crew --help` 输出用法与 heredoc 示例。全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
-- **Token：** 通常每次调用一行；带用法的输出约 20 行。
+- **模型看到什么：** `crew reply` 成功时输出一行 `Message sent to room <room-id>.`；被 HELD 拦下时输出“没有发出”、新消息与下一步；失败时向 stderr 写英文的 `error: …`，说明原因与下一步，参数用错时还附上用法；`crew --help` 输出用法与 heredoc 示例。全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
+- **Token：** 通常每次调用一行；带用法的输出约 20 行；HELD 时随新消息增长，一次最多 20 条消息，更多时说明后面还有几条。
 - **缓存：** 作为工具结果追加在对话中。
 
 ## 已知限制

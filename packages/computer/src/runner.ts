@@ -1,4 +1,4 @@
-import type { ComputerAgent, InboxRoom } from "@crew/protocol";
+import type { ComputerAgent } from "@crew/protocol";
 import type { ServerClient } from "./client";
 import type { EngineAdapter } from "./engine/types";
 import { type AgentLayout, resumableSession, type SessionKey, saveSession } from "./home";
@@ -89,7 +89,7 @@ export class AgentRunner {
       layout,
       confinement: this.options.confinement,
       model: agent.model,
-      prompt: turnPrompt(inbox, (this.options.now ?? (() => new Date()))()),
+      prompt: turnPrompt(inbox, (this.options.now ?? (() => new Date()))(), agent.id),
       sessionId: await resumableSession(layout, key),
       env: this.options.env,
       signal: this.controller.signal,
@@ -97,7 +97,7 @@ export class AgentRunner {
 
     if (outcome.ok) {
       await saveSession(layout, key, outcome.sessionId);
-      await server.acknowledge(agent.id, lastSeqs(inbox));
+      await server.acknowledge(agent.id);
       await server.reportStatus(agent.id, { state: "idle" });
       return;
     }
@@ -105,9 +105,4 @@ export class AgentRunner {
     if (outcome.error.kind === "cancelled") return;
     await server.reportStatus(agent.id, { state: "error", reason: outcome.error.message });
   }
-}
-
-/** 每个房间本批最后一条消息的序号。 */
-function lastSeqs(inbox: InboxRoom[]) {
-  return inbox.map((room) => ({ roomId: room.roomId, seq: room.messages.at(-1)?.seq ?? 0 }));
 }

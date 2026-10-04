@@ -1,6 +1,6 @@
 # @crew/server
 
-Collaboration Server：保存用户、Agent、房间与消息，提供界面、Computer 与 Agent 三组 HTTP 接口，并用 SSE 推送失效提示。它由 Desktop 主进程作为子进程启动，只监听 `127.0.0.1` 的随机端口。只有它访问 PostgreSQL。数据模型、接口、环境变量与验收见 [messaging.md](../../docs/subsystems/messaging.md)。
+Collaboration Server：保存用户、Agent、私聊与群聊、消息，提供界面、Computer 与 Agent 三组 HTTP 接口，并用 SSE 推送失效提示。它由 Desktop 主进程作为子进程启动，只监听 `127.0.0.1` 的随机端口。只有它访问 PostgreSQL。数据模型、接口、环境变量与验收见 [messaging.md](../../docs/subsystems/messaging.md)。
 
 ## 入口
 
@@ -20,7 +20,9 @@ Collaboration Server：保存用户、Agent、房间与消息，提供界面、C
 | `packages/server/src/http.ts` | 凭证校验、按契约注册接口的 `route()`、SSE 响应、把错误转成 `{ error }` |
 | `packages/server/src/routes/` | 三组接口：`desktop.ts`、`computer.ts`、`agent.ts` |
 | `packages/server/src/agents.ts` | 新建 Agent（连同私聊房间与成员关系）与列出 Agent |
-| `packages/server/src/messages.ts` | 写入消息与分配序号、读取消息、inbox 与已读位置 |
+| `packages/server/src/groups.ts` | 新建群聊、加成员、列出群聊 |
+| `packages/server/src/messages.ts` | 写入消息：分配序号、HELD 检查、记录 @、选出要唤醒的 Agent；按窗口读取消息；inbox、已投递与已读位置 |
+| `packages/server/src/mentions.ts` | 从正文里找出 @ 到的 handle |
 | `packages/server/src/context.ts` | 路由的依赖；消息写入后通知界面与唤醒 Agent |
 | `packages/server/src/events.ts` | 进程内事件总线 `EventHub` |
 | `packages/server/src/state.ts` | 只在内存中的 Agent 凭证、Agent 状态与模型列表 |
@@ -30,7 +32,8 @@ Collaboration Server：保存用户、Agent、房间与消息，提供界面、C
 
 ## 模型体验
 
-间接：Agent 每轮看到的消息正文、作者的显示名与本机用户名 “User” 来自这里的数据，由 [@crew/computer](../computer/README.md) 写进每轮输入。
+- 间接：Agent 每轮看到的消息正文、作者的显示名与 handle、群聊的名字与成员、本机用户名 “User” 来自这里的数据，由 [@crew/computer](../computer/README.md) 写进每轮输入。
+- `crew reply` 被 HELD 拦下时，模型看到的新消息由 `messages.ts` 选出：已投递位置之后、别人发的消息，从最早的开始，一次最多 20 条。
 
 ## 已知限制
 

@@ -25,16 +25,63 @@ const computer = (path: string, method?: string, body?: unknown) => call(TEST_CO
 interface CreatedAgent {
   id: AgentId;
   roomId: RoomId;
+  handle: string;
 }
 
-async function newAgent(displayName = "Alice"): Promise<CreatedAgent> {
+/** handle 默认取名字的小写，测试里的名字各不相同。 */
+async function newAgent(displayName = "Alice", handle = displayName.toLowerCase()): Promise<CreatedAgent> {
   const response = await desktop("/desktop/agents", "POST", {
     displayName,
+    handle,
     persona: "严谨的代码审查者",
     model: "opencode-go/deepseek-v4-pro",
   });
   expect(response.status).toBe(201);
   return (await response.json()) as CreatedAgent;
+}
+
+interface Group {
+  id: RoomId;
+  name: string;
+  agentIds: AgentId[];
+}
+
+async function newGroup(name: string, agents: CreatedAgent[]): Promise<Group> {
+  const response = await desktop("/desktop/groups", "POST", { name, agentIds: agents.map((agent) => agent.id) });
+  expect(response.status).toBe(201);
+  return (await response.json()) as Group;
+}
+
+interface Inbox {
+  roomId: RoomId;
+  kind: string;
+  name: string | null;
+  members: Array<{ kind: string; displayName: string; handle: string | null }>;
+  messages: Array<{ seq: number; body: string; mentionsYou: boolean; author: { handle: string | null } }>;
+}
+
+async function readInbox(agentId: AgentId): Promise<Inbox[]> {
+  const response = await computer(`/computer/agents/${agentId}/inbox`, "POST");
+  expect(response.status).toBe(200);
+  return (await response.json()) as Inbox[];
+}
+
+async function acknowledge(agentId: AgentId) {
+  expect((await computer(`/computer/agents/${agentId}/inbox/ack`, "POST")).status).toBe(204);
+}
+
+async function reply(token: string, roomId: RoomId, body: string) {
+  const response = await call(token, "/agent/reply", "POST", { roomId, body });
+  expect(response.status).toBe(200);
+  return (await response.json()) as
+    | { outcome: "posted"; seq: number }
+    | { outcome: "held"; newMessages: Array<{ seq: number; body: string }>; omitted: number };
+}
+
+async function listMessages(roomId: RoomId, query = "") {
+  const response = await desktop(`/desktop/rooms/${roomId}/messages${query}`);
+  expect(response.status).toBe(200);
+  return (await response.json()) as Array<{ seq: number; body: string }>;
 }
 
 async function agentToken(agentId: AgentId): Promise<string> {
@@ -69,9 +116,79 @@ describe("agents", () => {
   });
 
   it("reject a blank name with a JSON error", async () => {
-    const response = await desktop("/desktop/agents", "POST", { displayName: "  ", persona: "x", model: "m" });
+    const response = await desktop("/desktop/agents", "POST", {
+      displayName: "  ",
+      handle: "blank",
+      persona: "x",
+      model: "m",
+    });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "名字不能为空" });
+  });
+
+  it("reject a handle that is taken or not in the allowed format", async () => {
+    await newAgent("Taken");
+    const again = await desktop("/desktop/agents", "POST", {
+      displayName: "Taken again",
+      handle: "taken",
+      persona: "x",
+      model: "m",
+    });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: "handle @taken 已被使用" });
+
+    const upper = await desktop("/desktop/agents", "POST", {
+      displayName: "X",
+      handle: "Upper",
+      persona: "x",
+      model: "m",
+    });
+    expect(upper.status).toBe(400);
+  });
+});
+
+describe("groups", () => {
+  it("are created with the chosen agents, listed, and announced to the desktop", async () => {
+    const alice = await newAgent("GroupAlice");
+    const bob = await newAgent("GroupBob");
+    const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () => {
+      const group = await newGroup("评审", [alice, bob]);
+      expect(group.agentIds.toSorted()).toEqual([alice.id, bob.id].toSorted());
+    });
+    expect(events).toEqual([{ type: "rooms" }]);
+
+    const groups = (await (await desktop("/desktop/groups")).json()) as Group[];
+    expect(groups.map((group) => group.name)).toContain("评审");
+  });
+
+  it("reject an empty member list, a blank name and an unknown agent", async () => {
+    const alice = await newAgent("Picky");
+    expect((await desktop("/desktop/groups", "POST", { name: "空", agentIds: [] })).status).toBe(400);
+    expect((await desktop("/desktop/groups", "POST", { name: " ", agentIds: [alice.id] })).status).toBe(400);
+    const ghost = "00000000-0000-4000-8000-000000000000";
+    expect((await desktop("/desktop/groups", "POST", { name: "幽灵", agentIds: [ghost] })).status).toBe(404);
+  });
+
+  it("let a new member see only the messages sent after it joined", async () => {
+    const alice = await newAgent("Early");
+    const bob = await newAgent("Late");
+    const group = await newGroup("先来后到", [alice]);
+    await sendAsUser(group.id, "Bob 加入前");
+
+    const added = await desktop(`/desktop/groups/${group.id}/members`, "POST", { agentIds: [bob.id] });
+    expect(added.status).toBe(200);
+    expect(((await added.json()) as Group).agentIds).toContain(bob.id);
+    await sendAsUser(group.id, "Bob 加入后");
+
+    const inbox = await readInbox(bob.id);
+    expect(inbox.flatMap((room) => room.messages.map((m) => m.body))).toEqual(["Bob 加入后"]);
+  });
+
+  it("cannot take members through a direct room id", async () => {
+    const alice = await newAgent("Direct");
+    const bob = await newAgent("Intruder");
+    const response = await desktop(`/desktop/groups/${alice.roomId}/members`, "POST", { agentIds: [bob.id] });
+    expect(response.status).toBe(404);
   });
 });
 
@@ -104,6 +221,52 @@ describe("messages", () => {
     expect(computerEvents).toEqual([{ type: "agent.wake", agentId: agent.id }]);
   });
 
+  it("from the user wake every agent in a group", async () => {
+    const alice = await newAgent("AllAlice");
+    const bob = await newAgent("AllBob");
+    const group = await newGroup("全员", [alice, bob]);
+    const events = await collect<ComputerEvent>(t.ctx.events.computer, () => sendAsUser(group.id, "大家好"));
+    expect(events).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        { type: "agent.wake", agentId: alice.id },
+        { type: "agent.wake", agentId: bob.id },
+      ]),
+    );
+  });
+
+  it("from an agent wake only the members it mentions", async () => {
+    const alice = await newAgent("Speaker", "speaker");
+    const bob = await newAgent("Named", "named");
+    const carol = await newAgent("Bystander", "bystander");
+    const outsider = await newAgent("Outside", "outside");
+    const group = await newGroup("点名", [alice, bob, carol]);
+    const token = await agentToken(alice.id);
+
+    const quiet = await collect<ComputerEvent>(t.ctx.events.computer, () => reply(token, group.id, "我做完了"));
+    expect(quiet).toEqual([]);
+
+    const named = await collect<ComputerEvent>(t.ctx.events.computer, () =>
+      reply(token, group.id, "@Named 请看一下，`@bystander` 不算，@outside 不在群里，@speaker 是我自己"),
+    );
+    expect(named).toEqual([{ type: "agent.wake", agentId: bob.id }]);
+    expect(outsider.id).not.toBe(bob.id);
+  });
+
+  it("are listed by window: the latest batch, after a position, or before one", async () => {
+    const agent = await newAgent("Window");
+    for (let i = 1; i <= 5; i++) await sendAsUser(agent.roomId, `第 ${i} 条`);
+
+    const seqs = async (query: string) => (await listMessages(agent.roomId, query)).map((m) => m.seq);
+    expect(await seqs("")).toEqual([1, 2, 3, 4, 5]);
+    expect(await seqs("?limit=2")).toEqual([4, 5]);
+    expect(await seqs("?after=3")).toEqual([4, 5]);
+    expect(await seqs("?after=1&limit=2")).toEqual([2, 3]);
+    expect(await seqs("?before=4&limit=2")).toEqual([2, 3]);
+    expect((await desktop(`/desktop/rooms/${agent.roomId}/messages?after=1&before=3`)).status).toBe(400);
+    expect((await desktop(`/desktop/rooms/${agent.roomId}/messages?limit=abc`)).status).toBe(400);
+  });
+
   it("reject a blank body and an overlong body", async () => {
     const agent = await newAgent("Body");
     expect((await sendAsUser(agent.roomId, "   ")).status).toBe(400);
@@ -117,27 +280,43 @@ describe("messages", () => {
 });
 
 describe("inbox", () => {
-  it("returns messages after the read position, and ack moves it forward only", async () => {
+  it("returns messages after the read position until they are acknowledged", async () => {
     const agent = await newAgent("Inbox");
     await sendAsUser(agent.roomId, "一");
     await sendAsUser(agent.roomId, "二");
 
-    const inbox = async () =>
-      (await (await computer(`/computer/agents/${agent.id}/inbox`)).json()) as Array<{
-        roomId: string;
-        messages: Array<{ seq: number }>;
-      }>;
-    expect((await inbox()).map((room) => room.messages.map((m) => m.seq))).toEqual([[1, 2]]);
+    const seqs = async () => (await readInbox(agent.id)).map((room) => room.messages.map((m) => m.seq));
+    expect(await seqs()).toEqual([[1, 2]]);
+    // 没有确认时再读一次，仍是同样的消息：Turn 失败后重新处理。
+    expect(await seqs()).toEqual([[1, 2]]);
 
-    const ack = (seq: number) =>
-      computer(`/computer/agents/${agent.id}/inbox/ack`, "POST", { acks: [{ roomId: agent.roomId, seq }] });
-    expect((await ack(2)).status).toBe(204);
-    expect(await inbox()).toEqual([]);
+    await acknowledge(agent.id);
+    expect(await readInbox(agent.id)).toEqual([]);
 
-    expect((await ack(1)).status).toBe(204);
-    expect(await inbox()).toEqual([]);
+    // 确认只推进到读取过的位置，之后的新消息仍是未读。
+    await sendAsUser(agent.roomId, "三");
+    await acknowledge(agent.id);
+    expect(await seqs()).toEqual([[3]]);
+  });
 
-    expect((await ack(9)).status).toBe(400);
+  it("names the room, lists its members and marks messages that mention the agent", async () => {
+    const alice = await newAgent("RosterAlice", "roster-alice");
+    const bob = await newAgent("RosterBob", "roster-bob");
+    const group = await newGroup("名册", [alice, bob]);
+    await sendAsUser(group.id, "大家看看");
+    await sendAsUser(group.id, "@roster-bob 你来");
+
+    const [room] = await readInbox(bob.id);
+    expect(room).toMatchObject({ roomId: group.id, kind: "group", name: "名册" });
+    expect(room?.members.map((m) => [m.kind, m.displayName, m.handle])).toEqual([
+      ["user", "User", null],
+      ["agent", "RosterAlice", "roster-alice"],
+      ["agent", "RosterBob", "roster-bob"],
+    ]);
+    expect(room?.messages.map((m) => m.mentionsYou)).toEqual([false, true]);
+
+    const [direct] = await readInbox(alice.id);
+    expect(direct?.messages.map((m) => m.mentionsYou)).toEqual([false, false]);
   });
 });
 
@@ -146,8 +325,7 @@ describe("agent replies", () => {
     const agent = await newAgent("Replier");
     const token = await agentToken(agent.id);
     const events = await collect<ComputerEvent>(t.ctx.events.computer, async () => {
-      const response = await call(token, "/agent/reply", "POST", { roomId: agent.roomId, body: "我看完了" });
-      expect(response.status).toBe(201);
+      expect(await reply(token, agent.roomId, "我看完了")).toMatchObject({ outcome: "posted", seq: 1 });
     });
     expect(events).toEqual([]);
 
@@ -163,6 +341,72 @@ describe("agent replies", () => {
     const token = await agentToken(alice.id);
     const response = await call(token, "/agent/reply", "POST", { roomId: bob.roomId, body: "我来插话" });
     expect(response.status).toBe(403);
+  });
+
+  it("are held when someone else wrote after what the agent was given, until it has seen those messages", async () => {
+    const agent = await newAgent("Held");
+    const token = await agentToken(agent.id);
+    await sendAsUser(agent.roomId, "帮我看看这个");
+    await readInbox(agent.id);
+    await sendAsUser(agent.roomId, "算了，换个问题");
+
+    const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () => {
+      expect(await reply(token, agent.roomId, "好的，我来看")).toEqual({
+        outcome: "held",
+        newMessages: [expect.objectContaining({ seq: 2, body: "算了，换个问题" })],
+        omitted: 0,
+      });
+    });
+    expect(events).toEqual([]);
+    expect((await listMessages(agent.roomId)).map((m) => m.body)).toEqual(["帮我看看这个", "算了，换个问题"]);
+
+    // 看过新消息之后再发，发得出去；它自己的消息不会让下一次回复被拦下。
+    expect(await reply(token, agent.roomId, "好，换个问题")).toMatchObject({ outcome: "posted", seq: 3 });
+    expect(await reply(token, agent.roomId, "补充一句")).toMatchObject({ outcome: "posted", seq: 4 });
+  });
+
+  it("show many new messages oldest first, a batch at a time, without skipping the rest", async () => {
+    const agent = await newAgent("Flooded");
+    const token = await agentToken(agent.id);
+    for (let i = 1; i <= 23; i++) await sendAsUser(agent.roomId, `消息 ${i}`);
+
+    const first = await reply(token, agent.roomId, "来了");
+    if (first.outcome !== "held") throw new Error("应当被拦下");
+    expect(first.newMessages.map((m) => m.seq)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(first.omitted).toBe(3);
+
+    // Turn 在这里结束：没有返回的 3 条仍是未读，下一轮会看到。
+    await acknowledge(agent.id);
+    expect((await readInbox(agent.id)).flatMap((room) => room.messages.map((m) => m.seq))).toEqual([21, 22, 23]);
+
+    const second = await reply(token, agent.roomId, "来了");
+    expect(second).toMatchObject({ outcome: "posted" });
+  });
+
+  it("show the rest of a large batch on the next reply in the same turn", async () => {
+    const agent = await newAgent("Paged");
+    const token = await agentToken(agent.id);
+    for (let i = 1; i <= 23; i++) await sendAsUser(agent.roomId, `消息 ${i}`);
+
+    expect((await reply(token, agent.roomId, "来了")).outcome).toBe("held");
+    const second = await reply(token, agent.roomId, "来了");
+    if (second.outcome !== "held") throw new Error("应当再次被拦下");
+    expect(second.newMessages.map((m) => m.seq)).toEqual([21, 22, 23]);
+    expect(second.omitted).toBe(0);
+    expect((await reply(token, agent.roomId, "来了")).outcome).toBe("posted");
+  });
+
+  it("are not shown again after the turn is acknowledged, nor are messages shown by a hold", async () => {
+    const agent = await newAgent("Acked");
+    const token = await agentToken(agent.id);
+    await sendAsUser(agent.roomId, "问题");
+    await readInbox(agent.id);
+    await sendAsUser(agent.roomId, "补充");
+    expect((await reply(token, agent.roomId, "回答")).outcome).toBe("held");
+    expect((await reply(token, agent.roomId, "回答")).outcome).toBe("posted");
+    await acknowledge(agent.id);
+
+    expect(await readInbox(agent.id)).toEqual([]);
   });
 
   it("stop working with a replaced token", async () => {

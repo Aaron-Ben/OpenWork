@@ -213,3 +213,28 @@ error: could not reach Crew (TypeError: fetch failed). The message was not poste
 stderr:
 error: Crew did not answer within 10 seconds. The message may have been posted; do not send it again.
 ```
+
+## held (exit 1)
+
+```text
+stdout:
+Not sent: 1 new message arrived in room <alice-room> after the ones you were given.
+
+  [<message-id>] User (user): Wait, one more thing:
+    check the tests too.
+
+Read them and decide again. To post, run crew reply again with a revised or the same message. If nothing needs saying any more, do nothing.
+```
+
+## held, more to come (exit 1)
+
+```text
+stdout:
+Not sent: 3 new messages arrived in room <alice-room> after the ones you were given.
+
+  [<message-id>] User (user): First of many.
+
+  (2 more new messages come after these. Running crew reply again shows them first.)
+
+Read them and decide again. To post, run crew reply again with a revised or the same message. If nothing needs saying any more, do nothing.
+```

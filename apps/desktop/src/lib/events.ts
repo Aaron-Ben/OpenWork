@@ -2,12 +2,14 @@ import { DesktopEvent, EVENT_STREAMS, runEventStream } from "@crew/protocol";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { keysForEvent } from "./keys";
+import { fetchNewer } from "./queries";
 
 export type Connection = "connecting" | "connected" | "reconnecting";
 
 /**
  * 订阅 Server 的 SSE 失效提示，让对应的缓存重新获取，并返回连接状态。
- * 断线期间的提示不会补发，所以每次连接成功都让全部缓存失效。
+ * 房间有新消息时只取缓存之后的部分；其他提示让对应的缓存整个重新获取。
+ * 断线期间的提示不会补发，所以每次连接成功都让全部缓存失效，消息回到每个房间最新的一批。
  */
 export function useServerEvents(): Connection {
   const queryClient = useQueryClient();
@@ -26,6 +28,12 @@ export function useServerEvents(): Connection {
       },
       onDisconnect: () => setConnection("reconnecting"),
       onEvent: (event) => {
+        if (event.type === "room.messages") {
+          fetchNewer(queryClient, event.roomId).catch((error: unknown) =>
+            console.warn("[crew] 读取新消息失败:", error),
+          );
+          return;
+        }
         void queryClient.invalidateQueries({ queryKey: keysForEvent(event) });
       },
       onError: (error) => console.warn("[crew] SSE:", error),

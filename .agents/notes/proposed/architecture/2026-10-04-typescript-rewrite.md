@@ -24,7 +24,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 ### 已经实现的决策
 
-第 1、2 步已经实现。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
+第 1、2 步与第 3a 步已经实现。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
 
 - [workspace、包划分与构建](../../implemented/architecture/2026-10-04-workspace-and-build.md)
 - [主进程监管 Server 与 Computer](../../implemented/architecture/2026-10-04-process-supervision.md)
@@ -35,6 +35,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - [每轮一次 OpenCode 与 crew 命令](../../implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md)
 - [私聊界面](../../implemented/feature/2026-10-04-direct-chat-ui.md)
 - [仓库规则、检查与测试流程](../../implemented/process/2026-10-04-repo-rules-and-checks.md)
+- [群聊（第 3a 步）](../../implemented/feature/2026-10-05-group-chat.md)
 
 ### 进程与通信
 

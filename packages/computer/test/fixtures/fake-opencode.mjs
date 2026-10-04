@@ -1,6 +1,7 @@
-// 测试用的假 opencode：按环境变量 FAKE_MODE 模拟成功、报错、session 不存在、卡住与刷屏。
+// 测试用的假 opencode：按环境变量 FAKE_MODE 模拟成功、报错、session 不存在、卡住与刷屏，
+// 或像模型那样在沙箱里用 zsh 的 heredoc 运行命令（heredoc）。
 // 由 Electron 以 Node 方式运行（真实的 Node 装在 $HOME 下，沙箱读不到）。
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -38,6 +39,13 @@ process.stdin.on("end", () => {
     );
     emit({ type: "step_start", sessionID });
     emit({ type: "text", sessionID, part: { text: "done" } });
+    emit({ type: "step_finish", sessionID });
+    process.exit(0);
+  }
+  if (mode === "heredoc") {
+    // zsh 把 heredoc 写进 $TMPPREFIX 开头的临时文件，默认是沙箱不让写的 /tmp/zsh。
+    const result = spawnSync("/bin/zsh", ["-c", "cat <<'EOF'\nhello from heredoc\nEOF"], { encoding: "utf8" });
+    writeFileSync("heredoc.txt", `${result.stdout}${result.stderr}`);
     emit({ type: "step_finish", sessionID });
     process.exit(0);
   }

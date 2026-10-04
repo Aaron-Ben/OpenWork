@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ZodError } from "zod";
-import { AgentId, ApiClient, ApiError, api, endpointPath, errorMessage } from "../src";
+import { AgentId, ApiClient, ApiError, api, endpointPath, errorMessage, MessageWindow, RoomId } from "../src";
 
 // 按契约调用 Server 的客户端。用一个记录请求、返回预设响应的 fetch 代替 Server。
 
@@ -42,12 +42,28 @@ describe("ApiClient.call", () => {
     expect(calls[0]?.headers.get("Content-Type")).toBe("application/json");
   });
 
+  it("puts defined query parameters in the URL and leaves out undefined ones", async () => {
+    const { fetchFn, calls } = fakeFetch(json([]));
+    const client = new ApiClient({ baseUrl: "http://server", token: "t", fetch: fetchFn });
+    const roomId = RoomId.parse("7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+
+    await client.call(api.desktop.listMessages, { params: { roomId }, query: { after: 12, before: undefined } });
+    expect(calls[0]?.url).toBe(`http://server/desktop/rooms/${roomId}/messages?after=12`);
+  });
+
+  it("parses query strings into numbers and rejects after together with before", () => {
+    expect(MessageWindow.parse({ after: "12", limit: "50" })).toEqual({ after: 12, limit: 50 });
+    expect(MessageWindow.safeParse({ after: "-1" }).success).toBe(false);
+    expect(MessageWindow.safeParse({ limit: "0" }).success).toBe(false);
+    expect(MessageWindow.safeParse({ after: "1", before: "5" }).success).toBe(false);
+  });
+
   it("throws the server's reason with the status when the server refuses", async () => {
     const { fetchFn } = fakeFetch(json({ error: "名字不能为空" }, 400));
     const client = new ApiClient({ baseUrl: "http://server", token: "t", fetch: fetchFn });
 
     const error = await client
-      .call(api.desktop.createAgent, { body: { displayName: "", persona: "x", model: "a/b" } })
+      .call(api.desktop.createAgent, { body: { displayName: "", persona: "x", model: "a/b", handle: "x" } })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 400, message: "名字不能为空" });

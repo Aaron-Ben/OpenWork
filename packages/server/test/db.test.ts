@@ -1,7 +1,7 @@
 import { UserId } from "@crew/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureLocalUser } from "../src/db";
-import { agents, messages, rooms, users } from "../src/db/schema";
+import { agentReadCursors, agents, messages, rooms, users } from "../src/db/schema";
 import { createTestDatabase, type TestDatabase } from "./support/database";
 
 // 迁移与数据库约束的集成测试。约束是数据模型的一部分：它们在数据库层拒绝错误数据，这里逐条确认。
@@ -18,10 +18,18 @@ afterAll(async () => {
   await test.drop();
 });
 
-async function newAgent(name = "Alice") {
+let handles = 0;
+
+async function newAgent(name = "Alice", handle = `agent-${++handles}`) {
   const [agent] = await test.db
     .insert(agents)
-    .values({ displayName: name, persona: "代码审查者", engineId: "opencode", model: "opencode-go/deepseek-v4-pro" })
+    .values({
+      displayName: name,
+      handle,
+      persona: "代码审查者",
+      engineId: "opencode",
+      model: "opencode-go/deepseek-v4-pro",
+    })
     .returning();
   if (!agent) throw new Error("没有创建 Agent");
   return agent;
@@ -51,6 +59,7 @@ describe("migrations", () => {
     expect(result.rows.map((row) => row.table_name)).toEqual([
       "agent_read_cursors",
       "agents",
+      "message_mentions",
       "messages",
       "room_agents",
       "room_users",
@@ -110,6 +119,33 @@ describe("constraints", () => {
         test.db.insert(messages).values({ roomId: room.id, seq: 1, body: "幽灵", authorUserId: ghost }),
       ),
     ).toBe("messages_author_user_id_users_id_fk");
+  });
+
+  it("keep handles unique and in the allowed format", async () => {
+    await newAgent("Alice", "alice");
+    expect(await violatedConstraint(newAgent("Alice 2", "alice"))).toBe("agents_handle_unique");
+    expect(await violatedConstraint(newAgent("Bob", "Bob"))).toBe("agents_handle_format");
+    expect(await violatedConstraint(newAgent("Bob", "-bob"))).toBe("agents_handle_format");
+    expect(await violatedConstraint(newAgent("Bob", "b".repeat(33)))).toBe("agents_handle_format");
+  });
+
+  it("require a name for a group room", async () => {
+    expect(await violatedConstraint(test.db.insert(rooms).values({ kind: "group" }))).toBe("rooms_group_has_name");
+    expect(await violatedConstraint(test.db.insert(rooms).values({ kind: "group", name: " " }))).toBe(
+      "rooms_group_has_name",
+    );
+  });
+
+  it("keep the delivered position at or after the read position", async () => {
+    const agent = await newAgent();
+    const room = await newRoom("cursor");
+    expect(
+      await violatedConstraint(
+        test.db
+          .insert(agentReadCursors)
+          .values({ agentId: agent.id, roomId: room.id, lastReadSeq: 2, deliveredSeq: 1 }),
+      ),
+    ).toBe("agent_read_cursors_delivered_not_behind");
   });
 
   it("reject a blank message body", async () => {
