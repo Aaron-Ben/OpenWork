@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentId, MessageId, RoomId } from "./ids";
+import { Notice } from "./notices";
 import { TaskTag } from "./tasks";
 
 /** 消息正文：去掉首尾空白后不能为空，最多 20,000 字符。 */
@@ -90,6 +91,8 @@ export const MessageView = z.object({
   id: MessageId,
   seq: z.number().int().positive(),
   kind: z.enum(["text", "system"]),
+  /** 通知的类型与数据；聊天消息与没有类型的通知为 null。 */
+  notice: Notice.nullable(),
   author: Participant,
   body: z.string(),
   createdAt: z.string(),

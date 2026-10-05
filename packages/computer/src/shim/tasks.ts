@@ -5,7 +5,7 @@ import {
   TASK_STATUSES,
   TASK_TITLE_MAX,
   TASK_TRANSITIONS,
-  type TaskRefusal,
+  TaskRefusal,
   TaskStatus,
   TaskView,
 } from "@crew/protocol";
@@ -131,7 +131,8 @@ async function call(io: CliIo, path: string, body: unknown, roomId: RoomId, mess
   const response = await postAgent(io, path, body, UNSURE);
   if (response.status === 200) return response.json();
   const error = await errorBody(response);
-  if (error?.refusal) throw new CliFailure(refusalText(error.refusal, roomId, messageId));
+  const refusal = TaskRefusal.safeParse(error?.refusal);
+  if (refusal.success) throw new CliFailure(refusalText(refusal.data, roomId, messageId));
   switch (response.status) {
     case 401:
       throw new CliFailure("Crew rejected your token. Crew may have restarted; nothing was changed.");

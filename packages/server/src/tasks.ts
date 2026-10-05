@@ -2,6 +2,7 @@ import {
   type AgentId,
   isSendBack,
   type MessageId,
+  type Notice,
   type RoomId,
   TASK_TITLE_MAX,
   TASK_TRANSITIONS,
@@ -86,9 +87,11 @@ async function notice(
   task: TaskRow,
   actor: Author,
   body: string,
+  data: Notice,
 ): Promise<Extract<PostResult, { kind: "posted" }>> {
   const result = await postMessageIn(tx, room.id, actor, body, {
     kind: "system",
+    notice: data,
     threadOf: room.kind === "group" ? task.messageId : undefined,
   });
   if (result.kind !== "posted") throw new Error("通知被拦下");
@@ -126,7 +129,11 @@ export async function createTask(
     const host = await postMessageIn(tx, room.id, actor, input.title, { action: true, quiet: assignee !== undefined });
     if (host.kind !== "posted") throw new Error("任务的标题消息被拦下");
     const task = await insertTask(tx, room.id, actor, host.message.id, input.title, assignee?.id);
-    const posted = await notice(tx, room, task, actor, `新建了任务 #${task.number}${mention(assignee)}`);
+    const posted = await notice(tx, room, task, actor, `新建了任务 #${task.number}${mention(assignee)}`, {
+      type: "task.created",
+      number: task.number,
+      assignee: assignee?.handle ?? null,
+    });
     return { task: await viewOf(tx, task.id), posts: [host, posted] };
   });
 }
@@ -160,7 +167,11 @@ export async function convertToTask(
 
     const assignee = input.assignee && (await memberAgent(tx, room.id, input.assignee));
     const task = await insertTask(tx, room.id, actor, input.messageId, titleOf(message.body), assignee?.id);
-    const posted = await notice(tx, room, task, actor, `把这条消息转成任务 #${task.number}${mention(assignee)}`);
+    const posted = await notice(tx, room, task, actor, `把这条消息转成任务 #${task.number}${mention(assignee)}`, {
+      type: "task.converted",
+      number: task.number,
+      assignee: assignee?.handle ?? null,
+    });
     return { task: await viewOf(tx, task.id), posts: [posted] };
   });
 }
@@ -221,7 +232,10 @@ export async function claimTask(db: Database, agentId: AgentId, roomId: RoomId, 
       if (holder) refuse({ code: "claimed", number, by: holder });
       refuse({ code: "not_claimable", number, status: now.status });
     }
-    const posted = await notice(tx, room, claimed, actor, `领取了 #${number}，待办 → 进行中`);
+    const posted = await notice(tx, room, claimed, actor, `领取了 #${number}，待办 → 进行中`, {
+      type: "task.claimed",
+      number,
+    });
     return { task: await viewOf(tx, claimed.id), posts: [posted] };
   });
 }
@@ -267,7 +281,13 @@ export async function setTaskStatus(
     const byOther = !(actor.kind === "agent" && actor.id === assignee);
     const ping = assignee && byOther && isSendBack(current.status, status) ? `，@${await handleOf(tx, assignee)}` : "";
     const text = `把 #${number} 从${taskStatusLabel(current.status)}改成${taskStatusLabel(status)}${ping}`;
-    const posted = await notice(tx, room, updated, actor, text);
+    const posted = await notice(tx, room, updated, actor, text, {
+      type: "task.status",
+      number,
+      from: current.status,
+      to: status,
+      sentBack: ping !== "",
+    });
     return { task: await viewOf(tx, updated.id), posts: [posted] };
   });
 }
@@ -314,7 +334,11 @@ export async function assignTask(
     const text = assignee
       ? `把 #${number} 分配给 @${assignee.handle}`
       : `取消了 #${number} 的负责人${backToTodo ? "，退回待办" : ""}`;
-    const posted = await notice(tx, room, updated, actor, text);
+    const posted = await notice(tx, room, updated, actor, text, {
+      type: "task.assigned",
+      number,
+      assignee: assignee?.handle ?? null,
+    });
     return { task: await viewOf(tx, updated.id), posts: [posted] };
   });
 }

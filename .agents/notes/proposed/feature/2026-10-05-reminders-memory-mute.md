@@ -44,9 +44,14 @@ Status: proposed
 6. **记忆在界面上。** 私聊的右栏加一个只读的“记忆”视图，由 Electron 主进程读本机文件。不做编辑。
 7. **静音。** 只给 Agent：`crew mute <room-id> [--for 2h]` 与 `crew unmute <room-id>`。静音后用户在群里的消息不再唤醒它；@ 它的消息、它关注的讨论串、分配给它的任务仍然唤醒它，被唤醒时静音期间的未读一起给它，让它有上下文（照旧版 OpenWork）。私聊不能静音。群聊顶栏的成员标签上显示“已静音”，用户可以点开解除。用户自己的静音先不做：只有一个用户，房间也不多。
 
+8. **通知的样子（2026-10-05 用户同意，设计稿 `apps/desktop/out/mockups/step6-notices-mute.html`）。** `messages` 加一列 `notice`（JSON：通知的类型与数据，例如 `{type: "task.claimed", number: 3}`、`{type: "reminder", title, repeat, setAt, dueAt}`），界面据此画图标与提醒卡片，不从文字里解析；正文照旧保留，Agent 读到的仍是文字。颜色只用四种：蓝是任务的变化，绿是完成，黄是退回与晚到，紫是提醒与静音。提醒到点用一张淡紫色小卡片：标题、一次性或周期、什么时候定的，晚到时写明原定时间。
+9. **静音的补充（同上）。** Agent 静音或被用户解除时，群里写一行紫色通知；静音到期不写（要另外计时），成员标签自动恢复。Agent 自己的提醒也能穿透静音。顶栏成员标签变灰并带划掉的铃铛，点开看到静音到几点、什么仍会叫醒它，可以解除；加成员对话框的成员列表里也能解除。
+
 ### 实现进度
 
 - **6a 记忆（2026-10-05 完成）。** 文件名与位置是 protocol 的 `MEMORY_FILE` 与 `agentWorkSegments`，Computer 与 Desktop 主进程共用；模板与大小在 `packages/computer/src/home.ts`（`seedMemory`、`memorySize`），开新会话的提醒在 `packages/computer/src/prompt.ts`（`sessionNote`）；界面经主进程读文件（`apps/desktop/electron/memory.ts`），至多读 256KB。OpenCode 报告旧会话失效、自动改开新会话时，这一轮输入里没有“先读记忆”这句，要等下一次 Computer 自己判断为新会话。
+
+- **6b 提醒（2026-10-05 完成）。** 表 `reminders`（迁移 `0006_reminders.sql`），代码在 `packages/server/src/reminders.ts`：计时器 `ReminderScheduler` 只排下一个到期的，最长睡一小时，启动时先补触发；Server 的“现在”由 `ServerContext.now` 提供，测试可以固定。通知经 `postMessageIn` 的 `wake` 选项只唤醒主人，主人自己写的通知也唤醒它。提醒的标题至多 200 字符。`crew remind` 的 `--at 18:00` 是下一个 18:00。到点的通知带 `notice`（`type: "reminder"`、标题、周期、定于何时、原定时间），界面画成淡紫色小卡片；任务的通知也带上类型（迁移 `0007_message_notice.sql`），图标与颜色由 `apps/desktop/src/lib/notices.ts` 的 `noticeLook` 决定。
 
 ## 考虑过的方案
 

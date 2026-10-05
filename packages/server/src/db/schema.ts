@@ -1,10 +1,11 @@
-import type { AgentId, MessageId, RoomId, UserId } from "@crew/protocol";
+import type { AgentId, MessageId, Notice, ReminderRepeat, RoomId, UserId } from "@crew/protocol";
 import { sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   bigint,
   check,
   doublePrecision,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -139,6 +140,8 @@ export const messages = pgTable(
     kind: text("kind", { enum: ["text", "system"] })
       .notNull()
       .default("text"),
+    /** 通知的类型与数据，界面据此画图标与提醒卡片。聊天消息为空。 */
+    notice: jsonb("notice").$type<Notice>(),
     body: text("body").notNull(),
     /** Agent 的消息是在哪一轮里发出的；用户的消息为空。 */
     runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
@@ -349,4 +352,38 @@ export const runEvents = pgTable(
     data: jsonb("data").notNull(),
   },
   (t) => [primaryKey({ columns: [t.runId, t.seq] })],
+);
+
+/**
+ * 提醒：Agent 给自己定的一次性或周期提醒。`fire_at` 是下一次触发的时间；周期提醒触发后排到下一次、仍是 scheduled，
+ * 一次性提醒触发后是 fired。到点在 `room_id`（定提醒的房间，可以是讨论串）写一条通知，只唤醒主人。
+ * 取舍见 Agent Note：提醒、记忆与静音（2026-10-05-reminders-memory-mute）。
+ */
+export const reminders = pgTable(
+  "reminders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" })
+      .$type<AgentId>(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" })
+      .$type<RoomId>(),
+    title: text("title").notNull(),
+    fireAt: timestamp("fire_at", { withTimezone: true }).notNull(),
+    repeat: jsonb("repeat").$type<ReminderRepeat>(),
+    status: text("status", { enum: ["scheduled", "fired", "canceled"] })
+      .notNull()
+      .default("scheduled"),
+    firedAt: timestamp("fired_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("reminders_title_not_blank", sql`btrim(${t.title}) <> ''`),
+    check("reminders_status_known", sql`${t.status} IN ('scheduled', 'fired', 'canceled')`),
+    // 计时器只查还没触发的、按时间排的第一个。
+    index("reminders_due").on(t.fireAt).where(sql`${t.status} = 'scheduled'`),
+  ],
 );

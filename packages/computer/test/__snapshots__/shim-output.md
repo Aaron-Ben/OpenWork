@@ -15,6 +15,8 @@ Commands:
   reply [options] <room-id>  Post a message to a room. The message is read from
                              standard input.
   task                       Create, claim and update tasks in a room.
+  remind                     Set reminders that wake you later. Nothing else
+                             wakes you unless a message arrives.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -39,6 +41,8 @@ Commands:
   reply [options] <room-id>  Post a message to a room. The message is read from
                              standard input.
   task                       Create, claim and update tasks in a room.
+  remind                     Set reminders that wake you later. Nothing else
+                             wakes you unless a message arrives.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -139,6 +143,7 @@ Keep the quotes around 'EOF' so the message is posted exactly as written.
 ```text
 stderr:
 error: unknown command 'send'
+(Did you mean remind?)
 
 Usage: crew [options] [command]
 
@@ -151,6 +156,8 @@ Commands:
   reply [options] <room-id>  Post a message to a room. The message is read from
                              standard input.
   task                       Create, claim and update tasks in a room.
+  remind                     Set reminders that wake you later. Nothing else
+                             wakes you unless a message arrives.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -375,6 +382,128 @@ error: "finished" is not a status. Use one of: todo, in_progress, in_review, don
 ```text
 stderr:
 error: @nobody is not an agent in room <group-room>.
+```
+
+## crew remind --help (exit 0)
+
+```text
+stdout:
+Usage: crew remind [options] [command]
+
+Set reminders that wake you later. Nothing else wakes you unless a message
+arrives.
+
+Options:
+  -h, --help                       display help for command
+
+Commands:
+  set [options] <room-id> <title>  Set a reminder: when it is due you get a
+                                   notice in the room and wake up there.
+  list                             List your reminders that have not fired yet.
+  cancel <id>                      Cancel one of your reminders.
+```
+
+## crew remind set --help (exit 0)
+
+```text
+stdout:
+Usage: crew remind set [options] <room-id> <title>
+
+Set a reminder: when it is due you get a notice in the room and wake up there.
+
+Arguments:
+  room-id                the room (or thread) to be reminded in
+  title                  what to do then, in one line
+
+Options:
+  --in <duration>        once, after a while: 30m, 2h, 1d
+  --at <time>            once, at a local time: 18:00 (the next one), 2026-10-06
+                         09:00, or ISO 8601
+  --every <duration>     repeatedly, every 30m, 2h, ... (at least 5m)
+  --daily <HH:MM>        every day at this local time
+  --weekly <days@HH:MM>  on these days at this local time: mon,fri@09:00
+  -h, --help             display help for command
+
+Example:
+  crew remind <room-id> "Check whether CI passed" --in 30m
+```
+
+## remind list, empty (exit 0)
+
+```text
+stdout:
+You have no reminders.
+```
+
+## remind at a date (exit 0)
+
+```text
+stdout:
+Reminder set: "Send the weekly report" at 2027-01-05T09:00:00<offset>. When it is due you get a notice in <alice-room> and wake up there.
+```
+
+## remind list (exit 0)
+
+```text
+stdout:
+Your reminders:
+  <reminder-1>  "Send the weekly report" at 2027-01-05T09:00:00<offset>, in <alice-room>
+```
+
+## remind, no time (exit 1)
+
+```text
+stderr:
+error: give exactly one of --in, --at, --every, --daily or --weekly. Run crew remind set --help.
+```
+
+## remind, two times (exit 1)
+
+```text
+stderr:
+error: give exactly one of --in, --at, --every, --daily or --weekly. Run crew remind set --help.
+```
+
+## remind, bad duration (exit 1)
+
+```text
+stderr:
+error: --in "soon" is not a duration. Write it like 30m, 2h or 1d.
+```
+
+## remind, in the past (exit 1)
+
+```text
+stderr:
+error: that time has already passed. Give a time in the future.
+```
+
+## remind, too often (exit 1)
+
+```text
+stderr:
+error: --every must be at least 5m, so a reminder does not wake you too often.
+```
+
+## remind, bad weekly (exit 1)
+
+```text
+stderr:
+error: --weekly "someday@9" is not a weekly time. Write it like mon,fri@09:00.
+```
+
+## remind cancel (exit 0)
+
+```text
+stdout:
+Canceled: "Send the weekly report" at 2027-01-05T09:00:00<offset>.
+```
+
+## remind cancel, again (exit 1)
+
+```text
+stderr:
+error: you have no waiting reminder with that id. Run crew remind list to see your reminders.
 ```
 
 ## held (exit 1)

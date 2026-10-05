@@ -20,6 +20,10 @@
   --user: #b45309;
   --warn: #b45309;
   --blue: #2563eb;
+  --blue-soft: rgb(37 99 235 / 10%);
+  --violet: #7c3aed;
+  --violet-soft: rgb(124 58 237 / 10%);
+  --warn-soft: rgb(180 83 9 / 10%);
   --danger: #b91c1c;
   --danger-soft: #fbe9e7;
   --overlay: rgb(20 24 28 / 35%);
@@ -54,6 +58,10 @@
     --user: #fbbf24;
     --warn: #fbbf24;
     --blue: #60a5fa;
+    --blue-soft: rgb(96 165 250 / 14%);
+    --violet: #a78bfa;
+    --violet-soft: rgb(167 139 250 / 14%);
+    --warn-soft: rgb(251 191 36 / 12%);
     --danger: #f87171;
     --danger-soft: rgb(248 113 113 / 10%);
     --overlay: rgb(0 0 0 / 55%);
@@ -86,6 +94,10 @@
   --color-user: var(--user);
   --color-warn: var(--warn);
   --color-blue: var(--blue);
+  --color-blue-soft: var(--blue-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-warn-soft: var(--warn-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-overlay: var(--overlay);

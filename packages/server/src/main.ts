@@ -4,6 +4,7 @@ import pg from "pg";
 import { createApp } from "./app";
 import { createDatabase, ensureLocalUser, migrateDatabase } from "./db";
 import { EventHub } from "./events";
+import { ReminderScheduler } from "./reminders";
 import { closeServer, listen } from "./serve";
 import { RuntimeState } from "./state";
 
@@ -36,6 +37,8 @@ async function main(): Promise<void> {
   const localUserId = await ensureLocalUser(db);
 
   const events = new EventHub();
+  const now = () => new Date();
+  const reminders = new ReminderScheduler({ db, events, now });
   const app = createApp({
     desktopToken: bootstrap.desktopToken,
     computerToken: bootstrap.computerToken,
@@ -44,8 +47,12 @@ async function main(): Promise<void> {
     localUserId,
     state: new RuntimeState(),
     events,
+    now,
+    reminders,
   });
   const { server, port } = await listen(app);
+  // 先触发应用没运行期间错过的提醒，再排下一个。
+  reminders.start();
 
   const ready: ServerReady = {
     runtimeSessionId: bootstrap.runtimeSessionId,
@@ -58,6 +65,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     // 先结束 SSE 长连接，server.close() 才不用等满宽限期；否则主进程会先发 SIGKILL。
+    reminders.stop();
     events.close();
     await closeServer(server);
     await pool.end();

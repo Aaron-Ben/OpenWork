@@ -61,6 +61,7 @@ describe("migrations", () => {
       "agents",
       "message_mentions",
       "messages",
+      "reminders",
       "room_agents",
       "room_users",
       "rooms",

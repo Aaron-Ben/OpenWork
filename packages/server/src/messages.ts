@@ -3,6 +3,7 @@ import {
   type InboxRoom,
   type MessageId,
   type MessageView,
+  type Notice,
   type Participant,
   type RoomId,
   type TaskTag,
@@ -80,6 +81,8 @@ export interface PostOptions {
    * 只唤醒它 @ 到的 Agent。
    */
   kind?: "text" | "system";
+  /** 通知的类型与数据（只给 `system` 用）。 */
+  notice?: Notice;
   /**
    * 这条消息是一次操作的一部分，不是回复：新建任务时以创建者的身份发出的标题。不做 HELD 检查，
    * 也不推进作者的已投递位置。
@@ -87,6 +90,11 @@ export interface PostOptions {
   action?: boolean;
   /** 不唤醒任何 Agent：新建任务时已经分配了负责人，由随后的通知唤醒它，不再唤醒群里的其他 Agent。 */
   quiet?: boolean;
+  /**
+   * 只唤醒这些 Agent，代替通常的规则：提醒到点时只唤醒它的主人，即使通知是主人自己写的。
+   * 消息在讨论串里时，它们也关注这个讨论串，否则读不到这条消息。
+   */
+  wake?: AgentId[];
 }
 
 /** 在调用方的事务里写一条消息，规则同 `postMessage`。任务操作用它把通知与任务改动写在同一个事务里。 */
@@ -126,6 +134,7 @@ export async function postMessageIn(
         roomId,
         seq,
         kind,
+        notice: options.notice ?? null,
         body,
         authorUserId: author.kind === "user" ? author.id : null,
         authorAgentId: author.kind === "agent" ? author.id : null,
@@ -146,6 +155,7 @@ export async function postMessageIn(
       if (room.kind === "thread") await follow(tx, roomId, mentioned);
     }
 
+    if (options.wake && room.kind === "thread") await follow(tx, roomId, options.wake);
     if (author.kind === "agent" && isReply) {
       // 通过了 HELD 检查，这之前的消息不是看过的就是它自己发的。
       await tx
@@ -158,13 +168,15 @@ export async function postMessageIn(
       kind: "posted",
       message,
       parentRoomId: room.parentRoomId,
-      wakeAgentIds: options.quiet
-        ? []
-        : kind === "system"
-          ? mentioned.filter((id) => author.kind !== "agent" || id !== author.id)
-          : room.kind === "thread"
-            ? await threadWakeTargets(tx, roomId, author, memberIds, mentioned)
-            : wakeTargets(author, memberIds, mentioned),
+      wakeAgentIds: options.wake
+        ? options.wake
+        : options.quiet
+          ? []
+          : kind === "system"
+            ? mentioned.filter((id) => author.kind !== "agent" || id !== author.id)
+            : room.kind === "thread"
+              ? await threadWakeTargets(tx, roomId, author, memberIds, mentioned)
+              : wakeTargets(author, memberIds, mentioned),
     };
   }
 }
@@ -305,6 +317,7 @@ const messageColumns = {
   roomId: messages.roomId,
   seq: messages.seq,
   kind: messages.kind,
+  notice: messages.notice,
   body: messages.body,
   createdAt: messages.createdAt,
   authorUserId: messages.authorUserId,
@@ -330,6 +343,7 @@ type MessageRow = {
   roomId: RoomId;
   seq: number;
   kind: "text" | "system";
+  notice: Notice | null;
   body: string;
   createdAt: Date;
   authorUserId: UserId | null;
@@ -345,7 +359,15 @@ function toView(row: MessageRow): MessageView {
   const author: Participant = row.authorUserId
     ? { kind: "user", id: row.authorUserId, displayName: row.userName ?? "", handle: null }
     : { kind: "agent", id: row.authorAgentId ?? "", displayName: row.agentName ?? "", handle: row.agentHandle };
-  return { id: row.id, seq: row.seq, kind: row.kind, author, body: row.body, createdAt: row.createdAt.toISOString() };
+  return {
+    id: row.id,
+    seq: row.seq,
+    kind: row.kind,
+    notice: row.notice,
+    author,
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 export interface MessageWindow {

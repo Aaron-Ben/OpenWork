@@ -1,5 +1,5 @@
 import { type AgentId, type ComputerEvent, DesktopEvent, type MessageId, RoomId, runEventStream } from "@crew/protocol";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "./support/app";
 
 // 业务接口的集成测试：真实的 PostgreSQL 临时库，应用在内存中处理请求。
@@ -94,6 +94,11 @@ async function listMessages(roomId: RoomId, query = "") {
 async function listMessagesWithIds(roomId: RoomId) {
   const response = await desktop(`/desktop/rooms/${roomId}/messages`);
   return (await response.json()) as Array<{ id: MessageId; kind: string; body: string }>;
+}
+
+async function listMessagesWithNotices(roomId: RoomId) {
+  const response = await desktop(`/desktop/rooms/${roomId}/messages`);
+  return (await response.json()) as Array<{ kind: string; notice: unknown }>;
 }
 
 async function agentToken(agentId: AgentId): Promise<string> {
@@ -1099,6 +1104,16 @@ describe("tasks", () => {
     expect(await wakes(() => agentStatus(token, group.id, number, "in_review"))).toEqual([]);
     expect(await wakes(() => setStatus(group.id, number, "in_progress"))).toEqual([alice.id]);
     expect(await wakes(() => setStatus(group.id, number, "done"))).toEqual([]);
+    // 通知带着类型与数据，界面据此画图标：退回的那一条标为 sentBack。
+    const threadId = ((await (await desktop(`/desktop/rooms/${group.id}/tasks`)).json()) as Task[])[0]?.threadId;
+    if (!threadId) throw new Error("应当有讨论串");
+    expect((await listMessagesWithNotices(threadId)).map((message) => message.notice)).toEqual([
+      { type: "task.created", number, assignee: "ping-alice" },
+      { type: "task.claimed", number },
+      { type: "task.status", number, from: "in_progress", to: "in_review", sentBack: false },
+      { type: "task.status", number, from: "in_review", to: "in_progress", sentBack: true },
+      { type: "task.status", number, from: "in_progress", to: "done", sentBack: false },
+    ]);
     // 重新打开完成的任务也是退回。
     expect(await wakes(() => setStatus(group.id, number, "in_progress"))).toEqual([alice.id]);
     expect(await wakes(() => setStatus(group.id, number, "closed"))).toEqual([]);
@@ -1155,6 +1170,169 @@ describe("tasks", () => {
     await expectTask(await claim(await agentToken(bob.id), group.id, number));
     await expectTask(await setStatus(group.id, number, "done"));
     expect(await expectRefusal(await assign(alice.id))).toEqual({ code: "finished", number, status: "done" });
+  });
+});
+
+interface Reminder {
+  id: string;
+  roomId: RoomId;
+  title: string;
+  fireAt: string;
+  status: string;
+}
+
+const remind = (token: string, body: unknown) => call(token, "/agent/reminders/create", "POST", body);
+const reminders = async (token: string) =>
+  (await (await call(token, "/agent/reminders/list", "POST")).json()) as Reminder[];
+const minutes = (base: Date, n: number) => new Date(base.getTime() + n * 60_000);
+/** 测试共用一个数据库，别的用例留下的提醒也会到期：只看这几个 Agent 被唤醒的情况。 */
+const wakesOf = async (agents: CreatedAgent[], run: () => Promise<unknown>) => {
+  const ids = new Set<string>(agents.map((agent) => agent.id));
+  return (await wakes(run)).filter((id) => ids.has(id));
+};
+
+describe("reminders", () => {
+  // 固定在本机时区某天的 10:00，每天、每周的规则按本机时区算。
+  const start = new Date(2026, 9, 5, 10, 0, 0);
+  beforeEach(() => t.setNow(start));
+  afterEach(() => t.setNow(undefined));
+
+  it("are set once or on a schedule, listed by when they fire next, and canceled", async () => {
+    const alice = await newAgent("RemindAlice", "remind-alice");
+    const token = await agentToken(alice.id);
+    const once = (await (
+      await remind(token, { roomId: alice.roomId, title: "看一下 CI", at: minutes(start, 30).toISOString() })
+    ).json()) as Reminder;
+    await remind(token, { roomId: alice.roomId, title: "每小时同步一次", repeat: { kind: "every", minutes: 60 } });
+    await remind(token, { roomId: alice.roomId, title: "早上汇总", repeat: { kind: "daily", time: "09:00" } });
+    await remind(token, {
+      roomId: alice.roomId,
+      title: "周报",
+      repeat: { kind: "weekly", days: [1, 5], time: "17:30" },
+    });
+
+    // 2026-10-05 是周一：周报排在当天 17:30，早上汇总排到第二天 09:00。
+    expect((await reminders(token)).map((r) => [r.title, new Date(r.fireAt).getTime()])).toEqual([
+      ["看一下 CI", minutes(start, 30).getTime()],
+      ["每小时同步一次", minutes(start, 60).getTime()],
+      ["周报", new Date(2026, 9, 5, 17, 30).getTime()],
+      ["早上汇总", new Date(2026, 9, 6, 9, 0).getTime()],
+    ]);
+
+    expect((await call(token, "/agent/reminders/cancel", "POST", { id: once.id })).status).toBe(200);
+    expect((await reminders(token)).map((r) => r.title)).not.toContain("看一下 CI");
+    const again = await call(token, "/agent/reminders/cancel", "POST", { id: once.id });
+    expect(again.status).toBe(404);
+    expect(((await again.json()) as { refusal: unknown }).refusal).toEqual({ code: "reminder_not_found" });
+  });
+
+  it("refuse the past, more than a year ahead, repeats under 5 minutes, rooms the agent is not in, and a 21st", async () => {
+    const alice = await newAgent("LimitAlice", "limit-alice");
+    const bob = await newAgent("LimitBob", "limit-bob");
+    const token = await agentToken(alice.id);
+    const refusal = async (response: Response) => ((await response.json()) as { refusal?: unknown }).refusal;
+
+    expect(
+      await refusal(await remind(token, { roomId: alice.roomId, title: "过去", at: minutes(start, -1).toISOString() })),
+    ).toEqual({
+      code: "reminder_past",
+    });
+    expect(
+      await refusal(
+        await remind(token, { roomId: alice.roomId, title: "太远", at: minutes(start, 400 * 24 * 60).toISOString() }),
+      ),
+    ).toEqual({ code: "reminder_too_far", days: 365 });
+    expect(
+      (await remind(token, { roomId: alice.roomId, title: "太频繁", repeat: { kind: "every", minutes: 4 } })).status,
+    ).toBe(400);
+    expect(
+      (await remind(token, { roomId: bob.roomId, title: "别人的私聊", at: minutes(start, 5).toISOString() })).status,
+    ).toBe(403);
+
+    for (let i = 0; i < 20; i++) {
+      const ok = await remind(token, {
+        roomId: alice.roomId,
+        title: `第 ${i} 个`,
+        at: minutes(start, 10 + i).toISOString(),
+      });
+      expect(ok.status).toBe(200);
+    }
+    expect(
+      await refusal(
+        await remind(token, { roomId: alice.roomId, title: "第 21 个", at: minutes(start, 60).toISOString() }),
+      ),
+    ).toEqual({
+      code: "reminder_limit",
+      max: 20,
+    });
+  });
+
+  it("fire when due: a notice in the room they were set in that wakes only their owner", async () => {
+    const alice = await newAgent("FireAlice", "fire-alice");
+    const bob = await newAgent("FireBob", "fire-bob");
+    const group = await newGroup("提醒", [alice, bob]);
+    const token = await agentToken(alice.id);
+    await remind(token, { roomId: group.id, title: "检查 CI", at: minutes(start, 30).toISOString() });
+
+    t.setNow(minutes(start, 29));
+    expect(await wakesOf([alice, bob], () => t.reminders.fireDue())).toEqual([]);
+    t.setNow(minutes(start, 30));
+    expect(await wakesOf([alice, bob], () => t.reminders.fireDue())).toEqual([alice.id]);
+
+    expect((await bodiesWithKind(group.id)).at(-1)).toBe("system: 的提醒到了：检查 CI");
+    const [notice] = (await listMessagesWithNotices(group.id)).slice(-1);
+    expect(notice?.notice).toEqual({
+      type: "reminder",
+      title: "检查 CI",
+      repeat: null,
+      setAt: expect.any(String),
+      dueAt: minutes(start, 30).toISOString(),
+    });
+    expect(await reminders(token)).toEqual([]);
+    const inbox = await readInbox(alice.id);
+    expect(inbox.find((room) => room.roomId === group.id)?.messages.at(-1)).toMatchObject({ kind: "system" });
+    expect(await wakesOf([alice, bob], () => t.reminders.fireDue())).toEqual([]);
+  });
+
+  it("catch up after the app was off: say when it was due, and move a repeating one past now without replaying", async () => {
+    const alice = await newAgent("LateAlice2", "late-alice2");
+    const token = await agentToken(alice.id);
+    await remind(token, { roomId: alice.roomId, title: "只一次", at: minutes(start, 30).toISOString() });
+    await remind(token, { roomId: alice.roomId, title: "每小时", repeat: { kind: "every", minutes: 60 } });
+
+    t.setNow(minutes(start, 5 * 60 + 10));
+    expect(await wakesOf([alice], () => t.reminders.fireDue())).toEqual([alice.id, alice.id]);
+    const notices = (await bodiesWithKind(alice.roomId)).filter((body) => body.startsWith("system:"));
+    expect(notices).toEqual([
+      "system: 的提醒到了：只一次。原定 10:30，当时应用没在运行",
+      "system: 的提醒到了：每小时（每 1 小时）。原定 11:00，当时应用没在运行",
+    ]);
+    expect((await reminders(token)).map((r) => new Date(r.fireAt).getTime())).toEqual([
+      minutes(start, 6 * 60).getTime(),
+    ]);
+  });
+
+  it("fire in a thread they were set in, and cannot be canceled by another agent", async () => {
+    const alice = await newAgent("ThreadRemind", "thread-remind");
+    const bob = await newAgent("ThreadOther", "thread-other");
+    const group = await newGroup("讨论串提醒", [alice, bob]);
+    const host = await post(group.id, "主题");
+    const thread = (await post(group.id, "@thread-other 你来", host.id)).roomId;
+    const token = await agentToken(alice.id);
+    const reminder = (await (
+      await remind(token, { roomId: thread, title: "回到这个讨论串", at: minutes(start, 10).toISOString() })
+    ).json()) as Reminder;
+    expect((await call(await agentToken(bob.id), "/agent/reminders/cancel", "POST", { id: reminder.id })).status).toBe(
+      404,
+    );
+
+    t.setNow(minutes(start, 10));
+    expect(await wakesOf([alice, bob], () => t.reminders.fireDue())).toEqual([alice.id]);
+    const inbox = await readInbox(alice.id);
+    expect(inbox.find((room) => room.roomId === thread)?.messages.at(-1)).toMatchObject({
+      kind: "system",
+      body: "的提醒到了：回到这个讨论串",
+    });
   });
 });
 

@@ -3,6 +3,7 @@ import { createApp } from "../../src/app";
 import type { ServerContext } from "../../src/context";
 import { ensureLocalUser } from "../../src/db";
 import { EventHub } from "../../src/events";
+import { ReminderScheduler } from "../../src/reminders";
 import { closeServer, listen } from "../../src/serve";
 import { RuntimeState } from "../../src/state";
 import { createTestDatabase, type TestDatabase } from "./database";
@@ -23,6 +24,10 @@ export interface TestApp {
    * 客户端可以用一个固定的假地址（例如 `http://127.0.0.1:1`），测试断言里的地址因此不随端口变化。
    */
   fetch: typeof fetch;
+  /** 提醒的计时器。测试不让它自己计时，调用 `fireDue` 触发到期的提醒。 */
+  reminders: ReminderScheduler;
+  /** 把 Server 的“现在”定在某个时间；传 undefined 恢复真实时间。 */
+  setNow(date: Date | undefined): void;
   /** 结束 SSE、关闭 Server，并删除临时数据库。 */
   close(): Promise<void>;
 }
@@ -33,11 +38,17 @@ export interface TestApp {
  */
 export async function createTestApp(): Promise<TestApp> {
   const database: TestDatabase = await createTestDatabase();
+  let fixedNow: Date | undefined;
+  const now = () => fixedNow ?? new Date();
+  const events = new EventHub();
+  const reminders = new ReminderScheduler({ db: database.db, events, now });
   const ctx: ServerContext = {
     db: database.db,
     localUserId: await ensureLocalUser(database.db),
     state: new RuntimeState(),
-    events: new EventHub(),
+    events,
+    now,
+    reminders,
   };
   const app = createApp({
     ...ctx,
@@ -58,6 +69,10 @@ export async function createTestApp(): Promise<TestApp> {
     ctx,
     server,
     baseUrl,
+    reminders,
+    setNow: (date) => {
+      fixedNow = date;
+    },
     request: (path, init) => fetch(new URL(path, baseUrl), init),
     fetch: async (input, init) => {
       if (input instanceof Request) return fetch(new Request(toServer(input.url), input), init);

@@ -172,6 +172,28 @@ describe("crew reply", () => {
     );
   });
 
+  it("sets a reminder relative to now or every day, lists it by when it fires, and cancels it", async () => {
+    const before = Date.now();
+    const soon = await crew(["remind", alice.roomId, "Check CI", "--in", "30m"]);
+    expect(soon.code).toBe(0);
+    expect(soon.stdout).toContain('Reminder set: "Check CI" at ');
+    expect((await crew(["remind", alice.roomId, "Morning summary", "--daily", "9:00"])).stdout).toContain(
+      "(daily at 09:00)",
+    );
+
+    const list = await crew(["remind", "list"]);
+    const lines = list.stdout.split("\n").filter((line) => line.startsWith("  "));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('"Check CI"');
+    const when = new Date(/at (\S+?),/.exec(lines[0] ?? "")?.[1] ?? "").getTime();
+    expect(when).toBeGreaterThanOrEqual(before + 30 * 60_000 - 1000);
+    expect(when).toBeLessThanOrEqual(Date.now() + 30 * 60_000 + 1000);
+
+    const id = lines[0]?.trim().split(/\s+/)[0] ?? "";
+    expect((await crew(["remind", "cancel", id])).code).toBe(0);
+    expect((await crew(["remind", "list"])).stdout).not.toContain("Check CI");
+  });
+
   it("does not post in a room the agent is not a member of", async () => {
     const result = await crew(["reply", bob.roomId], { stdin: "hi" });
     expect(result.code).toBe(1);
@@ -271,6 +293,41 @@ describe("crew output", () => {
       await record(title, args);
       sections[before] = taskIds(sections[before] ?? "");
     }
+    // 提醒：绝对时间的设定、列出、取消与各种拒绝。时区偏移与提醒 ID 每台机器、每次运行都不同，换成占位符。
+    const reminderIds = new Map<string, string>();
+    const reminderText = (text: string) =>
+      text
+        .replaceAll(alice.roomId, "<alice-room>")
+        .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
+          if (!reminderIds.has(id)) reminderIds.set(id, `<reminder-${reminderIds.size + 1}>`);
+          return reminderIds.get(id) ?? id;
+        })
+        .replace(/([+-]\d{2}:\d{2}|Z)\)/g, "<offset>)")
+        .replace(/T(\d{2}:\d{2}:\d{2})[+-]\d{2}:\d{2}/g, "T$1<offset>");
+    const reminderCases: Array<[string, string[]]> = [
+      ["crew remind --help", ["remind", "--help"]],
+      ["crew remind set --help", ["remind", "set", "--help"]],
+      ["remind list, empty", ["remind", "list"]],
+      ["remind at a date", ["remind", alice.roomId, "Send the weekly report", "--at", "2027-01-05 09:00"]],
+      ["remind list", ["remind", "list"]],
+      ["remind, no time", ["remind", alice.roomId, "Something"]],
+      ["remind, two times", ["remind", alice.roomId, "Something", "--in", "5m", "--daily", "09:00"]],
+      ["remind, bad duration", ["remind", alice.roomId, "Something", "--in", "soon"]],
+      ["remind, in the past", ["remind", alice.roomId, "Something", "--at", "2020-01-01 09:00"]],
+      ["remind, too often", ["remind", alice.roomId, "Something", "--every", "2m"]],
+      ["remind, bad weekly", ["remind", alice.roomId, "Something", "--weekly", "someday@9"]],
+    ];
+    for (const [title, args] of reminderCases) {
+      const before = sections.length;
+      await record(title, args);
+      sections[before] = reminderText(sections[before] ?? "");
+    }
+    const [firstReminder] = reminderIds.keys();
+    const cancelBefore = sections.length;
+    await record("remind cancel", ["remind", "cancel", firstReminder ?? ""]);
+    await record("remind cancel, again", ["remind", "cancel", firstReminder ?? ""]);
+    sections[cancelBefore] = reminderText(sections[cancelBefore] ?? "");
+    sections[cancelBefore + 1] = reminderText(sections[cancelBefore + 1] ?? "");
     // 最后：用户发了 Alice 还没看到的消息，回复被拦下。
     const unseen = await sendAsUser(alice.roomId, "Wait, one more thing:\ncheck the tests too.");
     await record("held", ["reply", alice.roomId], { stdin: "On it." });
@@ -284,6 +341,7 @@ describe("crew output", () => {
             id: unseen,
             seq: 2,
             kind: "text",
+            notice: null,
             author: { kind: "user", id: "u", displayName: "User", handle: null },
             body: "First of many.",
             createdAt: "2026-10-05T10:00:00.000Z",

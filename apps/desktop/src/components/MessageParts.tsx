@@ -1,9 +1,11 @@
 import {
   type DesktopAgent as Agent,
   type MessageView,
+  type Notice,
   type Participant,
   type RoomId,
   type RoomMessage,
+  repeatText,
   type TaskStatus,
   type TaskView,
   type ThreadSummary,
@@ -13,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { canSend, shouldSend } from "../lib/composer";
 import { newestSeq } from "../lib/messages";
+import { isLate, type NoticeIcon, type NoticeTone, noticeLook } from "../lib/notices";
 import { useMarkRead, useRun } from "../lib/queries";
 import { formatDuration, liveView } from "../lib/runs";
 import { formatMessageTime } from "../lib/time";
@@ -116,20 +119,117 @@ export function MessageItem({
   );
 }
 
-/** 通知：一行灰字，写明是谁做的。 */
+const toneClass: Record<NoticeTone, string> = {
+  task: "bg-blue-soft text-blue",
+  ok: "bg-accent-soft text-accent",
+  warn: "bg-warn-soft text-warn",
+  violet: "bg-violet-soft text-violet",
+  muted: "bg-panel text-muted",
+};
+
+/** 通知的小图标：线条画，颜色随类型。 */
+const iconPaths: Record<NoticeIcon, React.ReactNode> = {
+  clipboard: (
+    <>
+      <rect x="3" y="2.5" width="10" height="11.5" rx="2" />
+      <path d="M6 2.5h4v2H6zM6 8h4M6 10.5h3" />
+    </>
+  ),
+  play: <path d="M5 3v10l8-5z" />,
+  eye: (
+    <>
+      <path d="M2.5 8s2-4 5.5-4 5.5 4 5.5 4-2 4-5.5 4-5.5-4-5.5-4z" />
+      <circle cx="8" cy="8" r="1.6" />
+    </>
+  ),
+  assign: (
+    <>
+      <circle cx="6" cy="5.5" r="2.5" />
+      <path d="M2 13.5c.6-2.3 2.1-3.5 4-3.5s3.4 1.2 4 3.5M11 6h4M13 4v4" />
+    </>
+  ),
+  back: <path d="M6 4 3 7l3 3M3 7h6.5a3.5 3.5 0 0 1 0 7H8" />,
+  check: <path d="m3.5 8.5 3 3 6-7" />,
+  closed: (
+    <>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M4.2 11.8l7.6-7.6" />
+    </>
+  ),
+  alarm: (
+    <>
+      <circle cx="8" cy="9" r="5" />
+      <path d="M8 6.5V9l1.8 1.2M2.5 3.5 4.5 2M13.5 3.5 11.5 2" />
+    </>
+  ),
+  dot: <circle cx="8" cy="8" r="2" />,
+};
+
+function NoticeIconBox({ notice, className }: { notice: Notice | null; className?: string }) {
+  const look = noticeLook(notice);
+  return (
+    <span className={cn("grid flex-none place-items-center", toneClass[look.tone], className)}>
+      <svg
+        viewBox="0 0 16 16"
+        className="size-[13px] fill-none stroke-current"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {iconPaths[look.icon]}
+      </svg>
+    </span>
+  );
+}
+
+/** 通知：一行，左边是按类型着色的小图标，写明是谁做的。提醒到点画成一张小卡片。 */
 function NoticeLine({ message, now }: { message: MessageView; now: Date }) {
   const who = message.author.kind === "user" ? "你" : message.author.displayName;
+  if (message.notice?.type === "reminder") {
+    return <ReminderCard who={who} notice={message.notice} firedAt={message.createdAt} now={now} />;
+  }
   return (
-    <div className="mb-3 flex items-center gap-2 pl-[2px] text-xs text-faint">
-      <span className="grid size-[18px] flex-none place-items-center rounded-md border border-line bg-panel text-[10px] text-muted">
-        ✓
-      </span>
+    <div className="mb-3 flex items-center gap-2 pl-[2px] text-[12.5px] text-faint">
+      <NoticeIconBox notice={message.notice} className="size-[22px] rounded-[7px]" />
       <span className="min-w-0">
         <b className="font-medium text-muted">{who}</b> {message.body}
       </span>
       <time className="flex-none font-mono text-[11px]" dateTime={message.createdAt}>
         {formatMessageTime(message.createdAt, now)}
       </time>
+    </div>
+  );
+}
+
+/** 提醒到点：淡紫色的小卡片。标题是提醒的内容，下面写一次性还是周期、什么时候定的；晚到时写明原定的时间。 */
+function ReminderCard({
+  who,
+  notice,
+  firedAt,
+  now,
+}: {
+  who: string;
+  notice: Extract<Notice, { type: "reminder" }>;
+  firedAt: string;
+  now: Date;
+}) {
+  return (
+    <div className="mb-3.5 flex max-w-[460px] items-start gap-2.5 rounded-xl bg-violet-soft px-3 py-2.5">
+      <NoticeIconBox notice={notice} className="size-7 rounded-[9px] bg-raised shadow-card" />
+      <div className="min-w-0">
+        <div className="text-xs text-muted">
+          <b className="font-semibold text-text">{who}</b> 的提醒到了 · {formatMessageTime(firedAt, now)}
+        </div>
+        <div className="text-[14px] font-medium">{notice.title}</div>
+        <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
+          <span>{notice.repeat ? repeatText(notice.repeat) : "一次性"}</span>
+          <span>定于 {formatMessageTime(notice.setAt, now)}</span>
+          {isLate(notice, firedAt) && (
+            <span className="text-warn">原定 {formatMessageTime(notice.dueAt, now)}，当时应用没在运行</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

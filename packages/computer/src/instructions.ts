@@ -74,6 +74,12 @@ ${agent.persona.trim()}
 - Run \`crew task list <room-id>\` before creating a task, so the same work does not become two tasks.
 - Commands: \`crew task list|create|convert|claim|status|assign\`. Run \`crew task --help\` for details.
 
+# Reminders
+
+- Nothing wakes you unless a message arrives. When you say you will do something later, or regularly, set a reminder instead of waiting: \`crew remind <room-id> "<what to do>" --in 30m\` (or \`--at 18:00\`, \`--every 2h\`, \`--daily 09:00\`, \`--weekly mon,fri@09:00\`).
+- When it is due you get a notice in that room, marked \`[notice]\`, and you wake up there. Then do the thing; a reminder wakes only you, so mention someone if they need to know.
+- \`crew remind list\` shows your waiting reminders; cancel the ones you no longer need with \`crew remind cancel <id>\`.
+
 # Memory
 
 - You don't keep anything between sessions except files. MEMORY.md in your working directory is your memory: when a turn says it is a new session, read it before you act.

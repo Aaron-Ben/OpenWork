@@ -12,6 +12,7 @@ import {
   RoomName,
 } from "./collab";
 import { AgentId, MessageId, RoomId } from "./ids";
+import { NewReminder, ReminderRefusal, ReminderView } from "./reminders";
 import { EngineEvent, RunDetail, RunSummary, RunTrigger } from "./runs";
 import { TaskRefusal, TaskStatus, TaskTitle, TaskView } from "./tasks";
 
@@ -49,8 +50,8 @@ export type ReplyOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.in
 /** 响应：客户端校验后得到的值。 */
 export type ResponseOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.output<E["response"]> : undefined;
 
-/** 错误响应一律是 `{ error: 原因 }`。任务操作被拒绝时另带 `refusal`，`crew` 据此写英文说明。 */
-export const ErrorBody = z.object({ error: z.string(), refusal: TaskRefusal.optional() });
+/** 错误响应一律是 `{ error: 原因 }`。任务与提醒被拒绝时另带 `refusal`，`crew` 据此写英文说明。 */
+export const ErrorBody = z.object({ error: z.string(), refusal: z.union([TaskRefusal, ReminderRefusal]).optional() });
 
 /**
  * 房间里的一条消息，界面读取房间时得到。Agent 的消息带着它所在的那一轮（`runId`），
@@ -351,6 +352,21 @@ export const api = {
     }),
   },
   agent: {
+    /** 给自己定一个提醒。 */
+    createReminder: endpoint({
+      method: "POST",
+      path: "/agent/reminders/create",
+      body: NewReminder,
+      response: ReminderView,
+    }),
+    /** 自己还没触发的提醒，按触发时间排列。 */
+    listReminders: endpoint({ method: "POST", path: "/agent/reminders/list", response: z.array(ReminderView) }),
+    cancelReminder: endpoint({
+      method: "POST",
+      path: "/agent/reminders/cancel",
+      body: z.object({ id: z.uuid() }),
+      response: ReminderView,
+    }),
     listTasks: endpoint({
       method: "POST",
       path: "/agent/tasks/list",

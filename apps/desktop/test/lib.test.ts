@@ -19,6 +19,7 @@ import { rehypeMentions, splitMentions } from "../src/lib/mentions";
 import { hasOlder, mergeMessages, newestSeq } from "../src/lib/messages";
 import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-agent";
 import { groupMembers, groupsWithout, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
+import { isLate, noticeLook } from "../src/lib/notices";
 import { isNearBottom } from "../src/lib/scroll";
 import { statusIn, statusView } from "../src/lib/status";
 import { groupByStatus, nextStatuses, openCount } from "../src/lib/tasks";
@@ -431,5 +432,44 @@ describe("task helpers", () => {
     expect(nextStatuses({ status: "todo", assignee: null })).toEqual(["closed"]);
     expect(nextStatuses({ status: "todo", assignee: alice })).toEqual(["in_progress", "closed"]);
     expect(nextStatuses({ status: "done", assignee: null })).toEqual(["todo", "closed"]);
+  });
+});
+
+describe("noticeLook", () => {
+  it("colors task changes blue, completion green, send-backs amber and reminders violet", () => {
+    expect(noticeLook({ type: "task.created", number: 1, assignee: null })).toEqual({
+      icon: "clipboard",
+      tone: "task",
+    });
+    expect(noticeLook({ type: "task.claimed", number: 1 })).toEqual({ icon: "play", tone: "task" });
+    const status = { type: "task.status", number: 1, from: "in_progress", sentBack: false } as const;
+    expect(noticeLook({ ...status, to: "in_review" })).toEqual({ icon: "eye", tone: "task" });
+    expect(noticeLook({ ...status, to: "done" })).toEqual({ icon: "check", tone: "ok" });
+    expect(noticeLook({ ...status, to: "closed" })).toEqual({ icon: "closed", tone: "muted" });
+    expect(noticeLook({ ...status, from: "in_review", to: "in_progress", sentBack: true })).toEqual({
+      icon: "back",
+      tone: "warn",
+    });
+    const reminder = {
+      type: "reminder",
+      title: "看 CI",
+      repeat: null,
+      setAt: "",
+      dueAt: "2026-10-05T10:00:00.000Z",
+    } as const;
+    expect(noticeLook(reminder)).toEqual({ icon: "alarm", tone: "violet" });
+    expect(noticeLook(null)).toEqual({ icon: "dot", tone: "muted" });
+  });
+
+  it("calls a reminder late only when it fired more than a minute after it was due", () => {
+    const reminder = {
+      type: "reminder",
+      title: "看 CI",
+      repeat: null,
+      setAt: "",
+      dueAt: "2026-10-05T10:00:00.000Z",
+    } as const;
+    expect(isLate(reminder, "2026-10-05T10:00:50.000Z")).toBe(false);
+    expect(isLate(reminder, "2026-10-05T11:00:00.000Z")).toBe(true);
   });
 });

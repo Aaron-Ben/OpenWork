@@ -7,7 +7,7 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 | 入口 | 使用方 | 作用 |
 |---|---|---|
 | `packages/computer/src/main.ts` | Desktop 主进程（构建为主进程旁的 `computer.js`） | 进程入口：读 bootstrap，确认能连上 Server，写 ready，然后启动 `ComputerDaemon` |
-| `packages/computer/src/shim/main.ts` | Agent，经本次运行目录的 `bin/crew`（构建为 `shim.js`） | `crew reply <room-id> [--thread <message-id>]`、`crew task …` 与 `crew --help` |
+| `packages/computer/src/shim/main.ts` | Agent，经本次运行目录的 `bin/crew`（构建为 `shim.js`） | `crew reply <room-id> [--thread <message-id>]`、`crew task …`、`crew remind …` 与 `crew --help` |
 | `EngineAdapter`（`packages/computer/src/engine/types.ts`） | 接入新的 Engine 时实现 | `probe`、`listModels`、`runTurn`。`runTurn` 不抛出，失败以 `{ ok: false }` 与失败类型返回 |
 
 ## 源码地图
@@ -29,7 +29,7 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 
 ### Agent 的 `AGENTS.md`
 
-- **模型看到什么：** Agent 的身份（名字、id、handle、人设），用 `crew reply` 发言，可以保持沉默，回复被 HELD 拦下时怎么做，群聊的发言约束与 @ 的作用，讨论串（在消息来的地方回复，只在用户要求时开讨论串），任务（动手之前先领取，进展发在讨论串里，做完改成待审），记忆（新会话先读 `MEMORY.md`，有长期价值的写进去），工作目录与沙箱的说明。它经 OpenCode 配置的 `instructions` 进入系统提示词。原文由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
+- **模型看到什么：** Agent 的身份（名字、id、handle、人设），用 `crew reply` 发言，可以保持沉默，回复被 HELD 拦下时怎么做，群聊的发言约束与 @ 的作用，讨论串（在消息来的地方回复，只在用户要求时开讨论串），任务（动手之前先领取，进展发在讨论串里，做完改成待审），提醒（说以后要做的事就定提醒），记忆（新会话先读 `MEMORY.md`，有长期价值的写进去），工作目录与沙箱的说明。它经 OpenCode 配置的 `instructions` 进入系统提示词。原文由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - **Token：** 固定的说明，加上名字与人设；两者的长度上限见 [messaging.md](../../docs/subsystems/messaging.md) 第 3 节。
 - **缓存：** 文本不含时间、路径与运行期状态，只随 Agent 的设置变化。它的摘要是继续 session 的条件之一：改了名字或人设，这个 Agent 下一轮开新 session；改了 `instructions.ts` 的文本，全部 Agent 都开新 session。
 
@@ -41,7 +41,7 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 
 ### `crew` 命令的输出
 
-- **模型看到什么：** `crew reply` 成功时输出一行 `Message sent to room <room-id>.`，带 `--thread` 时写出讨论串的 ID；`crew task` 写出任务的编号、标题、状态、负责人与在哪里汇报，被拒绝时写明原因与下一步；被 HELD 拦下时输出“没有发出”、新消息与下一步；失败时向 stderr 写英文的 `error: …`，说明原因与下一步，参数用错时还附上用法；`crew --help` 输出用法与 heredoc 示例。全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
+- **模型看到什么：** `crew reply` 成功时输出一行 `Message sent to room <room-id>.`，带 `--thread` 时写出讨论串的 ID；`crew task` 写出任务的编号、标题、状态、负责人与在哪里汇报，被拒绝时写明原因与下一步；`crew remind` 写出提醒的时间（带时区偏移）与到点会怎样；被 HELD 拦下时输出“没有发出”、新消息与下一步；失败时向 stderr 写英文的 `error: …`，说明原因与下一步，参数用错时还附上用法；`crew --help` 输出用法与 heredoc 示例。全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
 - **Token：** 通常每次调用一行；带用法的输出约 20 行；HELD 时随新消息增长，一次最多 20 条消息，更多时说明后面还有几条。
 - **缓存：** 作为工具结果追加在对话中。
 

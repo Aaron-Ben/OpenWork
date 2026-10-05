@@ -43,6 +43,20 @@
       "when": 1791193456580,
       "tag": "0005_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791198445022,
+      "tag": "0006_reminders",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791199436981,
+      "tag": "0007_message_notice",
+      "breakpoints": true
     }
   ]
 }

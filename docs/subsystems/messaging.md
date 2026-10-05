@@ -16,7 +16,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `agents` | 名字、handle、人设、Engine（`opencode`）、模型 | handle 唯一，格式是小写字母、数字与 `-`，以字母或数字开头，最多 32 字符 |
 | `rooms` | 房间；`kind` 是 `direct`、`group` 或 `thread`；群聊有名字；`next_seq` 是最新一条的序号；讨论串有所在的群聊（`parent_room_id`）与挂着的消息（`parent_message_id`） | `direct_key` 唯一：每个用户与 Agent 之间只有一个私聊房间；群聊必须有名字；讨论串有且只有讨论串有两个父字段；每条消息最多一个讨论串 |
 | `room_users`、`room_agents` | 房间成员 | |
-| `messages` | 房间、序号、作者、类型（`kind`：聊天 `text` 或通知 `system`）、正文、时间；Agent 的消息还有所在的一轮（`run_id`）与发出前被 HELD 拦下的次数（`held_before`） | 作者恰好是用户或 Agent 之一，通知的作者是做这件事的人；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
+| `messages` | 房间、序号、作者、类型（`kind`：聊天 `text` 或通知 `system`）、通知的类型与数据（`notice`，界面据此画图标与提醒卡片，见 protocol 的 `Notice`）、正文、时间；Agent 的消息还有所在的一轮（`run_id`）与发出前被 HELD 拦下的次数（`held_before`） | 作者恰好是用户或 Agent 之一，通知的作者是做这件事的人；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
+| `reminders` | 提醒：主人（Agent）、定提醒的房间、标题、下一次触发的时间、周期规则（每隔 N 分钟、每天几点、每周几几点）、状态（`scheduled`、`fired`、`canceled`）、上次触发的时间 | 标题不能为空 |
 | `tasks` | 任务：房间、房间内的编号、标题、状态（`todo`、`in_progress`、`in_review`、`done`、`closed`）、负责人（Agent）、创建者、宿主消息、领取与完成时间 | `(room_id, number)` 唯一；每条消息最多一个任务；创建者恰好一个；进行中与待审一定有负责人 |
 | `message_mentions` | 消息 @ 到的 Agent | 只记录写入时是房间成员的 Agent |
 | `agent_read_cursors` | 每个 Agent 在每个房间的已读位置（`last_read_seq`）与已投递位置（`delivered_seq`）；在讨论串里有一行就是关注了它 | 已投递位置不小于已读位置 |
@@ -75,6 +76,15 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - 换负责人：只换人；取消负责人时，进行中或待审的任务回到待办；完成或关闭的任务不再分配；负责人必须是房间里的 Agent。
 - 拒绝时返回 404 或 409，正文带 `refusal`（原因的代码与数据），`crew` 据此写英文说明。
 - 收件箱里的宿主消息带任务的编号、状态与负责人（`task`），讨论串挂着的消息也带。
+
+### 提醒
+
+代码在 `packages/server/src/reminders.ts`，规则与上限在 `packages/protocol/src/reminders.ts`。
+
+- Agent 只能给自己定提醒，房间可以是讨论串（成员身份看所在的群聊）。一次性提醒要在将来、一年以内；周期最短 5 分钟；每个 Agent 同时最多 20 个未触发的。时间按本机时区。
+- 计时器在 Server 里，只排下一个到期的提醒，最长睡一小时就醒一次；新建或取消后重新排。启动时先触发应用没运行期间错过的。
+- 到点在定提醒的房间写一条通知（`kind = 'system'`，作者是主人）：“的提醒到了：<标题>”，周期提醒加上规则，晚了超过一分钟时写明原定的时间。只唤醒主人；在讨论串里时主人关注它。一次性提醒标为已触发，周期提醒排到现在之后的下一次，错过的几次不重放。
+- 每个提醒单独一个保存点：写通知失败时只取消这一个。
 
 ## 5. 用户的会话列表与未读数
 
@@ -151,6 +161,7 @@ Agent 的状态由运行记录推出（`agentStatuses`），不单独保存：
 | `POST /computer/models` | Computer | 上报可用模型 |
 | `GET /computer/events` | Computer | SSE：`agent.wake`、`agents` |
 | `POST /agent/reply` | Agent | 以凭证对应的 Agent 身份在房间里回复（带 `threadOf` 时在讨论串里），或被 HELD 拦下 |
+| `POST /agent/reminders/create`、`list`、`cancel` | Agent | 给自己定提醒、列出未触发的、取消 |
 | `POST /agent/tasks/list`、`create`、`convert`、`claim`、`status`、`assign` | Agent | 以凭证对应的 Agent 身份操作任务 |
 
 - 凭证用 `Authorization: Bearer`。缺少或不对时返回 401 与 `{ "error": "凭证无效" }`。
@@ -186,3 +197,4 @@ Agent 的状态由运行记录推出（`agentStatuses`），不单独保存：
 | 界面正在读 SSE 时，Server 也能在 1 秒内关闭 | `packages/server/test/serve.test.ts` |
 | 讨论串：在消息下开出并复用、不进群聊时间线、摘要；关注者与唤醒规则；一个 Agent 关注多个讨论串时各自的已读位置与分段；拒绝私聊、嵌套与别的房间的消息；收件箱附上所在群聊与挂着的消息；新关注者的第一条回复被 HELD；未读算进群聊；运行记录按群聊列出 | `api.test.ts` 的 `threads` |
 | 任务：编号、宿主消息与讨论串里的通知、私聊的通知在时间线；转成任务的标题与拒绝；两个 Agent 同时领取只有一个成功；流转表与负责人；只在分配与退回时唤醒负责人；Agent 不被自己的通知拦下、用户不把自己的通知算作未读；收件箱里的任务后缀；换负责人 | `api.test.ts` 的 `tasks` |
+| 提醒：一次性与三种周期的第一次时间、按时间列出、取消；过去、一年以后、太频繁、别人的房间与第 21 个被拒绝；到点在房间里写通知、只唤醒主人；错过的补触发并写明原定时间，周期提醒跳到现在之后；在讨论串里触发；别人取消不了 | `api.test.ts` 的 `reminders` |
