@@ -2,6 +2,7 @@ import {
   assertNever,
   MessageId,
   RoomId,
+  TASK_NOTE_MAX,
   TASK_STATUSES,
   TASK_TITLE_MAX,
   TASK_TRANSITIONS,
@@ -83,15 +84,26 @@ export function registerTaskCommands(program: Command, io: CliIo): void {
     .argument("<room-id>", "the room the task is in")
     .argument("<number>", "the task number, as in #3")
     .argument("<status>", TASK_STATUSES.join(" | "))
-    .action(async (roomArg: string, numberArg: string, statusArg: string) => {
+    .option("--note <text>", "one line for the notice: what to change when sending back, what you did for in_review")
+    .addHelpText(
+      "after",
+      `\nExample:\n  crew task status <room-id> 3 in_review --note "Wrote notes.md with the three steps"\n`,
+    )
+    .action(async (roomArg: string, numberArg: string, statusArg: string, options: { note?: string }) => {
       const roomId = parseRoom(roomArg);
       const status = TaskStatus.safeParse(statusArg);
       if (!status.success) {
         throw new CliFailure(`"${statusArg}" is not a status. Use one of: ${TASK_STATUSES.join(", ")}.`);
       }
-      const body = { roomId, number: parseNumber(numberArg), status: status.data };
+      const note = options.note?.trim();
+      if (options.note !== undefined && !note)
+        throw new CliFailure("--note is empty. Write what changed, or leave --note out.");
+      if (note && note.length > TASK_NOTE_MAX) {
+        throw new CliFailure(`--note is ${note.length} characters; keep it under ${TASK_NOTE_MAX}.`);
+      }
+      const body = { roomId, number: parseNumber(numberArg), status: status.data, note };
       const updated = TaskView.parse(await call(io, "/agent/tasks/status", body, roomId));
-      io.stdout(`Updated ${describe(updated)}.\n`);
+      io.stdout(`Updated ${describe(updated)}.${note ? " Your note is in the notice." : ""}\n`);
     });
 
   task

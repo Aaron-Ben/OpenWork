@@ -236,8 +236,8 @@ export function useTaskActions(roomId: RoomId) {
     onSuccess,
   });
   const setStatus = useMutation({
-    mutationFn: ({ task, status }: { task: TaskView; status: TaskStatus }) =>
-      server.call(api.desktop.setTaskStatus, { params: { roomId, number: task.number }, body: { status } }),
+    mutationFn: ({ task, status, note }: { task: TaskView; status: TaskStatus; note?: string }) =>
+      server.call(api.desktop.setTaskStatus, { params: { roomId, number: task.number }, body: { status, note } }),
     onSuccess,
   });
   const assign = useMutation({

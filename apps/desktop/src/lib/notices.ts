@@ -30,6 +30,17 @@ export function noticeLook(notice: Notice | null): { icon: NoticeIcon; tone: Not
   }
 }
 
+/**
+ * 通知那一行的文字与下面引用的说明。改状态的说明接在正文末尾（“…，@alice：标题太长”），
+ * 界面把它拿出来放进引用，这一行不再重复。
+ */
+export function noticeParts(body: string, notice: Notice | null): { line: string; note?: string } {
+  const note = notice?.type === "task.status" ? notice.note : undefined;
+  const suffix = `：${note}`;
+  if (!note || !body.endsWith(suffix)) return { line: body };
+  return { line: body.slice(0, -suffix.length), note };
+}
+
 /** 提醒晚了这么久才触发（应用当时没在运行），卡片上写明原定的时间。与 Server 的判断一致。 */
 const LATE_AFTER_MS = 60_000;
 

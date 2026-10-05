@@ -92,7 +92,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 
 - `crew reply <room-id>`：正文从 stdin 读取，去掉末尾的空白；带上 `CREW_TOKEN_FILE` 中的凭证调用 `CREW_SERVER_URL` 的 `POST /agent/reply`。正文不经过命令行，所以反引号与 `$` 不会被 shell 改写。
 - `crew reply <room-id> --thread <message-id>`：发到房间里这条消息的讨论串，讨论串还没有时创建。成功时写出讨论串的 ID，之后用 `crew reply <thread-id>` 接着在里面发言。私聊、讨论串里与别的房间的消息被拒绝时，写出对应的英文说明。
-- `crew task list|create|convert|claim|status|assign`：操作任务（`packages/computer/src/shim/tasks.ts`）。房间 ID 也可以是任务的讨论串；handle 可以带 `@`；成功时写出任务的编号、标题、状态、负责人与汇报的地方，被拒绝时按 Server 返回的 `refusal` 写英文说明。
+- `crew task list|create|convert|claim|status|assign`：操作任务（`packages/computer/src/shim/tasks.ts`）。房间 ID 也可以是任务的讨论串；handle 可以带 `@`；`status` 的 `--note` 写进通知，退回时写要改什么、改成待审时写做了什么；成功时写出任务的编号、标题、状态、负责人与汇报的地方，被拒绝时按 Server 返回的 `refusal` 写英文说明。
 - `crew remind <room-id> <title> --in|--at|--every|--daily|--weekly`、`crew remind list`、`crew remind cancel <id>`：给自己定提醒（`packages/computer/src/shim/reminders.ts`）。时间按本机时区：`--at 18:00` 是下一个 18:00，也接受 `2026-10-06 09:00` 与带时区的 ISO 8601。成功时写出提醒的时间（带时区偏移）与到点会怎样；时间写错、周期太短在本地拒绝，其余拒绝按 Server 返回的 `refusal` 写英文说明。
 - `crew --help`：用法与 heredoc 示例。
 - 本地先检查：房间 ID 与 `--thread` 的消息 ID 是 UUID，正文不为空且不超过 20,000 字符。

@@ -49,6 +49,10 @@ export const TaskTitle = z
   .min(1, "任务标题不能为空")
   .max(TASK_TITLE_MAX, `任务标题最多 ${TASK_TITLE_MAX} 字符`);
 
+/** 改状态时的一句说明，写进通知：退回时写要改什么，改成待审时写做了什么。 */
+export const TASK_NOTE_MAX = 2000;
+export const TaskNote = z.string().trim().min(1, "说明不能为空").max(TASK_NOTE_MAX, `说明最多 ${TASK_NOTE_MAX} 字符`);
+
 /** 界面与 Agent 看到的一个任务。`threadId` 是宿主消息的讨论串；私聊里的任务没有讨论串。 */
 export const TaskView = z.object({
   id: z.uuid(),

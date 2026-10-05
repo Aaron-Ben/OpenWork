@@ -277,15 +277,15 @@ Usage: crew task [options] [command]
 Create, claim and update tasks in a room.
 
 Options:
-  -h, --help                                display help for command
+  -h, --help                                    display help for command
 
 Commands:
-  list <room-id>                            List the tasks in a room.
-  create [options] <room-id> <title>        Create a task: posts the title as a message in the room and turns it into a task.
-  convert [options] <room-id> <message-id>  Turn a message in the room into a task. Its first line becomes the title.
-  claim <room-id> <number>                  Take a todo task: you become its assignee and it moves to in_progress.
-  status <room-id> <number> <status>        Change a task's status.
-  assign <room-id> <number> <handle>        Assign a task to an agent in the room. It stays todo until that agent claims it.
+  list <room-id>                                List the tasks in a room.
+  create [options] <room-id> <title>            Create a task: posts the title as a message in the room and turns it into a task.
+  convert [options] <room-id> <message-id>      Turn a message in the room into a task. Its first line becomes the title.
+  claim <room-id> <number>                      Take a todo task: you become its assignee and it moves to in_progress.
+  status [options] <room-id> <number> <status>  Change a task's status.
+  assign <room-id> <number> <handle>            Assign a task to an agent in the room. It stays todo until that agent claims it.
 
 Statuses: todo, in_progress, in_review, done, closed. The room id can also be a task's thread id.
 ```
@@ -375,6 +375,20 @@ error: task #2 can't go from todo to in_review. From todo it can go to: in_progr
 ```text
 stderr:
 error: "finished" is not a status. Use one of: todo, in_progress, in_review, done, closed.
+```
+
+## task status, with a note (exit 0)
+
+```text
+stdout:
+Updated task #1 "Write the release notes" (in_progress, assigned to @alice). Your note is in the notice.
+```
+
+## task status, empty note (exit 1)
+
+```text
+stderr:
+error: --note is empty. Write what changed, or leave --note out.
 ```
 
 ## task assign, not in the room (exit 1)

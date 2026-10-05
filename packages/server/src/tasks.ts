@@ -242,7 +242,8 @@ export async function claimTask(db: Database, agentId: AgentId, roomId: RoomId, 
 
 /**
  * 改状态：按流转表检查，带条件地更新（状态仍是读到的那个）。进行中与待审要有负责人。
- * 别人把负责人的任务退回（待审或完成退回到进行中或待办）时，通知 @ 负责人。
+ * 别人把负责人的任务退回（待审或完成退回到进行中或待办）时，通知 @ 负责人。`note` 接在通知正文后面，
+ * 负责人被唤醒的同一轮里就读到要改什么。状态没变时什么也不写，说明也丢掉。
  */
 export async function setTaskStatus(
   db: Database,
@@ -250,6 +251,7 @@ export async function setTaskStatus(
   roomId: RoomId,
   number: number,
   status: TaskStatus,
+  note?: string,
 ): Promise<TaskChange> {
   return db.transaction(async (tx) => {
     const room = await taskRoom(tx, roomId);
@@ -280,13 +282,14 @@ export async function setTaskStatus(
     const assignee = updated.assigneeAgentId;
     const byOther = !(actor.kind === "agent" && actor.id === assignee);
     const ping = assignee && byOther && isSendBack(current.status, status) ? `，@${await handleOf(tx, assignee)}` : "";
-    const text = `把 #${number} 从${taskStatusLabel(current.status)}改成${taskStatusLabel(status)}${ping}`;
+    const text = `把 #${number} 从${taskStatusLabel(current.status)}改成${taskStatusLabel(status)}${ping}${note ? `：${note}` : ""}`;
     const posted = await notice(tx, room, updated, actor, text, {
       type: "task.status",
       number,
       from: current.status,
       to: status,
       sentBack: ping !== "",
+      ...(note ? { note } : {}),
     });
     return { task: await viewOf(tx, updated.id), posts: [posted] };
   });

@@ -1,7 +1,9 @@
 import {
   type DesktopAgent as Agent,
   type AgentId,
+  isSendBack,
   type RoomId,
+  TASK_NOTE_MAX,
   type TaskStatus,
   type TaskView,
   type ThreadSummary,
@@ -9,12 +11,16 @@ import {
 } from "@crew/protocol";
 import { useMemo, useState } from "react";
 import { cn } from "../lib/cn";
+import { shouldSend } from "../lib/composer";
 import { useTaskActions, useTasks, useThreads } from "../lib/queries";
 import { BOARD_ORDER, FINISHED, groupByStatus, LIST_ORDER, nextStatuses } from "../lib/tasks";
 import { AgentAvatar } from "./Avatar";
 import { StatusIcon } from "./MessageParts";
 import { column, ThreadView } from "./ThreadPanel";
+import { Button } from "./ui/button";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { Textarea } from "./ui/input";
 
 export type TaskLayout = "list" | "board";
 
@@ -364,6 +370,14 @@ function TaskProperties({ roomId, task, members }: { roomId: RoomId; task: TaskV
   const { setStatus, assign } = useTaskActions(roomId);
   const error = setStatus.error ?? assign.error;
   const finished = FINISHED.includes(task.status);
+  /** 选了退回类的状态：先问要改什么，再改。 */
+  const [sendBack, setSendBack] = useState<TaskStatus>();
+  const choose = (status: TaskStatus) => {
+    if (isSendBack(task.status, status)) {
+      setStatus.reset();
+      setSendBack(status);
+    } else setStatus.mutate({ task, status });
+  };
   return (
     <div className="mb-3.5">
       <div className="font-mono text-[11.5px] text-faint">#{task.number}</div>
@@ -381,11 +395,7 @@ function TaskProperties({ roomId, task, members }: { roomId: RoomId; task: TaskV
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               {nextStatuses(task).map((status) => (
-                <DropdownMenuItem
-                  key={status}
-                  className="font-sans"
-                  onSelect={() => setStatus.mutate({ task, status })}
-                >
+                <DropdownMenuItem key={status} className="font-sans" onSelect={() => choose(status)}>
                   <StatusIcon status={status} />
                   {taskStatusLabel(status)}
                 </DropdownMenuItem>
@@ -432,8 +442,87 @@ function TaskProperties({ roomId, task, members }: { roomId: RoomId; task: TaskV
           </DropdownMenu>
         </span>
       </div>
-      {error && <p className="mt-2 text-xs text-danger">{error.message}</p>}
+      {error && !sendBack && <p className="mt-2 text-xs text-danger">{error.message}</p>}
+      <Dialog
+        open={sendBack !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setSendBack(undefined);
+        }}
+      >
+        <DialogContent>
+          {sendBack && (
+            <SendBackForm
+              task={task}
+              to={sendBack}
+              pending={setStatus.isPending}
+              error={setStatus.error?.message}
+              onSubmit={(note) =>
+                setStatus.mutate({ task, status: sendBack, note }, { onSuccess: () => setSendBack(undefined) })
+              }
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+/** 退回任务时问一句要改什么。说明写进退回的通知，负责人被唤醒时就读到；留空也能退回。 */
+function SendBackForm({
+  task,
+  to,
+  pending,
+  error,
+  onSubmit,
+}: {
+  task: TaskView;
+  to: TaskStatus;
+  pending: boolean;
+  error?: string;
+  onSubmit(note: string | undefined): void;
+}) {
+  const [note, setNote] = useState("");
+  const submit = () => onSubmit(note.trim() || undefined);
+  return (
+    <form
+      className="grid gap-3.5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <DialogTitle>
+        退回 #{task.number}：{taskStatusLabel(task.status)} → {taskStatusLabel(to)}
+      </DialogTitle>
+      <DialogDescription>
+        {task.assignee
+          ? `告诉 ${task.assignee.displayName} 要改什么。说明写进退回的通知，它被唤醒时就能看到。`
+          : "写一句为什么退回，会写进通知。"}
+      </DialogDescription>
+      <Textarea
+        autoFocus
+        value={note}
+        maxLength={TASK_NOTE_MAX}
+        placeholder="要改什么？（选填）"
+        aria-label="退回的说明"
+        onChange={(event) => setNote(event.target.value)}
+        onKeyDown={(event) => {
+          if (shouldSend({ ...event, isComposing: event.nativeEvent.isComposing })) {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <div className="mt-1 flex justify-end gap-2">
+        <DialogClose asChild>
+          <Button>取消</Button>
+        </DialogClose>
+        <Button type="submit" variant="primary" disabled={pending}>
+          退回
+        </Button>
+      </div>
+    </form>
   );
 }
 

@@ -170,6 +170,23 @@ describe("crew reply", () => {
     expect((await crew(["task", "status", group, "2", "in_review"])).stdout).toContain(
       "(in_review, assigned to @alice)",
     );
+
+    // --note 真的发到了 Server：从任务的讨论串读回最后一条通知。
+    expect((await crew(["task", "status", group, "2", "in_progress", "--note", " Shorten the title "])).code).toBe(0);
+    const headers = { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}` };
+    const tasks = (await (await t.request(`/desktop/rooms/${group}/tasks`, { headers })).json()) as Array<{
+      number: number;
+      threadId: string;
+    }>;
+    const threadId = tasks.find((task) => task.number === 2)?.threadId;
+    const thread = (await (await t.request(`/desktop/rooms/${threadId}/messages`, { headers })).json()) as Array<{
+      body: string;
+      notice: unknown;
+    }>;
+    expect(thread.at(-1)).toMatchObject({
+      body: "把 #2 从待审改成进行中：Shorten the title",
+      notice: { type: "task.status", from: "in_review", to: "in_progress", note: "Shorten the title" },
+    });
   });
 
   it("sets a reminder relative to now or every day, lists it by when it fires, and cancels it", async () => {
@@ -286,6 +303,8 @@ describe("crew output", () => {
       ["task status", ["task", "status", group, "1", "in_review"]],
       ["task status, not allowed", ["task", "status", group, "2", "in_review"]],
       ["task status, unknown status", ["task", "status", group, "1", "finished"]],
+      ["task status, with a note", ["task", "status", group, "1", "in_progress", "--note", "Shorten the title"]],
+      ["task status, empty note", ["task", "status", group, "1", "in_review", "--note", "  "]],
       ["task assign, not in the room", ["task", "assign", group, "3", "nobody"]],
     ];
     for (const [title, args] of taskCases) {

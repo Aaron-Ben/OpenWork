@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { canSend, shouldSend } from "../lib/composer";
 import { newestSeq } from "../lib/messages";
-import { isLate, type NoticeTone, noticeLook } from "../lib/notices";
+import { isLate, type NoticeTone, noticeLook, noticeParts } from "../lib/notices";
 import { useMarkRead, useRun } from "../lib/queries";
 import { formatDuration, liveView } from "../lib/runs";
 import { formatMessageTime } from "../lib/time";
@@ -137,21 +137,37 @@ function NoticeIconBox({ notice, className }: { notice: Notice | null; className
   );
 }
 
-/** 通知：一行，左边是按类型着色的小图标，写明是谁做的。提醒到点画成一张小卡片。 */
+/**
+ * 通知：一行，左边是按类型着色的小图标，写明是谁做的。改状态时写的说明放在下面的引用里，退回的用黄色边线。
+ * 提醒到点画成一张小卡片。
+ */
 function NoticeLine({ message, now }: { message: MessageView; now: Date }) {
   const who = message.author.kind === "user" ? "你" : message.author.displayName;
   if (message.notice?.type === "reminder") {
     return <ReminderCard who={who} notice={message.notice} firedAt={message.createdAt} now={now} />;
   }
+  const { line, note } = noticeParts(message.body, message.notice);
   return (
-    <div className="mb-3 flex items-center gap-2 pl-[2px] text-[12.5px] text-faint">
-      <NoticeIconBox notice={message.notice} className="size-[22px] rounded-[7px]" />
-      <span className="min-w-0">
-        <b className="font-medium text-muted">{who}</b> {message.body}
-      </span>
-      <time className="flex-none font-mono text-[11px]" dateTime={message.createdAt}>
-        {formatMessageTime(message.createdAt, now)}
-      </time>
+    <div className="mb-3 pl-[2px] text-[12.5px] text-faint">
+      <div className="flex items-center gap-2">
+        <NoticeIconBox notice={message.notice} className="size-[22px] rounded-[7px]" />
+        <span className="min-w-0">
+          <b className="font-medium text-muted">{who}</b> {line}
+        </span>
+        <time className="flex-none font-mono text-[11px]" dateTime={message.createdAt}>
+          {formatMessageTime(message.createdAt, now)}
+        </time>
+      </div>
+      {note && (
+        <p
+          className={cn(
+            "mt-1 ml-[30px] max-w-[520px] border-l-2 py-0.5 pl-2.5 text-[13px] whitespace-pre-wrap text-text",
+            noticeLook(message.notice).tone === "warn" ? "border-warn" : "border-line-strong",
+          )}
+        >
+          {note}
+        </p>
+      )}
     </div>
   );
 }

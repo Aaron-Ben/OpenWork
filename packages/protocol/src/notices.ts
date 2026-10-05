@@ -11,13 +11,14 @@ export const Notice = z.discriminatedUnion("type", [
   /** 把已有的消息转成任务。 */
   z.object({ type: z.literal("task.converted"), number: z.number().int(), assignee: z.string().nullable() }),
   z.object({ type: z.literal("task.claimed"), number: z.number().int() }),
-  /** 改状态。`sentBack` 是别人把负责人的任务退回，通知 @ 了负责人。 */
+  /** 改状态。`sentBack` 是别人把负责人的任务退回，通知 @ 了负责人；`note` 是改状态的人写的说明。 */
   z.object({
     type: z.literal("task.status"),
     number: z.number().int(),
     from: TaskStatus,
     to: TaskStatus,
     sentBack: z.boolean(),
+    note: z.string().optional(),
   }),
   /** 换负责人；`assignee` 为 null 是取消负责人。 */
   z.object({ type: z.literal("task.assigned"), number: z.number().int(), assignee: z.string().nullable() }),

@@ -70,7 +70,8 @@ ${agent.persona.trim()}
 - A task is a room message turned into a to-do. Its status is one of todo, in_progress, in_review, done or closed, and it has at most one assignee. In your turn a task's message ends with \`[task #3 in_progress, assigned to @alice]\`. Task notices are marked \`[notice]\`.
 - Before you start work that goes beyond replying (running tools, changing files, investigating), claim the task. If the request is not a task yet, turn the message that asked for it into one with \`crew task convert\`, then claim it. Just answering a question needs no task.
 - When you are assigned a task, claim it before you start. If claiming fails, someone else has it: don't start work on it.
-- In a group room, post progress in the task's thread. When you are done, set the task to in_review and say what you did; the person sets it to done.
+- In a group room, post progress in the task's thread. When you are done, set the task to in_review with \`--note\` saying what you did; the person sets it to done. The note is posted in the thread, so don't also reply with the same thing.
+- When you send someone's task back (in_review or done to in_progress or todo), say what needs changing with \`--note\`: \`crew task status <room-id> 3 in_progress --note "<what to change>"\`. The note is in the notice that wakes them.
 - Run \`crew task list <room-id>\` before creating a task, so the same work does not become two tasks.
 - Commands: \`crew task list|create|convert|claim|status|assign\`. Run \`crew task --help\` for details.
 

@@ -52,7 +52,10 @@ export function agentRoutes(app: Express, ctx: ServerContext): void {
   );
 
   route(app, api.agent.setTaskStatus, async ({ body, response }) =>
-    notifyTaskChange(ctx, await setTaskStatus(ctx.db, self(response), body.roomId, body.number, body.status)),
+    notifyTaskChange(
+      ctx,
+      await setTaskStatus(ctx.db, self(response), body.roomId, body.number, body.status, body.note),
+    ),
   );
 
   route(app, api.agent.assignTask, async ({ body, response }) =>

@@ -108,7 +108,7 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
   );
 
   route(app, api.desktop.setTaskStatus, async ({ params, body }) =>
-    notifyTaskChange(ctx, await setTaskStatus(ctx.db, user, params.roomId, params.number, body.status)),
+    notifyTaskChange(ctx, await setTaskStatus(ctx.db, user, params.roomId, params.number, body.status, body.note)),
   );
 
   route(app, api.desktop.assignTask, async ({ params, body }) =>

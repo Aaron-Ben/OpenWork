@@ -14,7 +14,7 @@ import {
 import { AgentId, MessageId, RoomId } from "./ids";
 import { NewReminder, ReminderRefusal, ReminderView } from "./reminders";
 import { EngineEvent, RunDetail, RunSummary, RunTrigger } from "./runs";
-import { TaskRefusal, TaskStatus, TaskTitle, TaskView } from "./tasks";
+import { TaskNote, TaskRefusal, TaskStatus, TaskTitle, TaskView } from "./tasks";
 
 // Server 的 HTTP 接口契约：每个接口的方法、路径、参数、请求体与响应的 schema。
 // Server 按它注册路由并校验输入，返回值必须符合响应 schema 的类型；客户端按它发请求并校验响应。
@@ -221,7 +221,7 @@ export const api = {
       method: "POST",
       path: "/desktop/rooms/:roomId/tasks/:number/status",
       params: TaskParams,
-      body: z.object({ status: TaskStatus }),
+      body: z.object({ status: TaskStatus, note: TaskNote.optional() }),
       response: TaskView,
     }),
     /** 换负责人；`agentId` 为 null 时取消负责人。 */
@@ -389,7 +389,7 @@ export const api = {
     setTaskStatus: endpoint({
       method: "POST",
       path: "/agent/tasks/status",
-      body: AgentTaskRef.extend({ status: TaskStatus }),
+      body: AgentTaskRef.extend({ status: TaskStatus, note: TaskNote.optional() }),
       response: TaskView,
     }),
     assignTask: endpoint({

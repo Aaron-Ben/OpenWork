@@ -19,7 +19,7 @@ import { rehypeMentions, splitMentions } from "../src/lib/mentions";
 import { hasOlder, mergeMessages, newestSeq } from "../src/lib/messages";
 import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-agent";
 import { groupMembers, groupsWithout, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
-import { isLate, noticeLook } from "../src/lib/notices";
+import { isLate, noticeLook, noticeParts } from "../src/lib/notices";
 import { isNearBottom } from "../src/lib/scroll";
 import { statusIn, statusView } from "../src/lib/status";
 import { groupByStatus, nextStatuses, openCount } from "../src/lib/tasks";
@@ -471,5 +471,26 @@ describe("noticeLook", () => {
     } as const;
     expect(isLate(reminder, "2026-10-05T10:00:50.000Z")).toBe(false);
     expect(isLate(reminder, "2026-10-05T11:00:00.000Z")).toBe(true);
+  });
+
+  it("takes a status change's note out of the notice line, so it shows once, in the quote below", () => {
+    const sentBack = {
+      type: "task.status",
+      number: 3,
+      from: "in_review",
+      to: "in_progress",
+      sentBack: true,
+      note: "标题太长",
+    } as const;
+    expect(noticeParts("把 #3 从待审改成进行中，@alice：标题太长", sentBack)).toEqual({
+      line: "把 #3 从待审改成进行中，@alice",
+      note: "标题太长",
+    });
+    // 没有说明，或正文不是以说明结尾时，整行照旧。
+    expect(noticeParts("把 #3 从待审改成进行中", { ...sentBack, note: undefined })).toEqual({
+      line: "把 #3 从待审改成进行中",
+    });
+    expect(noticeParts("别的文字", sentBack)).toEqual({ line: "别的文字" });
+    expect(noticeParts("领取了 #3", null)).toEqual({ line: "领取了 #3" });
   });
 });

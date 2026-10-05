@@ -993,12 +993,12 @@ async function expectRefusal(response: Response, status = 409) {
 
 const newTask = (roomId: RoomId, title: string, assigneeId?: AgentId) =>
   desktop(`/desktop/rooms/${roomId}/tasks`, "POST", { title, assigneeId });
-const setStatus = (roomId: RoomId, number: number, status: string) =>
-  desktop(`/desktop/rooms/${roomId}/tasks/${number}/status`, "POST", { status });
+const setStatus = (roomId: RoomId, number: number, status: string, note?: string) =>
+  desktop(`/desktop/rooms/${roomId}/tasks/${number}/status`, "POST", { status, note });
 const claim = (token: string, roomId: RoomId, number: number) =>
   call(token, "/agent/tasks/claim", "POST", { roomId, number });
-const agentStatus = (token: string, roomId: RoomId, number: number, status: string) =>
-  call(token, "/agent/tasks/status", "POST", { roomId, number, status });
+const agentStatus = (token: string, roomId: RoomId, number: number, status: string, note?: string) =>
+  call(token, "/agent/tasks/status", "POST", { roomId, number, status, note });
 
 async function bodiesWithKind(roomId: RoomId) {
   const response = await desktop(`/desktop/rooms/${roomId}/messages`);
@@ -1117,6 +1117,38 @@ describe("tasks", () => {
     // 重新打开完成的任务也是退回。
     expect(await wakes(() => setStatus(group.id, number, "in_progress"))).toEqual([alice.id]);
     expect(await wakes(() => setStatus(group.id, number, "closed"))).toEqual([]);
+  });
+
+  it("carry the note of a status change in the same notice, so a sent-back assignee reads it in the turn it wakes for", async () => {
+    const alice = await newAgent("NoteAlice", "note-alice");
+    const bob = await newAgent("NoteBob", "note-bob");
+    const group = await newGroup("说明", [alice, bob]);
+    const { number, threadId } = await expectTask(await newTask(group.id, "写说明", alice.id), 201);
+    if (!threadId) throw new Error("应当有讨论串");
+    const token = await agentToken(alice.id);
+    await claim(token, group.id, number);
+
+    expect(await wakes(() => agentStatus(token, group.id, number, "in_review", "写好了 notes.md"))).toEqual([]);
+    expect(await wakes(() => setStatus(group.id, number, "in_progress", "  标题太长，改到 10 个字以内 "))).toEqual([
+      alice.id,
+    ]);
+    // 空白的说明被拒绝，任务不变。
+    expect((await setStatus(group.id, number, "in_review", "   ")).status).toBe(400);
+
+    expect((await bodiesWithKind(threadId)).slice(-2)).toEqual([
+      `system: 把 #${number} 从进行中改成待审：写好了 notes.md`,
+      `system: 把 #${number} 从待审改成进行中，@note-alice：标题太长，改到 10 个字以内`,
+    ]);
+    expect((await listMessagesWithNotices(threadId)).at(-1)?.notice).toEqual({
+      type: "task.status",
+      number,
+      from: "in_review",
+      to: "in_progress",
+      sentBack: true,
+      note: "标题太长，改到 10 个字以内",
+    });
+    const inbox = await readInbox(alice.id);
+    expect(inbox.find((room) => room.roomId === threadId)?.messages.at(-1)?.body).toContain("标题太长");
   });
 
   it("do not hold an agent behind its own notice, nor count the user's own notices as unread", async () => {
