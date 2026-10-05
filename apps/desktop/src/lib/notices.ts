@@ -3,7 +3,8 @@ import { assertNever, type Notice } from "@crew/protocol";
 // 通知在界面上的图标与颜色。颜色只用四种：蓝是任务的变化，绿是完成，黄是需要注意（退回、晚到），
 // 紫是 Agent 自己的安排（提醒）。设计稿是 out/mockups/step6-notices-mute.html。
 
-export type NoticeIcon = "clipboard" | "play" | "eye" | "assign" | "back" | "check" | "closed" | "alarm" | "dot";
+/** 图标名都在 components/ui/icon.tsx 里画好，`<Icon name>` 的类型检查保证这一点。 */
+export type NoticeIcon = "clipboard" | "play" | "eye" | "assign" | "sendBack" | "check" | "closed" | "alarm" | "dot";
 export type NoticeTone = "task" | "ok" | "warn" | "violet" | "muted";
 
 export function noticeLook(notice: Notice | null): { icon: NoticeIcon; tone: NoticeTone } {
@@ -17,7 +18,7 @@ export function noticeLook(notice: Notice | null): { icon: NoticeIcon; tone: Not
     case "task.assigned":
       return { icon: "assign", tone: "task" };
     case "task.status":
-      if (notice.sentBack) return { icon: "back", tone: "warn" };
+      if (notice.sentBack) return { icon: "sendBack", tone: "warn" };
       if (notice.to === "done") return { icon: "check", tone: "ok" };
       if (notice.to === "closed") return { icon: "closed", tone: "muted" };
       if (notice.to === "in_review") return { icon: "eye", tone: "task" };

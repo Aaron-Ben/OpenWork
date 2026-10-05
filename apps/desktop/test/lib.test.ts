@@ -447,7 +447,7 @@ describe("noticeLook", () => {
     expect(noticeLook({ ...status, to: "done" })).toEqual({ icon: "check", tone: "ok" });
     expect(noticeLook({ ...status, to: "closed" })).toEqual({ icon: "closed", tone: "muted" });
     expect(noticeLook({ ...status, from: "in_review", to: "in_progress", sentBack: true })).toEqual({
-      icon: "back",
+      icon: "sendBack",
       tone: "warn",
     });
     const reminder = {
