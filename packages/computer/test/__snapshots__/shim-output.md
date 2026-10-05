@@ -460,7 +460,7 @@ You have no reminders.
 
 ```text
 stdout:
-Reminder set: "Send the weekly report" at 2027-01-05T09:00:00<offset>. When it is due you get a notice in <alice-room> and wake up there.
+Reminder set: "Send the weekly report" at <date>T09:00:00<offset>. When it is due you get a notice in <alice-room> and wake up there.
 ```
 
 ## remind list (exit 0)
@@ -468,7 +468,7 @@ Reminder set: "Send the weekly report" at 2027-01-05T09:00:00<offset>. When it i
 ```text
 stdout:
 Your reminders:
-  <reminder-1>  "Send the weekly report" at 2027-01-05T09:00:00<offset>, in <alice-room>
+  <reminder-1>  "Send the weekly report" at <date>T09:00:00<offset>, in <alice-room>
 ```
 
 ## remind, no time (exit 1)
@@ -552,7 +552,7 @@ error: --in can be at most 365d.
 
 ```text
 stdout:
-Canceled: "Send the weekly report" at 2027-01-05T09:00:00<offset>.
+Canceled: "Send the weekly report" at <date>T09:00:00<offset>.
 ```
 
 ## remind cancel, again (exit 1)

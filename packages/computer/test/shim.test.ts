@@ -324,10 +324,16 @@ describe("crew output", () => {
       sections[before] = taskIds(sections[before] ?? "");
     }
     // 提醒：绝对时间的设定、列出、取消与各种拒绝。时区偏移与提醒 ID 每台机器、每次运行都不同，换成占位符。
+    // 日期取 30 天以后（写死的日期过了就成了“已经过去”），输出里换成 <date>。
+    const later = new Date(Date.now() + 30 * 24 * 60 * 60_000);
+    const laterDay = [later.getFullYear(), later.getMonth() + 1, later.getDate()]
+      .map((part) => String(part).padStart(2, "0"))
+      .join("-");
     const reminderIds = new Map<string, string>();
     const reminderText = (text: string) =>
       text
         .replaceAll(alice.roomId, "<alice-room>")
+        .replaceAll(laterDay, "<date>")
         .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
           if (!reminderIds.has(id)) reminderIds.set(id, `<reminder-${reminderIds.size + 1}>`);
           return reminderIds.get(id) ?? id;
@@ -338,7 +344,7 @@ describe("crew output", () => {
       ["crew remind --help", ["remind", "--help"]],
       ["crew remind set --help", ["remind", "set", "--help"]],
       ["remind list, empty", ["remind", "list"]],
-      ["remind at a date", ["remind", alice.roomId, "Send the weekly report", "--at", "2027-01-05 09:00"]],
+      ["remind at a date", ["remind", alice.roomId, "Send the weekly report", "--at", `${laterDay} 09:00`]],
       ["remind list", ["remind", "list"]],
       ["remind, no time", ["remind", alice.roomId, "Something"]],
       ["remind, two times", ["remind", alice.roomId, "Something", "--in", "5m", "--daily", "09:00"]],
