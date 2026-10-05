@@ -36,3 +36,12 @@ export const ComputerReady = z.object({
   runtimeSessionId: RuntimeSessionId,
 });
 export type ComputerReady = z.infer<typeof ComputerReady>;
+
+/**
+ * Agent 的记忆文件：在它的工作目录里，由 Agent 自己维护。Computer 准备目录时写一份模板，
+ * Desktop 主进程读来给界面看。路径是相对 Computer 根目录（`crewRoot`）的几段，两边按同一个约定拼。
+ */
+export const MEMORY_FILE = "MEMORY.md";
+export function agentWorkSegments(agentId: string): string[] {
+  return ["agents", agentId, "work"];
+}

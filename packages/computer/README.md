@@ -29,13 +29,13 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 
 ### Agent 的 `AGENTS.md`
 
-- **模型看到什么：** Agent 的身份（名字、id、handle、人设），用 `crew reply` 发言，可以保持沉默，回复被 HELD 拦下时怎么做，群聊的发言约束与 @ 的作用，讨论串（在消息来的地方回复，只在用户要求时开讨论串），任务（动手之前先领取，进展发在讨论串里，做完改成待审），工作目录与沙箱的说明。它经 OpenCode 配置的 `instructions` 进入系统提示词。原文由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
+- **模型看到什么：** Agent 的身份（名字、id、handle、人设），用 `crew reply` 发言，可以保持沉默，回复被 HELD 拦下时怎么做，群聊的发言约束与 @ 的作用，讨论串（在消息来的地方回复，只在用户要求时开讨论串），任务（动手之前先领取，进展发在讨论串里，做完改成待审），记忆（新会话先读 `MEMORY.md`，有长期价值的写进去），工作目录与沙箱的说明。它经 OpenCode 配置的 `instructions` 进入系统提示词。原文由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - **Token：** 固定的说明，加上名字与人设；两者的长度上限见 [messaging.md](../../docs/subsystems/messaging.md) 第 3 节。
 - **缓存：** 文本不含时间、路径与运行期状态，只随 Agent 的设置变化。它的摘要是继续 session 的条件之一：改了名字或人设，这个 Agent 下一轮开新 session；改了 `instructions.ts` 的文本，全部 Agent 都开新 session。
 
 ### 每轮输入
 
-- **模型看到什么：** 唤醒说明、当前本地时间、按房间分组的未读消息。群聊带名字与成员名册；每条消息带消息 id、作者的显示名与 handle（用户写 `user`），@ 到本 Agent 的标 `[mentions you]`。它经 stdin 交给 `opencode run`。原文由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
+- **模型看到什么：** 唤醒说明、当前本地时间、开新会话时先读 `MEMORY.md` 的提醒、按房间分组的未读消息。工作目录里的 `MEMORY.md` 由 Agent 自己读写，Computer 只在没有时写一份模板。群聊带名字与成员名册；每条消息带消息 id、作者的显示名与 handle（用户写 `user`），@ 到本 Agent 的标 `[mentions you]`。它经 stdin 交给 `opencode run`。原文由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
 - **Token：** 随未读消息增长，没有上限：Server 的 inbox 返回已读位置之后的全部消息，单条正文的上限见 messaging.md 第 4 节。群聊每轮多一行名册，随成员数增长。讨论串每段再多一条宿主消息，正文至多 600 字符；任务的宿主消息多一段后缀；新关注者第一次读到的是讨论串里已有的全部回复。失败的一轮不确认已读，下一轮带上同样的消息，再加上新消息。
 - **缓存：** 用 `--session` 继续时，每轮输入追加在之前的对话之后，前面的内容不变；时间只出现在本轮输入里。实际是否命中缓存由 OpenCode 与模型服务商决定。
 

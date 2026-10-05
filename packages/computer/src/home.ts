@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import type { AgentId, RuntimeSessionId } from "@crew/protocol";
+import { type AgentId, agentWorkSegments, MEMORY_FILE, type RuntimeSessionId } from "@crew/protocol";
 import { z } from "zod";
 import { type AgentIdentity, standingInstructions } from "./instructions";
 import type { Confinement } from "./sandbox";
@@ -13,6 +13,7 @@ import type { Confinement } from "./sandbox";
 // ├── agents/<agent-id>/                 持久：跨 RuntimeSession 保留
 // │   ├── AGENTS.md                      身份与规则
 // │   ├── work/                          OpenCode 的工作目录
+// │   │   └── MEMORY.md                  Agent 的记忆，由它自己维护
 // │   └── engines/opencode/
 // │       ├── data/                      OpenCode 的数据目录（XDG_DATA_HOME），每个 Agent 独立
 // │       └── session.json               上次的 session
@@ -36,6 +37,8 @@ export interface RuntimeLayout {
 export interface AgentLayout {
   home: string;
   workDir: string;
+  /** 工作目录里的 `MEMORY.md`。 */
+  memoryFile: string;
   instructionsFile: string;
   engineDataDir: string;
   sessionFile: string;
@@ -136,9 +139,11 @@ function shellQuote(value: string): string {
 export function agentLayout(runtime: RuntimeLayout, agentId: AgentId): AgentLayout {
   const home = join(runtime.root, "agents", agentId);
   const runtimeDir = join(runtime.runtimeDir, "agents", agentId);
+  const workDir = join(runtime.root, ...agentWorkSegments(agentId));
   return {
     home,
-    workDir: join(home, "work"),
+    workDir,
+    memoryFile: join(workDir, MEMORY_FILE),
     instructionsFile: join(home, "AGENTS.md"),
     engineDataDir: join(home, "engines", "opencode", "data"),
     sessionFile: join(home, "engines", "opencode", "session.json"),
@@ -150,13 +155,48 @@ export function agentLayout(runtime: RuntimeLayout, agentId: AgentId): AgentLayo
   };
 }
 
-/** 建好 Agent 的持久目录与本次运行的目录，写入最新的 `AGENTS.md`。可以重复调用。 */
+/**
+ * 建好 Agent 的持久目录与本次运行的目录，写入最新的 `AGENTS.md`；还没有 `MEMORY.md` 时写一份模板。可以重复调用。
+ */
 export async function prepareAgent(runtime: RuntimeLayout, agent: AgentIdentity): Promise<AgentLayout> {
   const layout = agentLayout(runtime, agent.id);
   for (const dir of [layout.workDir, layout.engineDataDir]) await ensureDirUnder(layout.home, dir);
   for (const dir of [layout.configDir, layout.cacheDir, layout.stateDir]) await ensureDirUnder(layout.runtimeDir, dir);
   await writeFileAtomic(layout.instructionsFile, standingInstructions(agent), 0o600);
+  await seedMemory(layout, agent);
   return layout;
+}
+
+/**
+ * 记忆的模板。只在文件不存在时写：已有的内容是 Agent 自己写的，不覆盖。
+ * 存在但不是普通文件（例如 Agent 换成了符号链接）时也不动它。
+ */
+async function seedMemory(layout: AgentLayout, agent: AgentIdentity): Promise<void> {
+  const existing = await lstat(layout.memoryFile).catch((error: unknown) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
+  if (existing) return;
+  await writeFileAtomic(layout.memoryFile, memoryTemplate(agent), 0o600);
+}
+
+export function memoryTemplate(agent: Pick<AgentIdentity, "displayName">): string {
+  return `# ${agent.displayName}'s memory
+
+What to remember across sessions. Keep this file short: the most important facts here, details in other files next to it.
+
+## About the person
+
+## Ongoing work
+
+## Lessons learned
+`;
+}
+
+/** 记忆文件的大小（字节）。不存在或不是普通文件时返回 undefined。 */
+export async function memorySize(layout: AgentLayout): Promise<number | undefined> {
+  const info = await lstat(layout.memoryFile).catch(() => undefined);
+  return info?.isFile() ? info.size : undefined;
 }
 
 /**

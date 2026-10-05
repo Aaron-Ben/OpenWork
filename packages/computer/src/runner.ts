@@ -1,7 +1,7 @@
 import type { ComputerAgent, EngineEvent, InboxRoom, RunTrigger } from "@crew/protocol";
 import type { ServerClient } from "./client";
 import type { EngineAdapter } from "./engine/types";
-import { type AgentLayout, resumableSession, type SessionKey, saveSession } from "./home";
+import { type AgentLayout, memorySize, resumableSession, type SessionKey, saveSession } from "./home";
 import { standingInstructions } from "./instructions";
 import { turnPrompt } from "./prompt";
 import type { Confinement } from "./sandbox";
@@ -77,7 +77,15 @@ export class AgentRunner {
     // 读取期间被停止时不再开始这一轮。
     if (inbox.length === 0 || this.stopped) return;
 
-    const prompt = turnPrompt(inbox, (this.options.now ?? (() => new Date()))(), agent.id);
+    const key: SessionKey = {
+      engineId: agent.engineId,
+      model: agent.model,
+      instructions: standingInstructions(agent),
+    };
+    // 先定下这一轮是不是新会话：新会话的输入里多一句先读记忆。
+    const sessionId = await resumableSession(layout, key);
+    const session = { fresh: sessionId === undefined, memoryBytes: await memorySize(layout) };
+    const prompt = turnPrompt(inbox, (this.options.now ?? (() => new Date()))(), agent.id, session);
     const runId = await server.startRun(agent.id, { prompt, triggers: runTriggers(inbox) });
     const reporter = new RunReporter(server, runId);
     const finish = async (result: Parameters<RunnerServer["finishRun"]>[1]) => {
@@ -86,17 +94,12 @@ export class AgentRunner {
     };
 
     try {
-      const key: SessionKey = {
-        engineId: agent.engineId,
-        model: agent.model,
-        instructions: standingInstructions(agent),
-      };
       const outcome = await engine.runTurn({
         layout,
         confinement: this.options.confinement,
         model: agent.model,
         prompt,
-        sessionId: await resumableSession(layout, key),
+        sessionId,
         env: this.options.env,
         signal: this.controller.signal,
         onEvent: (event) => reporter.push(event),

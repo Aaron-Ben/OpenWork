@@ -18,6 +18,8 @@ import {
   clearSession,
   confinementFor,
   copyIntoCache,
+  memorySize,
+  memoryTemplate,
   prepareAgent,
   prepareRuntime,
   removeRuntime,
@@ -104,6 +106,31 @@ describe("prepareAgent", () => {
     const changed = { ...alice, persona: "你是一位测试工程师。" };
     const layout = await prepareAgent(runtime, changed);
     expect(await readFile(layout.instructionsFile, "utf8")).toContain("测试工程师");
+  });
+
+  it("seeds MEMORY.md in the work directory once and never overwrites what the agent wrote", async () => {
+    const runtime = await prepareRuntime(root, session);
+    const layout = await prepareAgent(runtime, alice);
+    expect(layout.memoryFile).toBe(join(layout.workDir, "MEMORY.md"));
+    expect(await readFile(layout.memoryFile, "utf8")).toBe(memoryTemplate(alice));
+    expect(mode(layout.memoryFile)).toBe(0o600);
+    expect(await memorySize(layout)).toBe(Buffer.byteLength(memoryTemplate(alice)));
+
+    await writeFile(layout.memoryFile, "# 我记得的事\n用户喜欢简短的回复。\n");
+    await prepareAgent(runtime, alice);
+    expect(await readFile(layout.memoryFile, "utf8")).toContain("用户喜欢简短的回复");
+  });
+
+  it("leaves a MEMORY.md that is not a regular file alone, and reports no size for it", async () => {
+    const runtime = await prepareRuntime(root, session);
+    const layout = await prepareAgent(runtime, alice);
+    const elsewhere = join(root, "elsewhere.md");
+    await writeFile(elsewhere, "不是 Agent 的文件");
+    await rm(layout.memoryFile);
+    symlinkSync(elsewhere, layout.memoryFile);
+    await prepareAgent(runtime, alice);
+    expect(await readFile(elsewhere, "utf8")).toBe("不是 Agent 的文件");
+    expect(await memorySize(layout)).toBeUndefined();
   });
 
   it("writes the token readable only by its owner", async () => {

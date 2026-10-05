@@ -27,7 +27,7 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
   - **失败：** 记为 `failed` 与原因，不确认已读；下一次唤醒时这些消息会和新消息一起重新处理。
   - **停止：** 中止 Engine，不确认已读，尽力记为 `cancelled`；记不上时，下一个 Computer 连上后它被标为中断。读取未读消息期间被停止时，不再开始这一轮。
   - **意外错误**（保存 session、确认已读或 Engine 违反约定抛出）：记为 `failed` 与“处理失败：…”。读取未读消息或登记失败时只记日志，下一次唤醒重新读取。
-- 本轮输入按房间列出未读消息，并写明本地时间。群聊写出名字与成员名册；讨论串单独成段，写出所在群聊的名字与成员，以及挂着的那条消息（正文至多 600 字符）；作者写成 `User (user)` 或 `名字 (@handle)`，本 Agent 加 `you`；@ 到本 Agent 的消息标 `[mentions you]`，通知标 `[notice]`，任务的宿主消息在正文后面带 `[task #3 in_progress, assigned to @alice]`。文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
+- 本轮输入按房间列出未读消息，并写明本地时间。开了新会话（第一次运行、换了模型或 `AGENTS.md`、旧会话失效）时多一句“这是新会话，先读 MEMORY.md”，记忆文件超过 16KB 时这句话里请它精简。群聊写出名字与成员名册；讨论串单独成段，写出所在群聊的名字与成员，以及挂着的那条消息（正文至多 600 字符）；作者写成 `User (user)` 或 `名字 (@handle)`，本 Agent 加 `you`；@ 到本 Agent 的消息标 `[mentions you]`，通知标 `[notice]`，任务的宿主消息在正文后面带 `[task #3 in_progress, assigned to @alice]`。文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
 
 ## 3. OpenCode
 
@@ -71,6 +71,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 ├── agents/<agent-id>/                 持久：跨运行保留
 │   ├── AGENTS.md                      身份与规则
 │   ├── work/                          OpenCode 的工作目录
+│   │   └── MEMORY.md                  Agent 的记忆，由它自己维护
 │   └── engines/opencode/
 │       ├── data/                      OpenCode 的数据目录，每个 Agent 独立
 │       └── session.json               上次的 session
@@ -83,7 +84,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 
 - 目录权限 0700，文件 0600。写文件先写临时文件再改名。
 - Agent 在沙箱里能写自己的两个目录，所以 Computer 在建目录、写 session 与凭证之前，逐级用 `lstat` 确认它们是真正的目录；遇到符号链接或其他类型时拒绝。`session.json` 不是普通文件时当作没有记录。
-- `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间：身份与 handle、人设、怎样用 `crew reply` 发言、HELD 时怎么做、群聊的发言约束、讨论串（在消息来的地方回复，只在用户要求时开讨论串）、任务（动手之前先领取，进展发在任务的讨论串里，做完改成待审）。文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
+- 准备目录时，工作目录里还没有 `MEMORY.md` 就写一份模板；已有时不动，不是普通文件时也不动。记忆不放进 `AGENTS.md`，也不放进每轮输入：前者会让每次修改都重开会话，后者让每轮都多出这些 token。理由见 [提醒、记忆与静音 Note](../../.agents/notes/proposed/feature/2026-10-05-reminders-memory-mute.md)。
+- `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间：身份与 handle、人设、怎样用 `crew reply` 发言、HELD 时怎么做、群聊的发言约束、讨论串（在消息来的地方回复，只在用户要求时开讨论串）、任务（动手之前先领取，进展发在任务的讨论串里，做完改成待审）、记忆（新会话先读 `MEMORY.md`，有长期价值的东西写进去，保持在 16KB 以内）。文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - `bin/crew` 以 `ELECTRON_RUN_AS_NODE=1` 运行 Electron 可执行文件与打包后的 `shim.js`。两者都在 `$HOME` 之外，沙箱里可以读取。
 
 ## 6. crew 命令
@@ -123,3 +125,5 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | 真实模型的群聊：全员唤醒、Agent 之间的 @、HELD 后改写再发 | 手动：2026-10-05 用 `deepseek/deepseek-flash` 跑一个两人群聊，Alice 被 HELD 后把补充的信息写进回复再发出 |
 | 真实模型的讨论串 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，用户在群里 @alice 提问，Alice 与 Bob 都被唤醒（Bob 白跑）；用户在那条消息的讨论串里 @alice，只有 Alice 被唤醒并在讨论串里回复，群聊时间线里只多了讨论串摘要 |
 | 真实模型的任务 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，用户把一条消息转成任务并分配给 @alice，Alice 领取、写好文件、改成待审并在任务的讨论串里汇报；用户改成完成。同一轮里 Alice 也领取了用户新建的未分配任务并做完 |
+| 准备目录时写记忆模板，不覆盖 Agent 写的内容，不顺着符号链接写；新会话的输入里提醒先读记忆，超过 16KB 时请它精简 | `home.test.ts` 的 `seeds MEMORY.md…`、`leaves a MEMORY.md that is not a regular file alone…`；`prompt.test.ts` 的 `turnPrompt in a new session`；`runner.test.ts` 的 `tells the agent to read its memory in a new session…` |
+| 真实模型的记忆 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，告诉 Alice“我叫小王，以后用英文回答”，她写进 `MEMORY.md`；删掉会话记录让下一轮开新会话后问“我叫什么名字”，她先读记忆，用英文答出名字 |

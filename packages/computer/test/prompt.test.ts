@@ -113,11 +113,29 @@ describe("turnPrompt", () => {
   it("matches the reviewed text", async () => {
     // 2026-10-04T18:30:00+08:00，用固定的时区偏移避免依赖运行环境的时区。
     const now = new Date("2026-10-04T10:30:00.000Z");
-    const text = turnPrompt([direct, group, thread], now, self).replace(
+    const text = turnPrompt([direct, group, thread], now, self, { fresh: false, memoryBytes: 600 }).replace(
       localTimestamp(now),
       "2026-10-04T18:30:00+08:00",
     );
     await expect(text).toMatchFileSnapshot("./__snapshots__/turn-prompt.md");
+  });
+});
+
+describe("turnPrompt in a new session", () => {
+  const now = new Date("2026-10-04T10:30:00.000Z");
+
+  it("asks the agent to read its memory first, and only in a new session", () => {
+    expect(turnPrompt([direct], now, self, { fresh: true, memoryBytes: 600 })).toContain(
+      "This is a new session: you don't remember earlier turns. Before you act, read MEMORY.md in your working directory.\n",
+    );
+    expect(turnPrompt([direct], now, self, { fresh: false, memoryBytes: 600 })).not.toContain("MEMORY.md");
+  });
+
+  it("asks it to trim a memory file over 16 KB", () => {
+    expect(turnPrompt([direct], now, self, { fresh: true, memoryBytes: 20 * 1024 })).toContain(
+      "It is 20 KB now; trim it below 16 KB",
+    );
+    expect(turnPrompt([direct], now, self, { fresh: true, memoryBytes: 16 * 1024 })).not.toContain("trim");
   });
 });
 

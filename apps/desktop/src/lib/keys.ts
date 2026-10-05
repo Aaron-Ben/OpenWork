@@ -10,6 +10,9 @@ export const queryKeys = {
   threads: ["threads"] as const,
   threadList: (roomId: RoomId) => ["threads", roomId] as const,
   tasks: (roomId: RoomId) => ["tasks", roomId] as const,
+  /** Agent 的 `MEMORY.md`，由主进程读本机文件。 */
+  memory: (agentId: string) => ["memory", agentId] as const,
+  memories: ["memory"] as const,
   models: ["models"] as const,
   /** 全部运行记录列表的前缀：让它失效时，按房间或按 Agent 的列表一起失效。 */
   runs: ["runs"] as const,
@@ -26,7 +29,8 @@ export const queryKeys = {
 export function keysForEvent(event: DesktopEvent): ReadonlyArray<readonly unknown[]> {
   switch (event.type) {
     case "agents":
-      return [queryKeys.agents, queryKeys.conversations];
+      // Agent 的状态变了，常常是一轮刚结束：它可能刚改过记忆。
+      return [queryKeys.agents, queryKeys.conversations, queryKeys.memories];
     case "rooms":
       return [queryKeys.groups, queryKeys.conversations];
     case "room.messages":

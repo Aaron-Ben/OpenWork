@@ -91,6 +91,24 @@ describe("AgentRunner", () => {
     expect(await status(agent.id)).toEqual({ state: "idle" });
   });
 
+  it("tells the agent to read its memory in a new session, and not when it continues the last one", async () => {
+    const engine = new FakeEngine([
+      { ok: true, sessionId: "ses_1" },
+      { ok: true, sessionId: "ses_1" },
+    ]);
+    const runner = await newRunner(engine);
+    await send(agent.roomId, "第一条");
+    runner.wake();
+    await runner.idle();
+    await send(agent.roomId, "第二条");
+    runner.wake();
+    await runner.idle();
+
+    expect(engine.requests[0]?.prompt).toContain("This is a new session");
+    expect(engine.requests[1]?.sessionId).toBe("ses_1");
+    expect(engine.requests[1]?.prompt).not.toContain("This is a new session");
+  });
+
   it("records each turn: what woke it, the engine's steps in order, and the result", async () => {
     const at = "2026-10-05T12:00:00.000Z";
     const engine = new FakeEngine([{ ok: true, sessionId: "ses_1" }]);

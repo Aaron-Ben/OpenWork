@@ -36,7 +36,7 @@
 
 ## 模型体验
 
-间接：`MESSAGE_BODY_MAX` 限制 Agent 用 `crew reply` 发出的正文长度，见 [@crew/computer](../computer/README.md)。任务的状态名、流转表与拒绝原因（`src/tasks.ts`）出现在 `crew task` 的输出里。
+间接：`MESSAGE_BODY_MAX` 限制 Agent 用 `crew reply` 发出的正文长度，见 [@crew/computer](../computer/README.md)。任务的状态名、流转表与拒绝原因（`src/tasks.ts`）出现在 `crew task` 的输出里。记忆文件的名字与位置（`src/runtime.ts` 的 `MEMORY_FILE`、`agentWorkSegments`）由 Computer 与 Desktop 主进程共用。
 
 ## 已知限制
 

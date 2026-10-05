@@ -30,7 +30,7 @@ const roomId = RoomId.parse("6a1f4e2b-8c3d-4b5a-9e7f-0a1b2c3d4e5f");
 
 describe("keysForEvent", () => {
   it("refreshes the agent and conversation lists when agents change", () => {
-    expect(keysForEvent({ type: "agents" })).toEqual([queryKeys.agents, queryKeys.conversations]);
+    expect(keysForEvent({ type: "agents" })).toEqual([queryKeys.agents, queryKeys.conversations, queryKeys.memories]);
   });
 
   it("refreshes the conversation list, the room's threads and its tasks when it has new messages; the messages come from fetchNewer", () => {

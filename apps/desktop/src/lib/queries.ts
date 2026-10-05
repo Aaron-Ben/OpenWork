@@ -247,3 +247,14 @@ export function useTaskActions(roomId: RoomId) {
   });
   return { create, convert, setStatus, assign };
 }
+
+/** Agent 的记忆文件。不存在时是 null。`enabled` 为 false（右栏没打开记忆）时不读取。 */
+export function useMemory(agentId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.memory(agentId),
+    queryFn: () => window.crew.readMemory(agentId),
+    enabled,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+}

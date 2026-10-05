@@ -76,11 +76,34 @@ function threadParent(room: InboxRoom, self: AgentId): string[] {
   return [`Under this message in room ${room.parent.roomId}:`, messageLines(clipped, self), "Unread replies:"];
 }
 
+/** 记忆文件超过这个大小时，开新会话的提醒里请 Agent 精简。 */
+export const MEMORY_SOFT_MAX = 16 * 1024;
+
 /**
- * 每个 Turn 写给 Engine 的 prompt：唤醒说明、当前时间与按房间分组的未读消息。
+ * 这一轮的会话：`fresh` 是开了新会话（第一次、换了模型或常驻规则），Agent 不记得之前的对话；
+ * `memoryBytes` 是 `MEMORY.md` 的大小，读不到时为 undefined。
+ */
+export interface TurnSession {
+  fresh: boolean;
+  memoryBytes: number | undefined;
+}
+
+/** 开新会话时的一段：先读记忆，太大时请它精简。继续上一段会话时为空。 */
+function sessionNote(session: TurnSession): string {
+  if (!session.fresh) return "";
+  const size = session.memoryBytes;
+  const trim =
+    size !== undefined && size > MEMORY_SOFT_MAX
+      ? ` It is ${Math.round(size / 1024)} KB now; trim it below ${MEMORY_SOFT_MAX / 1024} KB by moving details into other files.`
+      : "";
+  return `This is a new session: you don't remember earlier turns. Before you act, read MEMORY.md in your working directory.${trim}\n\n`;
+}
+
+/**
+ * 每个 Turn 写给 Engine 的 prompt：唤醒说明、当前时间、开新会话时先读记忆的提醒与按房间分组的未读消息。
  * 群聊与讨论串附上成员名册，讨论串还附上它挂着的那条消息。身份与规则在 `AGENTS.md` 里，这里不重复。
  */
-export function turnPrompt(rooms: InboxRoom[], now: Date, self: AgentId): string {
+export function turnPrompt(rooms: InboxRoom[], now: Date, self: AgentId, session: TurnSession): string {
   const sections = rooms.map((room) => {
     const roster =
       room.kind === "direct"
@@ -97,7 +120,7 @@ export function turnPrompt(rooms: InboxRoom[], now: Date, self: AgentId): string
 
 Current time: ${localTimestamp(now)}
 
-Your unread messages:
+${sessionNote(session)}Your unread messages:
 
 ${sections.join("\n\n")}
 `;

@@ -2,7 +2,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { ChildStartError } from "./child";
-import { type RendererRuntime, RUNTIME_CHANNEL } from "./contract";
+import { MEMORY_CHANNEL, type RendererRuntime, RUNTIME_CHANNEL } from "./contract";
+import { readAgentMemory } from "./memory";
 import { confineNavigation } from "./navigation";
 import { type Runtime, startRuntime } from "./runtime";
 
@@ -38,13 +39,14 @@ async function start(): Promise<void> {
   // 开发模式下 app.getAppPath() 是 apps/desktop，.env 在仓库根目录。
   process.loadEnvFile(resolve(app.getAppPath(), "../../.env"));
 
+  const crewRoot = join(homedir(), ".crew");
   runtime = await startRuntime({
     executable: process.execPath,
     serverEntry: join(import.meta.dirname, "server.js"),
     computerEntry: join(import.meta.dirname, "computer.js"),
     migrationsDir: join(import.meta.dirname, "drizzle"),
     shimEntry: join(import.meta.dirname, "shim.js"),
-    crewRoot: join(homedir(), ".crew"),
+    crewRoot,
     env: process.env,
     rendererOrigin,
   });
@@ -61,6 +63,7 @@ async function start(): Promise<void> {
   ipcMain.on(RUNTIME_CHANNEL, (event) => {
     event.returnValue = rendererRuntime;
   });
+  ipcMain.handle(MEMORY_CHANNEL, (_event, agentId: unknown) => readAgentMemory(crewRoot, agentId));
 
   window = new BrowserWindow({
     width: 1100,

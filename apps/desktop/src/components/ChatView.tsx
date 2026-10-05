@@ -14,6 +14,7 @@ import { isNearBottom } from "../lib/scroll";
 import { statusIn, statusView } from "../lib/status";
 import { openCount } from "../lib/tasks";
 import { AgentAvatar, GroupAvatar } from "./Avatar";
+import { MemoryPanel } from "./MemoryPanel";
 import { Composer, LiveActivity, MessageItem, useMarkReadWhileOpen } from "./MessageParts";
 import { RunPanel } from "./RunPanel";
 import { SidebarToggle, SidePanel } from "./SidePanel";
@@ -36,7 +37,7 @@ function inRoom(room: ChatRoom): ChatRoom {
 }
 
 /** 右栏显示什么：运行记录、讨论串（列表或其中一个）或任务（列表、看板或其中一个）。 */
-type PanelView = "runs" | "threads" | "tasks";
+type PanelView = "runs" | "threads" | "tasks" | "memory";
 
 /** 右栏里选中的东西只属于打开它时的房间：换房间后右栏保持开着，显示新房间的列表。 */
 type Selection = { roomId: RoomId; runId?: string; parent?: MessageView; task?: number };
@@ -70,8 +71,9 @@ export function ChatView({
   /** 消息往上滚过了顶栏：顶栏下沿显示一道渐隐，代替分隔线。 */
   const [scrolled, setScrolled] = useState(false);
   const selected = selection?.roomId === roomId ? selection : undefined;
-  // 私聊没有讨论串：从群聊换到私聊时，讨论串的右栏关上。
-  const panel = room.kind === "direct" && view === "threads" ? undefined : view;
+  // 私聊没有讨论串，群聊没有记忆：换房间后对方没有的视图，右栏关上。
+  const panel =
+    (room.kind === "direct" && view === "threads") || (room.kind === "group" && view === "memory") ? undefined : view;
   const threads = useThreads(roomId, room.kind === "group");
   const tasks = useTasks(roomId);
   const { convert } = useTaskActions(roomId);
@@ -116,6 +118,11 @@ export function ChatView({
       <Tool active={panel === "runs"} onClick={() => toggle("runs")}>
         运行记录
       </Tool>
+      {room.kind === "direct" && (
+        <Tool active={panel === "memory"} onClick={() => toggle("memory")}>
+          记忆
+        </Tool>
+      )}
     </div>
   );
 
@@ -128,27 +135,31 @@ export function ChatView({
   const showSidebar = sidebarHidden ? <SidebarToggle hidden onClick={onShowSidebar} /> : undefined;
 
   const title =
-    panel === "runs"
-      ? "运行记录"
-      : panel === "threads"
-        ? parent
-          ? "讨论串"
-          : "全部讨论串"
-        : openTaskView
-          ? `#${openTaskView.number} ${openTaskView.title}`
-          : "任务";
+    panel === "memory"
+      ? "记忆"
+      : panel === "runs"
+        ? "运行记录"
+        : panel === "threads"
+          ? parent
+            ? "讨论串"
+            : "全部讨论串"
+          : openTaskView
+            ? `#${openTaskView.number} ${openTaskView.title}`
+            : "任务";
   const subtitle =
-    panel === "runs"
-      ? room.kind === "group"
-        ? `${groupName} · 包括讨论串里的轮次`
-        : `${groupName} 的全部轮次`
-      : panel === "threads"
-        ? parent
-          ? `${groupName} · ${parent.author.kind === "user" ? "你" : parent.author.displayName}的消息`
-          : `${groupName} · ${threads.data?.length ?? 0} 个`
-        : taskNumber !== undefined
-          ? `${groupName} · 任务`
-          : `${groupName} · ${tasks.data ? openCount(tasks.data) : 0} 个未完成`;
+    panel === "memory"
+      ? `${groupName} 的 MEMORY.md`
+      : panel === "runs"
+        ? room.kind === "group"
+          ? `${groupName} · 包括讨论串里的轮次`
+          : `${groupName} 的全部轮次`
+        : panel === "threads"
+          ? parent
+            ? `${groupName} · ${parent.author.kind === "user" ? "你" : parent.author.displayName}的消息`
+            : `${groupName} · ${threads.data?.length ?? 0} 个`
+          : taskNumber !== undefined
+            ? `${groupName} · 任务`
+            : `${groupName} · ${tasks.data ? openCount(tasks.data) : 0} 个未完成`;
   const back =
     parent || taskNumber !== undefined ? () => setSelection({ roomId, parent: undefined, task: undefined }) : undefined;
 
@@ -206,7 +217,9 @@ export function ChatView({
           onBack={back}
           onClose={close}
         >
-          {panel === "runs" ? (
+          {panel === "memory" && room.kind === "direct" ? (
+            <MemoryPanel agent={room.agent} agents={agents} expanded={expanded} />
+          ) : panel === "runs" ? (
             <RunPanel
               scope={room.kind === "direct" ? { agentId: room.agent.id } : { roomId }}
               agents={agents}
