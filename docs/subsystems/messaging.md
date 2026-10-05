@@ -16,15 +16,18 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `agents` | 名字、handle、人设、Engine（`opencode`）、模型 | handle 唯一，格式是小写字母、数字与 `-`，以字母或数字开头，最多 32 字符 |
 | `rooms` | 房间；`kind` 是 `direct` 或 `group`；群聊有名字；`next_seq` 是最新一条的序号 | `direct_key` 唯一：每个用户与 Agent 之间只有一个私聊房间；群聊必须有名字 |
 | `room_users`、`room_agents` | 房间成员 | |
-| `messages` | 房间、序号、作者、正文、时间 | 作者恰好是用户或 Agent 之一；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
+| `messages` | 房间、序号、作者、正文、时间；Agent 的消息还有所在的一轮（`run_id`）与发出前被 HELD 拦下的次数（`held_before`） | 作者恰好是用户或 Agent 之一；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
 | `message_mentions` | 消息 @ 到的 Agent | 只记录写入时是房间成员的 Agent |
 | `agent_read_cursors` | 每个 Agent 在每个房间的已读位置（`last_read_seq`）与已投递位置（`delivered_seq`） | 已投递位置不小于已读位置 |
 | `user_read_cursors` | 用户在每个房间读到的序号，用来算未读数 | |
+| `runs` | 运行记录：Agent 的一轮，结果（`running`、`succeeded`、`failed`、`cancelled`、`interrupted`）、错误、完整输入、起止时间、token 与费用合计、步数、回复数、HELD 次数 | 每个 Agent 最多一轮 `running`；`failed` 必须有错误；只有 `running` 没有结束时间 |
+| `run_triggers` | 一轮被哪个房间的哪几条消息唤醒 | |
+| `run_events` | 一轮里的每一步：`step`、`tool`、`text`、`step_end`、`reply`、`held`，序号在一轮内递增 | |
 
 - ID 都是数据库生成的 UUID，代码中用 branded 类型（`packages/protocol/src/ids.ts`）。
 - 表结构由 `packages/server/src/db/schema.ts` 定义，迁移由 drizzle-kit 生成在 `packages/server/drizzle/`。
 
-理由见 [私聊的数据模型](../../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md) 与 [群聊](../../.agents/notes/implemented/feature/2026-10-05-group-chat.md)。
+理由见 [私聊的数据模型](../../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md)、[群聊](../../.agents/notes/implemented/feature/2026-10-05-group-chat.md) 与 [运行观测](../../.agents/notes/implemented/feature/2026-10-05-run-observability.md)。
 
 ## 3. Agent 与房间
 
@@ -62,12 +65,28 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - Agent 的回复写入后，它的已投递位置推进到这条回复：之前的消息不是看过的就是它自己发的。
 - `POST /agent/reply` 总是返回 200：`{ outcome: "posted", id, seq }` 或 `{ outcome: "held", newMessages, omitted }`。HELD 时不通知界面，也不唤醒任何 Agent。
 
-## 7. 运行期状态
+## 7. 运行记录与 Agent 状态
+
+运行记录的代码在 `packages/server/src/runs.ts`：
+
+- **开始一轮：** Computer 登记被唤醒的消息（每个房间的起止序号）与完整输入，拿到 run ID。这个 Agent 还有没结束的一轮时，先把它标为 `interrupted`。
+- **上报事件：** Computer 按顺序追加 Engine 事件；`step_end` 带的用量累加到这一轮，`step` 计入步数。工具的输入输出与模型文字每段至多 4,096 字符。写入前把 NUL 与落单的 UTF-16 代理项换成 U+FFFD：PostgreSQL 的 text 与 jsonb 不接受它们（`storableText`）。
+- **结束：** 写结果与错误。已经结束的一轮再上报事件或结果时返回 409，不存在时返回 404。
+- **回复与 HELD：** `POST /agent/reply` 到达时，Server 把“发出”或“被拦下”写进这个 Agent 正在跑的那一轮，并在发出的消息上记下 run ID 与这一轮里、这个房间、上一条回复之后被 HELD 拦下的次数。不在任何一轮里时不记。记录失败只写日志，`crew reply` 照常返回发出或被拦下的结果。
+- **中断：** `POST /computer/connect` 把全部 `running` 的轮次标为 `interrupted`：上一个 Computer 不会再写结果。
+- 每一步写入后向界面发 `run.activity`（带 run ID 与涉及的房间）；开始与结束时另发 `agents`。
+
+Agent 的状态由运行记录推出（`agentStatuses`），不单独保存：
+
+- 有 `running` 的一轮：`working`，带 run ID 与这一轮涉及的房间；
+- 否则 Computer 报告了它跑不起来（沙箱不可用、目录不安全）：`error`，`roomIds` 为空，表示不限于某个房间；
+- 否则最近结束的一轮是 `failed`：`error`，带错误与那一轮的房间；
+- 其余是 `idle`。
 
 以下状态只存在 Server 内存中，应用重启后清空（`packages/server/src/state.ts`）：
 
 - **Agent 凭证：** Computer 为每个 Agent 申请一个随机凭证。再次申请时，旧凭证立即失效。
-- **Agent 状态：** `idle`（默认）、`working`、`error`（带原因），由 Computer 上报。变化时通知界面。
+- **Agent 跑不起来的原因：** 由 Computer 报告或清除。变化时通知界面。
 - **可用模型：** Computer 上报的模型列表。上报时通知界面。
 
 ## 8. 接口
@@ -81,16 +100,21 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `GET /desktop/conversations` | Desktop | 会话列表：最后一条消息与未读数 |
 | `POST /desktop/rooms/:roomId/read` | Desktop | 推进用户的已读位置 |
 | `GET /desktop/groups` | Desktop | 群聊列表，含成员 |
+| `GET /desktop/runs` | Desktop | 运行记录，从新到旧，至多 100 轮；`roomId` 或 `agentId` 筛选 |
+| `GET /desktop/runs/:runId` | Desktop | 一轮的概要、完整输入与每一步 |
 | `POST /desktop/groups` | Desktop | 新建群聊 |
 | `POST /desktop/groups/:roomId/members` | Desktop | 把 Agent 加进群聊 |
 | `GET /desktop/models` | Desktop | 可用模型列表 |
-| `GET /desktop/events` | Desktop | SSE：`room.messages`、`agents`、`rooms`、`models` |
-| `POST /computer/connect` | Computer | 确认地址与凭证可用 |
+| `GET /desktop/events` | Desktop | SSE：`room.messages`、`agents`、`rooms`、`run.activity`、`models` |
+| `POST /computer/connect` | Computer | 确认地址与凭证可用；把没结束的轮次标为中断 |
 | `GET /computer/agents` | Computer | Agent 列表，含私聊房间 |
 | `POST /computer/agents/:agentId/inbox` | Computer | 取出未读消息，记为已投递 |
 | `POST /computer/agents/:agentId/inbox/ack` | Computer | 已读位置推进到已投递位置 |
 | `POST /computer/agents/:agentId/token` | Computer | 签发 Agent 凭证 |
-| `POST /computer/agents/:agentId/status` | Computer | 上报 Agent 状态 |
+| `POST /computer/agents/:agentId/problem` | Computer | 报告或清除 Agent 跑不起来的原因 |
+| `POST /computer/agents/:agentId/runs` | Computer | 开始一轮 |
+| `POST /computer/runs/:runId/events` | Computer | 追加 Engine 事件 |
+| `POST /computer/runs/:runId/finish` | Computer | 一轮结束 |
 | `POST /computer/models` | Computer | 上报可用模型 |
 | `GET /computer/events` | Computer | SSE：`agent.wake`、`agents` |
 | `POST /agent/reply` | Agent | 以凭证对应的 Agent 身份在房间里回复，或被 HELD 拦下 |
@@ -121,7 +145,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | 已有房间的历史消息在迁移后不算未读 | 手动：2026-10-05 在临时数据库上执行到 `0001`、插入房间，再执行 `0002_user_read_cursors.sql`，已读位置等于房间的最新序号 |
 | HELD：有没看到的新消息时不写入并返回它们，从最早的开始一次最多 20 条，其余的下次回复时返回、确认已读后仍是未读；看过之后能发出；被 HELD 返回过的消息确认后不再出现 | `api.test.ts` 的 `agent replies` |
 | Agent 不能在非成员的房间回复；换发凭证后旧凭证失效 | `api.test.ts` 的 `agent replies` |
-| 状态与模型上报后通知界面 | `api.test.ts` 的 `status and models` |
+| 运行记录：状态由运行记录推出并只属于这一轮的房间；事件有序、用量累加；回复与 HELD 记进这一轮并标在消息上；失败显示为出错直到下一轮成功；已结束的一轮拒绝上报；连上时中断旧轮次；同一 Agent 最多一轮在跑；按房间或 Agent 列出；Computer 报告的问题在每个房间显示为出错 | `api.test.ts` 的 `runs`；约束见 `db.test.ts` 的 `constraints` |
+| 模型上报后通知界面 | `api.test.ts` 的 `models` |
 | 三类凭证互不通用；CORS 只允许界面来源；不合法的请求体、过大的请求体与不存在的接口都返回 JSON 错误 | `packages/server/test/app.test.ts` |
 | SSE 能被共用的读取器读到，中止后干净结束；Server 关闭通道时 SSE 立即结束 | `api.test.ts` 的 `events over SSE` |
 | 界面正在读 SSE 时，Server 也能在 1 秒内关闭 | `packages/server/test/serve.test.ts` |

@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   clearSession,
   confinementFor,
+  copyIntoCache,
   prepareAgent,
   prepareRuntime,
   removeRuntime,
@@ -154,6 +164,26 @@ describe("paths the agent controls", () => {
 
     await expect(prepareAgent(runtime, alice)).rejects.toThrow("不是普通目录");
     expect(mode(outside)).toBe(0o755);
+  });
+
+  it("refuses to copy into the cache through a directory replaced by a link, and skips an up-to-date copy", async () => {
+    const layout = await prepareAgent(await prepareRuntime(root, session), alice);
+    const source = join(root, "models.json");
+    writeFileSync(source, "prices");
+    await copyIntoCache(layout, source, join("opencode", "models.json"));
+    const copied = join(layout.cacheDir, "opencode", "models.json");
+    expect(readFileSync(copied, "utf8")).toBe("prices");
+
+    // 副本比来源新时不再复制。
+    writeFileSync(copied, "agent changed it");
+    await copyIntoCache(layout, source, join("opencode", "models.json"));
+    expect(readFileSync(copied, "utf8")).toBe("agent changed it");
+
+    const outside = outsideDir();
+    await rm(join(layout.cacheDir, "opencode"), { recursive: true });
+    symlinkSync(outside, join(layout.cacheDir, "opencode"));
+    await expect(copyIntoCache(layout, source, join("opencode", "models.json"))).rejects.toThrow("不是普通目录");
+    expect(readdirSync(outside)).toEqual([]);
   });
 
   it("refuses to save a session through a directory replaced by a link", async () => {

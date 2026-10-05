@@ -6,13 +6,13 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
 
 1. 从 stdin 读 bootstrap，调用 `POST /computer/connect` 确认地址与凭证。失败时把原因写到 stderr 并以 1 退出。
 2. 向 stdout 写 ready。之后的准备不推迟窗口出现。
-3. 检查 Seatbelt 是否可用、能否找到 `opencode`。任一不满足时不创建任何 Runner，并给每个 Agent 上报 `error` 状态与原因，例如“沙箱不可用：…”。
+3. 检查 Seatbelt 是否可用、能否找到 `opencode`。任一不满足时不创建任何 Runner，并给每个 Agent 报告跑不起来的原因，例如“沙箱不可用：…”。
 4. 准备本次运行目录：删除以前运行留下的 `~/.crew/runtime/*`，写入 `bin/crew` 包装脚本。
 5. 用 `opencode models` 读取可用模型并上报（最多等 30 秒，只保留 `提供方/模型` 形式的行）。
 6. 订阅 `/computer/events`。每次连接成功后同步 Agent 列表，再唤醒全部 Runner，补上断线期间到达的消息。
 
 - 同步 Agent 列表时，为新 Agent 创建 Runner；名字、人设、Engine 或模型变了的 Agent，先停掉旧 Runner 再建新的。创建 Runner 时签发 Agent 凭证并写入凭证文件，写入 `AGENTS.md`。
-- 某个 Agent 准备失败（例如它的目录里出现了符号链接）时，给它上报 `error` 与原因，其他 Agent 照常运行。
+- 某个 Agent 准备失败（例如它的目录里出现了符号链接）时，给它报告原因，其他 Agent 照常运行；之后准备成功时清除。
 - 第 4 到 6 步本身失败时（例如建不了本次运行目录），Computer 把原因写到 stderr 并以 1 退出，主进程随之弹出错误对话框。
 - stdin 关闭或收到 SIGTERM、SIGINT 时停止：同时中止全部 Runner 与 SSE（中止正在运行的 Turn），等它们结束，删除本次运行目录，然后退出。
 
@@ -21,11 +21,12 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
 每个 Agent 一个 Runner，内部是一个串行循环（`packages/computer/src/runner.ts`）：
 
 - Turn 运行期间到达的唤醒合并成下一轮，不并发运行。
-- 一轮 Turn：读取未读消息（同时记为已投递）。没有未读时什么也不做。有未读时上报 `working`，生成本轮输入，运行一次 Engine。
-  - **成功：** 保存 session，确认已读（已读位置推进到已投递位置，包括被 HELD 返回过的消息），上报 `idle`。
-  - **失败：** 上报 `error` 与原因，不确认已读；下一次唤醒时这些消息会和新消息一起重新处理。
-  - **停止：** 中止 Engine，不确认已读，也不上报状态。读取未读消息期间被停止时，不再开始这一轮。
-  - **意外错误**（读取、上报或 Engine 违反约定抛出）：上报 `error` 与“处理失败：…”，下一次唤醒重新读取。
+- 一轮 Turn：读取未读消息（同时记为已投递）。没有未读时什么也不做。有未读时生成本轮输入，向 Server 登记这一轮（每个房间的起止序号与完整输入），运行一次 Engine。Agent 的“回复中”与“出错”由 Server 从运行记录推出，见 [messaging.md](messaging.md) 第 7 节。
+  - **运行中：** Engine 的每个事件按顺序上报（`packages/computer/src/runner.ts` 的 `RunReporter`）。前一批还在路上时到达的事件攒成下一批；上报失败只记日志、丢掉这一批，不影响这一轮。
+  - **成功：** 保存 session，确认已读（已读位置推进到已投递位置，包括被 HELD 返回过的消息），记为 `succeeded`。
+  - **失败：** 记为 `failed` 与原因，不确认已读；下一次唤醒时这些消息会和新消息一起重新处理。
+  - **停止：** 中止 Engine，不确认已读，尽力记为 `cancelled`；记不上时，下一个 Computer 连上后它被标为中断。读取未读消息期间被停止时，不再开始这一轮。
+  - **意外错误**（保存 session、确认已读或 Engine 违反约定抛出）：记为 `failed` 与“处理失败：…”。读取未读消息或登记失败时只记日志，下一次唤醒重新读取。
 - 本轮输入按房间列出未读消息，并写明本地时间。群聊写出名字与成员名册；作者写成 `User (user)` 或 `名字 (@handle)`，本 Agent 加 `you`；@ 到本 Agent 的消息标 `[mentions you]`。文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
 
 ## 3. OpenCode
@@ -40,6 +41,8 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - 环境变量只有：`PATH`、`LANG`、`TMPDIR`；`TMPPREFIX` 指向可写的临时目录（zsh 在这里写 heredoc 的临时文件，默认的 `/tmp/zsh` 沙箱不让写）；`HOME` 与各个 `XDG_*` 目录指向 Agent 自己的目录；`OPENCODE_DISABLE_PROJECT_CONFIG=1`；`OPENCODE_AUTH_CONTENT`；`OPENCODE_CONFIG_CONTENT`；以及 `crew` 需要的 `CREW_SERVER_URL`、`CREW_TOKEN_FILE`，并把 `bin/crew` 所在目录放在 `PATH` 最前面。没有数据库相关的变量。
 - `OPENCODE_AUTH_CONTENT` 来自用户的 `$XDG_DATA_HOME/opencode/auth.json`，在沙箱外读取。文件不存在、超过 64 KiB 或不是合法 JSON 时不启动。
 - `OPENCODE_CONFIG_CONTENT` 是派生的配置：常驻规则指向 Agent 的 `AGENTS.md`；放行全部操作，安全边界是 Seatbelt；本次的模型标为 active。
+- 模型价格表：每轮启动前，把用户的 `$XDG_CACHE_HOME/opencode/models.json`（默认 `~/.cache`）复制进 Agent 的缓存目录；副本不比来源旧时跳过。OpenCode 按这张表算费用，缓存里没有它时报告的费用一律是 0，它也不会自己去下载。复制失败只记日志。复制时逐级确认目录不是符号链接，先写临时文件再改名。
+- 事件：每行输出换成运行记录的 Engine 事件（`engineEventOf`）。`step_start` 是开始一步；`tool_use` 在工具完成后才有，带工具名、标题、输入、输出、耗时与是否失败；`text` 是模型的文字；`step_finish` 是一步结束，带 token 与费用。工具的输入输出与文字截到 4,096 字符，不把 emoji 这类代理对从中间切断。
 - session：从输出事件中取 `sessionID`，保存在 `engines/opencode/session.json`，并记下 Engine、模型与 `AGENTS.md` 的摘要。三者都没变时下一轮继续这个 session，否则开新 session。旧 session 不存在时，开新 session 重试一次。
 - 失败分为：未登录、模型不可用、限流、session 失效、沙箱、OpenCode 报告的错误、进程异常、输出超限、已停止。错误信息中隐去 Agent 目录与凭证。`runTurn` 不抛出，意外错误也转成“进程异常”。
 - 准备期间（查找 `opencode`、读取登录文件）已经被停止时，不启动 OpenCode。
@@ -107,8 +110,12 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | 不顺着 Agent 换成的符号链接或命名管道操作；准备失败的 Agent 上报 error，其他 Agent 不受影响 | `home.test.ts` 的 `paths the agent controls`；`daemon.test.ts` 的 `reports an unsafe agent directory and keeps serving the other agents` |
 | 准备失败时 Computer 退出，不空转 | `packages/computer/test/main.test.ts` 的 `exits with the reason instead of idling when it cannot prepare its directories` |
 | OpenCode 的参数、环境隔离、session 重试、失败分类、进程组停止、输出超限；一轮结束后不留下后台进程，也不被占着管道的后台进程卡住；沙箱里的 zsh 能运行 heredoc | `packages/computer/test/opencode.test.ts` |
+| Engine 事件的解析（样本取自真实输出）与截短 | `packages/computer/test/opencode-events.test.ts` |
+| 价格表复制进 Agent 的缓存，不顺着符号链接写，副本较新时跳过 | `opencode.test.ts` 的 `copies the user's model price table…`；`home.test.ts` 的 `refuses to copy into the cache through a directory replaced by a link…` |
+| 每一轮登记唤醒的消息与完整输入，事件按顺序上报，结束写结果；停止时记为已停止 | `runner.test.ts` 的 `records each turn…`、`stops a running turn…` |
 | `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；被 HELD 拦下时打印新消息，再次运行后发出；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
 | `AGENTS.md` 与每轮输入的文本逐字锁定 | `home.test.ts`、`packages/computer/test/prompt.test.ts` |
 | 构建产物的完整链路：用户发消息，Seatbelt 中的 Engine 经构建好的 `crew` 回复并落库 | `apps/desktop/test/smoke.e2e.ts` |
 | 真实模型的完整链路 | 手动：`CREW_E2E_MODEL=<模型> pnpm test:e2e` |
+| 真实模型的运行记录：工具调用、HELD、回复、用量与费用都记进这一轮 | 手动：2026-10-05 用 `deepseek/deepseek-flash` 在群聊里让 Alice 写文件并确认，记下 5 步、HELD 1 次、回复 1 条、费用约 0.0015 美元；没被点名的 Bob 两轮都是白跑 |
 | 真实模型的群聊：全员唤醒、Agent 之间的 @、HELD 后改写再发 | 手动：2026-10-05 用 `deepseek/deepseek-flash` 跑一个两人群聊，Alice 被 HELD 后把补充的信息写进回复再发出 |

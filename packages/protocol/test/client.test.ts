@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { ZodError } from "zod";
-import { AgentId, ApiClient, ApiError, api, endpointPath, errorMessage, MessageWindow, RoomId } from "../src";
+import {
+  AgentId,
+  ApiClient,
+  ApiError,
+  api,
+  clipText,
+  endpointPath,
+  errorMessage,
+  MessageWindow,
+  RoomId,
+  storableText,
+} from "../src";
 
 // 按契约调用 Server 的客户端。用一个记录请求、返回预设响应的 fetch 代替 Server。
 
@@ -109,5 +120,20 @@ describe("errorMessage", () => {
   it("falls back to the status code", () => {
     expect(errorMessage("Internal Server Error", 500)).toBe("Server 返回 500");
     expect(errorMessage(undefined, 502)).toBe("Server 返回 502");
+  });
+});
+
+describe("clipText and storableText", () => {
+  it("cuts to the limit without splitting an emoji", () => {
+    expect(clipText("abc", 5)).toBe("abc");
+    expect(clipText("ab😀c", 3)).toBe("ab");
+    expect(clipText("ab😀c", 4)).toBe("ab😀");
+  });
+
+  it("replaces NUL and lone surrogates, which PostgreSQL rejects, and keeps whole emoji", () => {
+    expect(storableText("a\u0000b")).toBe("a�b");
+    expect(storableText("x\ud83d")).toBe("x�");
+    expect(storableText("\ude00y")).toBe("�y");
+    expect(storableText("ok 😀")).toBe("ok 😀");
   });
 });

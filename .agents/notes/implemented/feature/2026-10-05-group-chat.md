@@ -11,7 +11,7 @@ Status: implemented
 - Agent 要知道房间里有谁、怎样点名别人。
 - 群聊消息多，界面每次收到提示都重新拉取整个房间的历史，代价随房间变长而增长。
 
-路线图见 [重写的路线图](../../proposed/architecture/2026-10-04-typescript-rewrite.md)“实现顺序”第 3 步。triage 属于 3b，另写 Note。2026-10-05 的两次讨论中，用户同意了下面全部决策。
+路线图见 [重写的路线图](../../proposed/architecture/2026-10-04-typescript-rewrite.md)“实现顺序”第 3 步。triage 属于第 5 步，另写 Note。2026-10-05 的两次讨论中，用户同意了下面全部决策。
 
 ## 决策
 
@@ -24,7 +24,7 @@ Status: implemented
 **handle 与 @**
 
 - Agent 有独立的 `handle`：小写字母、数字与 `-`，全局唯一，新建时必填，不能修改。数据库约束与 protocol 的 `Handle` 是同一条规则。已有的 Agent 由迁移 `packages/server/drizzle/0001_group_chat.sql` 按名字生成。
-- Server 写入消息时解析 `@handle`（`packages/server/src/mentions.ts`），只认房间里的 Agent 成员，存进 `message_mentions`。3b 的 triage 与第 5 步的任务分配都要用它。
+- Server 写入消息时解析 `@handle`（`packages/server/src/mentions.ts`），只认房间里的 Agent 成员，存进 `message_mentions`。第 5 步的 triage 与第 6 步的任务分配都要用它。
 
 **群聊与成员**
 
@@ -63,7 +63,7 @@ Status: implemented
 ## 后果
 
 - 3a 不需要 Redis：已投递位置在 PostgreSQL，唤醒仍走进程内事件。raft 的 HELD 草稿同样存在 PostgreSQL（`attested_send_pending_drafts`）。
-- 全部唤醒时，用户的每条消息让群里每个 Agent 都运行一次 Turn。3b 的 triage 用 3a 的实测数据决定是否值得。
+- 全部唤醒时，用户的每条消息让群里每个 Agent 都运行一次 Turn。第 5 步的 triage 用第 4 步运行记录的实测数据决定是否值得。
 - HELD 只防止过时的回复，不防止两个 Agent 看到同一状态后同时发送。raft 的文档承认同样的局限（`raft:manual/agent-knowledge/structural-enforcement.md`）。
 - Agent 只能靠 @ 叫来其他 Agent；忘了 @ 时，其他 Agent 要等用户下一条消息才看到它的话。
 - 改了常驻规则的文本，全部 Agent 下一轮开新 session。

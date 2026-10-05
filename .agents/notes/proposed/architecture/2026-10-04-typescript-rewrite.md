@@ -24,7 +24,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 ### 已经实现的决策
 
-第 1、2 步与第 3a 步已经实现。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
+第 1 至 4 步已经实现（第 3 步的 triage 移到了第 5 步）。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
 
 - [workspace、包划分与构建](../../implemented/architecture/2026-10-04-workspace-and-build.md)
 - [主进程监管 Server 与 Computer](../../implemented/architecture/2026-10-04-process-supervision.md)
@@ -37,6 +37,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - [仓库规则、检查与测试流程](../../implemented/process/2026-10-04-repo-rules-and-checks.md)
 - [群聊（第 3a 步）](../../implemented/feature/2026-10-05-group-chat.md)
 - [会话列表、未读数与侧栏导航](../../implemented/feature/2026-10-05-conversation-list.md)
+- [运行观测（第 4 步）](../../implemented/feature/2026-10-05-run-observability.md)
 
 ### 进程与通信
 
@@ -58,7 +59,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 | `crew` 的参数解析 | commander |
 | Markdown | react-markdown 与 remark-gfm；代码高亮用 rehype-highlight |
 | Electron 构建与开发 | electron-vite |
-| 安装包 | electron-builder，在第 7 步建立 |
+| 安装包 | electron-builder，在第 8 步建立 |
 
 ### 存储
 
@@ -88,16 +89,15 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 1. 骨架：workspace、Electron、主进程启动 Server 与 Computer、界面显示连接状态。
 2. 最小私聊：用户给一个 Agent 发消息，Server 保存消息并唤醒 Agent，Computer 在 Seatbelt 中启动 OpenCode，Agent 经 `crew` 回复，界面显示回复。每个环节只做最简单的版本：一对一私聊，没有 triage、退避与幂等。
-3. 群聊协调，分两半：
-   - 3a：多个 Agent 的房间、`@handle`、房间成员全部唤醒并由提示词约束何时发言、HELD（发送时有未读的新消息就存为草稿并返回新消息）、界面按序号增量拉取消息。
-   - 3b：triage。先用 3a 的版本跑一组对话，统计无关唤醒浪费的 Turn，作为评测集；再用一次便宜的模型调用判断“这条和我有关吗”，用评测集衡量省下的 Turn 与误判，并给 triage 题面加快照。
-4. 运行观测：Agent 运行时实时显示它在思考、调用了哪个工具，可以查看每轮的记录。数据来自解析 OpenCode 的事件流。
-5. 任务：房间里的消息可以转成任务；状态固定为待办、进行中、待审、完成、关闭，按状态显示成看板或列表；Agent 领取任务是一次 compare-and-swap。分配任务时发一条系统消息并 @ 对方，复用第 3 步的唤醒与 HELD，不另做卡片唤醒。
-6. 提醒、记忆与静音：Agent 用 `crew` 给自己定时或周期提醒，到时唤醒它自己；Agent 目录里有 `MEMORY.md`，由 Agent 自己维护；用户可以静音房间。
-7. 打包：见下文“打包”。
-8. 删除 Rust：删除 `crates/`、Tauri、旧 `desktop/`、描述 Rust 版的文档与 `.agents/notes/legacy/`，卸载 rust-analyzer 相关工具，更新 README、testing.md 与本 Agent Note。
+3. 群聊（3a）：多个 Agent 的房间、`@handle`、用户的消息唤醒全部成员而 Agent 的消息只唤醒它 @ 到的成员、HELD（发送时有没看过的新消息就不发出并返回新消息）、界面按序号增量拉取消息。
+4. 运行观测：Agent 运行时实时显示它在思考、调用了哪个工具，状态分房间；每一轮留下运行记录（唤醒原因、耗时、用量、发出的消息、HELD），可以回看。数据来自解析 OpenCode 的事件流。
+5. triage（3b）：用第 4 步的运行记录统计“白跑”（被唤醒、完整运行一轮却没有发出消息）占的轮次与费用，作为动机数据；按“消息 × Agent”标注应该回复还是应该沉默，作为评测集；再用一次便宜的模型调用判断“这条和我有关吗”，用评测集衡量漏判与节省，并给 triage 题面加快照。
+6. 任务：房间里的消息可以转成任务；状态固定为待办、进行中、待审、完成、关闭，按状态显示成看板或列表；Agent 领取任务是一次 compare-and-swap。分配任务时发一条系统消息并 @ 对方，复用第 3 步的唤醒与 HELD，不另做卡片唤醒。
+7. 提醒、记忆与静音：Agent 用 `crew` 给自己定时或周期提醒，到时唤醒它自己；Agent 目录里有 `MEMORY.md`，由 Agent 自己维护；静音房间（是用户不再看到未读，还是 Agent 不再被唤醒，到这一步再定）。
+8. 打包：见下文“打包”。
+9. 删除 Rust：删除 `crates/`、Tauri、旧 `desktop/`、描述 Rust 版的文档与 `.agents/notes/legacy/`，卸载 rust-analyzer 相关工具，更新 README、testing.md 与本 Agent Note。
 
-第 3 至 6 步的形状参考了 raft：raft 不做 triage，房间成员全部收到消息（`raft:packages/server/src/services/messageService.ts` 的 `broadcastAndDeliver`），由提示词约束何时插话（`raft:packages/daemon/src/drivers/raftCliGuide.ts` 的 Conversation etiquette），靠发送时的新鲜度检查防止过时的回复（`raft:packages/server/src/routes/internalAgentApi.ts`，最多返回 3 条新消息）；任务状态固定（`raft:packages/server/src/db/schema.ts` 的 `tasks`），分配任务时写一条 “📌 Assigned” 系统消息并 @ 对方（`raft:packages/server/src/services/taskService.ts`）；定时唤醒用 Agent 自己设的提醒，记忆用 `MEMORY.md`（`raft:packages/daemon/src/workspaces.ts`）。
+群聊、任务与提醒的形状参考了 raft：raft 不做 triage，房间成员全部收到消息（`raft:packages/server/src/services/messageService.ts` 的 `broadcastAndDeliver`），由提示词约束何时插话（`raft:packages/daemon/src/drivers/raftCliGuide.ts` 的 Conversation etiquette），靠发送时的新鲜度检查防止过时的回复（`raft:packages/server/src/routes/internalAgentApi.ts`，最多返回 3 条新消息）；任务状态固定（`raft:packages/server/src/db/schema.ts` 的 `tasks`），分配任务时写一条 “📌 Assigned” 系统消息并 @ 对方（`raft:packages/server/src/services/taskService.ts`）；定时唤醒用 Agent 自己设的提醒，记忆用 `MEMORY.md`（`raft:packages/daemon/src/workspaces.ts`）。
 
 功能对齐后接入新的 Engine 时，写一份“新增 Engine adapter”的操作指南，放在本仓库的 docs/cookbook/ 目录（还没有建）。做法来自 DSH 的 `dsh:docs/cookbook/adding-an-llm-adapter.md`。
 
@@ -105,7 +105,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 ### 打包
 
-第 7 步建立安装包：
+第 8 步建立安装包：
 
 - 用 electron-builder。Server、Computer、`crew` 与迁移文件经 `extraResources` 放在 asar 之外，做法来自 raft 把 CLI 放在 `Resources/cli/index.js`（`raft:apps/raft-desktop-electron/electron-builder.yml`）。
 - 界面经自定义协议 `app://crew` 加载，CORS 来源随之改为它。raft 与 cumora 都用 `app://`。
@@ -121,6 +121,8 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 **Redis 作为必需依赖。** 原计划 PostgreSQL 保存业务事实，Redis 保存可过期的协调数据，两者都必需，理由是以后 Server 多实例部署时协调数据与事件要跨实例共享。第 2 步结束时 Redis 只在启动时检查连接。读 raft 后放弃：raft 的 Redis 是可选的，没有它时按单实例运行，Redis 只用于多副本之间的同步（`raft:packages/server/src/replicaRouter.ts`）；它的 HELD 草稿存在 PostgreSQL（`attested_send_pending_drafts`）。Crew 只有一个 Server 进程，不用 Redis 能少一个服务和一组测试配置。
 
 **第 3 步先做 triage。** 原计划第 3 步一起做 triage、点名路由、HELD、连发与逐字重复检查。改为先做不带 triage 的 3a：triage 是减少无关 Turn 的优化，不是群聊能工作的前提；先测出浪费的 Turn，triage 才有评测数据。连发与逐字重复检查删掉，raft 也没有，观察到实际问题时再加。
+
+**triage 紧接在 3a 之后，运行观测排在后面。** 2026-10-05 的路线图最初这样排。用户同意改为先做运行观测：triage 要用“白跑”的轮次与费用作为动机数据，这些数据来自每一轮的运行记录，而运行记录属于运行观测；先能看到、量到，再去优化。运行观测本身的演示效果也好，并且能修掉 Agent 状态不分房间的问题。
 
 **看板沿用旧版：自定义列加 `kind`，卡片有独立的唤醒。** 见 legacy 的 `.agents/notes/legacy/architecture/2026-09-24-column-kind-and-card-claim.md` 与 `.agents/notes/legacy/architecture/2026-09-24-persistent-card-wakes.md`。没有采用：固定状态足够演示，分配任务复用消息与 @ 唤醒，不需要第二套唤醒机制。
 
@@ -146,8 +148,8 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 ## 验收条件
 
-- 第 1 至 7 步每一步结束时，`docker compose up -d` 与 `pnpm dev` 能启动应用，已完成的功能可以演示，`pnpm check` 通过。
-- 第 8 步结束后，仓库中没有 Rust 与 Tauri 代码，文档中没有 Rust 路径。
+- 第 1 至 8 步每一步结束时，`docker compose up -d` 与 `pnpm dev` 能启动应用，已完成的功能可以演示，`pnpm check` 通过。
+- 第 9 步结束后，仓库中没有 Rust 与 Tauri 代码，文档中没有 Rust 路径。
 
 ## 风险
 

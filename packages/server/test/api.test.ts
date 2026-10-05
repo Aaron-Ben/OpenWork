@@ -81,7 +81,7 @@ async function reply(token: string, roomId: RoomId, body: string) {
 async function listMessages(roomId: RoomId, query = "") {
   const response = await desktop(`/desktop/rooms/${roomId}/messages${query}`);
   expect(response.status).toBe(200);
-  return (await response.json()) as Array<{ seq: number; body: string }>;
+  return (await response.json()) as Array<{ seq: number; body: string; runId: string | null; heldBefore: number }>;
 }
 
 async function agentToken(agentId: AgentId): Promise<string> {
@@ -483,19 +483,226 @@ describe("agent replies", () => {
   });
 });
 
-describe("status and models", () => {
-  it("show a reported status in the agent list and notify the desktop", async () => {
-    const agent = await newAgent("Busy");
-    const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () => {
-      const response = await computer(`/computer/agents/${agent.id}/status`, "POST", { state: "working" });
-      expect(response.status).toBe(204);
-    });
-    expect(events).toEqual([{ type: "agents" }]);
+async function statusOf(agentId: AgentId): Promise<unknown> {
+  const list = (await (await desktop("/desktop/agents")).json()) as Array<{ id: string; status: unknown }>;
+  return list.find((agent) => agent.id === agentId)?.status;
+}
 
-    const list = (await (await desktop("/desktop/agents")).json()) as Array<{ id: string; status: unknown }>;
-    expect(list.find((a) => a.id === agent.id)?.status).toEqual({ state: "working" });
+async function startRun(agentId: AgentId, roomId: RoomId, seq = 1): Promise<string> {
+  const response = await computer(`/computer/agents/${agentId}/runs`, "POST", {
+    prompt: "本轮输入",
+    triggers: [{ roomId, fromSeq: seq, toSeq: seq }],
+  });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { id: string }).id;
+}
+
+const finish = (runId: string, body: unknown) => computer(`/computer/runs/${runId}/finish`, "POST", body);
+const runDetail = async (runId: string) =>
+  (await (await desktop(`/desktop/runs/${runId}`)).json()) as {
+    outcome: string;
+    steps: number;
+    replies: number;
+    holds: number;
+    usage: Record<string, number>;
+    prompt: string;
+    events: Array<{ seq: number; kind: string; [key: string]: unknown }>;
+  };
+
+const at = "2026-10-05T12:00:00.000Z";
+const usage = { input: 100, output: 20, reasoning: 5, cacheRead: 50, cacheWrite: 0, cost: 0.002 };
+
+describe("runs", () => {
+  it("make the agent working in the rooms that woke it, then idle when the run succeeds", async () => {
+    const agent = await newAgent("Runner");
+    await sendAsUser(agent.roomId, "开始");
+    expect(await statusOf(agent.id)).toEqual({ state: "idle" });
+
+    const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () => {
+      const runId = await startRun(agent.id, agent.roomId);
+      expect(await statusOf(agent.id)).toEqual({ state: "working", runId, roomIds: [agent.roomId] });
+      expect((await finish(runId, { outcome: "succeeded" })).status).toBe(204);
+    });
+    expect(events.filter((event) => event.type === "agents")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "run.activity")).toHaveLength(2);
+    expect(await statusOf(agent.id)).toEqual({ state: "idle" });
   });
 
+  it("record engine events in order and add up the usage of each step", async () => {
+    const agent = await newAgent("Stepper");
+    await sendAsUser(agent.roomId, "开始");
+    const runId = await startRun(agent.id, agent.roomId);
+    const append = (events: unknown[]) => computer(`/computer/runs/${runId}/events`, "POST", { events });
+
+    expect((await append([{ kind: "step", at }])).status).toBe(204);
+    const tool = {
+      kind: "tool",
+      at,
+      tool: "bash",
+      title: "ls",
+      input: '{"command":"ls"}',
+      output: "a.txt",
+      durationMs: 15,
+      failed: false,
+    };
+    await append([tool, { kind: "step_end", at, usage }]);
+    await append([
+      { kind: "step", at },
+      { kind: "text", at, text: "完成" },
+      { kind: "step_end", at, usage },
+    ]);
+
+    const run = await runDetail(runId);
+    expect(run.events.map((event) => [event.seq, event.kind])).toEqual([
+      [1, "step"],
+      [2, "tool"],
+      [3, "step_end"],
+      [4, "step"],
+      [5, "text"],
+      [6, "step_end"],
+    ]);
+    expect(run.events[1]).toMatchObject(tool);
+    expect(run).toMatchObject({ steps: 2, prompt: "本轮输入", outcome: "running" });
+    expect(run.usage).toEqual({ input: 200, output: 40, reasoning: 10, cacheRead: 100, cacheWrite: 0, cost: 0.004 });
+  });
+
+  it("note replies and holds in the agent's running run, and mark the message with them", async () => {
+    const agent = await newAgent("Noted");
+    const token = await agentToken(agent.id);
+    await sendAsUser(agent.roomId, "问题");
+    await readInbox(agent.id);
+    const runId = await startRun(agent.id, agent.roomId);
+    await sendAsUser(agent.roomId, "补充一句");
+
+    expect((await reply(token, agent.roomId, "回答")).outcome).toBe("held");
+    expect((await reply(token, agent.roomId, "改写后的回答")).outcome).toBe("posted");
+    expect((await reply(token, agent.roomId, "再补一句")).outcome).toBe("posted");
+
+    const run = await runDetail(runId);
+    expect(run).toMatchObject({ replies: 2, holds: 1 });
+    expect(run.events.map((event) => event.kind)).toEqual(["held", "reply", "reply"]);
+    expect(run.events[0]).toMatchObject({ roomId: agent.roomId, newMessages: 1, preview: "补充一句" });
+
+    const messages = await listMessages(agent.roomId);
+    expect(messages.map((m) => [m.body, m.runId, m.heldBefore])).toEqual([
+      ["问题", null, 0],
+      ["补充一句", null, 0],
+      ["改写后的回答", runId, 1],
+      ["再补一句", runId, 0],
+    ]);
+  });
+
+  it("still hold a reply when the new message has an emoji right at the preview's cut", async () => {
+    const agent = await newAgent("Emoji");
+    const token = await agentToken(agent.id);
+    await sendAsUser(agent.roomId, "开始");
+    await readInbox(agent.id);
+    const runId = await startRun(agent.id, agent.roomId);
+    await sendAsUser(agent.roomId, `${"x".repeat(119)}😀 thanks`);
+
+    expect((await reply(token, agent.roomId, "好")).outcome).toBe("held");
+    const [held] = (await runDetail(runId)).events;
+    expect(held).toMatchObject({ kind: "held", preview: "x".repeat(119) });
+  });
+
+  it("store tool output with NUL bytes and broken emoji instead of dropping the batch", async () => {
+    const agent = await newAgent("Binary");
+    await sendAsUser(agent.roomId, "开始");
+    const runId = await startRun(agent.id, agent.roomId);
+    const binary = {
+      kind: "tool",
+      at,
+      tool: "bash",
+      title: "cat",
+      input: "{}",
+      output: "ELF\u0000\u0001",
+      durationMs: 1,
+      failed: false,
+    };
+    const response = await computer(`/computer/runs/${runId}/events`, "POST", {
+      events: [binary, { kind: "text", at, text: "a\ud83d" }, { kind: "step_end", at, usage }],
+    });
+    expect(response.status).toBe(204);
+
+    const run = await runDetail(runId);
+    expect(run.events.map((event) => event.kind)).toEqual(["tool", "text", "step_end"]);
+    expect(run.events[0]).toMatchObject({ output: "ELF\uFFFD\u0001" });
+    expect(run.events[1]).toMatchObject({ text: "a\uFFFD" });
+    expect(run.usage.input).toBe(100);
+  });
+
+  it("show a failed run as an error in its rooms until a later run succeeds", async () => {
+    const agent = await newAgent("Failing");
+    await sendAsUser(agent.roomId, "开始");
+    const failed = await startRun(agent.id, agent.roomId);
+    expect((await finish(failed, { outcome: "failed", error: "限流" })).status).toBe(204);
+    expect(await statusOf(agent.id)).toEqual({ state: "error", reason: "限流", roomIds: [agent.roomId] });
+
+    const next = await startRun(agent.id, agent.roomId);
+    await finish(next, { outcome: "succeeded" });
+    expect(await statusOf(agent.id)).toEqual({ state: "idle" });
+  });
+
+  it("refuse events and results for a run that already ended", async () => {
+    const agent = await newAgent("Ended");
+    await sendAsUser(agent.roomId, "开始");
+    const runId = await startRun(agent.id, agent.roomId);
+    await finish(runId, { outcome: "cancelled" });
+    expect((await computer(`/computer/runs/${runId}/events`, "POST", { events: [{ kind: "step", at }] })).status).toBe(
+      409,
+    );
+    expect((await finish(runId, { outcome: "succeeded" })).status).toBe(409);
+    const missing = "00000000-0000-4000-8000-000000000000";
+    expect((await finish(missing, { outcome: "succeeded" })).status).toBe(404);
+  });
+
+  it("interrupt the runs a previous computer left running when a computer connects", async () => {
+    const agent = await newAgent("Orphan");
+    await sendAsUser(agent.roomId, "开始");
+    const runId = await startRun(agent.id, agent.roomId);
+    expect((await computer("/computer/connect", "POST")).status).toBe(204);
+    expect(await statusOf(agent.id)).toEqual({ state: "idle" });
+    expect((await runDetail(runId)).outcome).toBe("interrupted");
+  });
+
+  it("keep at most one running run per agent: a new run interrupts the old one", async () => {
+    const agent = await newAgent("Twice");
+    await sendAsUser(agent.roomId, "开始");
+    const first = await startRun(agent.id, agent.roomId);
+    const second = await startRun(agent.id, agent.roomId);
+    expect((await runDetail(first)).outcome).toBe("interrupted");
+    expect(await statusOf(agent.id)).toMatchObject({ state: "working", runId: second });
+  });
+
+  it("are listed newest first, by room or by agent", async () => {
+    const alice = await newAgent("ListAlice", "list-alice");
+    const bob = await newAgent("ListBob", "list-bob");
+    const group = await newGroup("列表", [alice, bob]);
+    await sendAsUser(group.id, "大家好");
+    const a = await startRun(alice.id, group.id);
+    await finish(a, { outcome: "succeeded" });
+    const b = await startRun(bob.id, group.id);
+    await sendAsUser(alice.roomId, "私聊");
+    const c = await startRun(alice.id, alice.roomId);
+
+    const ids = async (query: string) =>
+      ((await (await desktop(`/desktop/runs${query}`)).json()) as Array<{ id: string }>).map((run) => run.id);
+    expect(await ids(`?roomId=${group.id}`)).toEqual([b, a]);
+    expect(await ids(`?agentId=${alice.id}`)).toEqual([c, a]);
+  });
+
+  it("show a problem the computer reports as an error in every room, until it is cleared", async () => {
+    const agent = await newAgent("Blocked");
+    const problem = (value: string | null) =>
+      computer(`/computer/agents/${agent.id}/problem`, "POST", { problem: value });
+    expect((await problem("沙箱不可用")).status).toBe(204);
+    expect(await statusOf(agent.id)).toEqual({ state: "error", reason: "沙箱不可用", roomIds: [] });
+    await problem(null);
+    expect(await statusOf(agent.id)).toEqual({ state: "idle" });
+  });
+});
+
+describe("models", () => {
   it("serve the model list reported by the computer and tell the desktop to refresh it", async () => {
     const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () =>
       computer("/computer/models", "POST", { models: ["opencode-go/deepseek-v4-pro", "deepseek/deepseek-v4-pro"] }),

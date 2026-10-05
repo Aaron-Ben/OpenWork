@@ -159,3 +159,21 @@ export function useJoinGroups(agentId: AgentId) {
     },
   });
 }
+
+/** 运行记录列表。SSE 的 `run.activity` 让全部列表与详情一起失效。 */
+export function useRuns(filter: { roomId?: RoomId; agentId?: AgentId }, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runList(filter),
+    queryFn: () => server.call(api.desktop.listRuns, { query: filter }),
+    enabled,
+  });
+}
+
+/** 一轮的全部内容。`runId` 为空时不读取。 */
+export function useRun(runId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.run(runId ?? ""),
+    queryFn: () => server.call(api.desktop.getRun, { params: { runId: runId ?? "" } }),
+    enabled: runId !== undefined,
+  });
+}

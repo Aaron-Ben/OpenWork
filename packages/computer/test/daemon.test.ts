@@ -138,8 +138,8 @@ describe("ComputerDaemon", () => {
     const engine = new FakeEngine([]);
     await startDaemon(engine, false);
 
-    await until(() => t.ctx.state.statusOf(agent.id).state === "error");
-    expect(t.ctx.state.statusOf(agent.id)).toEqual({ state: "error", reason: "沙箱不可用：测试中关闭了沙箱" });
+    await until(() => t.ctx.state.agentProblems().has(agent.id));
+    expect(t.ctx.state.agentProblems().get(agent.id)).toBe("沙箱不可用：测试中关闭了沙箱");
     expect(engine.requests).toHaveLength(0);
   });
 
@@ -154,8 +154,8 @@ describe("ComputerDaemon", () => {
     const engine = new FakeEngine([]);
     await startDaemon(engine);
 
-    await until(() => t.ctx.state.statusOf(unsafe.id).state === "error");
-    expect(t.ctx.state.statusOf(unsafe.id)).toMatchObject({ state: "error" });
+    await until(() => t.ctx.state.agentProblems().has(unsafe.id));
+    expect(t.ctx.state.agentProblems().get(unsafe.id)).toMatch(/^准备 Agent 失败：/);
     await send(safe.roomId, "你还在吗");
     await until(() => engine.requests.length === 1);
   });

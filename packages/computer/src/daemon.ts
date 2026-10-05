@@ -42,6 +42,8 @@ function fingerprint(agent: ComputerAgent): string {
  */
 export class ComputerDaemon {
   private readonly runners = new Map<AgentId, RunnerEntry>();
+  /** 上报过“跑不起来”的 Agent：准备成功后清除。 */
+  private readonly problems = new Set<AgentId>();
   private readonly controller = new AbortController();
   private runtime: RuntimeLayout | undefined;
   private shimWrapper = "";
@@ -111,7 +113,7 @@ export class ComputerDaemon {
 
     if (this.blocked) {
       const reason = this.blocked;
-      await Promise.all(agents.map((agent) => client.reportStatus(agent.id, { state: "error", reason })));
+      await Promise.all(agents.map((agent) => client.reportProblem(agent.id, reason)));
       return;
     }
 
@@ -136,9 +138,11 @@ export class ComputerDaemon {
         const reason = `准备 Agent 失败：${error instanceof Error ? error.message : String(error)}`;
         console.error(`[computer] ${reason}`);
         if (current) this.runners.delete(agent.id);
-        await client.reportStatus(agent.id, { state: "error", reason });
+        await client.reportProblem(agent.id, reason);
+        this.problems.add(agent.id);
         continue;
       }
+      if (this.problems.delete(agent.id)) await client.reportProblem(agent.id, null);
       this.runners.set(agent.id, { runner, fingerprint: fingerprint(agent) });
       runner.wake();
     }

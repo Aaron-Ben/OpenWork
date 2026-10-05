@@ -12,6 +12,7 @@ import {
   RoomName,
 } from "./collab";
 import { AgentId, MessageId, RoomId } from "./ids";
+import { EngineEvent, RunDetail, RunSummary, RunTrigger } from "./runs";
 
 // Server 的 HTTP 接口契约：每个接口的方法、路径、参数、请求体与响应的 schema。
 // Server 按它注册路由并校验输入，返回值必须符合响应 schema 的类型；客户端按它发请求并校验响应。
@@ -50,8 +51,15 @@ export type ResponseOf<E extends Endpoint> = E["response"] extends z.ZodType ? z
 /** 错误响应一律是 `{ error: 原因 }`。 */
 export const ErrorBody = z.object({ error: z.string() });
 
-/** 房间里的一条消息，界面读取房间时得到。 */
-export const RoomMessage = MessageView.extend({ roomId: RoomId });
+/**
+ * 房间里的一条消息，界面读取房间时得到。Agent 的消息带着它所在的那一轮（`runId`），
+ * 以及发出前被 HELD 拦下的次数（`heldBefore`）。
+ */
+export const RoomMessage = MessageView.extend({
+  roomId: RoomId,
+  runId: z.uuid().nullable(),
+  heldBefore: z.number().int().nonnegative(),
+});
 export type RoomMessage = z.infer<typeof RoomMessage>;
 
 /** 写入一条消息后返回它的位置。 */
@@ -123,6 +131,7 @@ export const MessageWindow = z
   .refine((window) => window.after === undefined || window.before === undefined, "after 与 before 不能同时使用");
 
 const RoomParams = z.object({ roomId: RoomId });
+const RunParams = z.object({ runId: z.uuid() });
 const AgentParams = z.object({ agentId: AgentId });
 
 export const api = {
@@ -168,6 +177,17 @@ export const api = {
       body: z.object({ seq: z.number().int().nonnegative() }),
     }),
     listGroups: endpoint({ method: "GET", path: "/desktop/groups", response: z.array(DesktopGroup) }),
+    /** 运行记录，从新到旧。给 `roomId` 时只列这个房间唤醒的轮次，给 `agentId` 时只列这个 Agent 的。 */
+    listRuns: endpoint({
+      method: "GET",
+      path: "/desktop/runs",
+      query: z.object({
+        roomId: RoomId.optional(),
+        agentId: AgentId.optional(),
+      }),
+      response: z.array(RunSummary),
+    }),
+    getRun: endpoint({ method: "GET", path: "/desktop/runs/:runId", params: RunParams, response: RunDetail }),
     createGroup: endpoint({
       method: "POST",
       path: "/desktop/groups",
@@ -185,6 +205,7 @@ export const api = {
     }),
   },
   computer: {
+    /** Computer 启动时调用：确认地址与凭证可用，并把上一个 Computer 没结束的轮次标为中断。 */
     connect: endpoint({ method: "POST", path: "/computer/connect" }),
     listAgents: endpoint({ method: "GET", path: "/computer/agents", response: z.array(ComputerAgent) }),
     /**
@@ -209,11 +230,42 @@ export const api = {
       params: AgentParams,
       response: z.object({ token: z.string().min(1) }),
     }),
-    reportStatus: endpoint({
+    /**
+     * Agent 跑不起来的原因（沙箱不可用、目录不安全等），与某一轮无关。`problem` 为 null 时清除。
+     * 一轮里的失败记在运行记录里，不经过这里。
+     */
+    reportProblem: endpoint({
       method: "POST",
-      path: "/computer/agents/:agentId/status",
+      path: "/computer/agents/:agentId/problem",
       params: AgentParams,
-      body: AgentStatus,
+      body: z.object({ problem: z.string().min(1).nullable() }),
+    }),
+    /** 开始一轮：登记被哪些消息唤醒与这一轮的完整输入，返回 run ID。 */
+    startRun: endpoint({
+      method: "POST",
+      path: "/computer/agents/:agentId/runs",
+      params: AgentParams,
+      body: z.object({ prompt: z.string(), triggers: z.array(RunTrigger).min(1) }),
+      response: z.object({ id: z.uuid() }),
+      status: 201,
+    }),
+    /** 按发生顺序追加 Engine 事件。 */
+    appendRunEvents: endpoint({
+      method: "POST",
+      path: "/computer/runs/:runId/events",
+      params: RunParams,
+      body: z.object({ events: z.array(EngineEvent).min(1) }),
+    }),
+    /** 一轮结束。失败时带原因。 */
+    finishRun: endpoint({
+      method: "POST",
+      path: "/computer/runs/:runId/finish",
+      params: RunParams,
+      body: z.discriminatedUnion("outcome", [
+        z.object({ outcome: z.literal("succeeded") }),
+        z.object({ outcome: z.literal("cancelled") }),
+        z.object({ outcome: z.literal("failed"), error: z.string().min(1) }),
+      ]),
     }),
     reportModels: endpoint({
       method: "POST",

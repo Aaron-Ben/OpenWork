@@ -1,15 +1,16 @@
 import {
   type AgentId,
-  type AgentStatus,
   ApiClient,
   ApiError,
   api,
   type CallArgs,
   type ComputerAgent,
   type Endpoint,
+  type EngineEvent,
   EVENT_STREAMS,
   type InboxRoom,
   type ResponseOf,
+  type RunTrigger,
 } from "@crew/protocol";
 import { ZodError } from "zod";
 
@@ -52,8 +53,26 @@ export class ServerClient {
     return token;
   }
 
-  async reportStatus(agentId: AgentId, status: AgentStatus): Promise<void> {
-    await this.call(api.computer.reportStatus, { params: { agentId }, body: status });
+  /** Agent 跑不起来的原因；`null` 清除。 */
+  async reportProblem(agentId: AgentId, problem: string | null): Promise<void> {
+    await this.call(api.computer.reportProblem, { params: { agentId }, body: { problem } });
+  }
+
+  /** 开始一轮，返回 run ID。 */
+  async startRun(agentId: AgentId, run: { prompt: string; triggers: RunTrigger[] }): Promise<string> {
+    const { id } = await this.call(api.computer.startRun, { params: { agentId }, body: run });
+    return id;
+  }
+
+  async appendRunEvents(runId: string, events: EngineEvent[]): Promise<void> {
+    await this.call(api.computer.appendRunEvents, { params: { runId }, body: { events } });
+  }
+
+  async finishRun(
+    runId: string,
+    result: { outcome: "succeeded" | "cancelled" } | { outcome: "failed"; error: string },
+  ): Promise<void> {
+    await this.call(api.computer.finishRun, { params: { runId }, body: result });
   }
 
   async reportModels(models: string[]): Promise<void> {

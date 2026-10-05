@@ -1,4 +1,5 @@
 import type { Conversation, DesktopAgent } from "@crew/protocol";
+import { statusIn } from "./status";
 
 /** 侧栏会话一项的第二行：有 Agent 正在回复时写“某某 回复中…”，否则是最后一条消息的预览。 */
 export function conversationPreview(
@@ -6,7 +7,8 @@ export function conversationPreview(
   agents: readonly DesktopAgent[],
 ): { kind: "working" | "message" | "empty"; text: string } {
   const working = agents.filter(
-    (agent) => conversation.agentIds.includes(agent.id) && agent.status.state === "working",
+    (agent) =>
+      conversation.agentIds.includes(agent.id) && statusIn(agent.status, conversation.roomId).state === "working",
   );
   if (working.length > 0) {
     return { kind: "working", text: `${working.map((agent) => agent.displayName).join("、")} 回复中…` };

@@ -7,6 +7,10 @@ export const queryKeys = {
   conversations: ["conversations"] as const,
   messages: (roomId: RoomId) => ["messages", roomId] as const,
   models: ["models"] as const,
+  /** 全部运行记录列表的前缀：让它失效时，按房间或按 Agent 的列表一起失效。 */
+  runs: ["runs"] as const,
+  runList: (filter: { roomId?: RoomId; agentId?: string }) => ["runs", "list", filter] as const,
+  run: (runId: string) => ["runs", "detail", runId] as const,
 };
 
 /**
@@ -24,6 +28,8 @@ export function keysForEvent(event: DesktopEvent): ReadonlyArray<readonly unknow
       return [queryKeys.conversations];
     case "models":
       return [queryKeys.models];
+    case "run.activity":
+      return [queryKeys.runs];
     default:
       return assertNever(event);
   }

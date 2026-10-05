@@ -1,6 +1,20 @@
 import type { AgentId, MessageId, RoomId, UserId } from "@crew/protocol";
 import { sql } from "drizzle-orm";
-import { bigint, check, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  check,
+  doublePrecision,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 // 表结构的取舍见 Agent Note：私聊的数据模型（2026-10-04-direct-chat-data-model），群聊（2026-10-05-group-chat）。
 
@@ -102,6 +116,10 @@ export const messages = pgTable(
       .references(() => agents.id, { onDelete: "restrict" })
       .$type<AgentId>(),
     body: text("body").notNull(),
+    /** Agent 的消息是在哪一轮里发出的；用户的消息为空。 */
+    runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
+    /** 这条消息发出前，同一轮里在这个房间被 HELD 拦下的次数。 */
+    heldBefore: integer("held_before").notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [
@@ -179,4 +197,80 @@ export const userReadCursors = pgTable(
     primaryKey({ columns: [t.userId, t.roomId] }),
     check("user_read_cursors_seq_non_negative", sql`${t.lastReadSeq} >= 0`),
   ],
+);
+
+/**
+ * 运行记录：Agent 被唤醒后跑的一轮。Computer 开始时登记、结束时写结果；用量由每一步的事件累加。
+ * Agent 的状态由它推出：有 `running` 的一轮就是回复中，最近一轮 `failed` 就是出错。
+ */
+export const runs = pgTable(
+  "runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" })
+      .$type<AgentId>(),
+    outcome: text("outcome", { enum: ["running", "succeeded", "failed", "cancelled", "interrupted"] })
+      .notNull()
+      .default("running"),
+    error: text("error"),
+    /** 这一轮交给 Engine 的完整输入。 */
+    prompt: text("prompt").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    reasoningTokens: bigint("reasoning_tokens", { mode: "number" }).notNull().default(0),
+    cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }).notNull().default(0),
+    cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }).notNull().default(0),
+    cost: doublePrecision("cost").notNull().default(0),
+    steps: integer("steps").notNull().default(0),
+    replies: integer("replies").notNull().default(0),
+    holds: integer("holds").notNull().default(0),
+    /** 下一个事件的序号来源，与 `rooms.next_seq` 同样的做法。 */
+    lastEventSeq: integer("last_event_seq").notNull().default(0),
+  },
+  (t) => [
+    check("runs_outcome_known", sql`${t.outcome} IN ('running', 'succeeded', 'failed', 'cancelled', 'interrupted')`),
+    check("runs_failed_has_error", sql`${t.outcome} <> 'failed' OR ${t.error} IS NOT NULL`),
+    check("runs_ended_unless_running", sql`(${t.outcome} = 'running') = (${t.endedAt} IS NULL)`),
+    // 每个 Agent 同一时间最多一轮在跑：Computer 的 Runner 是串行的，这里在数据库层保证。
+    uniqueIndex("runs_one_running_per_agent").on(t.agentId).where(sql`${t.outcome} = 'running'`),
+  ],
+);
+
+/** 一轮被哪个房间的哪几条消息唤醒。 */
+export const runTriggers = pgTable(
+  "run_triggers",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" })
+      .$type<RoomId>(),
+    fromSeq: bigint("from_seq", { mode: "number" }).notNull(),
+    toSeq: bigint("to_seq", { mode: "number" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.runId, t.roomId] }),
+    check("run_triggers_range", sql`${t.fromSeq} >= 1 AND ${t.toSeq} >= ${t.fromSeq}`),
+  ],
+);
+
+/** 一轮里的每一步。`data` 是 protocol 的 RunEvent 去掉 `seq`、`kind` 与 `at` 后的字段。 */
+export const runEvents = pgTable(
+  "run_events",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    kind: text("kind", { enum: ["step", "tool", "text", "step_end", "reply", "held"] }).notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    data: jsonb("data").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.seq] })],
 );

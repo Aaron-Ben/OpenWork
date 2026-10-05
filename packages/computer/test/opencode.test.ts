@@ -18,6 +18,7 @@ const fakeScript = fileURLToPath(new URL("./fixtures/fake-opencode.mjs", import.
 let root: string;
 let dataHome: string;
 let fakeOpencode: string;
+let cacheHome: string;
 let layout: AgentLayout;
 let base: Omit<TurnRequest, "signal">;
 
@@ -26,6 +27,9 @@ beforeAll(async () => {
   dataHome = join(root, "user-data");
   await mkdir(join(dataHome, "opencode"), { recursive: true });
   await writeFile(join(dataHome, "opencode", "auth.json"), '{"deepseek":{"type":"api","key":"sk-test"}}');
+  cacheHome = join(root, "user-cache");
+  await mkdir(join(cacheHome, "opencode"), { recursive: true });
+  await writeFile(join(cacheHome, "opencode", "models.json"), '{"deepseek":{"models":{}}}');
 
   fakeOpencode = join(root, "opencode");
   await writeFile(
@@ -55,7 +59,8 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const adapter = () => new OpenCodeAdapter({ executable: fakeOpencode, userDataHome: dataHome });
+const adapter = () =>
+  new OpenCodeAdapter({ executable: fakeOpencode, userDataHome: dataHome, userCacheHome: cacheHome });
 const run = (overrides: Partial<TurnRequest> = {}) =>
   adapter().runTurn({ ...base, signal: new AbortController().signal, ...overrides });
 const received = async () => JSON.parse(await readFile(join(layout.workDir, "received.json"), "utf8"));
@@ -91,6 +96,11 @@ describe("OpenCodeAdapter.runTurn", () => {
       permission: { "*": "allow" },
       provider: { deepseek: { models: { "deepseek-v4-pro": { status: "active" } } } },
     });
+  });
+
+  it("copies the user's model price table into the agent's cache, so OpenCode can report costs", async () => {
+    expect((await run()).ok).toBe(true);
+    expect(await readFile(join(layout.cacheDir, "opencode", "models.json"), "utf8")).toBe('{"deepseek":{"models":{}}}');
   });
 
   it("lets the shell inside the sandbox run a heredoc, as the standing instructions tell the agent to", async () => {

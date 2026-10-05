@@ -49,11 +49,14 @@ export const Participant = z.object({
 });
 export type Participant = z.infer<typeof Participant>;
 
-/** Agent 当前在做什么。只存在 Server 内存中，由 Computer 上报。 */
+/**
+ * Agent 当前在做什么，由 Server 从运行记录推出：有进行中的一轮是 `working`，`roomIds` 是这一轮涉及的房间；
+ * 最近一轮失败、或 Computer 报告它跑不起来时是 `error`，`roomIds` 为空表示不限于某个房间。
+ */
 export const AgentStatus = z.discriminatedUnion("state", [
   z.object({ state: z.literal("idle") }),
-  z.object({ state: z.literal("working") }),
-  z.object({ state: z.literal("error"), reason: z.string().min(1) }),
+  z.object({ state: z.literal("working"), runId: z.uuid(), roomIds: z.array(RoomId) }),
+  z.object({ state: z.literal("error"), reason: z.string().min(1), roomIds: z.array(RoomId) }),
 ]);
 export type AgentStatus = z.infer<typeof AgentStatus>;
 
@@ -120,6 +123,8 @@ export const DesktopEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agents") }),
   /** 群聊列表或某个群聊的成员变了。 */
   z.object({ type: z.literal("rooms") }),
+  /** 这一轮有了新的一步或结束了。`roomIds` 是这一轮涉及的房间。 */
+  z.object({ type: z.literal("run.activity"), runId: z.uuid(), roomIds: z.array(RoomId) }),
   /** Computer 上报了新的可用模型列表。 */
   z.object({ type: z.literal("models") }),
 ]);

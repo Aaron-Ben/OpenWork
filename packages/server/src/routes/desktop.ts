@@ -1,4 +1,4 @@
-import { api, EVENT_STREAMS } from "@crew/protocol";
+import { type AgentId, type AgentStatus, api, EVENT_STREAMS } from "@crew/protocol";
 import type { Express } from "express";
 import { type AgentSummary, createAgent, listAgents } from "../agents";
 import { notifyMessage, type ServerContext } from "../context";
@@ -6,24 +6,31 @@ import { type Conversation, listConversations, markRead } from "../conversations
 import { addGroupMembers, createGroup, type GroupSummary, listGroups } from "../groups";
 import { eventStream, route } from "../http";
 import { listMessages, postMessage } from "../messages";
+import { agentStatuses, getRun, listRuns } from "../runs";
+
+const IDLE: AgentStatus = { state: "idle" };
 
 /** 界面调用的接口。凭证与 CORS 在 app.ts 中按路径前缀统一处理。 */
 export function desktopRoutes(app: Express, ctx: ServerContext): void {
-  const view = (agent: AgentSummary) => ({
+  const view = (agent: AgentSummary, statuses: Map<AgentId, AgentStatus>) => ({
     ...agent,
     createdAt: agent.createdAt.toISOString(),
-    status: ctx.state.statusOf(agent.id),
+    status: statuses.get(agent.id) ?? IDLE,
   });
+  const statuses = () => agentStatuses(ctx.db, ctx.state.agentProblems());
 
   const groupView = (group: GroupSummary) => ({ ...group, createdAt: group.createdAt.toISOString() });
 
-  route(app, api.desktop.listAgents, async () => (await listAgents(ctx.db)).map(view));
+  route(app, api.desktop.listAgents, async () => {
+    const current = await statuses();
+    return (await listAgents(ctx.db)).map((agent) => view(agent, current));
+  });
 
   route(app, api.desktop.createAgent, async ({ body }) => {
     const agent = await createAgent(ctx.db, ctx.localUserId, body);
     ctx.events.desktop.publish({ type: "agents" });
     ctx.events.computer.publish({ type: "agents" });
-    return view(agent);
+    return view(agent, new Map());
   });
 
   route(app, api.desktop.listMessages, ({ params, query }) => listMessages(ctx.db, params.roomId, query));
@@ -50,6 +57,10 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
   );
 
   route(app, api.desktop.markRead, ({ params, body }) => markRead(ctx.db, ctx.localUserId, params.roomId, body.seq));
+
+  route(app, api.desktop.listRuns, ({ query }) => listRuns(ctx.db, query));
+
+  route(app, api.desktop.getRun, ({ params }) => getRun(ctx.db, params.runId));
 
   route(app, api.desktop.listGroups, async () => (await listGroups(ctx.db)).map(groupView));
 

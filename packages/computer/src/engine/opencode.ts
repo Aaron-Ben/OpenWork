@@ -4,7 +4,9 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
+import { clipText, type EngineEvent, RUN_TEXT_MAX } from "@crew/protocol";
 import { z } from "zod";
+import { copyIntoCache } from "../home";
 import { buildProfile, classifySandboxExit, SANDBOX_EXEC, sandboxArgs } from "../sandbox";
 import type { EngineAdapter, EngineError, EngineReadiness, TurnOutcome, TurnRequest } from "./types";
 
@@ -22,20 +24,114 @@ const KILL_GRACE_MS = 2_000;
 
 const CANCELLED: TurnOutcome = { ok: false, error: { kind: "cancelled", message: "已停止" } };
 
-/** `opencode run --format json` 输出的一行事件。只取需要的字段，其余忽略。 */
+const Count = z.number().nonnegative().catch(0);
+
+/**
+ * `opencode run --format json` 输出的一行事件。只取需要的字段，其余忽略；
+ * 字段的形状在 2026-10-05 用 OpenCode 1.18.18 实测，见运行观测的 Agent Note。
+ */
 const OpenCodeEvent = z.object({
   type: z.string(),
+  timestamp: z.number().optional(),
   sessionID: z.string().optional(),
   error: z
     .object({ name: z.string().optional(), data: z.object({ message: z.string().optional() }).optional() })
     .optional(),
+  part: z
+    .object({
+      type: z.string().optional(),
+      tool: z.string().optional(),
+      text: z.string().optional(),
+      state: z
+        .object({
+          status: z.string().optional(),
+          title: z.string().optional(),
+          input: z.unknown().optional(),
+          output: z.unknown().optional(),
+          time: z.object({ start: z.number().optional(), end: z.number().optional() }).optional(),
+        })
+        .optional(),
+      cost: Count.optional(),
+      tokens: z
+        .object({
+          input: Count,
+          output: Count,
+          reasoning: Count,
+          cache: z.object({ read: Count, write: Count }).catch({ read: 0, write: 0 }),
+        })
+        .optional(),
+    })
+    .optional(),
 });
+type OpenCodeEvent = z.infer<typeof OpenCodeEvent>;
+
+/** 截到运行记录允许的长度，并注明截掉了多少。 */
+export function clip(text: string): string {
+  if (text.length <= RUN_TEXT_MAX) return text;
+  // 给末尾的说明留 40 个字符，足够写下任何长度的数字。
+  const kept = RUN_TEXT_MAX - 40;
+  const head = clipText(text, kept);
+  return `${head}\n…（截掉 ${text.length - head.length} 字符）`;
+}
+
+/** 把 OpenCode 的一行事件换成运行记录的 Engine 事件；与运行记录无关的事件返回 undefined。 */
+function toEngineEvent(event: OpenCodeEvent): EngineEvent | undefined {
+  const at = new Date(event.timestamp ?? Date.now()).toISOString();
+  const part = event.part;
+  switch (event.type) {
+    case "step_start":
+      return { kind: "step", at };
+    case "tool_use": {
+      const state = part?.state;
+      const start = state?.time?.start;
+      const end = state?.time?.end;
+      const input = typeof state?.input === "string" ? state.input : JSON.stringify(state?.input ?? {});
+      const output = typeof state?.output === "string" ? state.output : JSON.stringify(state?.output ?? "");
+      return {
+        kind: "tool",
+        at,
+        tool: clipText(part?.tool ?? "tool", 100),
+        title: clipText(state?.title ?? "", 500),
+        input: clip(input),
+        output: clip(output),
+        durationMs: start !== undefined && end !== undefined && end >= start ? Math.round(end - start) : null,
+        failed: state?.status === "error",
+      };
+    }
+    case "text":
+      return part?.text ? { kind: "text", at, text: clip(part.text) } : undefined;
+    case "step_finish": {
+      const tokens = part?.tokens;
+      return {
+        kind: "step_end",
+        at,
+        usage: {
+          input: tokens?.input ?? 0,
+          output: tokens?.output ?? 0,
+          reasoning: tokens?.reasoning ?? 0,
+          cacheRead: tokens?.cache.read ?? 0,
+          cacheWrite: tokens?.cache.write ?? 0,
+          cost: part?.cost ?? 0,
+        },
+      };
+    }
+    default:
+      return undefined;
+  }
+}
 
 export interface OpenCodeOptions {
   /** `opencode` 可执行文件；不给时在 PATH 中查找。 */
   executable?: string;
   /** 用户 OpenCode 数据目录，登录文件在其中的 `opencode/auth.json`。 */
   userDataHome?: string;
+  /** 用户的缓存目录，OpenCode 的模型价格表在其中的 `opencode/models.json`。 */
+  userCacheHome?: string;
+}
+
+/** 用户自己的缓存目录：`$XDG_CACHE_HOME`，默认 `~/.cache`。 */
+export function defaultUserCacheHome(): string {
+  return process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
 }
 
 /** 用户自己的 OpenCode 数据目录：`$XDG_DATA_HOME`，默认 `~/.local/share`。 */
@@ -178,6 +274,14 @@ export class OpenCodeAdapter implements EngineAdapter {
     if (typeof auth !== "string") return { ok: false, error: auth };
 
     const { layout } = request;
+    // OpenCode 按缓存里的模型价格表计算费用；每个 Agent 的缓存目录是空的，它也不会自己去下载，
+    // 没有这张表时报告的费用一律是 0。从用户的缓存复制一份；复制失败只影响费用统计。
+    const prices = join(this.options.userCacheHome ?? defaultUserCacheHome(), "opencode", "models.json");
+    if (existsSync(prices)) {
+      await copyIntoCache(layout, prices, join("opencode", "models.json")).catch((error: unknown) => {
+        console.error("[computer] 复制 OpenCode 的模型价格表失败，这一轮的费用会记为 0:", error);
+      });
+    }
     const command = [
       readiness.executable,
       "run",
@@ -260,6 +364,8 @@ export class OpenCodeAdapter implements EngineAdapter {
         const parsed = parseEvent(line);
         if (!parsed) continue;
         sessionId = parsed.sessionID ?? sessionId;
+        const event = toEngineEvent(parsed);
+        if (event) request.onEvent?.(event);
         if (parsed.type === "error")
           reported = parsed.error?.data?.message ?? parsed.error?.name ?? "OpenCode 报告了错误";
       }
@@ -309,6 +415,12 @@ export class OpenCodeAdapter implements EngineAdapter {
     const error = classifyFailure(exitCode, stderr, reported);
     return { ok: false, error: { ...error, message: redact(error.message, layout.home) } };
   }
+}
+
+/** 一行输出对应的 Engine 事件；不是事件或与运行记录无关时返回 undefined。 */
+export function engineEventOf(line: string): EngineEvent | undefined {
+  const parsed = parseEvent(line);
+  return parsed && toEngineEvent(parsed);
 }
 
 function parseEvent(line: string) {

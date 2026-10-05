@@ -61,3 +61,9 @@
 - **现象：** 常驻规则教 Agent 用 heredoc 运行 `crew reply`，真实模型照做时，沙箱里的 zsh 报 `can't create temp file for here document: operation not permitted`，模型只好改用 `printf`。zsh 把 heredoc 写进以 `TMPPREFIX` 开头的临时文件，默认是沙箱不让写的 `/tmp/zsh`。冒烟测试的假 opencode 直接启动 `crew` 并写 stdin，没有经过 shell，所以没测出来。
 - **规则：** 提示词教给模型的写法，要在同样的沙箱、同样的环境变量下真正跑一遍，不只测被调用的程序本身。
 - **出处：** `packages/computer/src/engine/opencode.ts` 设置 `TMPPREFIX`；`packages/computer/test/opencode.test.ts` 的 `lets the shell inside the sandbox run a heredoc, as the standing instructions tell the agent to`，去掉 `TMPPREFIX` 时它报出同样的错误。2026-10-05 用真实模型演示群聊时发现。
+
+## 写进 PostgreSQL 的外来文本先清洗
+
+- **现象：** 提交前的评审发现，工具输出里有 NUL（`cat` 了一个二进制文件），或按 UTF-16 截断时把 emoji 切成两半，写进 `run_events` 就失败：text 与 jsonb 不接受 `\u0000`，jsonb 不接受落单的代理项。一批事件连同用量被整批丢掉；HELD 的预览因此出错时，`crew reply` 返回 500，而已投递位置已经推进，Agent 重试时被直接放行，HELD 失效。
+- **规则：** 来自 Engine、工具与用户的文本写进数据库前，换掉 NUL 与落单的代理项；截断时不切断代理对。只用于观测的写入失败时，不能改变主流程的结果。
+- **出处：** `packages/protocol/src/runs.ts` 的 `storableText` 与 `clipText`；`packages/server/src/routes/agent.ts` 的 `observe`。`packages/server/test/api.test.ts` 的 `still hold a reply when the new message has an emoji…` 与 `store tool output with NUL bytes…`，去掉清洗时两者都失败。

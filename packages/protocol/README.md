@@ -27,6 +27,7 @@
 | `packages/protocol/src/api.ts` | 接口契约 `api`，以及由契约推导参数、查询参数、请求体与响应类型 |
 | `packages/protocol/src/client.ts` | `ApiClient` |
 | `packages/protocol/src/collab.ts` | handle、房间、参与者、Agent 状态、消息、inbox、回复结果与 SSE 事件的 schema |
+| `packages/protocol/src/runs.ts` | 运行记录：Engine 事件、运行事件、用量、一轮的概要与详情 |
 | `packages/protocol/src/ids.ts` | 数据库实体的 branded ID |
 | `packages/protocol/src/runtime.ts` | `RuntimeSessionId` 与启动握手的四种消息 |
 | `packages/protocol/src/stdio.ts` | 读一行 JSON、写一行 JSON |

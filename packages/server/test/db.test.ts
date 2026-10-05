@@ -1,7 +1,7 @@
 import { UserId } from "@crew/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureLocalUser } from "../src/db";
-import { agentReadCursors, agents, messages, rooms, users } from "../src/db/schema";
+import { agentReadCursors, agents, messages, rooms, runs, users } from "../src/db/schema";
 import { createTestDatabase, type TestDatabase } from "./support/database";
 
 // 迁移与数据库约束的集成测试。约束是数据模型的一部分：它们在数据库层拒绝错误数据，这里逐条确认。
@@ -64,6 +64,9 @@ describe("migrations", () => {
       "room_agents",
       "room_users",
       "rooms",
+      "run_events",
+      "run_triggers",
+      "runs",
       "user_read_cursors",
       "users",
     ]);
@@ -147,6 +150,22 @@ describe("constraints", () => {
           .values({ agentId: agent.id, roomId: room.id, lastReadSeq: 2, deliveredSeq: 1 }),
       ),
     ).toBe("agent_read_cursors_delivered_not_behind");
+  });
+
+  it("keep at most one running run per agent and require an error for a failed run", async () => {
+    const agent = await newAgent();
+    await test.db.insert(runs).values({ agentId: agent.id, prompt: "p" });
+    expect(await violatedConstraint(test.db.insert(runs).values({ agentId: agent.id, prompt: "p" }))).toBe(
+      "runs_one_running_per_agent",
+    );
+    expect(
+      await violatedConstraint(
+        test.db.insert(runs).values({ agentId: agent.id, prompt: "p", outcome: "failed", endedAt: new Date() }),
+      ),
+    ).toBe("runs_failed_has_error");
+    expect(
+      await violatedConstraint(test.db.insert(runs).values({ agentId: agent.id, prompt: "p", outcome: "succeeded" })),
+    ).toBe("runs_ended_unless_running");
   });
 
   it("reject a blank message body", async () => {

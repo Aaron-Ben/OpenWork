@@ -1,5 +1,6 @@
 import {
   AgentId,
+  type AgentStatus,
   type Conversation,
   type DesktopAgent,
   type DesktopGroup,
@@ -16,7 +17,7 @@ import { hasOlder, mergeMessages, newestSeq } from "../src/lib/messages";
 import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-agent";
 import { groupMembers, groupsWithout, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
 import { isNearBottom } from "../src/lib/scroll";
-import { statusView } from "../src/lib/status";
+import { statusIn, statusView } from "../src/lib/status";
 import { formatListTime, formatMessageTime } from "../src/lib/time";
 
 // 界面里抽出来的纯逻辑。组件本身不写只断言 HTML 的测试。
@@ -36,6 +37,10 @@ describe("keysForEvent", () => {
     expect(keysForEvent({ type: "rooms" })).toEqual([queryKeys.groups, queryKeys.conversations]);
   });
 
+  it("refreshes every run list and run detail when a run changes", () => {
+    expect(keysForEvent({ type: "run.activity", runId: "r", roomIds: [roomId] })).toEqual([queryKeys.runs]);
+  });
+
   it("refreshes the model list when the computer reports models", () => {
     expect(keysForEvent({ type: "models" })).toEqual([queryKeys.models]);
   });
@@ -44,8 +49,31 @@ describe("keysForEvent", () => {
 describe("statusView", () => {
   it("labels each state", () => {
     expect(statusView({ state: "idle" })).toEqual({ label: "空闲", tone: "idle" });
-    expect(statusView({ state: "working" })).toEqual({ label: "回复中", tone: "working" });
-    expect(statusView({ state: "error", reason: "OpenCode 未登录" })).toEqual({ label: "出错", tone: "error" });
+    expect(statusView({ state: "working", runId: "r", roomIds: [roomId] })).toEqual({
+      label: "回复中",
+      tone: "working",
+    });
+    expect(statusView({ state: "error", reason: "OpenCode 未登录", roomIds: [] })).toEqual({
+      label: "出错",
+      tone: "error",
+    });
+  });
+});
+
+describe("statusIn", () => {
+  const other = RoomId.parse("7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+
+  it("shows working only in the rooms the run is about", () => {
+    const working: AgentStatus = { state: "working", runId: "r", roomIds: [roomId] };
+    expect(statusIn(working, roomId)).toEqual(working);
+    expect(statusIn(working, other)).toEqual({ state: "idle" });
+  });
+
+  it("shows an error in its rooms, or everywhere when it is not tied to a room", () => {
+    const failed: AgentStatus = { state: "error", reason: "限流", roomIds: [roomId] };
+    expect(statusIn(failed, other)).toEqual({ state: "idle" });
+    const blocked: AgentStatus = { state: "error", reason: "沙箱不可用", roomIds: [] };
+    expect(statusIn(blocked, other)).toEqual(blocked);
   });
 });
 
@@ -271,7 +299,11 @@ describe("avatars", () => {
 
 describe("conversationPreview", () => {
   const alice = { id: agentId(1), displayName: "Alice", status: { state: "idle" } } as DesktopAgent;
-  const bob = { id: agentId(2), displayName: "Bob", status: { state: "working" } } as DesktopAgent;
+  const bob = {
+    id: agentId(2),
+    displayName: "Bob",
+    status: { state: "working", runId: "r", roomIds: [roomId] },
+  } as DesktopAgent;
   const base = { roomId, name: "发版", unread: 0, activeAt: "", agentIds: [agentId(1)] };
   const last = (kind: "user" | "agent", displayName: string, body: string) => ({
     author: { kind, id: "x", displayName, handle: null },

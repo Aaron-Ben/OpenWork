@@ -50,8 +50,8 @@ Electron 主进程（监管者）
 
 | 数据 | 位置 | 生命周期 |
 |---|---|---|
-| 用户、Agent、房间、成员、消息、Agent 的已读与已投递位置、用户的已读位置 | PostgreSQL | 持久 |
-| Agent 凭证、Agent 状态、可用模型列表 | Server 内存 | 本次运行；应用重启后清空 |
+| 用户、Agent、房间、成员、消息、Agent 的已读与已投递位置、用户的已读位置、运行记录 | PostgreSQL | 持久 |
+| Agent 凭证、Agent 跑不起来的原因、可用模型列表 | Server 内存 | 本次运行；应用重启后清空 |
 | Agent 的常驻规则、工作目录、OpenCode 数据与 session | `~/.crew/agents/<id>/` | 持久 |
 | `crew` 包装脚本、Agent 凭证文件、OpenCode 配置与缓存 | `~/.crew/runtime/<运行 ID>/` | 本次运行；正常退出时删除 |
 
@@ -61,10 +61,10 @@ Electron 主进程（监管者）
 
 1. 用户在界面发消息，界面调用 `POST /desktop/rooms/:roomId/messages`。
 2. Server 在一个事务里锁住房间行，分配房间内的序号并写入消息；提交后向界面发“房间有新消息”，向 Computer 发“唤醒”：用户的消息唤醒房间里全部 Agent，Agent 的消息只唤醒它 @ 到的 Agent。
-3. Computer 的 Runner 读取 Agent 已读位置之后的消息（同时记为已投递），生成本轮输入，在 Seatbelt 中启动一次 OpenCode。
+3. Computer 的 Runner 读取 Agent 已读位置之后的消息（同时记为已投递），生成本轮输入，向 Server 登记这一轮，在 Seatbelt 中启动一次 OpenCode；OpenCode 的每一步随时上报，界面实时显示。
 4. 模型决定回复时运行 `crew reply <room-id>`，正文从 stdin 读入；`crew` 带着 Agent 凭证调用 `POST /agent/reply`。
 5. Server 检查房间里有没有已投递位置之后、别人发的消息。有就不写入，把它们返回给 Agent（HELD），Agent 看完再决定；没有就写入回复，向界面发“房间有新消息”。界面只取它缓存之后的新消息。
-6. Turn 成功结束后，Runner 确认已读，并上报 Agent 回到空闲。
+6. Turn 成功结束后，Runner 确认已读，并写下这一轮的结果。Agent 的状态由运行记录推出：没有进行中的一轮就是空闲。
 
 理由见 [每轮一次 OpenCode 与 crew 命令](../.agents/notes/implemented/architecture/2026-10-04-opencode-turns-and-crew-cli.md) 与 [群聊](../.agents/notes/implemented/feature/2026-10-05-group-chat.md)。
 
@@ -80,6 +80,8 @@ Electron 主进程（监管者）
 | 已读位置 | 每个 Agent 在每个房间处理完的最后一个序号。Turn 成功后推进。 |
 | 已投递位置 | 每个 Agent 在每个房间已经看过的最后一个序号。读取 inbox 与 HELD 时推进。 |
 | HELD | Agent 的回复因为房间里有它没看过的新消息而没有发出；它看完新消息后再决定。 |
+| 运行记录 | 每一轮 Turn 的记录：被哪些消息唤醒、完整输入、每一步、用量与结果。 |
+| 白跑 | 成功跑完一轮，却一条消息也没有发出。 |
 | RuntimeSession | 一次应用运行。它的 ID 用于本次运行目录；凭证与运行期状态只在本次运行内有效。 |
 | Computer | 在本机运行 Agent 的进程。 |
 | Engine | 实际调用模型的程序。目前只有 OpenCode。 |

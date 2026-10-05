@@ -1,3 +1,4 @@
+import type { EngineEvent } from "@crew/protocol";
 import type { AgentLayout } from "../home";
 import type { Confinement } from "../sandbox";
 
@@ -32,6 +33,8 @@ export interface TurnRequest {
   env: Record<string, string>;
   /** 中止时结束整个 Engine 进程组。 */
   signal: AbortSignal;
+  /** Engine 的每一步：开始一步、调用工具、输出文字、一步结束及其用量。按发生顺序回调。 */
+  onEvent?: (event: EngineEvent) => void;
 }
 
 export type EngineReadiness = { ready: true; executable: string } | { ready: false; reason: string };

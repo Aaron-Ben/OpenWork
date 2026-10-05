@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { AgentId, RuntimeSessionId } from "@crew/protocol";
@@ -85,7 +85,7 @@ async function ensureDirUnder(base: string, path: string): Promise<void> {
 }
 
 /** 先写同目录下的临时文件再改名，读者看到的要么是旧内容，要么是新内容。 */
-async function writeFileAtomic(path: string, content: string, mode: number): Promise<void> {
+async function writeFileAtomic(path: string, content: string | Buffer, mode: number): Promise<void> {
   const temporary = join(dirname(path), `.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`);
   await writeFile(temporary, content, { mode });
   await chmod(temporary, mode);
@@ -157,6 +157,18 @@ export async function prepareAgent(runtime: RuntimeLayout, agent: AgentIdentity)
   for (const dir of [layout.configDir, layout.cacheDir, layout.stateDir]) await ensureDirUnder(layout.runtimeDir, dir);
   await writeFileAtomic(layout.instructionsFile, standingInstructions(agent), 0o600);
   return layout;
+}
+
+/**
+ * 把沙箱外的一个文件复制进 Agent 的缓存目录，例如 OpenCode 的模型价格表。目标已经是同样或更新的副本时跳过。
+ * 缓存目录 Agent 写得了，所以逐级确认是真正的目录，写入用先写临时文件再改名，不顺着 Agent 放的符号链接写。
+ */
+export async function copyIntoCache(layout: AgentLayout, source: string, relativePath: string): Promise<void> {
+  const target = join(layout.cacheDir, relativePath);
+  const [from, to] = await Promise.all([stat(source), lstat(target).catch(() => undefined)]);
+  if (to?.isFile() && to.mtimeMs >= from.mtimeMs) return;
+  await ensureDirUnder(layout.runtimeDir, dirname(target));
+  await writeFileAtomic(target, await readFile(source), 0o600);
 }
 
 export async function writeAgentToken(layout: AgentLayout, token: string): Promise<void> {

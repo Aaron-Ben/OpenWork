@@ -15,11 +15,11 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 | 文件 | 负责 |
 |---|---|
 | `packages/computer/src/daemon.ts` | 主流程：沙箱与 Engine 自检、同步 Agent 列表、订阅 SSE、把唤醒交给 Runner、停止 |
-| `packages/computer/src/runner.ts` | 每个 Agent 一个的串行循环：读 inbox、运行一轮、确认已读、上报状态 |
-| `packages/computer/src/engine/opencode.ts` | OpenCode 适配器：参数与环境变量、登录凭证、派生配置、输出解析、失败分类、结束进程组 |
+| `packages/computer/src/runner.ts` | 每个 Agent 一个的串行循环：读 inbox、登记一轮、运行、按顺序上报 Engine 事件（`RunReporter`）、确认已读、写结果 |
+| `packages/computer/src/engine/opencode.ts` | OpenCode 适配器：参数与环境变量、登录凭证、模型价格表、派生配置、输出解析成 Engine 事件、失败分类、结束进程组 |
 | `packages/computer/src/engine/types.ts` | Engine 接口与失败类型 |
 | `packages/computer/src/sandbox/` | Seatbelt 规则生成（`profile.ts`）、启动自检（`probe.ts`）、按退出结果区分沙箱拒绝（`outcome.ts`） |
-| `packages/computer/src/home.ts` | `~/.crew` 下的目录、凭证文件、`bin/crew` 包装脚本与 session 记录；不顺着符号链接操作 |
+| `packages/computer/src/home.ts` | `~/.crew` 下的目录、凭证文件、`bin/crew` 包装脚本、session 记录与复制进缓存的文件；不顺着符号链接操作 |
 | `packages/computer/src/instructions.ts` | Agent 的 `AGENTS.md` 文本 |
 | `packages/computer/src/prompt.ts` | 每轮输入的文本 |
 | `packages/computer/src/shim/cli.ts` | `crew` 的参数解析、请求与全部输出文本 |

@@ -165,6 +165,8 @@ const messageColumns = {
   userName: users.displayName,
   agentName: agents.displayName,
   agentHandle: agents.handle,
+  runId: messages.runId,
+  heldBefore: messages.heldBefore,
 };
 
 function selectMessages(db: Database | Transaction) {
@@ -187,6 +189,8 @@ type MessageRow = {
   userName: string | null;
   agentName: string | null;
   agentHandle: string | null;
+  runId: string | null;
+  heldBefore: number;
 };
 
 function toView(row: MessageRow): MessageView {
@@ -210,7 +214,7 @@ export async function listMessages(
   db: Database,
   roomId: RoomId,
   window: MessageWindow = {},
-): Promise<Array<MessageView & { roomId: RoomId }>> {
+): Promise<Array<MessageView & { roomId: RoomId; runId: string | null; heldBefore: number }>> {
   const [room] = await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.id, roomId));
   if (!room) throw new RequestError(404, "房间不存在");
 
@@ -232,7 +236,7 @@ export async function listMessages(
             .orderBy(desc(messages.seq))
             .limit(limit)
         ).reverse();
-  return rows.map((row) => ({ ...toView(row), roomId }));
+  return rows.map((row) => ({ ...toView(row), roomId, runId: row.runId, heldBefore: row.heldBefore }));
 }
 
 /**
