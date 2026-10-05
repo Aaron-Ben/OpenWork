@@ -92,6 +92,8 @@ export const TaskRefusal = z.discriminatedUnion("code", [
   z.object({ code: z.literal("needs_assignee"), number: z.number().int() }),
   z.object({ code: z.literal("finished"), number: z.number().int(), status: TaskStatus }),
   z.object({ code: z.literal("changed"), number: z.number().int() }),
+  /** 状态没变却带了说明：没有通知可写，说明发不出去，不能假装成功。 */
+  z.object({ code: z.literal("note_unchanged"), number: z.number().int(), status: TaskStatus }),
 ]);
 export type TaskRefusal = z.infer<typeof TaskRefusal>;
 
@@ -121,6 +123,8 @@ export function taskRefusalText(refusal: TaskRefusal): string {
       return `任务 #${refusal.number} 已经${taskStatusLabel(refusal.status)}，不能再分配`;
     case "changed":
       return `任务 #${refusal.number} 刚被别人改过，请刷新后再试`;
+    case "note_unchanged":
+      return `任务 #${refusal.number} 已经是${taskStatusLabel(refusal.status)}，状态没变，说明没有发出`;
     default:
       return assertNever(refusal);
   }

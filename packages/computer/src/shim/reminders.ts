@@ -18,6 +18,8 @@ import { CliFailure, type CliIo, errorBody, postAgent } from "./io";
 const UNSURE = "The reminder may have been changed; run crew remind list to check before trying again.";
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+/** 提醒最远定到这么多分钟以后，与 Server 的上限一致；更大的数在本地就拒绝，免得算出无效的时间。 */
+const MAX_MINUTES = REMINDER_MAX_DAYS * 24 * 60;
 
 interface WhenOptions {
   in?: string;
@@ -101,26 +103,42 @@ function parseClock(text: string, flag: string): string {
   return `${match[1]?.padStart(2, "0")}:${match[2]}`;
 }
 
+/**
+ * 日历上真有这一天、这一刻。`Date` 会把 2 月 30 日、18:99 悄悄顺延成别的时间，提醒就会在 Agent 没想到的时候响，
+ * 所以先检查各部分的范围。
+ */
+function realMoment(year: number, month: number, day: number, hour: number, minute: number): boolean {
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth && hour <= 23 && minute <= 59;
+}
+
 /** 一次性提醒的时间：`18:00` 是下一个 18:00（今天还没到就是今天），也接受本地日期时间与带时区的 ISO 8601。 */
 function parseAt(text: string, now: Date): Date {
   const value = text.trim();
+  const fail = () =>
+    new CliFailure(`--at "${text}" is not a time. Write it like 18:00, 2026-10-06 09:00, or ISO 8601 with an offset.`);
   const clock = /^(\d{1,2}):(\d{2})$/.exec(value);
   if (clock) {
+    const [hour, minute] = [Number(clock[1]), Number(clock[2])];
+    if (!realMoment(2000, 1, 1, hour, minute)) throw fail();
     const at = new Date(now);
-    at.setHours(Number(clock[1]), Number(clock[2]), 0, 0);
+    at.setHours(hour, minute, 0, 0);
     if (at <= now) at.setDate(at.getDate() + 1);
     return at;
   }
   const local = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})$/.exec(value);
   if (local) {
-    const [, y, mo, d, h, mi] = local.map(Number);
-    return new Date(y ?? 0, (mo ?? 1) - 1, d, h, mi);
+    const [year, month, day, hour, minute] = local.slice(1).map(Number) as [number, number, number, number, number];
+    if (!realMoment(year, month, day, hour, minute)) throw fail();
+    return new Date(year, month - 1, day, hour, minute);
   }
-  const iso = new Date(value);
-  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value) && !Number.isNaN(iso.getTime())) return iso;
-  throw new CliFailure(
-    `--at "${text}" is not a time. Write it like 18:00, 2026-10-06 09:00, or ISO 8601 with an offset.`,
-  );
+  const iso = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:[zZ]|[+-]\d{2}:?\d{2})$/.exec(value);
+  if (iso) {
+    const [year, month, day, hour, minute] = iso.slice(1, 6).map(Number) as [number, number, number, number, number];
+    const at = new Date(value);
+    if (realMoment(year, month, day, hour, minute) && !Number.isNaN(at.getTime())) return at;
+  }
+  throw fail();
 }
 
 /** 恰好一个时间选项，换成接口要的 `at` 或 `repeat`。 */
@@ -130,11 +148,14 @@ function parseWhen(options: WhenOptions, now: Date): { at: string } | { repeat: 
     throw new CliFailure("give exactly one of --in, --at, --every, --daily or --weekly. Run crew remind set --help.");
   }
   if (options.in !== undefined) {
-    return { at: new Date(now.getTime() + parseDuration(options.in, "--in") * 60_000).toISOString() };
+    const minutes = parseDuration(options.in, "--in");
+    if (minutes > MAX_MINUTES) throw new CliFailure(`--in can be at most ${REMINDER_MAX_DAYS}d.`);
+    return { at: new Date(now.getTime() + minutes * 60_000).toISOString() };
   }
   if (options.at !== undefined) return { at: parseAt(options.at, now).toISOString() };
   if (options.every !== undefined) {
     const minutes = parseDuration(options.every, "--every");
+    if (minutes > MAX_MINUTES) throw new CliFailure(`--every can be at most ${REMINDER_MAX_DAYS}d.`);
     if (minutes < REMINDER_MIN_MINUTES) {
       throw new CliFailure(
         `--every must be at least ${REMINDER_MIN_MINUTES}m, so a reminder does not wake you too often.`,

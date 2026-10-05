@@ -51,7 +51,7 @@ Status: proposed
 
 - **6a 记忆（2026-10-05 完成）。** 文件名与位置是 protocol 的 `MEMORY_FILE` 与 `agentWorkSegments`，Computer 与 Desktop 主进程共用；模板与大小在 `packages/computer/src/home.ts`（`seedMemory`、`memorySize`），开新会话的提醒在 `packages/computer/src/prompt.ts`（`sessionNote`）；界面经主进程读文件（`apps/desktop/electron/memory.ts`），至多读 256KB。OpenCode 报告旧会话失效、自动改开新会话时，这一轮输入里没有“先读记忆”这句，要等下一次 Computer 自己判断为新会话。
 
-- **6b 提醒（2026-10-05 完成）。** 表 `reminders`（迁移 `0006_reminders.sql`），代码在 `packages/server/src/reminders.ts`：计时器 `ReminderScheduler` 只排下一个到期的，最长睡一小时，启动时先补触发；Server 的“现在”由 `ServerContext.now` 提供，测试可以固定。通知经 `postMessageIn` 的 `wake` 选项只唤醒主人，主人自己写的通知也唤醒它。提醒的标题至多 200 字符。`crew remind` 的 `--at 18:00` 是下一个 18:00。到点的通知带 `notice`（`type: "reminder"`、标题、周期、定于何时、原定时间），界面画成淡紫色小卡片；任务的通知也带上类型（迁移 `0007_message_notice.sql`），图标与颜色由 `apps/desktop/src/lib/notices.ts` 的 `noticeLook` 决定。
+- **6b 提醒（2026-10-05 完成）。** 表 `reminders`（迁移 `0006_reminders.sql`），代码在 `packages/server/src/reminders.ts`：计时器 `ReminderScheduler` 只排下一个到期的，最长睡一小时，启动时先补触发；Server 的“现在”由 `ServerContext.now` 提供，测试可以固定。提醒的通知以主人的名义写下却要唤醒主人，HELD 因此把它当作没看过（`packages/server/src/messages.ts` 的 `heldMessages`）：否则一轮进行中提醒到点、这一轮又在同一房间回复时，提醒被当成已读，下一轮读不到（2026-10-05 排查发现）。6c 静音若也有“自己名下却要唤醒自己”的通知，照此处理。通知经 `postMessageIn` 的 `wake` 选项只唤醒主人，主人自己写的通知也唤醒它。提醒的标题至多 200 字符。`crew remind` 的 `--at 18:00` 是下一个 18:00。到点的通知带 `notice`（`type: "reminder"`、标题、周期、定于何时、原定时间），界面画成淡紫色小卡片；任务的通知也带上类型（迁移 `0007_message_notice.sql`），图标与颜色由 `apps/desktop/src/lib/notices.ts` 的 `noticeLook` 决定。
 
 ## 考虑过的方案
 

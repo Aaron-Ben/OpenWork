@@ -11,7 +11,7 @@ import {
 } from "@crew/protocol";
 import { useMemo, useState } from "react";
 import { cn } from "../lib/cn";
-import { shouldSend } from "../lib/composer";
+import { shouldSend, shouldSubmit } from "../lib/composer";
 import { useTaskActions, useTasks, useThreads } from "../lib/queries";
 import { BOARD_ORDER, FINISHED, groupByStatus, LIST_ORDER, nextStatuses } from "../lib/tasks";
 import { AgentAvatar } from "./Avatar";
@@ -488,7 +488,7 @@ function SendBackForm({
       className="grid gap-3.5"
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
+        if (!pending) submit();
       }}
     >
       <DialogTitle>
@@ -507,10 +507,10 @@ function SendBackForm({
         aria-label="退回的说明"
         onChange={(event) => setNote(event.target.value)}
         onKeyDown={(event) => {
-          if (shouldSend({ ...event, isComposing: event.nativeEvent.isComposing })) {
-            event.preventDefault();
-            submit();
-          }
+          const key = { ...event, isComposing: event.nativeEvent.isComposing };
+          // 请求进行中按 Enter 也不换行，只是不再提交。
+          if (shouldSend(key)) event.preventDefault();
+          if (shouldSubmit(key, pending)) submit();
         }}
       />
       {error && <p className="text-xs text-danger">{error}</p>}

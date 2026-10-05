@@ -12,7 +12,7 @@ import {
 } from "@crew/protocol";
 import { describe, expect, it } from "vitest";
 import { AVATAR_COLORS, avatarColor, avatarInitial, RING_MAX, ringSlots } from "../src/lib/avatar";
-import { canSend, shouldSend } from "../src/lib/composer";
+import { canSend, shouldSend, shouldSubmit } from "../src/lib/composer";
 import { conversationPreview, totalUnread, unreadLabel } from "../src/lib/conversations";
 import { keysForEvent, queryKeys } from "../src/lib/keys";
 import { rehypeMentions, splitMentions } from "../src/lib/mentions";
@@ -83,6 +83,15 @@ describe("statusIn", () => {
     expect(statusIn(failed, other)).toEqual({ state: "idle" });
     const blocked: AgentStatus = { state: "error", reason: "沙箱不可用", roomIds: [] };
     expect(statusIn(blocked, other)).toEqual(blocked);
+  });
+});
+
+describe("shouldSubmit", () => {
+  it("submits a dialog on Enter, but not again while the first request is still pending", () => {
+    const enter = { key: "Enter", shiftKey: false, isComposing: false, keyCode: 13 };
+    expect(shouldSubmit(enter, false)).toBe(true);
+    expect(shouldSubmit(enter, true)).toBe(false);
+    expect(shouldSubmit({ ...enter, isComposing: true }, false)).toBe(false);
   });
 });
 

@@ -243,7 +243,7 @@ export async function claimTask(db: Database, agentId: AgentId, roomId: RoomId, 
 /**
  * 改状态：按流转表检查，带条件地更新（状态仍是读到的那个）。进行中与待审要有负责人。
  * 别人把负责人的任务退回（待审或完成退回到进行中或待办）时，通知 @ 负责人。`note` 接在通知正文后面，
- * 负责人被唤醒的同一轮里就读到要改什么。状态没变时什么也不写，说明也丢掉。
+ * 负责人被唤醒的同一轮里就读到要改什么。状态没变时什么也不写；这时带了说明就拒绝，说明发不出去，不能假装成功。
  */
 export async function setTaskStatus(
   db: Database,
@@ -257,7 +257,10 @@ export async function setTaskStatus(
     const room = await taskRoom(tx, roomId);
     await assertMember(tx, room.id, actor);
     const current = await findTask(tx, room.id, number);
-    if (current.status === status) return { task: await viewOf(tx, current.id), posts: [] };
+    if (current.status === status) {
+      if (note) refuse({ code: "note_unchanged", number, status });
+      return { task: await viewOf(tx, current.id), posts: [] };
+    }
     if (!TASK_TRANSITIONS[current.status].includes(status)) {
       refuse({ code: "transition", number, from: current.status, to: status });
     }

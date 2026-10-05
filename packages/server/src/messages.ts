@@ -261,7 +261,7 @@ export function wakeTargets(author: Author, memberIds: AgentId[], mentionedIds: 
 }
 
 /**
- * HELD 检查：房间里有已投递位置之后、别人发的消息时，从最早的开始返回至多 `HELD_SHOWN_MAX` 条，
+ * HELD 检查：房间里有已投递位置之后、别人发的消息（或自己的提醒）时，从最早的开始返回至多 `HELD_SHOWN_MAX` 条，
  * 已投递位置只推进到返回的最后一条：没有返回的消息仍然算没看过，Agent 再次回复时接着返回，
  * Turn 结束后它们也仍是未读，不会因为确认已读而被跳过。没有新消息时返回 undefined。
  */
@@ -277,10 +277,16 @@ async function heldMessages(
     .where(and(eq(agentReadCursors.agentId, agentId), eq(agentReadCursors.roomId, roomId)));
   if (!cursor) throw new Error(`Agent ${agentId} 在房间 ${roomId} 没有已读记录`);
 
+  // 自己写的消息不拦，只有自己的提醒例外：它以自己的名义写下，却是要唤醒自己去看的。一轮进行中提醒到点、
+  // 这一轮又在同一房间回复时，不拦就会把已投递位置推过它，这一轮结束后它被当成已读，提醒唤醒的下一轮读不到。
   const unseen = and(
     eq(messages.roomId, roomId),
     gt(messages.seq, cursor.deliveredSeq),
-    or(isNull(messages.authorAgentId), ne(messages.authorAgentId, agentId)),
+    or(
+      isNull(messages.authorAgentId),
+      ne(messages.authorAgentId, agentId),
+      sql`${messages.notice}->>'type' = 'reminder'`,
+    ),
   );
   const [count] = await tx.select({ n: sql<number>`count(*)::int` }).from(messages).where(unseen);
   const total = count?.n ?? 0;

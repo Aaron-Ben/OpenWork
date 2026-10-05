@@ -186,6 +186,8 @@ function refusalText(refusal: TaskRefusal, roomId: RoomId, messageId: MessageId 
       return `task #${refusal.number} is ${refusal.status} and can't be reassigned.`;
     case "changed":
       return `task #${refusal.number} was just changed by someone else. Run crew task list ${roomId} and decide again.`;
+    case "note_unchanged":
+      return `task #${refusal.number} is already ${refusal.status}, so nothing changed and your note was not posted. To add something, reply in the task's thread.`;
     default:
       return assertNever(refusal);
   }

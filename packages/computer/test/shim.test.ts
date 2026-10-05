@@ -209,6 +209,16 @@ describe("crew reply", () => {
     const id = lines[0]?.trim().split(/\s+/)[0] ?? "";
     expect((await crew(["remind", "cancel", id])).code).toBe(0);
     expect((await crew(["remind", "list"])).stdout).not.toContain("Check CI");
+
+    // 带时区的 ISO 8601（带秒或不带、Z 或偏移）照常接受；范围检查只拒绝日历上没有的时刻。
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60_000);
+    const iso = tomorrow.toISOString().slice(0, 16);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const local = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())} 09:00`;
+    const spaced = `${iso.replace("T", " ")}+00:00`;
+    for (const at of [`${iso}:00Z`, `${iso}+00:00`, `${iso.toLowerCase()}z`, spaced, local]) {
+      expect((await crew(["remind", alice.roomId, "Valid time", "--at", at])).code).toBe(0);
+    }
   });
 
   it("does not post in a room the agent is not a member of", async () => {
@@ -305,6 +315,7 @@ describe("crew output", () => {
       ["task status, unknown status", ["task", "status", group, "1", "finished"]],
       ["task status, with a note", ["task", "status", group, "1", "in_progress", "--note", "Shorten the title"]],
       ["task status, empty note", ["task", "status", group, "1", "in_review", "--note", "  "]],
+      ["task status, unchanged with a note", ["task", "status", group, "1", "in_progress", "--note", "Again"]],
       ["task assign, not in the room", ["task", "assign", group, "3", "nobody"]],
     ];
     for (const [title, args] of taskCases) {
@@ -335,6 +346,12 @@ describe("crew output", () => {
       ["remind, in the past", ["remind", alice.roomId, "Something", "--at", "2020-01-01 09:00"]],
       ["remind, too often", ["remind", alice.roomId, "Something", "--every", "2m"]],
       ["remind, bad weekly", ["remind", alice.roomId, "Something", "--weekly", "someday@9"]],
+      // 不存在的时刻不能被顺延成别的时间。
+      ["remind, minute out of range", ["remind", alice.roomId, "Something", "--at", "18:99"]],
+      ["remind, hour out of range", ["remind", alice.roomId, "Something", "--at", "25:00"]],
+      ["remind, no such date", ["remind", alice.roomId, "Something", "--at", "2027-02-30 09:00"]],
+      ["remind, no such date in ISO", ["remind", alice.roomId, "Something", "--at", "2027-02-30T09:00:00+08:00"]],
+      ["remind, too far ahead", ["remind", alice.roomId, "Something", "--in", "999999999999m"]],
     ];
     for (const [title, args] of reminderCases) {
       const before = sections.length;

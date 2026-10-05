@@ -391,6 +391,13 @@ stderr:
 error: --note is empty. Write what changed, or leave --note out.
 ```
 
+## task status, unchanged with a note (exit 1)
+
+```text
+stderr:
+error: task #1 is already in_progress, so nothing changed and your note was not posted. To add something, reply in the task's thread.
+```
+
 ## task assign, not in the room (exit 1)
 
 ```text
@@ -504,6 +511,41 @@ error: --every must be at least 5m, so a reminder does not wake you too often.
 ```text
 stderr:
 error: --weekly "someday@9" is not a weekly time. Write it like mon,fri@09:00.
+```
+
+## remind, minute out of range (exit 1)
+
+```text
+stderr:
+error: --at "18:99" is not a time. Write it like 18:00, 2026-10-06 09:00, or ISO 8601 with an offset.
+```
+
+## remind, hour out of range (exit 1)
+
+```text
+stderr:
+error: --at "25:00" is not a time. Write it like 18:00, 2026-10-06 09:00, or ISO 8601 with an offset.
+```
+
+## remind, no such date (exit 1)
+
+```text
+stderr:
+error: --at "2027-02-30 09:00" is not a time. Write it like 18:00, 2026-10-06 09:00, or ISO 8601 with an offset.
+```
+
+## remind, no such date in ISO (exit 1)
+
+```text
+stderr:
+error: --at "2027-02-30T09:00:00<offset>" is not a time. Write it like 18:00, 2026-10-06 09:00, or ISO 8601 with an offset.
+```
+
+## remind, too far ahead (exit 1)
+
+```text
+stderr:
+error: --in can be at most 365d.
 ```
 
 ## remind cancel (exit 0)

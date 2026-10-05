@@ -1152,7 +1152,7 @@ describe("tasks", () => {
     expect(inbox.find((room) => room.roomId === threadId)?.messages.at(-1)?.body).toContain("标题太长");
   });
 
-  it("post nothing when the status does not change, even with a note", async () => {
+  it("post nothing when the status does not change, and refuse a note that would go nowhere", async () => {
     const alice = await newAgent("SameAlice", "same-alice");
     const group = await newGroup("没变", [alice]);
     const { number, threadId } = await expectTask(await newTask(group.id, "状态没变", alice.id), 201);
@@ -1162,10 +1162,17 @@ describe("tasks", () => {
     await agentStatus(token, group.id, number, "in_review");
     const before = await bodiesWithKind(threadId);
 
-    // Agent 把待审的任务再改成待审：成功返回，任务不变，不写通知，说明丢掉，也不唤醒谁。
-    expect(await wakes(() => agentStatus(token, group.id, number, "in_review", "又看了一遍"))).toEqual([]);
-    const same = await expectTask(await agentStatus(token, group.id, number, "in_review", "又看了一遍"));
-    expect(same.status).toBe("in_review");
+    // 不带说明：成功返回，任务不变，不写通知，不唤醒谁。
+    expect(await wakes(() => agentStatus(token, group.id, number, "in_review"))).toEqual([]);
+    expect((await expectTask(await agentStatus(token, group.id, number, "in_review"))).status).toBe("in_review");
+    // 带了说明：说明没有通知可写，拒绝，免得 Agent 与用户以为它发出去了。
+    const refused = await agentStatus(token, group.id, number, "in_review", "又看了一遍");
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: `任务 #${number} 已经是待审，状态没变，说明没有发出`,
+      refusal: { code: "note_unchanged", number, status: "in_review" },
+    });
+    expect((await setStatus(group.id, number, "in_review", "又看了一遍")).status).toBe(409);
     expect(await bodiesWithKind(threadId)).toEqual(before);
   });
 
@@ -1383,6 +1390,29 @@ describe("reminders", () => {
       kind: "system",
       body: "的提醒到了：回到这个讨论串",
     });
+  });
+
+  it("hold the owner's reply when one fires during its turn, so the reminder is not marked read unseen", async () => {
+    const alice = await newAgent("HeldAlice", "held-alice");
+    const group = await newGroup("提醒与 HELD", [alice]);
+    const token = await agentToken(alice.id);
+    await remind(token, { roomId: group.id, title: "看一下 CI", at: minutes(start, 30).toISOString() });
+    await post(group.id, "你好");
+
+    // 这一轮读到“你好”；它还在运行时提醒到点。
+    expect((await readInbox(alice.id)).find((room) => room.roomId === group.id)?.messages.map((m) => m.body)).toEqual([
+      "你好",
+    ]);
+    t.setNow(minutes(start, 30));
+    expect(await wakesOf([alice], () => t.reminders.fireDue())).toEqual([alice.id]);
+
+    // 这一轮接着回复：被提醒拦下，先看到它。
+    const held = await reply(token, group.id, "你好！");
+    expect(held).toMatchObject({ outcome: "held", newMessages: [{ body: "的提醒到了：看一下 CI" }] });
+    expect((await reply(token, group.id, "你好！")).outcome).toBe("posted");
+    await acknowledge(alice.id);
+    // 看过了，下一轮不再读到它；自己领取任务这类通知仍然不拦（见 tasks 的用例）。
+    expect((await readInbox(alice.id)).find((room) => room.roomId === group.id)).toBeUndefined();
   });
 
   it("are not missed when one is set while the timer is looking up the next due time", async () => {
