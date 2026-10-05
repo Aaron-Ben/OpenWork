@@ -13,7 +13,7 @@ export type SandboxOutcome =
  */
 const SANDBOX_EXEC_FAILURES = new Set([64, 65, 71]);
 
-/** 根据退出码与 stderr 区分三种结果。做法沿用 Rust 版的 `crates/openwork-sandbox/src/denial.rs`。 */
+/** 根据退出码与 stderr 区分三种结果。做法沿用 Rust 版（已删除，`git show dd8779b:crates/openwork-sandbox/src/denial.rs`）。 */
 export function classifySandboxExit(exitCode: number, stderr: string): SandboxOutcome {
   const start = stderr.trimStart();
   if (

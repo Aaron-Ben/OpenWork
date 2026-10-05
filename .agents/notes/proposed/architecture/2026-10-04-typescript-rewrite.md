@@ -17,7 +17,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 参考 cumora、raft 与现有 OpenWork，用 TypeScript 从零实现新版本，产品名改为 Crew。三者都只作参考：
 
 - 不逐行翻译 Rust 代码，不兼容现有的线协议与数据库。
-- 现有协作规则（triage 判定、HELD、water-fill 分批等）是做到对应功能时讨论的参考方案之一，不是必须照搬的行为。Rust 版的决策记录在 `.agents/notes/legacy/`。
+- 现有协作规则（triage 判定、HELD、water-fill 分批等）是做到对应功能时讨论的参考方案之一，不是必须照搬的行为。Rust 版的决策记录原先在 legacy 目录，第 9 步已删除，原文见 `git show dd8779b:.agents/notes/legacy`。
 - 本文是路线图，只记录总体决策与实现顺序。每一步开始前，为这一步的实现决策另写 proposed Agent Note，按根 [AGENTS.md](../../../../AGENTS.md) 的规则讨论；实现后改为 implemented。
 
 已经确定的决策：全部代码用 TypeScript；Desktop、Server、Computer 三个进程；PostgreSQL；Express 5；Electron；Engine 必须在 Seatbelt 中运行；在 `refactor` 分支开发，新代码与 Rust 代码并存到最后一步。
@@ -84,7 +84,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 ### 文档
 
 - 新实现的子系统页随功能编写。Server 与 Computer 的新功能扩展 `docs/subsystems/messaging.md` 与 `docs/subsystems/agent-runtime.md`，看板等独立的功能另起一页。
-- `collaboration.md` 与 `collaboration-desktop.md` 描述 Rust 版，开发期间保留作参考，最后一步删除。
+- 描述 Rust 版的 `collaboration.md` 与 `collaboration-desktop.md` 已在第 9 步删除，原文见 `git show dd8779b:docs/subsystems/collaboration.md`。
 
 ### 实现顺序
 
@@ -103,13 +103,13 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
    - 6c 静音：Agent 用 `crew mute` 让某个群不再唤醒它，@ 它、讨论串与任务仍然送达。
 7. triage（3b）：用第 4 步的运行记录统计“白跑”（被唤醒、完整运行一轮却没有发出消息）占的轮次与费用，作为动机数据；按“消息 × Agent”标注应该回复还是应该沉默，作为评测集；再用一次便宜的模型调用判断“这条和我有关吗”，用评测集衡量漏判与节省，并给 triage 题面加快照。
 8. 打包：见下文“打包”。
-9. 删除 Rust：删除 `crates/`、Tauri、旧 `desktop/`、描述 Rust 版的文档与 `.agents/notes/legacy/`，卸载 rust-analyzer 相关工具，更新 README、testing.md 与本 Agent Note。
+9. 删除 Rust：删除 crates 目录、Tauri、旧 desktop 目录、描述 Rust 版的文档与 legacy 目录下的 Note，卸载 rust-analyzer 相关工具，更新 README、testing.md 与本 Agent Note。2026-10-05 删除了 crates、旧 desktop、legacy Note、描述 Rust 版的文档、`Cargo.toml` 与 Rust 编译输出，规则文件、检查脚本与配置里的旧版条目一并去掉；最后一个包含旧版的提交是 dd8779b。rust-analyzer 的编辑器设置与 README 里过时的“现在能做什么”一节也已删除。还没做的：Redis 配置（`compose.yaml`、`.env.example`）与本机的 Rust 工具。
 
 群聊、任务与提醒的形状参考了 raft：raft 不做 triage，房间成员全部收到消息（`raft:packages/server/src/services/messageService.ts` 的 `broadcastAndDeliver`），由提示词约束何时插话（`raft:packages/daemon/src/drivers/raftCliGuide.ts` 的 Conversation etiquette），靠发送时的新鲜度检查防止过时的回复（`raft:packages/server/src/routes/internalAgentApi.ts`，最多返回 3 条新消息）；任务状态固定（`raft:packages/server/src/db/schema.ts` 的 `tasks`），分配任务时写一条 “📌 Assigned” 系统消息并 @ 对方（`raft:packages/server/src/services/taskService.ts`）；定时唤醒用 Agent 自己设的提醒，记忆用 `MEMORY.md`（`raft:packages/daemon/src/workspaces.ts`）。
 
 功能对齐后接入新的 Engine 时，写一份“新增 Engine adapter”的操作指南，放在本仓库的 docs/cookbook/ 目录（还没有建）。做法来自 DSH 的 `dsh:docs/cookbook/adding-an-llm-adapter.md`。
 
-界面在对应步骤设计，不复制现有的 `desktop/src`。
+界面在对应步骤设计，不复制旧版 desktop 目录里的界面。
 
 ### 打包
 
@@ -134,11 +134,11 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 **triage 紧接在 3a 之后，运行观测排在后面。** 2026-10-05 的路线图最初这样排。用户同意改为先做运行观测：triage 要用“白跑”的轮次与费用作为动机数据，这些数据来自每一轮的运行记录，而运行记录属于运行观测；先能看到、量到，再去优化。运行观测本身的演示效果也好，并且能修掉 Agent 状态不分房间的问题。
 
-**看板沿用旧版：自定义列加 `kind`，卡片有独立的唤醒。** 见 legacy 的 `.agents/notes/legacy/architecture/2026-09-24-column-kind-and-card-claim.md` 与 `.agents/notes/legacy/architecture/2026-09-24-persistent-card-wakes.md`。没有采用：固定状态足够演示，分配任务复用消息与 @ 唤醒，不需要第二套唤醒机制。
+**看板沿用旧版：自定义列加 `kind`，卡片有独立的唤醒。** 见 legacy 的 `git show dd8779b:.agents/notes/legacy/architecture/2026-09-24-column-kind-and-card-claim.md` 与 `git show dd8779b:.agents/notes/legacy/architecture/2026-09-24-persistent-card-wakes.md`（第 9 步已删除）。没有采用：固定状态足够演示，分配任务复用消息与 @ 唤醒，不需要第二套唤醒机制。
 
-**Agenda：系统定期用模型判断 Agent 该不该主动做事。** 旧版的做法，有候选集、签名、decline 计数与退避（`docs/subsystems/collaboration.md` §12）。没有采用：换成 Agent 自己设的提醒，更简单，行为可以预期，也容易演示。
+**Agenda：系统定期用模型判断 Agent 该不该主动做事。** 旧版的做法，有候选集、签名、decline 计数与退避（`git show dd8779b:docs/subsystems/collaboration.md` §12）。没有采用：换成 Agent 自己设的提醒，更简单，行为可以预期，也容易演示。
 
-**Climate：Agent 对其他参与者的私有印象。** 旧版的做法（`docs/subsystems/collaboration.md` §10）。没有采用：换成 Agent 自己维护的 `MEMORY.md`，不需要专门的表与命令。
+**Climate：Agent 对其他参与者的私有印象。** 旧版的做法（`git show dd8779b:docs/subsystems/collaboration.md` §10）。没有采用：换成 Agent 自己维护的 `MEMORY.md`，不需要专门的表与命令。
 
 **Server 与 Computer 合并为一个进程，或全部放进 Electron 主进程。** 进程更少。没有采用，因为以后 Computer 要留在用户机器上，而 Server 可能迁到云端。全部放进主进程时，Engine 管理、数据库写入与界面通信无法隔离。
 
@@ -166,4 +166,4 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - Electron 的内存占用高于 Tauri。
 - 演示前需要安装 Docker 并启动 PostgreSQL。
 - 开发期间 Rust 与 TypeScript 两套代码并存。Rust 代码不再加功能，只修影响旧版本运行的问题。
-- 从零实现时，现有 Rust 版已经解决的问题可能重新出现。做到对应功能时，先查旧版的子系统页与 `.agents/notes/legacy/`。
+- 从零实现时，现有 Rust 版已经解决的问题可能重新出现。做到对应功能时，先查旧版的子系统页与 legacy Note（第 9 步已删除，原文见 `git show dd8779b:.agents/notes/legacy`）。

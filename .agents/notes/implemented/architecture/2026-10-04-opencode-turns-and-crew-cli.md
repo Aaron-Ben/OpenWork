@@ -46,7 +46,7 @@ Agent 被唤醒后要调用模型，并且能在房间里发言。需要决定�
 
 真正值钱的是经 `OPENCODE_AUTH_CONTENT` 传入的服务商登录信息，两个参考项目同样把服务商密钥原样交给 Engine。保护它要靠网络管控，不是代理。
 
-**每个 Agent 一个常驻的 `opencode serve`。** 常驻进程省掉每轮的启动时间，Turn 进行中还能把新消息送进同一轮（steer）。Rust 版提议过（`.agents/notes/legacy/architecture/2026-09-24-opencode-serve-for-steer.md`），没有实现。没有采用：2026-10-05 在沙箱外粗测，`opencode run` 在调用模型前退出约 0.65 秒，模型响应要几秒到几十秒，启动不是瓶颈；raft 与 cumora 都只对 Claude、Codex 用常驻进程，OpenCode 都按 Turn 启动（`cumora:server/src/agents/computer/engine.ts` 称它为 “ONE-SHOT engine”）。常驻进程还要管理启动、健康检查、崩溃重建与关闭。
+**每个 Agent 一个常驻的 `opencode serve`。** 常驻进程省掉每轮的启动时间，Turn 进行中还能把新消息送进同一轮（steer）。Rust 版提议过（那份 Note 已在第 9 步删除，原文见 `git show dd8779b:.agents/notes/legacy/architecture/2026-09-24-opencode-serve-for-steer.md`），没有实现。没有采用：2026-10-05 在沙箱外粗测，`opencode run` 在调用模型前退出约 0.65 秒，模型响应要几秒到几十秒，启动不是瓶颈；raft 与 cumora 都只对 Claude、Codex 用常驻进程，OpenCode 都按 Turn 启动（`cumora:server/src/agents/computer/engine.ts` 称它为 “ONE-SHOT engine”）。常驻进程还要管理启动、健康检查、崩溃重建与关闭。
 
 **`crew` 也接受写在命令行上的正文。** cumora 的 `reply <convo_id> "<body>"` 这样做（`cumora:server/src/agents/cli.ts`）。没有采用：命令行上的正文先经过 shell，反引号与 `$` 会被展开，消息被悄悄改写；用单引号时 `\n` 又不会变成换行，cumora 为此写了 `unescapeChat`，再用 `--stdin` 与 `--file` 绕开它对代码片段的破坏（`cumora:server/src/agents/cli-parse.ts`）。raft 只接受 stdin（`raft:packages/cli/src/commands/message/send.ts`）。
 

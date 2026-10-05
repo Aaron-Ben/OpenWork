@@ -22,16 +22,7 @@
 </div>
 
 > [!IMPORTANT]
-> Crew 正在用 TypeScript 从零实现，只能从源码运行，只支持 macOS 与本机 OpenCode。Agent 在 Seatbelt 沙箱中运行，但网络不受限制。只在可信的本机环境中使用。旧版 OpenWork（Rust 加 Tauri）的代码仍在 `crates/` 与 `desktop/` 中，最后一步删除。
-
-## 现在能做什么
-
-- **新建 Agent**：填写名字、人设，从本机 OpenCode 的可用模型中选一个。
-- **私聊**：给 Agent 发消息。Agent 被唤醒后，在 Seatbelt 中运行一次 OpenCode，用 `crew reply` 命令回复；它的纯文本输出没有人看到，所以它也可以选择不回复。
-- **状态**：侧栏显示每个 Agent 是空闲、回复中还是出错。出错时，对话里写明原因；下一条消息到来时自动重试。
-- **界面**：消息按 Markdown 渲染，代码块按语言高亮；浅色与深色主题跟随系统。
-
-接下来按顺序实现：群聊协调（多个 Agent、谁该发言）、看板、Agenda 与运行观测。计划见[设计 Agent Note](.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md)。
+> Crew 正在用 TypeScript 从零实现，只能从源码运行，只支持 macOS 与本机 OpenCode。Agent 在 Seatbelt 沙箱中运行，但网络不受限制。只在可信的本机环境中使用。旧版 OpenWork（Rust 加 Tauri）的代码已删除，需要时从 git 历史找回。
 
 ## 架构
 

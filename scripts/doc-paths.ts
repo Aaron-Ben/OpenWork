@@ -13,7 +13,7 @@ export interface PathCheckOptions {
 }
 
 /** 本仓库的顶层目录。以它们开头的行内代码视为仓库路径。 */
-const REPO_DIRS = new Set(["apps", "packages", "docs", "scripts", ".agents", ".claude", "crates", "desktop"]);
+const REPO_DIRS = new Set(["apps", "packages", "docs", "scripts", ".agents", ".claude"]);
 const INLINE_CODE = /`([^`]+)`/g;
 /** 引用其他项目的路径写成 `项目:路径`，例如 `raft:packages/cli/src/main.ts`。 */
 const OTHER_PROJECT = /^([a-z]+):(.+)$/i;

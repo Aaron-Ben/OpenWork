@@ -26,7 +26,7 @@ git diff --stat
 - 运行 `pnpm check`。用户说“只做语法检查”时，只运行 `pnpm lint` 与 `pnpm typecheck`，并在汇报中写明没有跑测试。
 - 检查失败时不提交，修好后重新运行。
 - 改了命令参数、默认值、数字或行为时，用 `git grep` 在 `docs/` 与 `.agents/notes/proposed/` 中搜索旧的写法，一起更新。路径检查只能发现被删除的文件，发现不了这类过时的描述。
-- 改了模型可见的文本：确认快照的 diff 已经逐行看过。改了 Engine 调用或模型可见的行为：按 [testing.md](../../../docs/testing.md) 第 1 节先问用户是否运行真实模型测试。改了旧版 Rust 代码：另外运行 [docs/legacy-rust.md](../../../docs/legacy-rust.md) 中的检查。
+- 改了模型可见的文本：确认快照的 diff 已经逐行看过。改了 Engine 调用或模型可见的行为：按 [testing.md](../../../docs/testing.md) 第 1 节先问用户是否运行真实模型测试。
 
 ## 3. 写提交说明
 

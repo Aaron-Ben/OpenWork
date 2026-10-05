@@ -4,8 +4,8 @@ Server 把数据存在 PostgreSQL。`compose.yaml` 定义两个服务：
 
 | 服务 | 容器 | 端口 | 数据 | 谁用 |
 |---|---|---|---|---|
-| `postgres` | `crew-postgres` | 5432 | 数据卷 `crew-postgres-data` | Crew 与旧版 |
-| `redis` | `crew-redis` | 6379 | 没有数据卷，重启后清空 | 只有旧版，属于 `legacy` profile，默认不启动，见 [legacy-rust.md](legacy-rust.md) |
+| `postgres` | `crew-postgres` | 5432 | 数据卷 `crew-postgres-data` | Crew |
+| `redis` | `crew-redis` | 6379 | 没有数据卷，重启后清空 | 只有旧版，属于 `legacy` profile，默认不启动；旧版代码已删除 |
 
 ## 配置
 

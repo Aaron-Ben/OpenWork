@@ -2,7 +2,7 @@
 
 本文规定文档分层与写作规则。`docs/CLAUDE.md` 是指向本文的软链接。Agent Note 的格式见 [.agents/notes/README.md](../.agents/notes/README.md)。
 
-这里的“文档”指仓库里的 Markdown 文件，不包括两类：测试快照（`__snapshots__/` 下由测试生成的模型提示词），以及描述 Rust 版、不再修改的文档（`crates/`、`desktop/`、`.agents/notes/legacy/` 与两个旧子系统页）。
+这里的“文档”指仓库里的 Markdown 文件，不包括测试快照（`__snapshots__/` 下由测试生成的模型提示词）。
 
 ## 1. 一个事实只有一个位置
 

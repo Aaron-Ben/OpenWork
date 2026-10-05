@@ -9,7 +9,7 @@ const root = resolve(import.meta.dirname, "..");
 /** 检查器自己的源码与测试在注释和字符串里写着被禁止的写法，不检查。 */
 const SELF = new Set(["scripts/code-rules.ts", "scripts/code-rules.test.ts"]);
 
-/** 新版 Crew 的源码与测试。旧版 Rust 加 Tauri 的 `desktop/` 不检查。 */
+/** Crew 的源码与测试。 */
 function sourceFiles(): string[] {
   const output = execFileSync(
     "git",

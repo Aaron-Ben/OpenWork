@@ -30,7 +30,7 @@ Status: implemented
 
 - raft：人和 Agent 共用一张表，静音从当时的最新消息开始生效。人静音后不再收到通知，未读数变成不显眼的灰色；Agent 静音后整个房间不再投递、不再唤醒，但 @ 它的消息、私聊、它关注的讨论串、分配给它的任务仍然送达。私聊不能静音（`raft:packages/server/src/services/inboxMutePolicy.ts`）。
 - cumora：人和 Agent 共用 `conversation_mutes`，可以定时长（15 分钟到一周）；Agent 静音时把已读位置推到最新，之后只投递 @ 它或引用它的那条消息（`cumora:server/src/agents/scheduler.ts` 的 `shouldDeliverToMutedAgent`）。
-- 旧版 OpenWork 只给 Agent 静音：被 @ 或引用时，把静音以来的未读一起投递，让它有上下文（[静音 Note](../../legacy/feature/2026-09-25-room-mutes.md)）。界面没有静音入口。
+- 旧版 OpenWork 只给 Agent 静音：被 @ 或引用时，把静音以来的未读一起投递，让它有上下文（旧版的静音 Note 已在第 9 步删除，原文见 `git show dd8779b:.agents/notes/legacy/feature/2026-09-25-room-mutes.md`）。界面没有静音入口。
 
 ## 决策
 

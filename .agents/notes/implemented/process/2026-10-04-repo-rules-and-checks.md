@@ -23,7 +23,7 @@ Status: implemented
 **Agent Note**
 
 - 一份 Note 只负责一个主题。分多步实施的计划写成路线图 Note（[重写的路线图](../../proposed/architecture/2026-10-04-typescript-rewrite.md)），每一步的决策另写 Note，实现后改为 implemented。
-- Rust 版的 Note 放在 `.agents/notes/legacy/`，状态行是 `Status: legacy`，只作参考，可以重新讨论。
+- Rust 版的 Note 原先放在 legacy 目录，状态行是 `Status: legacy`，只作参考，可以重新讨论；第 9 步随 Rust 代码一起删除，原文见 `git show dd8779b:.agents/notes/legacy`。
 - 只为会约束后续工作的决策写 Note。界面的视觉方向会约束以后的每个页面，所以有[私聊界面](../feature/2026-10-04-direct-chat-ui.md)这份 Note。
 - Note 的“决策”一节只写选了什么，并链接设计文档；数字与默认值只写在设计文档里。
 - 讨论要写进 Note 的方案时，Note 跟着讨论更新，不在讨论结束后凭记忆补写。做法见 [Agent Notes 的 README](../../README.md)“讨论中记录”。

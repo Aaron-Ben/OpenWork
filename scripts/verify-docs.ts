@@ -12,16 +12,8 @@ import { findBrokenLinks } from "./md-links";
 const root = resolve(import.meta.dirname, "..");
 const notesDir = resolve(root, ".agents/notes");
 
-/**
- * 不检查行内代码路径的文档：Rust 版的 Note 与旧版的子系统页记录的是当时的路径；
- * 任务文件写的是计划中、还没建的文件。
- */
-const PATH_CHECK_EXEMPT = [
-  ".agents/notes/legacy/",
-  ".agents/tasks/",
-  "docs/subsystems/collaboration.md",
-  "docs/subsystems/collaboration-desktop.md",
-];
+/** 不检查行内代码路径的文档：任务文件写的是计划中、还没建的文件。 */
+const PATH_CHECK_EXEMPT = [".agents/tasks/"];
 
 /** 仓库中已跟踪与未跟踪（但未被忽略）的 Markdown 文件。已跟踪但在工作区中删除的文件不在其中。 */
 function markdownFiles(): string[] {

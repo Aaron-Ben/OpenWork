@@ -9,9 +9,9 @@ Crew 有三个进程：Electron 主进程、Server 与 Computer，这是[路线�
 ## 决策
 
 - 主进程用 `child_process.spawn` 运行 Electron 可执行文件，设置 `ELECTRON_RUN_AS_NODE=1`，参数是 Server 或 Computer 的入口 JS。测试中用 `node` 运行同样的入口，监管代码不变。代码在 `apps/desktop/electron/runtime.ts` 与 `apps/desktop/electron/child.ts`。
-- 启动握手：主进程向子进程的 stdin 写一行 JSON（bootstrap），子进程就绪后向 stdout 写一行 JSON（ready）。凭证不经过命令行参数与环境变量；Server 的随机端口由 ready 带回。消息的 schema 在 `packages/protocol/src/runtime.ts`。这沿用 Rust 版的 `crates/openwork-collab/src/protocol/desktop.rs`。
+- 启动握手：主进程向子进程的 stdin 写一行 JSON（bootstrap），子进程就绪后向 stdout 写一行 JSON（ready）。凭证不经过命令行参数与环境变量；Server 的随机端口由 ready 带回。消息的 schema 在 `packages/protocol/src/runtime.ts`。这沿用 Rust 版的做法（代码已在第 9 步删除，原文见 `git show dd8779b:crates/openwork-collab/src/protocol/desktop.rs`）。
 - 主进程启动时读取根目录的 `.env`，生成 RuntimeSession ID 与 Desktop、Computer 两个随机凭证。
-- 先启动 Server，再启动 Computer，两者都 ready 后才创建窗口。启动 Computer 时从环境变量中删除 `DATABASE_URL` 与 PostgreSQL 相关的变量（`computerEnv`）：Computer 只经 Server 的 HTTP 接口访问数据。Rust 版的做法见 `desktop/src-tauri/src/collab_client.rs` 的 `spawn_child`。
+- 先启动 Server，再启动 Computer，两者都 ready 后才创建窗口。启动 Computer 时从环境变量中删除 `DATABASE_URL` 与 PostgreSQL 相关的变量（`computerEnv`）：Computer 只经 Server 的 HTTP 接口访问数据。Rust 版的做法见 `git show dd8779b:desktop/src-tauri/src/collab_client.rs` 的 `spawn_child`（代码已在第 9 步删除）。
 - 子进程超时没有报告 ready 就按启动失败处理。停止时先停 Computer 再停 Server，每个先发 SIGTERM，宽限期过后仍未退出就发 SIGKILL。
 - 主进程给子进程 stderr 的每一行加上 `[Server]` 或 `[Computer]` 前缀，转发到自己的 stderr，并保留末尾一段用于报错。
 - 启动失败，或 Server、Computer 意外退出时，主进程停止整组进程，用系统错误对话框显示原因与 stderr 末尾，然后退出应用，不自动重启。

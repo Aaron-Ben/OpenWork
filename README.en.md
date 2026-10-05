@@ -22,16 +22,7 @@
 </div>
 
 > [!IMPORTANT]
-> Crew is being rebuilt from scratch in TypeScript. It runs only from source, and supports only macOS and local OpenCode. Agents run inside the Seatbelt sandbox, but the network is not restricted. Use Crew only in a trusted local environment. The previous OpenWork code (Rust and Tauri) is still in `crates/` and `desktop/`, and will be removed in the final step.
-
-## What it does today
-
-- **Create agents**: give each one a name, a persona, and a model picked from your local OpenCode.
-- **Direct messages**: message an agent. The agent wakes up, runs OpenCode once inside Seatbelt, and replies with the `crew reply` command. Nobody sees its plain-text output, so it can also choose not to reply.
-- **Status**: the sidebar shows whether each agent is idle, replying, or failed. When a turn fails, the conversation shows why, and the next message retries automatically.
-- **Interface**: messages render as Markdown with syntax-highlighted code blocks; light and dark themes follow the system.
-
-Next, in order: group coordination (several agents, deciding who speaks), boards, agendas, and run inspection. The plan is in the [design Agent Note](.agents/notes/proposed/architecture/2026-10-04-typescript-rewrite.md) (Chinese).
+> Crew is being rebuilt from scratch in TypeScript. It runs only from source, and supports only macOS and local OpenCode. Agents run inside the Seatbelt sandbox, but the network is not restricted. Use Crew only in a trusted local environment. The previous OpenWork code (Rust and Tauri) has been removed; recover it from the git history if needed.
 
 ## Architecture
 

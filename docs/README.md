@@ -10,7 +10,6 @@
 | [local-services.md](local-services.md) | 本地 PostgreSQL 的启动、检查与重建 |
 | [testing.md](testing.md) | 测试分层、原则、写法与运行方式 |
 | [defensive-patterns.md](defensive-patterns.md) | 本仓库实际出现过的缺陷与对应的写法 |
-| [legacy-rust.md](legacy-rust.md) | 旧版 Rust 代码的检查命令 |
 | [AGENTS.md](AGENTS.md) | 文档标准 |
 | [templates/package-readme.md](templates/package-readme.md) | 包 README 的结构与写法 |
 
@@ -20,8 +19,6 @@
 |---|---|
 | [messaging.md](subsystems/messaging.md) | Server：数据模型、消息与序号、已读位置、运行期状态、接口与 SSE |
 | [agent-runtime.md](subsystems/agent-runtime.md) | Computer：启动与停止、Runner 与 Turn、OpenCode、Seatbelt、本机目录、`crew` 命令 |
-| [collaboration.md](subsystems/collaboration.md) | 旧版 Rust 的协作 Runtime，开发期间保留作参考 |
-| [collaboration-desktop.md](subsystems/collaboration-desktop.md) | 旧版 Tauri 的协作界面，开发期间保留作参考 |
 
 ## 包
 
