@@ -1,11 +1,11 @@
-import { type AgentId, type AgentStatus, api, EVENT_STREAMS } from "@crew/protocol";
+import { type AgentId, type AgentStatus, api, EVENT_STREAMS, THREAD_PARTICIPANTS_MAX } from "@crew/protocol";
 import type { Express } from "express";
 import { type AgentSummary, createAgent, listAgents } from "../agents";
 import { notifyMessage, type ServerContext } from "../context";
 import { type Conversation, listConversations, markRead } from "../conversations";
 import { addGroupMembers, createGroup, type GroupSummary, listGroups } from "../groups";
 import { eventStream, route } from "../http";
-import { listMessages, postMessage } from "../messages";
+import { listMessages, listThreads, postMessage } from "../messages";
 import { agentStatuses, getRun, listRuns } from "../runs";
 
 const IDLE: AgentStatus = { state: "idle" };
@@ -36,7 +36,13 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
   route(app, api.desktop.listMessages, ({ params, query }) => listMessages(ctx.db, params.roomId, query));
 
   route(app, api.desktop.sendMessage, async ({ params, body }) => {
-    const result = await postMessage(ctx.db, params.roomId, { kind: "user", id: ctx.localUserId }, body.body);
+    const result = await postMessage(
+      ctx.db,
+      params.roomId,
+      { kind: "user", id: ctx.localUserId },
+      body.body,
+      body.threadOf,
+    );
     // 只有 Agent 的回复会被 HELD 拦下。
     if (result.kind !== "posted") throw new Error("用户的消息被拦下");
     notifyMessage(ctx, result);
@@ -75,6 +81,13 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
     ctx.events.desktop.publish({ type: "rooms" });
     return groupView(group);
   });
+
+  route(app, api.desktop.listThreads, async ({ params }) =>
+    (await listThreads(ctx.db, params.roomId, ctx.localUserId, THREAD_PARTICIPANTS_MAX)).map((thread) => ({
+      ...thread,
+      lastReplyAt: thread.lastReplyAt?.toISOString() ?? null,
+    })),
+  );
 
   route(app, api.desktop.listModels, () => ctx.state.listModels());
 

@@ -29,6 +29,8 @@ function Workbench() {
   const conversations = useConversations();
   const [selectedId, setSelectedId] = useState<RoomId>();
   const [dialog, setDialog] = useState<Dialog>();
+  /** 右栏放大后收起左侧会话栏。由聊天里的右栏打开与关上。 */
+  const [focus, setFocus] = useState(false);
 
   const agentList = agents.data ?? [];
   const groupList = groups.data ?? [];
@@ -51,20 +53,24 @@ function Workbench() {
 
   return (
     <div className="flex h-full">
-      <Sidebar
-        agents={agentList}
-        groups={groupList}
-        conversations={conversationList}
-        selectedRoomId={roomId}
-        onSelect={setSelectedId}
-        onCreateAgent={() => setDialog("agent")}
-        onCreateGroup={() => setDialog("group")}
-        connection={connection}
-      />
+      {!(focus && room) && (
+        <Sidebar
+          agents={agentList}
+          groups={groupList}
+          conversations={conversationList}
+          selectedRoomId={roomId}
+          onSelect={setSelectedId}
+          onCreateAgent={() => setDialog("agent")}
+          onCreateGroup={() => setDialog("group")}
+          connection={connection}
+        />
+      )}
       {room ? (
         <ChatView
           room={room}
           agents={agentList}
+          focus={focus}
+          onFocusChange={setFocus}
           onAddMembers={() => setDialog("members")}
           onJoinGroups={() => setDialog("join")}
         />

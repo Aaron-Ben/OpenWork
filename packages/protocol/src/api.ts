@@ -99,7 +99,23 @@ const AgentIds = z
 
 export const NewGroup = z.object({ name: RoomName, agentIds: AgentIds });
 
-/** 侧栏会话列表的一项：用户所在的一个房间。 */
+/**
+ * 群聊里一条消息下的讨论串，显示在那条消息下面，也在讨论串列表里。`replies` 是讨论串里的消息数，
+ * `participants` 是发过言的人（按第一次发言排列，至多 5 个），`unread` 是用户还没读的、别人发的回复数。
+ */
+export const THREAD_PARTICIPANTS_MAX = 5;
+export const ThreadSummary = z.object({
+  id: RoomId,
+  /** 讨论串挂着的那条消息。 */
+  parent: MessageView,
+  replies: z.number().int().nonnegative(),
+  lastReplyAt: z.string().nullable(),
+  participants: z.array(Participant),
+  unread: z.number().int().nonnegative(),
+});
+export type ThreadSummary = z.infer<typeof ThreadSummary>;
+
+/** 侧栏会话列表的一项：用户所在的一个房间。讨论串不单独出现，它的未读算进所在的群聊。 */
 export const Conversation = z.object({
   roomId: RoomId,
   kind: RoomKind,
@@ -108,9 +124,9 @@ export const Conversation = z.object({
   agentIds: z.array(AgentId),
   /** 最后一条消息；正文截短为预览。房间还没有消息时为 null。 */
   lastMessage: z.object({ author: Participant, body: z.string(), createdAt: z.string() }).nullable(),
-  /** 别人发的、用户还没读的消息数。 */
+  /** 别人发的、用户还没读的消息数，包括这个群聊的讨论串里的。 */
   unread: z.number().int().nonnegative(),
-  /** 最后活动的时间。列表按它从新到旧排列。 */
+  /** 最后活动的时间（包括讨论串里的消息）。列表按它从新到旧排列。 */
   activeAt: z.string(),
 });
 export type Conversation = z.infer<typeof Conversation>;
@@ -159,9 +175,17 @@ export const api = {
       method: "POST",
       path: "/desktop/rooms/:roomId/messages",
       params: RoomParams,
-      body: z.object({ body: MessageBody }),
+      /** 带 `threadOf` 时发到群聊里这条消息的讨论串，讨论串还没有时创建。返回的 `roomId` 是讨论串。 */
+      body: z.object({ body: MessageBody, threadOf: MessageId.optional() }),
       response: PostedMessage,
       status: 201,
+    }),
+    /** 群聊里的全部讨论串。 */
+    listThreads: endpoint({
+      method: "GET",
+      path: "/desktop/rooms/:roomId/threads",
+      params: RoomParams,
+      response: z.array(ThreadSummary),
     }),
     listModels: endpoint({ method: "GET", path: "/desktop/models", response: z.array(z.string()) }),
     listConversations: endpoint({
@@ -177,7 +201,9 @@ export const api = {
       body: z.object({ seq: z.number().int().nonnegative() }),
     }),
     listGroups: endpoint({ method: "GET", path: "/desktop/groups", response: z.array(DesktopGroup) }),
-    /** 运行记录，从新到旧。给 `roomId` 时只列这个房间唤醒的轮次，给 `agentId` 时只列这个 Agent 的。 */
+    /**
+     * 运行记录，从新到旧。给 `roomId` 时只列这个房间（包括它的讨论串）唤醒的轮次，给 `agentId` 时只列这个 Agent 的。
+     */
     listRuns: endpoint({
       method: "GET",
       path: "/desktop/runs",
@@ -277,7 +303,8 @@ export const api = {
     reply: endpoint({
       method: "POST",
       path: "/agent/reply",
-      body: z.object({ roomId: RoomId, body: MessageBody }),
+      /** 带 `threadOf` 时发到 `roomId` 里这条消息的讨论串，讨论串还没有时创建。 */
+      body: z.object({ roomId: RoomId, body: MessageBody, threadOf: MessageId.optional() }),
       response: ReplyOutcome,
     }),
   },

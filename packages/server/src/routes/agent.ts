@@ -9,20 +9,26 @@ import { recordHeld, recordReply } from "../runs";
 export function agentRoutes(app: Express, ctx: ServerContext): void {
   route(app, api.agent.reply, async ({ body, response }) => {
     const agentId = agentOf(response);
-    const result = await postMessage(ctx.db, body.roomId, { kind: "agent", id: agentId }, body.body);
+    const result = await postMessage(ctx.db, body.roomId, { kind: "agent", id: agentId }, body.body, body.threadOf);
     if (result.kind === "held") {
       const newMessages = result.newMessages.length + result.omitted;
       const preview = result.newMessages.map((message) => message.body).join(" / ");
-      notifyRun(ctx, await observe(recordHeld(ctx.db, agentId, { roomId: body.roomId, newMessages, preview })));
-      return { outcome: "held" as const, newMessages: result.newMessages, omitted: result.omitted };
+      notifyRun(ctx, await observe(recordHeld(ctx.db, agentId, { roomId: result.roomId, newMessages, preview })));
+      return {
+        outcome: "held" as const,
+        roomId: result.roomId,
+        newMessages: result.newMessages,
+        omitted: result.omitted,
+      };
     }
     // 先记进这一轮，再通知界面：界面读到的消息已经带着它所在的那一轮。
+    const { message } = result;
     const runRooms = await observe(
-      recordReply(ctx.db, agentId, { roomId: body.roomId, messageId: result.message.id, body: body.body }),
+      recordReply(ctx.db, agentId, { roomId: message.roomId, messageId: message.id, body: body.body }),
     );
     notifyMessage(ctx, result);
     notifyRun(ctx, runRooms);
-    return { outcome: "posted" as const, id: result.message.id, seq: result.message.seq };
+    return { outcome: "posted" as const, id: message.id, roomId: message.roomId, seq: message.seq };
   });
 }
 

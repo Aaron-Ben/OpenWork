@@ -26,27 +26,25 @@ const toneClass: Record<RunTone, string> = {
 };
 
 /**
- * 右侧的运行记录面板。从私聊打开时列出这个 Agent 的轮次；从群聊打开时列出群里全部成员的轮次，
- * 可以按成员筛选。选中的一轮展开成时间线。
+ * 右栏里的运行记录。从私聊打开时列出这个 Agent 的轮次；从群聊打开时列出群里（包括讨论串里）全部成员的轮次，
+ * 可以按成员筛选。不放大时选中的一轮在列表里展开成时间线；放大后左边是列表，右边是选中那一轮的时间线。
  */
 export function RunPanel({
-  title,
   scope,
   agents,
   members,
   selectedId,
+  expanded,
   onSelect,
-  onClose,
 }: {
-  title: string;
   scope: { roomId: RoomId } | { agentId: AgentId };
   /** 全部 Agent，用来显示每一轮的名字与头像（离开群聊的成员也要找得到）。 */
   agents: Agent[];
   /** 筛选项：群聊的成员；私聊时为空。 */
   members: Agent[];
   selectedId: string | undefined;
+  expanded: boolean;
   onSelect(runId: string | undefined): void;
-  onClose(): void;
 }) {
   const runs = useRuns(scope);
   const [member, setMember] = useState<AgentId>();
@@ -59,33 +57,23 @@ export function RunPanel({
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
   const showMembers = members.length > 1;
 
-  return (
-    <aside className="flex w-[400px] flex-none flex-col border-l border-line bg-bg">
-      <header className="drag flex h-[52px] flex-none items-center gap-2.5 border-b border-line pr-3.5 pl-[18px]">
-        <b className="truncate text-sm">{title}</b>
-        <span className="flex-none font-mono text-[11px] text-faint">{runs.data ? `${list.length} 轮` : ""}</span>
-        <button
-          type="button"
-          aria-label="关闭运行记录"
-          onClick={onClose}
-          className="ml-auto grid size-7 place-items-center rounded-md text-faint hover:bg-hover hover:text-text"
-        >
-          ✕
-        </button>
-      </header>
-
-      {showMembers && (
-        <div className="flex flex-wrap gap-1 px-3.5 pt-2.5 pb-1.5 font-mono text-[11.5px]">
-          <Chip active={!member} onClick={() => setMember(undefined)}>
-            全部成员
-          </Chip>
-          {members.map((agent) => (
-            <Chip key={agent.id} active={member === agent.id} onClick={() => setMember(agent.id)}>
-              {agent.displayName}
+  const listView = (
+    <div className={cn("flex min-h-0 flex-col", expanded ? "w-[340px] flex-none border-r border-line" : "flex-1")}>
+      <div className="flex flex-wrap items-center gap-1 px-3.5 pt-2.5 pb-1.5 font-mono text-[11.5px]">
+        {showMembers && (
+          <>
+            <Chip active={!member} onClick={() => setMember(undefined)}>
+              全部成员
             </Chip>
-          ))}
-        </div>
-      )}
+            {members.map((agent) => (
+              <Chip key={agent.id} active={member === agent.id} onClick={() => setMember(agent.id)}>
+                {agent.displayName}
+              </Chip>
+            ))}
+          </>
+        )}
+        <span className="ml-auto text-[11px] text-faint">{runs.data ? `${list.length} 轮` : ""}</span>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-3">
         {runs.error && <p className="px-2 py-4 text-xs text-danger">读取运行记录失败：{runs.error.message}</p>}
@@ -100,11 +88,28 @@ export function RunPanel({
             run={run}
             agent={byId.get(run.agentId)}
             open={run.id === selectedId}
-            onToggle={() => onSelect(run.id === selectedId ? undefined : run.id)}
+            inline={!expanded}
+            onToggle={() => onSelect(run.id === selectedId && !expanded ? undefined : run.id)}
           />
         ))}
       </div>
-    </aside>
+    </div>
+  );
+
+  if (!expanded) return listView;
+  return (
+    <div className="flex min-h-0 flex-1">
+      {listView}
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {selectedId ? (
+          <div className="mx-auto max-w-[760px]">
+            <RunDetailView runId={selectedId} />
+          </div>
+        ) : (
+          <p className="pt-10 text-center text-[12.5px] text-faint">选一轮，在这里看它的完整时间线。</p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -127,18 +132,21 @@ function RunRow({
   run,
   agent,
   open,
+  inline,
   onToggle,
 }: {
   run: RunSummary;
   agent: Agent | undefined;
   open: boolean;
+  /** 选中时在列表里展开时间线；放大后时间线显示在右边，这里只高亮。 */
+  inline: boolean;
   onToggle(): void;
 }) {
   const outcome = runOutcome(run);
   const now = new Date();
   const duration = formatDuration(new Date(run.endedAt ?? now).getTime() - new Date(run.startedAt).getTime());
   return (
-    <div className={cn("my-0.5 rounded-lg text-[12.5px]", open && "bg-panel shadow-[0_0_0_1px_var(--line-strong)]")}>
+    <div className={cn("my-0.5 rounded-lg text-[12.5px]", open && "bg-raised shadow-card ring-1 ring-line")}>
       <button type="button" onClick={onToggle} className="block w-full rounded-lg px-2.5 py-2 text-left hover:bg-hover">
         <span className="flex items-center gap-2">
           {agent && <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />}
@@ -157,7 +165,7 @@ function RunRow({
           {run.error && <span className="truncate text-danger">{run.error}</span>}
         </span>
       </button>
-      {open && <RunDetailView runId={run.id} />}
+      {open && inline && <RunDetailView runId={run.id} />}
     </div>
   );
 }

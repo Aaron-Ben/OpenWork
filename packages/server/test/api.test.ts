@@ -1,4 +1,4 @@
-import { type AgentId, type ComputerEvent, DesktopEvent, RoomId, runEventStream } from "@crew/protocol";
+import { type AgentId, type ComputerEvent, DesktopEvent, type MessageId, RoomId, runEventStream } from "@crew/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "./support/app";
 
@@ -74,7 +74,7 @@ async function reply(token: string, roomId: RoomId, body: string) {
   const response = await call(token, "/agent/reply", "POST", { roomId, body });
   expect(response.status).toBe(200);
   return (await response.json()) as
-    | { outcome: "posted"; seq: number }
+    | { outcome: "posted"; id: MessageId; roomId: RoomId; seq: number }
     | { outcome: "held"; newMessages: Array<{ seq: number; body: string }>; omitted: number };
 }
 
@@ -418,6 +418,7 @@ describe("agent replies", () => {
     const events = await collect<DesktopEvent>(t.ctx.events.desktop, async () => {
       expect(await reply(token, agent.roomId, "好的，我来看")).toEqual({
         outcome: "held",
+        roomId: agent.roomId,
         newMessages: [expect.objectContaining({ seq: 2, body: "算了，换个问题" })],
         omitted: 0,
       });
@@ -699,6 +700,257 @@ describe("runs", () => {
     expect(await statusOf(agent.id)).toEqual({ state: "error", reason: "沙箱不可用", roomIds: [] });
     await problem(null);
     expect(await statusOf(agent.id)).toEqual({ state: "idle" });
+  });
+});
+
+interface Posted {
+  id: MessageId;
+  roomId: RoomId;
+  seq: number;
+}
+
+/** 用户发一条消息；带 `threadOf` 时发到那条消息的讨论串。 */
+async function post(roomId: RoomId, body: string, threadOf?: MessageId): Promise<Posted> {
+  const response = await desktop(`/desktop/rooms/${roomId}/messages`, "POST", { body, threadOf });
+  expect(response.status).toBe(201);
+  return (await response.json()) as Posted;
+}
+
+async function threadsOf(roomId: RoomId) {
+  const response = await desktop(`/desktop/rooms/${roomId}/threads`);
+  expect(response.status).toBe(200);
+  return (await response.json()) as Array<{
+    id: RoomId;
+    parent: { id: MessageId; body: string };
+    replies: number;
+    lastReplyAt: string | null;
+    participants: Array<{ kind: string; displayName: string }>;
+    unread: number;
+  }>;
+}
+
+const wakes = async (run: () => Promise<unknown>) =>
+  (await collect<ComputerEvent>(t.ctx.events.computer, run)).map((event) =>
+    event.type === "agent.wake" ? event.agentId : event.type,
+  );
+
+describe("threads", () => {
+  it("open under a group message on the first reply, stay out of the group's timeline, and are summarized", async () => {
+    const alice = await newAgent("ThreadAlice", "thread-alice");
+    const group = await newGroup("讨论串", [alice]);
+    const host = await post(group.id, "登录页要加忘记密码");
+
+    const first = await post(group.id, "细节在这里讨论", host.id);
+    expect(first.roomId).not.toBe(group.id);
+    expect(first.seq).toBe(1);
+    const second = await post(group.id, "再补充一句", host.id);
+    expect(second).toMatchObject({ roomId: first.roomId, seq: 2 });
+    expect((await post(first.roomId, "直接发到讨论串")).seq).toBe(3);
+
+    expect((await listMessages(group.id)).map((message) => message.body)).toEqual(["登录页要加忘记密码"]);
+    expect((await listMessages(first.roomId)).map((message) => message.seq)).toEqual([1, 2, 3]);
+    const [summary] = await threadsOf(group.id);
+    expect(summary).toMatchObject({ id: first.roomId, parent: { id: host.id }, replies: 3, unread: 0 });
+    expect(summary?.participants).toEqual([expect.objectContaining({ kind: "user" })]);
+    expect(summary?.lastReplyAt).not.toBeNull();
+  });
+
+  it("refresh both the thread and its group when a reply is written", async () => {
+    const alice = await newAgent("RefreshAlice", "refresh-alice");
+    const group = await newGroup("刷新", [alice]);
+    const host = await post(group.id, "主题");
+    const events = await collect<DesktopEvent>(t.ctx.events.desktop, () => post(group.id, "回复", host.id));
+    const rooms = events.flatMap((event) => (event.type === "room.messages" ? [event.roomId] : []));
+    expect(rooms).toHaveLength(2);
+    expect(rooms).toContain(group.id);
+  });
+
+  it("wake the followers on a user reply: the agent that wrote the message, and those who replied or were mentioned", async () => {
+    const alice = await newAgent("FollowAlice", "follow-alice");
+    const bob = await newAgent("FollowBob", "follow-bob");
+    const carol = await newAgent("FollowCarol", "follow-carol");
+    const group = await newGroup("关注", [alice, bob, carol]);
+    const aliceToken = await agentToken(alice.id);
+    const bobToken = await agentToken(bob.id);
+    await post(group.id, "开始");
+    await readInbox(alice.id);
+    const host = await reply(aliceToken, group.id, "我先列个方案");
+    if (host.outcome !== "posted") throw new Error("应当发出");
+
+    const thread = (await post(group.id, "方案细节呢？", host.id)).roomId;
+    expect(await wakes(() => post(thread, "继续"))).toEqual([alice.id]);
+    expect(new Set(await wakes(() => post(thread, "@follow-bob 你也看下")))).toEqual(new Set([alice.id, bob.id]));
+
+    await readInbox(bob.id);
+    expect(await wakes(() => reply(bobToken, thread, "看过了，没问题"))).toEqual([]);
+    expect(new Set(await wakes(() => post(thread, "好的")))).toEqual(new Set([alice.id, bob.id]));
+    expect(await wakes(() => post(group.id, "群里的消息仍然唤醒全部成员"))).toHaveLength(3);
+  });
+
+  it("wake and enlist every agent in the group when nobody follows the thread yet", async () => {
+    const alice = await newAgent("EnlistAlice", "enlist-alice");
+    const bob = await newAgent("EnlistBob", "enlist-bob");
+    const group = await newGroup("没人关注", [alice, bob]);
+    const host = await post(group.id, "我自己发的主题");
+    const first = await wakes(() => post(group.id, "谁来回答？", host.id));
+    expect(new Set(first)).toEqual(new Set([alice.id, bob.id]));
+    const thread = (await threadsOf(group.id))[0]?.id;
+    if (!thread) throw new Error("讨论串应当存在");
+    expect(new Set(await wakes(() => post(thread, "还在吗")))).toEqual(new Set([alice.id, bob.id]));
+  });
+
+  it("let an agent open one with crew reply --thread and tell it where the message went", async () => {
+    const alice = await newAgent("OpenAlice", "open-alice");
+    const group = await newGroup("Agent 开讨论串", [alice]);
+    const host = await post(group.id, "主题");
+    await readInbox(alice.id);
+    const response = await call(await agentToken(alice.id), "/agent/reply", "POST", {
+      roomId: group.id,
+      body: "我在讨论串里回",
+      threadOf: host.id,
+    });
+    expect(response.status).toBe(200);
+    const posted = (await response.json()) as { outcome: string; roomId: RoomId };
+    expect(posted.outcome).toBe("posted");
+    expect(posted.roomId).toBe((await threadsOf(group.id))[0]?.id);
+  });
+
+  it("let one agent follow several threads, each with its own read position and its own section in a turn", async () => {
+    const alice = await newAgent("ManyAlice", "many-alice");
+    const bob = await newAgent("ManyBob", "many-bob");
+    const group = await newGroup("多个讨论串", [alice, bob]);
+    const first = await post(group.id, "主题一：登录页");
+    const second = await post(group.id, "主题二：注册页");
+    const threadA = (await post(group.id, "@many-alice 登录页怎么改？", first.id)).roomId;
+    const threadB = (await post(group.id, "@many-alice @many-bob 注册页呢？", second.id)).roomId;
+    await post(group.id, "群里的新消息");
+
+    const inbox = await readInbox(alice.id);
+    const sections = new Map(inbox.map((room) => [room.roomId, room]));
+    expect(new Set(sections.keys())).toEqual(new Set([group.id, threadA, threadB]));
+    expect(sections.get(group.id)?.messages.map((message) => message.body)).toEqual([
+      "主题一：登录页",
+      "主题二：注册页",
+      "群里的新消息",
+    ]);
+    expect(sections.get(threadA)).toMatchObject({ kind: "thread", parent: { message: { id: first.id } } });
+    expect(sections.get(threadA)?.messages.map((message) => message.body)).toEqual(["@many-alice 登录页怎么改？"]);
+    expect(sections.get(threadB)).toMatchObject({ kind: "thread", parent: { message: { id: second.id } } });
+
+    // 每个讨论串只唤醒自己的关注者：Bob 只关注了讨论串二。
+    expect(await wakes(() => post(threadA, "补充：要能记住邮箱"))).toEqual([alice.id]);
+    expect(new Set(await wakes(() => post(threadB, "补充：要校验密码强度")))).toEqual(new Set([alice.id, bob.id]));
+
+    // 确认已读把读过的每个房间一起推进；之后只剩上次读取之后来的消息，各在自己的讨论串里。
+    await acknowledge(alice.id);
+    await post(threadB, "再补一句");
+    const next = await readInbox(alice.id);
+    expect(new Map(next.map((room) => [room.roomId, room.messages.map((message) => message.body)]))).toEqual(
+      new Map([
+        [threadA, ["补充：要能记住邮箱"]],
+        [threadB, ["补充：要校验密码强度", "再补一句"]],
+      ]),
+    );
+  });
+
+  it("refuse to open in a direct room, inside a thread, or under a message of another room", async () => {
+    const alice = await newAgent("RefuseAlice", "refuse-alice");
+    const group = await newGroup("拒绝", [alice]);
+    const direct = await post(alice.roomId, "私聊");
+    const send = (roomId: RoomId, threadOf: MessageId) =>
+      desktop(`/desktop/rooms/${roomId}/messages`, "POST", { body: "x", threadOf });
+
+    const inDirect = await send(alice.roomId, direct.id);
+    expect(inDirect.status).toBe(400);
+    expect(await inDirect.json()).toEqual({ error: "私聊里不能开讨论串" });
+
+    const host = await post(group.id, "主题");
+    const reply1 = await post(group.id, "回复", host.id);
+    const nested = await send(reply1.roomId, reply1.id);
+    expect(nested.status).toBe(400);
+    expect(await nested.json()).toEqual({ error: "讨论串里不能再开讨论串" });
+
+    expect((await send(group.id, direct.id)).status).toBe(404);
+  });
+
+  it("show a follower the group's name, members and the message the thread hangs under, with every reply", async () => {
+    const alice = await newAgent("InboxAlice", "inbox-alice");
+    const bob = await newAgent("InboxBob", "inbox-bob");
+    const group = await newGroup("收件箱", [alice, bob]);
+    const host = await post(group.id, "要做的事");
+    await readInbox(bob.id);
+    await acknowledge(bob.id);
+    const thread = (await post(group.id, "第一条回复", host.id)).roomId;
+    await post(thread, "第二条回复");
+    await post(thread, "@inbox-bob 请看");
+
+    const inbox = await readInbox(bob.id);
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]).toMatchObject({
+      roomId: thread,
+      kind: "thread",
+      name: "收件箱",
+      parent: { roomId: group.id, message: { id: host.id, body: "要做的事" } },
+    });
+    expect(inbox[0]?.members.map((member) => member.displayName)).toEqual(["User", "InboxAlice", "InboxBob"]);
+    expect(inbox[0]?.messages.map((message) => [message.body, message.mentionsYou])).toEqual([
+      ["第一条回复", false],
+      ["第二条回复", false],
+      ["@inbox-bob 请看", true],
+    ]);
+  });
+
+  it("hold an agent's first reply in a thread until it has seen the replies already there", async () => {
+    const alice = await newAgent("LateAlice", "late-alice");
+    const bob = await newAgent("LateBob", "late-bob");
+    const group = await newGroup("后来者", [alice, bob]);
+    const host = await post(group.id, "主题");
+    await readInbox(bob.id);
+    await post(group.id, "@late-alice 先说", host.id);
+    const token = await agentToken(bob.id);
+
+    const held = await call(token, "/agent/reply", "POST", { roomId: group.id, body: "我来补充", threadOf: host.id });
+    const outcome = (await held.json()) as { outcome: string; newMessages: Array<{ body: string }> };
+    expect(outcome.outcome).toBe("held");
+    expect(outcome.newMessages.map((message) => message.body)).toEqual(["@late-alice 先说"]);
+
+    const again = await call(token, "/agent/reply", "POST", { roomId: group.id, body: "我来补充", threadOf: host.id });
+    expect(((await again.json()) as { outcome: string }).outcome).toBe("posted");
+  });
+
+  it("count unread replies in the group's conversation and in the summary, until the thread is read", async () => {
+    const alice = await newAgent("UnreadThread", "unread-thread");
+    const group = await newGroup("讨论串未读", [alice]);
+    const host = await post(group.id, "主题");
+    const thread = (await post(group.id, "我的回复不算", host.id)).roomId;
+    await desktop(`/desktop/rooms/${group.id}/read`, "POST", { seq: 99 });
+    await readInbox(alice.id);
+    const token = await agentToken(alice.id);
+    await reply(token, thread, "回复一");
+    await reply(token, thread, "回复二");
+
+    expect((await conversation(group.id))?.unread).toBe(2);
+    expect((await threadsOf(group.id))[0]?.unread).toBe(2);
+    expect((await desktop(`/desktop/rooms/${thread}/read`, "POST", { seq: 99 })).status).toBe(204);
+    expect((await conversation(group.id))?.unread).toBe(0);
+    expect((await threadsOf(group.id))[0]?.unread).toBe(0);
+  });
+
+  it("list runs woken in a thread under its group, and show the agent working in both", async () => {
+    const alice = await newAgent("RunThread", "run-thread");
+    const group = await newGroup("讨论串运行", [alice]);
+    const host = await post(group.id, "主题");
+    const thread = (await post(group.id, "回复", host.id)).roomId;
+    const runId = await startRun(alice.id, thread);
+
+    const listed = (await (await desktop(`/desktop/runs?roomId=${group.id}`)).json()) as Array<{
+      id: string;
+      triggers: Array<{ roomId: RoomId; parentRoomId: RoomId | null }>;
+    }>;
+    expect(listed.map((run) => run.id)).toEqual([runId]);
+    expect(listed[0]?.triggers).toEqual([expect.objectContaining({ roomId: thread, parentRoomId: group.id })]);
+    expect(await statusOf(alice.id)).toEqual({ state: "working", runId, roomIds: [thread, group.id] });
+    await finish(runId, { outcome: "succeeded" });
   });
 });
 

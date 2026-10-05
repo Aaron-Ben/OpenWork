@@ -22,6 +22,9 @@
   --danger: #b91c1c;
   --danger-soft: #fbe9e7;
   --overlay: rgb(20 24 28 / 35%);
+  /* 卡片与浮层的阴影：右栏、讨论串摘要、消息上的工具条。来源是设计稿 out/mockups/step5-threads-tasks.html。 */
+  --card-shadow: 0 1px 2px rgb(16 24 32 / 6%), 0 8px 24px rgb(16 24 32 / 8%);
+  --pop-shadow: 0 2px 6px rgb(16 24 32 / 10%), 0 12px 32px rgb(16 24 32 / 14%);
   --code-keyword: #7c3aed;
   --code-string: #15803d;
   --code-number: #c2410c;
@@ -50,6 +53,8 @@
     --danger: #f87171;
     --danger-soft: rgb(248 113 113 / 10%);
     --overlay: rgb(0 0 0 / 55%);
+    --card-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 35%);
+    --pop-shadow: 0 2px 6px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 50%);
     --code-keyword: #c4a7ff;
     --code-string: #9fdfb4;
     --code-number: #fdba74;
@@ -78,6 +83,8 @@
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-overlay: var(--overlay);
+  --shadow-card: var(--card-shadow);
+  --shadow-pop: var(--pop-shadow);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
   /* Chromium 不认 ui-monospace，SF Mono 也不是系统级字体；Menlo 保证落到等宽字体。 */
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;

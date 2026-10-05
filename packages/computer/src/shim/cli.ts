@@ -1,4 +1,4 @@
-import { MESSAGE_BODY_MAX, ReplyOutcome, RoomId } from "@crew/protocol";
+import { MESSAGE_BODY_MAX, MessageId, ReplyOutcome, RoomId, THREAD_REFUSALS } from "@crew/protocol";
 import { Command, CommanderError } from "commander";
 import { z } from "zod";
 import { messageLines } from "../prompt";
@@ -46,10 +46,11 @@ export async function runCli(args: string[], io: CliIo): Promise<number> {
   program
     .command("reply")
     .description("Post a message to a room. The message is read from standard input.")
-    .argument("<room-id>", "the room to post in, as shown above your unread messages")
+    .argument("<room-id>", "the room or thread to post in, as shown above your unread messages")
+    .option("--thread <message-id>", "post in the thread under this message of the room, starting it if needed")
     .addHelpText("after", EXAMPLE_HELP)
-    .action(async (roomIdArg: string) => {
-      await reply(roomIdArg, io);
+    .action(async (roomIdArg: string, options: { thread?: string }) => {
+      await reply(roomIdArg, options.thread, io);
     });
 
   try {
@@ -67,10 +68,14 @@ export async function runCli(args: string[], io: CliIo): Promise<number> {
   }
 }
 
-async function reply(roomIdArg: string, io: CliIo): Promise<void> {
+async function reply(roomIdArg: string, threadArg: string | undefined, io: CliIo): Promise<void> {
   const roomId = RoomId.safeParse(roomIdArg);
   if (!roomId.success) {
     throw new CliFailure(`"${roomIdArg}" is not a room id. Use the id shown above your unread messages.`);
+  }
+  const threadOf = threadArg === undefined ? undefined : MessageId.safeParse(threadArg);
+  if (threadOf && !threadOf.success) {
+    throw new CliFailure(`"${threadArg}" is not a message id. Use the id shown in brackets before a message.`);
   }
 
   // heredoc 末尾总有一个换行，去掉末尾的空白；开头的缩进保留。
@@ -90,7 +95,7 @@ async function reply(roomIdArg: string, io: CliIo): Promise<void> {
     response = await io.fetch(new URL("/agent/reply", serverUrl), {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ roomId: roomId.data, body }),
+      body: JSON.stringify({ roomId: roomId.data, body, threadOf: threadOf?.data }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
@@ -102,7 +107,7 @@ async function reply(roomIdArg: string, io: CliIo): Promise<void> {
     throw new CliFailure(`could not reach Crew (${String(error)}). The message was not posted.`);
   }
 
-  if (response.status !== 200) throw new CliFailure(await failureMessage(response, roomId.data));
+  if (response.status !== 200) throw new CliFailure(await failureMessage(response, roomId.data, threadOf?.data));
   const outcome = ReplyOutcome.safeParse(await response.json().catch(() => undefined));
   if (!outcome.success) {
     throw new CliFailure(
@@ -110,7 +115,11 @@ async function reply(roomIdArg: string, io: CliIo): Promise<void> {
     );
   }
   if (outcome.data.outcome === "posted") {
-    io.stdout(`Message sent to room ${roomId.data}.\n`);
+    io.stdout(
+      outcome.data.roomId === roomId.data
+        ? `Message sent to room ${roomId.data}.\n`
+        : `Message sent to thread ${outcome.data.roomId}, under message ${threadOf?.data ?? "?"}. To post there again, run crew reply ${outcome.data.roomId}.\n`,
+    );
     return;
   }
   io.stdout(heldText(roomId.data, outcome.data));
@@ -119,13 +128,15 @@ async function reply(roomIdArg: string, io: CliIo): Promise<void> {
 
 /** HELD：回复没有发出。把新消息（从最早的开始）与下一步写到 stdout，退出码 1。 */
 function heldText(roomId: RoomId, held: Extract<ReplyOutcome, { outcome: "held" }>): string {
+  // 带 --thread 时拦下的是讨论串里的消息，`held.roomId` 是讨论串。
+  const where = held.roomId === roomId ? `room ${roomId}` : `thread ${held.roomId}`;
   const count = held.newMessages.length + held.omitted;
   const noun = count === 1 ? "message" : "messages";
   const more =
     held.omitted > 0
       ? `\n  (${held.omitted} more new ${held.omitted === 1 ? "message comes" : "messages come"} after these. Running crew reply again shows ${held.omitted === 1 ? "it" : "them"} first.)\n`
       : "";
-  return `Not sent: ${count} new ${noun} arrived in room ${roomId} after the ones you were given.
+  return `Not sent: ${count} new ${noun} arrived in ${where} after the ones you were given.
 
 ${held.newMessages.map((message) => messageLines(message)).join("\n")}
 ${more}
@@ -154,19 +165,26 @@ async function credentials(io: CliIo): Promise<{ serverUrl: string; token: strin
  * 把 Server 的拒绝换成 Agent 能据此行动的英文说明。
  * Server 的错误文本是中文，界面也在用，所以在这里翻译，而不是改 Server。
  */
-async function failureMessage(response: Response, roomId: RoomId): Promise<string> {
+async function failureMessage(response: Response, roomId: RoomId, threadOf: MessageId | undefined): Promise<string> {
+  const parsed = ErrorBody.safeParse(await response.json().catch(() => undefined));
+  const reason = parsed.success ? parsed.data.error : undefined;
   switch (response.status) {
     case 401:
       return "Crew rejected your token. Crew may have restarted; the message was not posted.";
     case 403:
       return `you are not a member of room ${roomId}. Reply only in the rooms listed in your turn.`;
     case 404:
-      return `room ${roomId} does not exist. Reply only in the rooms listed in your turn.`;
-    default: {
-      const parsed = ErrorBody.safeParse(await response.json().catch(() => undefined));
-      const detail = parsed.success ? `: ${parsed.data.error}` : "";
-      return `Crew refused the message (HTTP ${response.status}${detail}). The message was not posted.`;
-    }
+      return reason === THREAD_REFUSALS.noMessage
+        ? `message ${threadOf ?? "?"} is not in room ${roomId}. Start a thread under a message of that room.`
+        : `room ${roomId} does not exist. Reply only in the rooms listed in your turn.`;
+    default:
+      if (reason === THREAD_REFUSALS.direct) {
+        return `room ${roomId} is a direct room, and direct rooms have no threads. Reply without --thread.`;
+      }
+      if (reason === THREAD_REFUSALS.nested) {
+        return `${roomId} is a thread, and a thread can't have threads. Reply in it without --thread.`;
+      }
+      return `Crew refused the message (HTTP ${response.status}${reason ? `: ${reason}` : ""}). The message was not posted.`;
   }
 }
 

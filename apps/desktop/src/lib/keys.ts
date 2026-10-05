@@ -6,6 +6,9 @@ export const queryKeys = {
   groups: ["groups"] as const,
   conversations: ["conversations"] as const,
   messages: (roomId: RoomId) => ["messages", roomId] as const,
+  /** 全部讨论串列表的前缀：用户读了一个讨论串后，所在群聊的未读数随之变化。 */
+  threads: ["threads"] as const,
+  threadList: (roomId: RoomId) => ["threads", roomId] as const,
   models: ["models"] as const,
   /** 全部运行记录列表的前缀：让它失效时，按房间或按 Agent 的列表一起失效。 */
   runs: ["runs"] as const,
@@ -16,7 +19,8 @@ export const queryKeys = {
 /**
  * 一条 SSE 失效提示对应哪些缓存需要重新获取。
  * 会话列表带着最后一条消息、未读数、名字与成员，消息、Agent 与群聊变化时都要刷新。
- * “房间有新消息”时消息本身由 `fetchNewer` 增量获取，不在这里。
+ * “房间有新消息”时消息本身由 `fetchNewer` 增量获取，不在这里；讨论串的消息让它所在群聊的讨论串摘要也变了，
+ * Server 同时为群聊发一条提示。
  */
 export function keysForEvent(event: DesktopEvent): ReadonlyArray<readonly unknown[]> {
   switch (event.type) {
@@ -25,7 +29,7 @@ export function keysForEvent(event: DesktopEvent): ReadonlyArray<readonly unknow
     case "rooms":
       return [queryKeys.groups, queryKeys.conversations];
     case "room.messages":
-      return [queryKeys.conversations];
+      return [queryKeys.conversations, queryKeys.threadList(event.roomId)];
     case "models":
       return [queryKeys.models];
     case "run.activity":

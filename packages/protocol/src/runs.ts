@@ -98,6 +98,10 @@ export const RunTrigger = z.object({
 });
 export type RunTrigger = z.infer<typeof RunTrigger>;
 
+/** 记录里的唤醒来源多一个字段：房间是讨论串时，它所在的群聊。 */
+export const RecordedTrigger = RunTrigger.extend({ parentRoomId: RoomId.nullable() });
+export type RecordedTrigger = z.infer<typeof RecordedTrigger>;
+
 /** 列表里的一轮。 */
 export const RunSummary = z.object({
   id: z.uuid(),
@@ -107,7 +111,7 @@ export const RunSummary = z.object({
   error: z.string().nullable(),
   startedAt: z.string(),
   endedAt: z.string().nullable(),
-  triggers: z.array(RunTrigger),
+  triggers: z.array(RecordedTrigger),
   usage: Usage,
   steps: z.number().int().nonnegative(),
   replies: z.number().int().nonnegative(),

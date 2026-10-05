@@ -124,12 +124,14 @@ describe("timeline and liveView", () => {
 
 describe("triggerText", () => {
   it("names the messages that woke a run", () => {
-    expect(triggerText([{ roomId, fromSeq: 3, toSeq: 3 }])).toBe("第 3 条消息");
-    expect(triggerText([{ roomId, fromSeq: 3, toSeq: 5 }])).toBe("第 3–5 条消息");
+    const other = RoomId.parse("7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+    expect(triggerText([{ roomId, fromSeq: 3, toSeq: 3, parentRoomId: null }])).toBe("第 3 条消息");
+    expect(triggerText([{ roomId, fromSeq: 3, toSeq: 5, parentRoomId: null }])).toBe("第 3–5 条消息");
+    expect(triggerText([{ roomId: other, fromSeq: 2, toSeq: 2, parentRoomId: roomId }])).toBe("讨论串里第 2 条消息");
     expect(
       triggerText([
-        { roomId, fromSeq: 1, toSeq: 1 },
-        { roomId: RoomId.parse("7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"), fromSeq: 2, toSeq: 2 },
+        { roomId, fromSeq: 1, toSeq: 1, parentRoomId: null },
+        { roomId: other, fromSeq: 2, toSeq: 2, parentRoomId: null },
       ]),
     ).toBe("2 个房间的消息");
   });

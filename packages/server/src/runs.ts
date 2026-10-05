@@ -4,6 +4,7 @@ import {
   clipText,
   type EngineEvent,
   type MessageId,
+  type RecordedTrigger,
   type RoomId,
   type RunDetail,
   type RunEvent,
@@ -11,9 +12,9 @@ import {
   type RunTrigger,
   storableText,
 } from "@crew/protocol";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import type { Database } from "./db";
-import { messages, runEvents, runs, runTriggers } from "./db/schema";
+import { messages, rooms, runEvents, runs, runTriggers } from "./db/schema";
 import { RequestError } from "./errors";
 
 // 运行记录：Computer 登记一轮、追加 Engine 事件、写结果；Server 自己记下这一轮里的回复与 HELD。
@@ -58,7 +59,7 @@ export async function startRun(
       .returning({ id: runs.id });
     if (!run) throw new Error("登记一轮失败");
     await tx.insert(runTriggers).values(input.triggers.map((trigger) => ({ runId: run.id, ...trigger })));
-    return { id: run.id, roomIds: input.triggers.map((trigger) => trigger.roomId) };
+    return { id: run.id, roomIds: await triggerRooms(tx, run.id) };
   });
 }
 
@@ -209,20 +210,38 @@ export async function recordHeld(
 
 const roomIs = (roomId: RoomId) => sql`${runEvents.data}->>'roomId' = ${roomId}`;
 
+/** 一轮涉及的房间：唤醒它的房间，讨论串再加上它所在的群聊。界面据此刷新，也据此显示 Agent 在哪个群里回复。 */
 async function triggerRooms(tx: Transaction | Database, runId: string): Promise<RoomId[]> {
-  const rows = await tx.select({ roomId: runTriggers.roomId }).from(runTriggers).where(eq(runTriggers.runId, runId));
-  return rows.map((row) => row.roomId);
+  return roomsOf(await triggersOf(tx, [runId]).then((map) => map.get(runId) ?? []));
 }
 
-async function triggersOf(db: Database, runIds: string[]): Promise<Map<string, RunTrigger[]>> {
-  const result = new Map<string, RunTrigger[]>();
+function roomsOf(triggers: RecordedTrigger[]): RoomId[] {
+  return [
+    ...new Set(
+      triggers.flatMap((trigger) => [trigger.roomId, ...(trigger.parentRoomId ? [trigger.parentRoomId] : [])]),
+    ),
+  ];
+}
+
+async function triggersOf(db: Transaction | Database, runIds: string[]): Promise<Map<string, RecordedTrigger[]>> {
+  const result = new Map<string, RecordedTrigger[]>();
   if (runIds.length === 0) return result;
-  const rows = await db.select().from(runTriggers).where(inArray(runTriggers.runId, runIds));
+  const rows = await db
+    .select({
+      runId: runTriggers.runId,
+      roomId: runTriggers.roomId,
+      fromSeq: runTriggers.fromSeq,
+      toSeq: runTriggers.toSeq,
+      parentRoomId: rooms.parentRoomId,
+    })
+    .from(runTriggers)
+    .innerJoin(rooms, eq(rooms.id, runTriggers.roomId))
+    .where(inArray(runTriggers.runId, runIds));
   for (const { runId, ...trigger } of rows) result.set(runId, [...(result.get(runId) ?? []), trigger]);
   return result;
 }
 
-function summary(run: Run, triggers: RunTrigger[]): RunSummary {
+function summary(run: Run, triggers: RecordedTrigger[]): RunSummary {
   return {
     id: run.id,
     agentId: run.agentId,
@@ -248,7 +267,7 @@ function summary(run: Run, triggers: RunTrigger[]): RunSummary {
 /** 列表上限。更早的轮次以后需要时再分页。 */
 export const RUN_LIST_MAX = 100;
 
-/** 运行记录，从新到旧。给了房间时只列被这个房间唤醒的轮次。 */
+/** 运行记录，从新到旧。给了房间时只列被这个房间或它的讨论串唤醒的轮次。 */
 export async function listRuns(db: Database, filter: { roomId?: RoomId; agentId?: AgentId }): Promise<RunSummary[]> {
   const rows = await db
     .select()
@@ -259,7 +278,11 @@ export async function listRuns(db: Database, filter: { roomId?: RoomId; agentId?
         filter.roomId
           ? inArray(
               runs.id,
-              db.select({ id: runTriggers.runId }).from(runTriggers).where(eq(runTriggers.roomId, filter.roomId)),
+              db
+                .select({ id: runTriggers.runId })
+                .from(runTriggers)
+                .innerJoin(rooms, eq(rooms.id, runTriggers.roomId))
+                .where(or(eq(runTriggers.roomId, filter.roomId), eq(rooms.parentRoomId, filter.roomId))),
             )
           : undefined,
       ),
@@ -306,15 +329,15 @@ export async function agentStatuses(
     db,
     [...running, ...latest].map((run) => run.id),
   );
-  const rooms = (runId: string) => (triggers.get(runId) ?? []).map((trigger) => trigger.roomId);
+  const roomIdsOf = (runId: string) => roomsOf(triggers.get(runId) ?? []);
 
   const statuses = new Map<AgentId, AgentStatus>();
   for (const run of latest) {
     if (run.outcome === "failed" && run.error) {
-      statuses.set(run.agentId, { state: "error", reason: run.error, roomIds: rooms(run.id) });
+      statuses.set(run.agentId, { state: "error", reason: run.error, roomIds: roomIdsOf(run.id) });
     }
   }
   for (const [agentId, reason] of problems) statuses.set(agentId, { state: "error", reason, roomIds: [] });
-  for (const run of running) statuses.set(run.agentId, { state: "working", runId: run.id, roomIds: rooms(run.id) });
+  for (const run of running) statuses.set(run.agentId, { state: "working", runId: run.id, roomIds: roomIdsOf(run.id) });
   return statuses;
 }

@@ -1,4 +1,4 @@
-import { type AgentId, api, MESSAGE_PAGE_MAX, type RoomId, type RoomMessage } from "@crew/protocol";
+import { type AgentId, api, MESSAGE_PAGE_MAX, type MessageId, type RoomId, type RoomMessage } from "@crew/protocol";
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { server } from "./api";
 import { queryKeys } from "./keys";
@@ -86,11 +86,27 @@ export function useModels(enabled: boolean) {
   });
 }
 
+/**
+ * 在房间里发一条消息。带 `threadOf` 时发到那条消息的讨论串（第一次发时创建），返回的 `roomId` 是讨论串。
+ */
 export function useSendMessage(roomId: RoomId) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: string) => server.call(api.desktop.sendMessage, { params: { roomId }, body: { body } }),
-    onSuccess: () => fetchNewer(queryClient, roomId),
+    mutationFn: (input: { body: string; threadOf?: MessageId }) =>
+      server.call(api.desktop.sendMessage, { params: { roomId }, body: input }),
+    onSuccess: async (posted, input) => {
+      if (input.threadOf) void queryClient.invalidateQueries({ queryKey: queryKeys.threadList(roomId) });
+      await fetchNewer(queryClient, posted.roomId);
+    },
+  });
+}
+
+/** 群聊里的讨论串。私聊没有讨论串，`enabled` 为 false 时不读取。 */
+export function useThreads(roomId: RoomId, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.threadList(roomId),
+    queryFn: () => server.call(api.desktop.listThreads, { params: { roomId } }),
+    enabled,
   });
 }
 
@@ -135,12 +151,15 @@ export function useConversations() {
   });
 }
 
-/** 用户读到了房间的第 `seq` 条。成功后刷新会话列表里的未读数。 */
+/** 用户读到了房间（或讨论串）的第 `seq` 条。成功后刷新会话列表与讨论串摘要里的未读数。 */
 export function useMarkRead(roomId: RoomId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (seq: number) => server.call(api.desktop.markRead, { params: { roomId }, body: { seq } }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.threads });
+    },
   });
 }
 

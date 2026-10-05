@@ -8,14 +8,14 @@ Agent 跑一轮时，界面只显示“正在回复”。用户看不到它在�
 
 - Agent 的状态不分房间：它在群聊里回复时，私聊里也显示“正在回复”。
 - 被 HELD 拦下又改写的回复，界面上看不出来。
-- 第 5 步的 triage 要统计“白跑”（被唤醒、完整运行一轮却没有发出消息）占的轮次与费用，需要每一轮的记录。
+- 第 7 步的 triage 要统计“白跑”（被唤醒、完整运行一轮却没有发出消息）占的轮次与费用，需要每一轮的记录。
 - 演示时看不到几个 Agent 同时动手干活的过程。
 
 路线图见 [重写的路线图](../../proposed/architecture/2026-10-04-typescript-rewrite.md)“实现顺序”第 4 步。
 
 两个参考项目都有这样的记录（2026-10-05 读源码确认）：
 
-- cumora 每轮一行 `agent_runs`，加上按时间排列的 `agent_events`（`cumora:server/src/db/migrate.ts`）。表前的注释说明了理由：记录由后端写，界面只负责显示，模型流或工具调用卡住时也留得下证据。它另有 `tool_calls`、记每次模型调用用量与费用的 `llm_calls`，以及记每次 triage 判断与它唤醒了哪一轮的 `agent_triages`。观测页 `cumora:src/desktop/ObservabilityView.tsx` 按房间类型统计“没有发言的轮次”的比例与花费（`silentRuns`、`silentSpendUsd`）和每条消息唤醒了几轮，正是第 5 步要量的东西。旧数据由定期清理按天数删除（`cumora:server/src/db-gc.ts`）。
+- cumora 每轮一行 `agent_runs`，加上按时间排列的 `agent_events`（`cumora:server/src/db/migrate.ts`）。表前的注释说明了理由：记录由后端写，界面只负责显示，模型流或工具调用卡住时也留得下证据。它另有 `tool_calls`、记每次模型调用用量与费用的 `llm_calls`，以及记每次 triage 判断与它唤醒了哪一轮的 `agent_triages`。观测页 `cumora:src/desktop/ObservabilityView.tsx` 按房间类型统计“没有发言的轮次”的比例与花费（`silentRuns`、`silentSpendUsd`）和每条消息唤醒了几轮，正是第 7 步要量的东西。旧数据由定期清理按天数删除（`cumora:server/src/db-gc.ts`）。
 - raft 用 `agent_activity_events` 记 Agent 的活动与一串轨迹条目（`raft:packages/server/src/db/schema.ts`），界面有活动日志与实时活动栏（`raft:packages/web/src/components/agent/AgentActivityLog.tsx`）。它没有按轮的记录表；要看一轮的完整过程时，再去读 Engine 自己的会话文件。
 
 ## 决策
@@ -26,7 +26,7 @@ Agent 跑一轮时，界面只显示“正在回复”。用户看不到它在�
 
 **运行记录**
 
-- Server 的 PostgreSQL 存 `runs`、`run_triggers`、`run_events`（`packages/server/src/runs.ts`）。每轮存完整输入：第 5 步做评测集时要知道 Agent 当时看到了什么。工具输入输出与文字截短后存。
+- Server 的 PostgreSQL 存 `runs`、`run_triggers`、`run_events`（`packages/server/src/runs.ts`）。每轮存完整输入：第 7 步做评测集时要知道 Agent 当时看到了什么。工具输入输出与文字截短后存。
 - Computer 开始一轮时登记，Engine 的每个事件随时上报，结束时写结果（`packages/computer/src/runner.ts` 的 `RunReporter`）。上报失败只记日志，不让这一轮失败。
 - 回复与 HELD 由 Server 在 `crew reply` 到达时写进这个 Agent 正在跑的一轮，并在消息上记下所在的一轮与发出前被拦下的次数；Computer 不解析 `crew` 的输出。
 - 数据库保证每个 Agent 同一时间最多一轮在跑。Computer 连上时把没结束的轮次标为中断。
@@ -45,13 +45,13 @@ Agent 跑一轮时，界面只显示“正在回复”。用户看不到它在�
 - Agent 在这个房间跑一轮时，聊天里显示实时活动：最近三次工具调用、“思考中”、已运行的时间与第几步。
 - Agent 的消息下面有“这一轮”，被 HELD 拦下过的多一行“↻ 看到新消息后改写了回复”。
 - 运行记录面板（`apps/desktop/src/components/RunPanel.tsx`）从顶栏打开：私聊列出这个 Agent 的轮次，群聊列出全部成员的轮次并可按成员筛选；成功却没有发言的一轮标为“白跑”；展开一轮看用量、本轮输入与时间线。`crew reply` 的工具调用与“发出回复”重复，时间线里只显示后者。
-- 汇总统计放到第 5 步。
+- 汇总统计放到第 7 步。
 
 行为与接口见 [messaging.md](../../../../docs/subsystems/messaging.md) 第 7 节与 [agent-runtime.md](../../../../docs/subsystems/agent-runtime.md) 第 2、3 节。
 
 ## 考虑过的方案
 
-**像 raft 一样只记活动，不记按轮的记录。** 活动日志足够显示 Agent 在做什么，但统计不了“一轮花了多少、发没发言”，第 5 步的白跑统计需要按轮汇总。cumora 按轮记录，并且已经用它统计没有发言的轮次。
+**像 raft 一样只记活动，不记按轮的记录。** 活动日志足够显示 Agent 在做什么，但统计不了“一轮花了多少、发没发言”，第 7 步的白跑统计需要按轮汇总。cumora 按轮记录，并且已经用它统计没有发言的轮次。
 
 **一轮一行，把事件存成这一行里的 JSON 数组。** 只要一张表。没有采用：一轮在运行中不断追加事件，每次追加都要改写整行、越改越大；列表只需要概要，却要把每轮的事件一起读出来，或者在查询里排除它；回复与 HELD 也要往同一行里写。分开后，追加一步就是插入一行，列表只读 `runs`，展开一轮时才读事件。
 
@@ -65,7 +65,7 @@ cumora 也是这样分的：一轮一行的 `agent_runs`，加按时间排列的
 
 ## 后果
 
-- 第 5 步可以直接统计白跑：2026-10-05 的真实演示里，没被点名的 Bob 两轮都是白跑，每轮约 8.6k token。
+- 第 7 步可以直接统计白跑：2026-10-05 的真实演示里，没被点名的 Bob 两轮都是白跑，每轮约 8.6k token。
 - 运行记录与完整输入都存在本机数据库里，会一直增长；还没有清理。cumora 按天数定期删除旧记录（`cumora:server/src/db-gc.ts`）。
 - 工具输出可能包含文件内容，只截短、不脱敏；数据只在本机。
 - 界面每收到一次 `run.activity` 就重新读取这一轮与运行记录列表，事件多时请求也多。

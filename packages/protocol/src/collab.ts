@@ -29,6 +29,13 @@ export function normalizeHandle(raw: string): string {
   return raw.toLowerCase().replace(/-+$/, "");
 }
 
+/** Server 拒绝开讨论串时的原因。界面直接显示；`crew` 据此换成给 Agent 的英文说明。 */
+export const THREAD_REFUSALS = {
+  direct: "私聊里不能开讨论串",
+  nested: "讨论串里不能再开讨论串",
+  noMessage: "消息不存在",
+} as const;
+
 /** 群聊的名字。 */
 export const ROOM_NAME_MAX = 40;
 export const RoomName = z
@@ -88,13 +95,17 @@ export type MessageView = z.infer<typeof MessageView>;
 export const InboxMessage = MessageView.extend({ mentionsYou: z.boolean() });
 export type InboxMessage = z.infer<typeof InboxMessage>;
 
-/** inbox 的一项：一个房间里已读位置之后的消息，以及房间的名字与成员。 */
+/**
+ * inbox 的一项：一个房间里已读位置之后的消息，以及房间的名字与成员。
+ * 讨论串也是一项：名字与成员是它所在群聊的，`parent` 是它所在的群聊与挂在下面的那条消息。
+ */
 export const InboxRoom = z.object({
   roomId: RoomId,
-  kind: RoomKind,
-  /** 群聊的名字；私聊为 null。 */
+  kind: z.enum(["direct", "group", "thread"]),
+  /** 群聊的名字（讨论串是它所在群聊的名字）；私聊为 null。 */
   name: z.string().nullable(),
   members: z.array(Participant),
+  parent: z.object({ roomId: RoomId, message: MessageView }).nullable(),
   messages: z.array(InboxMessage).min(1),
 });
 export type InboxRoom = z.infer<typeof InboxRoom>;
@@ -105,9 +116,11 @@ export type InboxRoom = z.infer<typeof InboxRoom>;
  * `omitted` 是这之后还没有附上的条数：Agent 再次回复时接着返回。
  */
 export const ReplyOutcome = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("posted"), id: MessageId, seq: z.number().int().positive() }),
+  /** `roomId` 是消息实际所在的房间：在一条消息下发言时是那条消息的讨论串。 */
+  z.object({ outcome: z.literal("posted"), id: MessageId, roomId: RoomId, seq: z.number().int().positive() }),
   z.object({
     outcome: z.literal("held"),
+    roomId: RoomId,
     newMessages: z.array(MessageView).min(1),
     omitted: z.number().int().nonnegative(),
   }),
@@ -117,7 +130,7 @@ export type ReplyOutcome = z.infer<typeof ReplyOutcome>;
 // SSE 只传失效提示，不传业务正文。收到提示的一方重新读取对应的数据。
 
 export const DesktopEvent = z.discriminatedUnion("type", [
-  /** 这个房间有新消息。 */
+  /** 这个房间有新消息。讨论串有新消息时，它所在的群聊也收到一条：讨论串的摘要变了。 */
   z.object({ type: z.literal("room.messages"), roomId: RoomId }),
   /** Agent 列表或某个 Agent 的状态变了。 */
   z.object({ type: z.literal("agents") }),

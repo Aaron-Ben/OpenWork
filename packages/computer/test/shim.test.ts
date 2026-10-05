@@ -45,6 +45,16 @@ async function sendAsUser(roomId: RoomId, body: string): Promise<string> {
   return ((await response.json()) as { id: string }).id;
 }
 
+/** 新建一个有 Alice 与 Bob 的群聊，返回它的 ID。 */
+async function newGroup(name: string): Promise<RoomId> {
+  const response = await t.request("/desktop/groups", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${TEST_DESKTOP_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name, agentIds: [alice.id, bob.id] }),
+  });
+  return RoomId.parse(((await response.json()) as { id: string }).id);
+}
+
 interface Run {
   stdin?: string;
   env?: Record<string, string | undefined>;
@@ -127,6 +137,21 @@ describe("crew reply", () => {
     expect(await bodies(alice.roomId)).toEqual(["等等，还有一件事", "好的，我一起看"]);
   });
 
+  it("posts in the thread under a message with --thread, starting it the first time", async () => {
+    const group = await newGroup("发版");
+    const host = await sendAsUser(group, "回归测试的范围定一下");
+    await new ServerClient(SERVER_URL, TEST_COMPUTER_TOKEN, t.fetch).readInbox(alice.id);
+
+    const first = await crew(["reply", group, "--thread", host], { stdin: "我来列一下" });
+    expect(first.code).toBe(0);
+    const threadId = first.stdout.match(/thread (\S+), under/)?.[1];
+    expect(threadId).toBeDefined();
+    const second = await crew(["reply", group, "--thread", host], { stdin: "补充一项" });
+    expect(second.stdout).toContain(`thread ${threadId},`);
+    expect(await bodies(group)).toEqual(["回归测试的范围定一下"]);
+    expect(await bodies(RoomId.parse(threadId))).toEqual(["我来列一下", "补充一项"]);
+  });
+
   it("does not post in a room the agent is not a member of", async () => {
     const result = await crew(["reply", bob.roomId], { stdin: "hi" });
     expect(result.code).toBe(1);
@@ -171,6 +196,33 @@ describe("crew output", () => {
       sections.push(`## ${title} (exit ${result.code})\n\n\`\`\`text\n${output.trimEnd()}\n\`\`\`\n`);
     };
     for (const [title, args, run] of cases) await record(title, args, run);
+    // 讨论串：在群聊的一条消息下开，私聊、讨论串里与别的房间的消息都不行。
+    const group = await newGroup("Release");
+    const host = await sendAsUser(group, "Scope of the regression run?");
+    const directMessage = await sendAsUser(alice.roomId, "A direct message.");
+    await new ServerClient(SERVER_URL, TEST_COMPUTER_TOKEN, t.fetch).readInbox(alice.id);
+    const posted = await crew(["reply", group, "--thread", host], { stdin: "I'll list it." });
+    const threadId = RoomId.parse(posted.stdout.match(/thread (\S+), under/)?.[1]);
+    const ids = (text: string) =>
+      text
+        .replaceAll(group, "<group-room>")
+        .replaceAll(threadId, "<thread>")
+        .replaceAll(host, "<host-message>")
+        .replaceAll(directMessage, "<direct-message>");
+    sections.push(
+      `## sent to a thread (exit ${posted.code})\n\n\`\`\`text\nstdout:\n${ids(posted.stdout).trimEnd()}\n\`\`\`\n`,
+    );
+    const threadCases: Array<[string, string[], Run?]> = [
+      ["not a message id", ["reply", group, "--thread", "first"], { stdin: "hello" }],
+      ["thread in a direct room", ["reply", alice.roomId, "--thread", directMessage], { stdin: "hello" }],
+      ["thread in a thread", ["reply", threadId, "--thread", host], { stdin: "hello" }],
+      ["message from another room", ["reply", group, "--thread", directMessage], { stdin: "hello" }],
+    ];
+    for (const [title, args, run] of threadCases) {
+      const before = sections.length;
+      await record(title, args, run);
+      sections[before] = ids(sections[before] ?? "");
+    }
     // 最后：用户发了 Alice 还没看到的消息，回复被拦下。
     const unseen = await sendAsUser(alice.roomId, "Wait, one more thing:\ncheck the tests too.");
     await record("held", ["reply", alice.roomId], { stdin: "On it." });
@@ -178,6 +230,7 @@ describe("crew output", () => {
     const heldWithMore: typeof fetch = async () =>
       Response.json({
         outcome: "held",
+        roomId: alice.roomId,
         newMessages: [
           {
             id: unseen,

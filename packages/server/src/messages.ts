@@ -1,7 +1,27 @@
-import type { AgentId, InboxRoom, MessageId, MessageView, Participant, RoomId, RoomKind, UserId } from "@crew/protocol";
+import {
+  type AgentId,
+  type InboxRoom,
+  type MessageId,
+  type MessageView,
+  type Participant,
+  type RoomId,
+  THREAD_REFUSALS,
+  type UserId,
+} from "@crew/protocol";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "./db";
-import { agentReadCursors, agents, messageMentions, messages, roomAgents, rooms, roomUsers, users } from "./db/schema";
+import {
+  agentReadCursors,
+  agents,
+  messageMentions,
+  messages,
+  roomAgents,
+  rooms,
+  roomUsers,
+  userReadCursors,
+  users,
+} from "./db/schema";
 import { RequestError } from "./errors";
 import { mentionedHandles } from "./mentions";
 
@@ -17,12 +37,15 @@ export type PostResult =
   | {
       kind: "posted";
       message: { id: MessageId; roomId: RoomId; seq: number };
-      /** 需要唤醒的 Agent，规则见 `wakeTargets`。 */
+      /** 消息在讨论串里时，讨论串所在的群聊：它的讨论串摘要变了。 */
+      parentRoomId: RoomId | null;
+      /** 需要唤醒的 Agent，规则见 `wakeTargets` 与 `threadWakeTargets`。 */
       wakeAgentIds: AgentId[];
     }
   | {
       /** Agent 的回复被拦下：房间里有它还没看到的、别人发的消息。消息没有写入。 */
       kind: "held";
+      roomId: RoomId;
       newMessages: MessageView[];
       omitted: number;
     };
@@ -30,20 +53,34 @@ export type PostResult =
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 /**
- * 写入一条消息。用户与 Agent 都经过这里。
+ * 写入一条消息。用户与 Agent 都经过这里。带 `threadOf` 时写到房间里这条消息的讨论串，讨论串还没有时创建。
  *
- * 在一个事务里：锁住房间行，确认作者是房间成员；作者是 Agent 时先做 HELD 检查；
+ * 在一个事务里：锁住房间行，确认作者是房间成员（讨论串看它所在群聊的成员）；作者是 Agent 时先做 HELD 检查；
  * 然后把房间的 `next_seq` 加一取得序号，写入消息与它 @ 到的 Agent。
  * 锁住房间行使同一房间的写入排队，序号连续且与提交顺序一致，HELD 检查也不会与新消息交错。
  * 调用方在事务提交后再发通知。
  */
-export async function postMessage(db: Database, roomId: RoomId, author: Author, body: string): Promise<PostResult> {
+export async function postMessage(
+  db: Database,
+  roomId: RoomId,
+  author: Author,
+  body: string,
+  threadOf?: MessageId,
+): Promise<PostResult> {
   return db.transaction(async (tx) => {
-    const [room] = await tx.select({ nextSeq: rooms.nextSeq }).from(rooms).where(eq(rooms.id, roomId)).for("update");
+    if (threadOf) roomId = await openThread(tx, roomId, threadOf, author);
+    const [room] = await tx
+      .select({ nextSeq: rooms.nextSeq, kind: rooms.kind, parentRoomId: rooms.parentRoomId })
+      .from(rooms)
+      .where(eq(rooms.id, roomId))
+      .for("update");
     if (!room) throw new RequestError(404, "房间不存在");
-    await assertMember(tx, roomId, author);
+    const membershipRoomId = room.parentRoomId ?? roomId;
+    await assertMember(tx, membershipRoomId, author);
 
     if (author.kind === "agent") {
+      // 在讨论串里发言就关注它。新关注者的已读位置从 0 开始，HELD 会先给它看讨论串里已有的消息。
+      if (room.kind === "thread") await follow(tx, roomId, [author.id]);
       const held = await heldMessages(tx, roomId, author.id, room.nextSeq);
       if (held) return held;
     }
@@ -66,11 +103,13 @@ export async function postMessage(db: Database, roomId: RoomId, author: Author, 
       .select({ id: agents.id, handle: agents.handle })
       .from(roomAgents)
       .innerJoin(agents, eq(agents.id, roomAgents.agentId))
-      .where(eq(roomAgents.roomId, roomId));
+      .where(eq(roomAgents.roomId, membershipRoomId));
+    const memberIds = members.map((member) => member.id);
     const handles = new Set(mentionedHandles(body));
     const mentioned = members.filter((member) => handles.has(member.handle)).map((member) => member.id);
     if (mentioned.length > 0) {
       await tx.insert(messageMentions).values(mentioned.map((agentId) => ({ messageId: message.id, agentId })));
+      if (room.kind === "thread") await follow(tx, roomId, mentioned);
     }
 
     if (author.kind === "agent") {
@@ -84,13 +123,83 @@ export async function postMessage(db: Database, roomId: RoomId, author: Author, 
     return {
       kind: "posted",
       message,
-      wakeAgentIds: wakeTargets(
-        author,
-        members.map((member) => member.id),
-        mentioned,
-      ),
+      parentRoomId: room.parentRoomId,
+      wakeAgentIds:
+        room.kind === "thread"
+          ? await threadWakeTargets(tx, roomId, author, memberIds, mentioned)
+          : wakeTargets(author, memberIds, mentioned),
     };
   });
+}
+
+/**
+ * 找到或创建房间里一条消息下的讨论串，返回讨论串的房间 ID。只有群聊能开讨论串，讨论串里不能再开。
+ * 创建时：群聊里的用户从 0 开始读；消息的作者是 Agent 时，它关注讨论串。
+ */
+async function openThread(tx: Transaction, roomId: RoomId, messageId: MessageId, author: Author): Promise<RoomId> {
+  const [parent] = await tx.select({ kind: rooms.kind }).from(rooms).where(eq(rooms.id, roomId));
+  if (!parent) throw new RequestError(404, "房间不存在");
+  if (parent.kind === "direct") throw new RequestError(400, THREAD_REFUSALS.direct);
+  if (parent.kind === "thread") throw new RequestError(400, THREAD_REFUSALS.nested);
+  await assertMember(tx, roomId, author);
+  const [message] = await tx
+    .select({ authorAgentId: messages.authorAgentId })
+    .from(messages)
+    .where(and(eq(messages.id, messageId), eq(messages.roomId, roomId)));
+  if (!message) throw new RequestError(404, THREAD_REFUSALS.noMessage);
+
+  // 两个请求同时创建时，唯一约束让后到的等前一个提交，然后什么也不插入，下面读到前一个创建的。
+  const [created] = await tx
+    .insert(rooms)
+    .values({ kind: "thread", parentRoomId: roomId, parentMessageId: messageId })
+    .onConflictDoNothing({ target: rooms.parentMessageId })
+    .returning({ id: rooms.id });
+  if (!created) {
+    const [existing] = await tx.select({ id: rooms.id }).from(rooms).where(eq(rooms.parentMessageId, messageId));
+    if (!existing) throw new Error(`消息 ${messageId} 的讨论串不存在`);
+    return existing.id;
+  }
+
+  const people = await tx.select({ userId: roomUsers.userId }).from(roomUsers).where(eq(roomUsers.roomId, roomId));
+  if (people.length > 0) {
+    await tx.insert(userReadCursors).values(people.map(({ userId }) => ({ userId, roomId: created.id })));
+  }
+  if (message.authorAgentId) await follow(tx, created.id, [message.authorAgentId]);
+  return created.id;
+}
+
+/**
+ * Agent 关注讨论串：在讨论串里有已读位置。已读位置从 0 开始，它下次被唤醒时能读到讨论串里已有的消息。
+ * 已经关注的不变。
+ */
+async function follow(tx: Transaction, threadId: RoomId, agentIds: AgentId[]): Promise<void> {
+  if (agentIds.length === 0) return;
+  await tx
+    .insert(agentReadCursors)
+    .values(agentIds.map((agentId) => ({ agentId, roomId: threadId })))
+    .onConflictDoNothing();
+}
+
+/**
+ * 讨论串里的消息唤醒哪些 Agent：Agent 的消息与群聊一样，只唤醒它 @ 到的其他成员；
+ * 用户的消息唤醒全部关注者，不唤醒群里的其他 Agent。还没有 Agent 关注时，群里的 Agent 全部关注并被唤醒，
+ * 免得用户的问题没人回答。
+ */
+async function threadWakeTargets(
+  tx: Transaction,
+  threadId: RoomId,
+  author: Author,
+  memberIds: AgentId[],
+  mentionedIds: AgentId[],
+): Promise<AgentId[]> {
+  if (author.kind === "agent") return wakeTargets(author, memberIds, mentionedIds);
+  const followers = await tx
+    .select({ agentId: agentReadCursors.agentId })
+    .from(agentReadCursors)
+    .where(eq(agentReadCursors.roomId, threadId));
+  if (followers.length > 0) return followers.map((row) => row.agentId);
+  await follow(tx, threadId, memberIds);
+  return memberIds;
 }
 
 /**
@@ -136,7 +245,7 @@ async function heldMessages(
     .update(agentReadCursors)
     .set({ deliveredSeq: delivered })
     .where(and(eq(agentReadCursors.agentId, agentId), eq(agentReadCursors.roomId, roomId)));
-  return { kind: "held", newMessages: rows.map(toView), omitted };
+  return { kind: "held", roomId, newMessages: rows.map(toView), omitted };
 }
 
 async function assertMember(tx: Transaction, roomId: RoomId, author: Author): Promise<void> {
@@ -239,16 +348,26 @@ export async function listMessages(
   return rows.map((row) => ({ ...toView(row), roomId, runId: row.runId, heldBefore: row.heldBefore }));
 }
 
+const parentRooms = alias(rooms, "parent_rooms");
+
 /**
  * 取出 Agent 在各房间已读位置之后的全部消息，并把已投递位置推进到本次的最后一条。
- * 每个房间附上名字与成员。没有未读消息的房间不出现。
+ * 每个房间附上名字与成员；讨论串附上它所在群聊的名字与成员，以及挂在下面的那条消息。没有未读消息的房间不出现。
  */
 export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRoom[]> {
   return db.transaction(async (tx) => {
     const rows = await tx
-      .select({ ...messageColumns, kind: rooms.kind, name: rooms.name, mentionsYou: messageMentions.agentId })
+      .select({
+        ...messageColumns,
+        kind: rooms.kind,
+        name: sql<string | null>`coalesce(${parentRooms.name}, ${rooms.name})`,
+        parentRoomId: rooms.parentRoomId,
+        parentMessageId: rooms.parentMessageId,
+        mentionsYou: messageMentions.agentId,
+      })
       .from(agentReadCursors)
       .innerJoin(rooms, eq(rooms.id, agentReadCursors.roomId))
+      .leftJoin(parentRooms, eq(parentRooms.id, rooms.parentRoomId))
       .innerJoin(
         messages,
         and(eq(messages.roomId, agentReadCursors.roomId), gt(messages.seq, agentReadCursors.lastReadSeq)),
@@ -259,9 +378,19 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
       .where(eq(agentReadCursors.agentId, agentId))
       .orderBy(asc(messages.roomId), asc(messages.seq));
 
-    const byRoom = new Map<RoomId, { kind: RoomKind; name: string | null; messages: InboxRoom["messages"] }>();
+    type Group = Omit<InboxRoom, "roomId" | "members" | "parent"> & {
+      parentRoomId: RoomId | null;
+      parentMessageId: MessageId | null;
+    };
+    const byRoom = new Map<RoomId, Group>();
     for (const row of rows) {
-      const room = byRoom.get(row.roomId) ?? { kind: row.kind, name: row.name, messages: [] };
+      const room = byRoom.get(row.roomId) ?? {
+        kind: row.kind,
+        name: row.name,
+        parentRoomId: row.parentRoomId,
+        parentMessageId: row.parentMessageId,
+        messages: [],
+      };
       room.messages.push({ ...toView(row), mentionsYou: row.mentionsYou !== null });
       byRoom.set(row.roomId, room);
     }
@@ -276,11 +405,28 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
         .where(and(eq(agentReadCursors.agentId, agentId), eq(agentReadCursors.roomId, roomId)));
     }
 
-    const members = await roomMembers(tx, roomIds);
-    return roomIds.map((roomId) => {
+    const groups = [...byRoom.values()];
+    const membershipOf = (roomId: RoomId) => byRoom.get(roomId)?.parentRoomId ?? roomId;
+    const members = await roomMembers(tx, [...new Set(roomIds.map(membershipOf))]);
+    const parentIds = groups.flatMap((room) => (room.parentMessageId ? [room.parentMessageId] : []));
+    const parents =
+      parentIds.length === 0
+        ? new Map<MessageId, MessageView>()
+        : new Map(
+            (await selectMessages(tx).where(inArray(messages.id, parentIds))).map((row) => [row.id, toView(row)]),
+          );
+
+    return roomIds.map((roomId): InboxRoom => {
       const room = byRoom.get(roomId);
       if (!room) throw new Error("unreachable");
-      return { roomId, kind: room.kind, name: room.name, members: members.get(roomId) ?? [], messages: room.messages };
+      const { parentRoomId, parentMessageId, ...rest } = room;
+      const parentMessage = parentMessageId ? parents.get(parentMessageId) : undefined;
+      return {
+        roomId,
+        ...rest,
+        members: members.get(membershipOf(roomId)) ?? [],
+        parent: parentRoomId && parentMessage ? { roomId: parentRoomId, message: parentMessage } : null,
+      };
     });
   });
 }
@@ -313,4 +459,102 @@ export async function acknowledge(db: Database, agentId: AgentId): Promise<void>
     .update(agentReadCursors)
     .set({ lastReadSeq: agentReadCursors.deliveredSeq })
     .where(eq(agentReadCursors.agentId, agentId));
+}
+
+export interface ThreadSummaryRow {
+  id: RoomId;
+  parent: MessageView;
+  replies: number;
+  lastReplyAt: Date | null;
+  participants: Participant[];
+  unread: number;
+}
+
+/**
+ * 群聊里的全部讨论串，按创建先后排列：回复数、最后回复时间、发过言的人（按第一次发言排列，至多 `participantsMax` 个）
+ * 与用户还没读的、别人发的回复数。
+ *
+ * @throws RequestError 404：房间不存在。
+ */
+export async function listThreads(
+  db: Database,
+  roomId: RoomId,
+  userId: UserId,
+  participantsMax: number,
+): Promise<ThreadSummaryRow[]> {
+  const [room] = await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.id, roomId));
+  if (!room) throw new RequestError(404, "房间不存在");
+
+  const threads = await db
+    .select({
+      id: rooms.id,
+      parentMessageId: sql<MessageId>`${rooms.parentMessageId}`,
+      replies: rooms.nextSeq,
+      lastReplyAt: sql<Date | null>`(SELECT max(${messages.createdAt}) FROM ${messages} WHERE ${messages.roomId} = ${rooms.id})`,
+      unread: sql<number>`(
+        SELECT count(*)::int FROM ${messages}
+        WHERE ${messages.roomId} = ${rooms.id}
+          AND ${messages.seq} > ${userReadCursors.lastReadSeq}
+          AND ${messages.authorUserId} IS DISTINCT FROM ${userId}
+      )`,
+    })
+    .from(rooms)
+    .innerJoin(userReadCursors, and(eq(userReadCursors.roomId, rooms.id), eq(userReadCursors.userId, userId)))
+    .where(eq(rooms.parentRoomId, roomId))
+    .orderBy(asc(rooms.createdAt));
+
+  const firstSeq = sql<number>`min(${messages.seq})`;
+  const authors = await db
+    .select({
+      roomId: messages.roomId,
+      userId: messages.authorUserId,
+      agentId: messages.authorAgentId,
+      userName: users.displayName,
+      agentName: agents.displayName,
+      handle: agents.handle,
+    })
+    .from(messages)
+    .innerJoin(rooms, eq(rooms.id, messages.roomId))
+    .leftJoin(users, eq(users.id, messages.authorUserId))
+    .leftJoin(agents, eq(agents.id, messages.authorAgentId))
+    .where(eq(rooms.parentRoomId, roomId))
+    .groupBy(
+      messages.roomId,
+      messages.authorUserId,
+      messages.authorAgentId,
+      users.displayName,
+      agents.displayName,
+      agents.handle,
+    )
+    .orderBy(firstSeq);
+  const participants = new Map<RoomId, Participant[]>();
+  for (const row of authors) {
+    const list = participants.get(row.roomId) ?? [];
+    if (list.length >= participantsMax) continue;
+    list.push(
+      row.userId
+        ? { kind: "user", id: row.userId, displayName: row.userName ?? "", handle: null }
+        : { kind: "agent", id: row.agentId ?? "", displayName: row.agentName ?? "", handle: row.handle },
+    );
+    participants.set(row.roomId, list);
+  }
+
+  const parentIds = threads.map((thread) => thread.parentMessageId);
+  const parents = new Map(
+    parentIds.length === 0
+      ? []
+      : (await selectMessages(db).where(inArray(messages.id, parentIds))).map((row) => [row.id, toView(row)]),
+  );
+  return threads.flatMap(({ parentMessageId, ...thread }) => {
+    const parent = parents.get(parentMessageId);
+    if (!parent) return [];
+    return [
+      {
+        ...thread,
+        parent,
+        lastReplyAt: thread.lastReplyAt === null ? null : new Date(thread.lastReplyAt),
+        participants: participants.get(thread.id) ?? [],
+      },
+    ];
+  });
 }

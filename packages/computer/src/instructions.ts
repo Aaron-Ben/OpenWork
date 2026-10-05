@@ -50,6 +50,21 @@ ${agent.persona.trim()}
 - If another member is already handling a request, leave it to them. Don't repeat or summarize someone else's answer.
 - Don't post just to agree, to acknowledge, or to say you are waiting.
 
+# Threads
+
+- A message in a group room can have a thread: a side conversation under it, kept out of the room's timeline. Your turn lists a thread under its own id, with the message it hangs under.
+- Reply where a message came from: answer a thread message in the thread (\`crew reply <thread-id>\`), and a room message in the room.
+- In a thread, the person's messages wake the agents following it: the agent who wrote the message it hangs under, and agents who replied in it or were mentioned in it. Mention an agent to bring it in.
+- Start a thread only when the person asks for one. Pass the id of the message to start it under:
+
+  \`\`\`sh
+  crew reply <room-id> --thread <message-id> <<'EOF'
+  Your message here.
+  EOF
+  \`\`\`
+
+  If that message already has a thread, your message goes into it. Direct rooms have no threads, and a thread can't have threads.
+
 # Your workspace
 
 - Your current working directory belongs to you alone. Keep your files there.

@@ -1,4 +1,4 @@
-import type { AgentId, Participant, RoomId, RoomKind, UserId } from "@crew/protocol";
+import type { AgentId, Participant, RoomId, UserId } from "@crew/protocol";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "./db";
 import { agents, messages, roomAgents, rooms, roomUsers, userReadCursors, users } from "./db/schema";
@@ -9,7 +9,7 @@ export const PREVIEW_MAX = 200;
 
 export interface Conversation {
   roomId: RoomId;
-  kind: RoomKind;
+  kind: "direct" | "group";
   /** 群聊的名字；私聊是 Agent 的名字。 */
   name: string;
   agentIds: AgentId[];
@@ -22,13 +22,24 @@ export interface Conversation {
 
 /** 用户所在的全部房间，按最后活动从新到旧排列。 */
 export async function listConversations(db: Database, userId: UserId): Promise<Conversation[]> {
+  // 讨论串没有成员行，不出现在列表里；它们的未读与最后活动算进所在的群聊。
   const unread = sql<number>`(
     SELECT count(*)::int FROM ${messages}
     WHERE ${messages.roomId} = ${rooms.id}
       AND ${messages.seq} > ${userReadCursors.lastReadSeq}
       AND ${messages.authorUserId} IS DISTINCT FROM ${userId}
+  ) + (
+    SELECT count(*)::int FROM messages tm
+    JOIN rooms t ON t.id = tm.room_id
+    JOIN user_read_cursors tc ON tc.room_id = t.id AND tc.user_id = ${userId}
+    WHERE t.parent_room_id = ${rooms.id}
+      AND tm.seq > tc.last_read_seq
+      AND tm.author_user_id IS DISTINCT FROM ${userId}
   )`;
-  const activeAt = sql<Date>`coalesce(${messages.createdAt}, ${rooms.createdAt})`;
+  const activeAt = sql<Date>`GREATEST(
+    coalesce(${messages.createdAt}, ${rooms.createdAt}),
+    (SELECT max(tm.created_at) FROM messages tm JOIN rooms t ON t.id = tm.room_id WHERE t.parent_room_id = ${rooms.id})
+  )`;
   const rows = await db
     .select({
       roomId: rooms.id,
@@ -62,6 +73,8 @@ export async function listConversations(db: Database, userId: UserId): Promise<C
   for (const { roomId, ...member } of members) membersOf.set(roomId, [...(membersOf.get(roomId) ?? []), member]);
 
   return rows.map((row) => {
+    // 讨论串没有 `room_users` 行，查询不会返回它们。
+    if (row.kind === "thread") throw new Error(`讨论串 ${row.roomId} 出现在了会话列表里`);
     const roomMembers = membersOf.get(row.roomId) ?? [];
     const author: Participant | undefined = row.authorUserId
       ? { kind: "user", id: row.authorUserId, displayName: row.userName ?? "", handle: null }

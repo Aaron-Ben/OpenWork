@@ -1,16 +1,16 @@
-import type { DesktopAgent as Agent, DesktopGroup as Group, RoomMessage as Message, RoomId } from "@crew/protocol";
+import type { DesktopAgent as Agent, DesktopGroup as Group, MessageView, RoomId, ThreadSummary } from "@crew/protocol";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { canSend, shouldSend } from "../lib/composer";
-import { hasOlder, newestSeq } from "../lib/messages";
-import { useLoadOlder, useMarkRead, useMessages, useRun, useSendMessage } from "../lib/queries";
-import { formatDuration, liveView } from "../lib/runs";
+import { cn } from "../lib/cn";
+import { hasOlder } from "../lib/messages";
+import { useLoadOlder, useMessages, useSendMessage, useThreads } from "../lib/queries";
 import { isNearBottom } from "../lib/scroll";
 import { statusIn, statusView } from "../lib/status";
-import { formatMessageTime } from "../lib/time";
-import { AgentAvatar, GroupAvatar, UserAvatar } from "./Avatar";
-import { Markdown } from "./Markdown";
+import { AgentAvatar, GroupAvatar } from "./Avatar";
+import { Composer, LiveActivity, MessageItem, useMarkReadWhileOpen } from "./MessageParts";
 import { RunPanel } from "./RunPanel";
+import { SidePanel } from "./SidePanel";
 import { StatusTag } from "./StatusTag";
+import { ThreadPanel } from "./ThreadPanel";
 import { Button } from "./ui/button";
 
 /** 打开的房间：与一个 Agent 的私聊，或一个群聊与其中的 Agent。 */
@@ -26,93 +26,205 @@ function inRoom(room: ChatRoom): ChatRoom {
   return room.kind === "direct" ? { ...room, agent: scope(room.agent) } : { ...room, members: room.members.map(scope) };
 }
 
+/** 右栏显示什么：运行记录，或讨论串（列表，或挂在某条消息下的那一个）。 */
+type PanelView = "runs" | "threads";
+
+/** 右栏里选中的东西只属于打开它时的房间：换房间后右栏保持开着，显示新房间的列表。 */
+type Selection = { roomId: RoomId; runId?: string; parent?: MessageView };
+
 /**
- * 右侧：一个房间的消息与输入框。`agents` 是全部 Agent：消息的作者可能已经不在群里，
- * 头像与 @handle 的高亮都按全部 Agent 查找。
+ * 聊天：一个房间的消息与输入框，以及右栏（运行记录或讨论串）。`agents` 是全部 Agent：消息的作者可能已经不在群里，
+ * 头像与 @handle 的高亮都按全部 Agent 查找。`focus` 是右栏放大后收起了左侧会话栏。
  */
 export function ChatView({
   room,
   agents,
+  focus,
+  onFocusChange,
   onAddMembers,
   onJoinGroups,
 }: {
   room: ChatRoom;
   agents: Agent[];
+  focus: boolean;
+  onFocusChange(focus: boolean): void;
   onAddMembers(): void;
   onJoinGroups(): void;
 }) {
   const roomId = roomIdOf(room);
-  room = inRoom(room);
-  // 面板开着时换房间，面板跟着换成新房间的记录；选中的一轮只属于原来的房间。
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [selected, setSelected] = useState<{ roomId: RoomId; runId: string }>();
-  const selectedRun = selected?.roomId === roomId ? selected.runId : undefined;
-  const openRun = (runId: string) => {
-    setSelected({ roomId, runId });
-    setPanelOpen(true);
+  const scoped = inRoom(room);
+  const [view, setView] = useState<PanelView>();
+  const [expanded, setExpanded] = useState(false);
+  const [selection, setSelection] = useState<Selection>();
+  const selected = selection?.roomId === roomId ? selection : undefined;
+  // 私聊没有讨论串：从群聊换到私聊时，讨论串的右栏关上。
+  const panel = room.kind === "direct" && view === "threads" ? undefined : view;
+  const threads = useThreads(roomId, room.kind === "group");
+  // 聊天关上时（例如没有房间可显示）退出专注：会话栏收着、右栏又不在时，没有按钮能把会话栏找回来。
+  useEffect(() => () => onFocusChange(false), [onFocusChange]);
+
+  const close = () => {
+    setView(undefined);
+    setExpanded(false);
+    onFocusChange(false);
   };
-  const runsButton = (
-    <Button
-      variant={panelOpen ? "secondary" : "ghost"}
-      size="sm"
-      className="flex-none"
-      onClick={() => setPanelOpen((open) => !open)}
-    >
-      ◷ 运行记录
-    </Button>
+  const open = (next: PanelView, picked?: Omit<Selection, "roomId">) => {
+    setView(next);
+    if (picked) setSelection({ roomId, ...picked });
+  };
+  const toggle = (next: PanelView) => {
+    if (panel === next) close();
+    else open(next, { runId: undefined, parent: undefined });
+  };
+  const openRun = (runId: string) => open("runs", { runId });
+  const openThread = (parent: MessageView) => open("threads", { parent });
+
+  const unreadThreads = (threads.data ?? []).filter((thread) => thread.unread > 0).length;
+  const tools = (
+    <div className="flex flex-none gap-0.5 rounded-[9px] border border-line bg-panel p-0.5 font-sans">
+      {room.kind === "group" && (
+        <Tool active={panel === "threads"} onClick={() => toggle("threads")}>
+          讨论串
+          <span className={cn("font-mono text-[11px]", unreadThreads > 0 ? "text-accent" : "text-faint")}>
+            {threads.data?.length ?? ""}
+          </span>
+        </Tool>
+      )}
+      <Tool active={panel === "runs"} onClick={() => toggle("runs")}>
+        运行记录
+      </Tool>
+    </div>
   );
+
+  const groupName = room.kind === "group" ? `# ${room.group.name}` : room.agent.displayName;
+  const parent = panel === "threads" ? selected?.parent : undefined;
+  // 右栏放大后聊天只有一条窄列：顶栏只留名字、状态与右栏的按钮。
+  const compact = panel !== undefined && expanded;
 
   return (
     <>
-      <main className="flex min-w-0 flex-1 flex-col">
-        {room.kind === "direct" ? (
-          <DirectHeader agent={room.agent} onJoinGroups={onJoinGroups} runsButton={runsButton} />
+      <main className={cn("flex min-w-0 flex-col", panel && expanded ? "w-[340px] flex-none" : "flex-1")}>
+        {scoped.kind === "direct" ? (
+          <DirectHeader agent={scoped.agent} compact={compact} onJoinGroups={onJoinGroups} tools={tools} />
         ) : (
-          <GroupHeader group={room.group} members={room.members} onAddMembers={onAddMembers} runsButton={runsButton} />
+          <GroupHeader
+            group={scoped.group}
+            members={scoped.members}
+            compact={compact}
+            onAddMembers={onAddMembers}
+            tools={tools}
+          />
         )}
         {/* 换房间时重建消息列表与输入框：滚动位置与草稿属于各自的房间。 */}
-        <MessageList key={roomId} room={room} agents={agents} onOpenRun={openRun} />
-        <Composer key={`composer-${roomId}`} room={room} />
-      </main>
-      {panelOpen && (
-        <RunPanel
-          title={room.kind === "direct" ? `${room.agent.displayName} 的运行记录` : `# ${room.group.name} 的运行记录`}
-          scope={room.kind === "direct" ? { agentId: room.agent.id } : { roomId }}
+        <MessageList
+          key={roomId}
+          room={scoped}
           agents={agents}
-          members={room.kind === "group" ? room.members : []}
-          selectedId={selectedRun}
-          onSelect={(runId) => setSelected(runId ? { roomId, runId } : undefined)}
-          onClose={() => setPanelOpen(false)}
+          threads={threads.data}
+          openParentId={parent?.id}
+          onOpenRun={openRun}
+          onOpenThread={room.kind === "group" ? openThread : undefined}
         />
+        <RoomComposer key={`composer-${roomId}`} room={scoped} />
+      </main>
+      {panel && (
+        <SidePanel
+          title={panel === "runs" ? "运行记录" : parent ? "讨论串" : "全部讨论串"}
+          subtitle={
+            panel === "runs"
+              ? room.kind === "group"
+                ? `${groupName} · 包括讨论串里的轮次`
+                : `${groupName} 的全部轮次`
+              : parent
+                ? `${groupName} · ${parent.author.kind === "user" ? "你" : parent.author.displayName}的消息`
+                : `${groupName} · ${threads.data?.length ?? 0} 个`
+          }
+          expanded={expanded}
+          focus={focus}
+          onExpandedChange={(next) => {
+            setExpanded(next);
+            if (!next) onFocusChange(false);
+          }}
+          onFocusChange={onFocusChange}
+          onBack={parent ? () => setSelection({ roomId, parent: undefined }) : undefined}
+          onClose={close}
+        >
+          {panel === "runs" ? (
+            <RunPanel
+              scope={room.kind === "direct" ? { agentId: room.agent.id } : { roomId }}
+              agents={agents}
+              members={room.kind === "group" ? room.members : []}
+              selectedId={selected?.runId}
+              expanded={expanded}
+              onSelect={(runId) => setSelection({ roomId, runId })}
+            />
+          ) : (
+            <ThreadPanel
+              groupId={roomId}
+              members={room.kind === "group" ? room.members : []}
+              agents={agents}
+              parent={parent}
+              expanded={expanded}
+              onOpen={openThread}
+              onOpenRun={openRun}
+            />
+          )}
+        </SidePanel>
       )}
     </>
   );
 }
 
+function Tool({ active, onClick, children }: { active: boolean; onClick(): void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-[26px] items-center gap-1.5 rounded-[7px] px-2.5 text-xs whitespace-nowrap",
+        active ? "bg-raised text-text shadow-card" : "text-muted hover:text-text",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 function DirectHeader({
   agent,
+  compact,
   onJoinGroups,
-  runsButton,
+  tools,
 }: {
   agent: Agent;
+  compact: boolean;
   onJoinGroups(): void;
-  runsButton: React.ReactNode;
+  tools: React.ReactNode;
 }) {
   const status = statusView(agent.status);
   return (
-    <header className="drag flex h-[52px] flex-none items-center gap-3 border-b border-line px-6 font-mono">
+    <header
+      className={cn(
+        "drag flex h-[52px] flex-none items-center gap-3 border-b border-line font-mono",
+        compact ? "px-4" : "px-6",
+      )}
+    >
       <AgentAvatar name={agent.displayName} handle={agent.handle} size={28} />
       <h1 className="truncate font-sans text-sm font-semibold">{agent.displayName}</h1>
-      <span className="truncate text-xs text-muted">
-        @{agent.handle} · {agent.model}
-      </span>
+      {!compact && (
+        <span className="truncate text-xs text-muted">
+          @{agent.handle} · {agent.model}
+        </span>
+      )}
       <StatusTag tone={status.tone} className="ml-auto flex-none">
         {status.label}
       </StatusTag>
-      {runsButton}
-      <Button variant="ghost" size="sm" className="flex-none" onClick={onJoinGroups}>
-        加入群聊…
-      </Button>
+      {tools}
+      {!compact && (
+        <Button variant="ghost" size="sm" className="flex-none" onClick={onJoinGroups}>
+          加入群聊…
+        </Button>
+      )}
     </header>
   );
 }
@@ -120,22 +232,29 @@ function DirectHeader({
 function GroupHeader({
   group,
   members,
+  compact,
   onAddMembers,
-  runsButton,
+  tools,
 }: {
   group: Group;
   members: Agent[];
+  compact: boolean;
   onAddMembers(): void;
-  runsButton: React.ReactNode;
+  tools: React.ReactNode;
 }) {
   return (
-    <header className="drag flex h-[52px] flex-none items-center gap-3 border-b border-line px-6 font-mono">
+    <header
+      className={cn(
+        "drag flex h-[52px] flex-none items-center gap-3 border-b border-line font-mono",
+        compact ? "px-4" : "px-6",
+      )}
+    >
       <GroupAvatar members={members.map((agent) => ({ name: agent.displayName, handle: agent.handle }))} size={28} />
-      <h1 className="flex-none truncate font-sans text-sm font-semibold">
+      <h1 className={cn("truncate font-sans text-sm font-semibold", !compact && "flex-none")}>
         <span className="text-faint">#</span> {group.name}
       </h1>
-      <span className="flex-none text-xs text-muted">{members.length} 个 agent</span>
-      <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+      {!compact && <span className="flex-none text-xs text-muted">{members.length} 个 agent</span>}
+      <div className={cn("min-w-0 items-center gap-1.5 overflow-hidden", compact ? "hidden" : "flex")}>
         {members.map((agent) => (
           <span
             key={agent.id}
@@ -152,10 +271,12 @@ function GroupHeader({
         ))}
       </div>
       <span className="ml-auto" />
-      {runsButton}
-      <Button variant="ghost" size="sm" className="flex-none" onClick={onAddMembers}>
-        ＋ 成员
-      </Button>
+      {tools}
+      {!compact && (
+        <Button variant="ghost" size="sm" className="flex-none" onClick={onAddMembers}>
+          ＋ 成员
+        </Button>
+      )}
     </header>
   );
 }
@@ -163,16 +284,25 @@ function GroupHeader({
 function MessageList({
   room,
   agents: allAgents,
+  threads,
+  openParentId,
   onOpenRun,
+  onOpenThread,
 }: {
   room: ChatRoom;
   agents: Agent[];
+  threads: ThreadSummary[] | undefined;
+  /** 右栏正打开着讨论串的那条消息。 */
+  openParentId: string | undefined;
   onOpenRun(runId: string): void;
+  /** 群聊里才有：打开一条消息的讨论串。 */
+  onOpenThread?(message: MessageView): void;
 }) {
   const roomId = roomIdOf(room);
   const agents = agentsOf(room);
   const { data: messages, error, isPending } = useMessages(roomId);
   const handles = useMemo(() => new Set(allAgents.map((agent) => agent.handle)), [allAgents]);
+  const threadOf = useMemo(() => new Map((threads ?? []).map((thread) => [thread.parent.id, thread])), [threads]);
   useMarkReadWhileOpen(roomId, messages);
   const loadOlder = useLoadOlder(roomId);
   const scroller = useRef<HTMLDivElement>(null);
@@ -231,11 +361,26 @@ function MessageList({
           </div>
         )}
         {messages.map((message) => (
-          <MessageItem key={message.id} message={message} now={now} handles={handles} onOpenRun={onOpenRun} />
+          <MessageItem
+            key={message.id}
+            message={message}
+            now={now}
+            handles={handles}
+            onOpenRun={onOpenRun}
+            thread={threadOf.get(message.id)}
+            onOpenThread={onOpenThread}
+            highlighted={message.id === openParentId}
+          />
         ))}
         {agents.map((agent) =>
           agent.status.state === "working" ? (
-            <LiveActivity key={agent.id} agent={agent} runId={agent.status.runId} onOpenRun={onOpenRun} />
+            <LiveActivity
+              key={agent.id}
+              agent={agent}
+              runId={agent.status.runId}
+              roomId={roomId}
+              onOpenRun={onOpenRun}
+            />
           ) : null,
         )}
         {agents.map((agent) =>
@@ -252,110 +397,6 @@ function MessageList({
       </div>
     </div>
   );
-}
-
-function MessageItem({
-  message,
-  now,
-  handles,
-  onOpenRun,
-}: {
-  message: Message;
-  now: Date;
-  handles: ReadonlySet<string>;
-  onOpenRun(runId: string): void;
-}) {
-  const { author, runId } = message;
-  return (
-    <article className="mb-[22px] flex gap-3">
-      {author.kind === "user" ? (
-        <UserAvatar />
-      ) : (
-        <AgentAvatar name={author.displayName} handle={author.handle ?? author.id} ring="var(--bg)" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2 font-mono text-[11px] text-faint">
-          <b className="font-sans text-[13px] font-semibold text-text">
-            {author.kind === "user" ? "你" : author.displayName}
-          </b>
-          {author.handle && <span>@{author.handle}</span>}
-          <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt, now)}</time>
-        </div>
-        <Markdown handles={handles}>{message.body}</Markdown>
-        {runId && (
-          <div className="mt-1 flex gap-3 font-mono text-[11px] text-faint">
-            {message.heldBefore > 0 && (
-              <span className="text-warn">
-                ↻ 看到新消息后改写了回复{message.heldBefore > 1 ? `（被拦下 ${message.heldBefore} 次）` : ""}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => onOpenRun(runId)}
-              className="underline decoration-dotted underline-offset-[3px] hover:text-text"
-            >
-              这一轮
-            </button>
-          </div>
-        )}
-      </div>
-    </article>
-  );
-}
-
-/** Agent 正在这个房间跑一轮：实时列出最近几次工具调用与“思考中”，点击打开这一轮的记录。 */
-function LiveActivity({ agent, runId, onOpenRun }: { agent: Agent; runId: string; onOpenRun(runId: string): void }) {
-  const { data: run } = useRun(runId);
-  const now = useNow(1000);
-  const view = run ? liveView(run) : { recent: [], thinking: true, steps: 0 };
-  const elapsed = run ? formatDuration(now - new Date(run.startedAt).getTime()) : "";
-  return (
-    <div className="mb-[18px] flex gap-3">
-      <AgentAvatar name={agent.displayName} handle={agent.handle} size={22} className="mt-2 ml-[7px]" />
-      <button
-        type="button"
-        onClick={() => onOpenRun(runId)}
-        className="w-full max-w-[520px] rounded-md border border-l-2 border-line border-l-accent bg-raised px-3 py-2 text-left font-mono"
-      >
-        <span className="flex items-center gap-2 text-[12.5px] text-muted">
-          {agent.displayName} 正在回复
-          <span className="cursor-blink inline-block h-[13px] w-[7px] bg-accent" />
-          {run && (
-            <span className="ml-auto text-[11px] text-faint">
-              已运行 {elapsed}
-              {view.steps > 0 ? ` · 第 ${view.steps} 步` : ""}
-            </span>
-          )}
-        </span>
-        {(view.recent.length > 0 || view.thinking) && (
-          <ol className="mt-1.5 text-[12px] leading-[1.75] text-muted">
-            {view.recent.map((step) => (
-              <li key={step.seq} className="flex gap-2">
-                <span className="w-3.5 flex-none text-center text-faint">{step.mark}</span>
-                <span className="min-w-0 flex-1 truncate">{step.text}</span>
-                <span className="flex-none text-faint">{step.duration}</span>
-              </li>
-            ))}
-            {view.thinking && (
-              <li className="flex gap-2 text-text">
-                <span className="w-3.5 flex-none text-center text-faint">…</span>思考中
-              </li>
-            )}
-          </ol>
-        )}
-      </button>
-    </div>
-  );
-}
-
-/** 每隔 `intervalMs` 更新一次的当前时间，用来显示已经运行了多久。 */
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(timer);
-  }, [intervalMs]);
-  return now;
 }
 
 function EmptyChat({ room }: { room: ChatRoom }) {
@@ -392,99 +433,20 @@ function EmptyChat({ room }: { room: ChatRoom }) {
   );
 }
 
-function Composer({ room }: { room: ChatRoom }) {
-  const [draft, setDraft] = useState("");
+function RoomComposer({ room }: { room: ChatRoom }) {
   const send = useSendMessage(roomIdOf(room));
   const placeholder =
     room.kind === "direct" ? `给 ${room.agent.displayName} 发消息` : `发到 # ${room.group.name}，用 @handle 点名`;
-
-  const submit = () => {
-    if (!canSend(draft) || send.isPending) return;
-    send.mutate(draft, { onSuccess: () => setDraft("") });
-  };
-
   return (
-    <div className="max-w-[736px] px-7 pb-[18px]">
-      <div
-        className={
-          send.error
-            ? "rounded-md border border-danger bg-raised"
-            : "rounded-md border border-line-strong bg-raised focus-within:border-accent"
-        }
-      >
-        <textarea
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            if (send.error) send.reset();
-          }}
-          onKeyDown={(event) => {
-            if (shouldSend({ ...event, isComposing: event.nativeEvent.isComposing })) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-          placeholder={placeholder}
-          rows={2}
-          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-[15px] leading-[1.7] text-text outline-none placeholder:text-faint [field-sizing:content]"
-        />
-        <div className="flex items-center gap-2.5 pt-1.5 pr-2 pb-2 pl-3.5 font-mono text-[11px] text-faint">
-          <span>Markdown</span>
-          <span>
-            <Kbd>⏎</Kbd> 发送　<Kbd>⇧</Kbd> <Kbd>⏎</Kbd> 换行
-          </span>
-          <Button
-            variant="primary"
-            size="sm"
-            className="ml-auto"
-            disabled={!canSend(draft) || send.isPending}
-            onClick={submit}
-          >
-            发送
-          </Button>
-        </div>
-      </div>
-      {send.error && <p className="mt-1.5 text-xs text-danger">发送失败：{send.error.message}。草稿已保留。</p>}
-    </div>
+    <Composer
+      placeholder={placeholder}
+      className="max-w-[736px] px-7 pb-[18px]"
+      send={{
+        mutate: (body, options) => send.mutate({ body }, options),
+        isPending: send.isPending,
+        error: send.error,
+        reset: send.reset,
+      }}
+    />
   );
-}
-
-function Kbd({ children }: { children: string }) {
-  return (
-    <kbd className="rounded-[3px] border border-b-2 border-line-strong px-1 font-mono text-[11px] text-muted">
-      {children}
-    </kbd>
-  );
-}
-
-/**
- * 房间开着、窗口在前台时，把用户的已读位置推进到最新一条：打开房间时一次，之后每来新消息、
- * 窗口回到前台时再推进。窗口在后台时到达的消息保持未读，侧栏显示未读数。
- */
-function useMarkReadWhileOpen(roomId: RoomId, messages: readonly Message[] | undefined) {
-  const markRead = useMarkRead(roomId);
-  const marked = useRef(0);
-  const newest = messages ? newestSeq(messages) : 0;
-  const { mutate } = markRead;
-
-  useEffect(() => {
-    const mark = () => {
-      if (newest <= marked.current || document.visibilityState !== "visible" || !document.hasFocus()) return;
-      const previous = marked.current;
-      marked.current = newest;
-      // 请求失败时退回去，窗口下次回到前台时重试。
-      mutate(newest, {
-        onError: () => {
-          marked.current = previous;
-        },
-      });
-    };
-    mark();
-    window.addEventListener("focus", mark);
-    document.addEventListener("visibilitychange", mark);
-    return () => {
-      window.removeEventListener("focus", mark);
-      document.removeEventListener("visibilitychange", mark);
-    };
-  }, [newest, mutate]);
 }

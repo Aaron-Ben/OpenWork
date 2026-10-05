@@ -47,23 +47,40 @@ export const agents = pgTable(
 );
 
 /**
- * 房间：私聊（`direct`，一个用户与一个 Agent）或群聊（`group`，有名字，Agent 成员可以增加）。
+ * 房间：私聊（`direct`，一个用户与一个 Agent）、群聊（`group`，有名字，Agent 成员可以增加），
+ * 或群聊里一条消息下的讨论串（`thread`）。
  * `next_seq` 是下一条消息的序号来源：写消息时锁住房间行并加一，同一房间内的序号因此连续、不跳号。
+ *
+ * 讨论串没有自己的成员行，谁能发言看父房间的成员；它的关注者是在讨论串里有已读位置的 Agent。
+ * 取舍见 Agent Note：讨论串（2026-10-05-threads）。
  */
 export const rooms = pgTable(
   "rooms",
   {
     id: uuid("id").primaryKey().defaultRandom().$type<RoomId>(),
-    kind: text("kind", { enum: ["direct", "group"] }).notNull(),
+    kind: text("kind", { enum: ["direct", "group", "thread"] }).notNull(),
     /** 群聊的名字。私聊没有名字，界面显示 Agent 的名字。 */
     name: text("name"),
     /** 私聊双方的组合键，保证同一对用户与 Agent 只有一个私聊房间。 */
     directKey: text("direct_key").unique(),
     nextSeq: bigint("next_seq", { mode: "number" }).notNull().default(0),
+    /** 讨论串所在的群聊。 */
+    parentRoomId: uuid("parent_room_id")
+      .references((): AnyPgColumn => rooms.id, { onDelete: "cascade" })
+      .$type<RoomId>(),
+    /** 讨论串挂在哪条消息下。每条消息最多一个讨论串。 */
+    parentMessageId: uuid("parent_message_id")
+      .unique()
+      .references((): AnyPgColumn => messages.id, { onDelete: "cascade" })
+      .$type<MessageId>(),
     createdAt: createdAt(),
   },
   (t) => [
-    check("rooms_kind_known", sql`${t.kind} IN ('direct', 'group')`),
+    check("rooms_kind_known", sql`${t.kind} IN ('direct', 'group', 'thread')`),
+    check(
+      "rooms_thread_has_parent",
+      sql`(${t.kind} = 'thread') = (${t.parentRoomId} IS NOT NULL) AND (${t.kind} = 'thread') = (${t.parentMessageId} IS NOT NULL)`,
+    ),
     check("rooms_direct_has_key", sql`${t.kind} <> 'direct' OR ${t.directKey} IS NOT NULL`),
     check("rooms_group_has_name", sql`${t.kind} <> 'group' OR btrim(coalesce(${t.name}, '')) <> ''`),
   ],

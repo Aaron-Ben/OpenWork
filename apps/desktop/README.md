@@ -24,7 +24,10 @@ Electron 应用：主进程启动并监管 Server 与 Computer，窗口里是 Re
 | `apps/desktop/src/components/Avatar.tsx` | Agent、用户与群聊的头像；群聊头像是成员围成的环 |
 | `apps/desktop/src/components/` | 界面组件；`ui/` 下是按 shadcn/ui 做法写的基础组件 |
 | `apps/desktop/src/lib/` | 界面逻辑与数据层：`api.ts` 是 Server 客户端，`queries.ts` 用 TanStack Query 读写，`events.ts` 收到 SSE 提示后取新消息或让对应的缓存失效，`messages.ts` 合并分段取到的消息，`mentions.ts` 高亮正文里的 @handle，`avatar.ts` 算头像的颜色与环上的位置，`conversations.ts` 生成会话的预览，`status.ts` 算 Agent 在某个房间的状态，`runs.ts` 是运行记录的写法（结果标签、时长、token、工具调用的一行） |
-| `apps/desktop/src/components/RunPanel.tsx` | 右侧的运行记录面板：轮次列表与一轮的时间线 |
+| `apps/desktop/src/components/SidePanel.tsx` | 右栏的外框：运行记录与讨论串共用，可以放大与收起会话栏 |
+| `apps/desktop/src/components/RunPanel.tsx` | 右栏里的运行记录：轮次列表与一轮的时间线，放大后分左右两栏 |
+| `apps/desktop/src/components/ThreadPanel.tsx` | 右栏里的讨论串：全部讨论串的列表，或一个讨论串的宿主消息、回复与输入框 |
+| `apps/desktop/src/components/MessageParts.tsx` | 房间与讨论串共用的消息、讨论串摘要、实时活动与输入框 |
 | `apps/desktop/src/index.css` | 颜色与字体的设计变量，浅色与深色两套 |
 | `apps/desktop/scripts/preview-shot.ts` | `pnpm preview:shot`：用临时数据库启动应用并截图 |
 | `apps/desktop/test/support/built-app.ts` | 冒烟测试与真实模型测试共用：启动构建产物 |

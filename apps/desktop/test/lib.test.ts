@@ -29,8 +29,11 @@ describe("keysForEvent", () => {
     expect(keysForEvent({ type: "agents" })).toEqual([queryKeys.agents, queryKeys.conversations]);
   });
 
-  it("refreshes the conversation list when a room has new messages; the messages come from fetchNewer", () => {
-    expect(keysForEvent({ type: "room.messages", roomId })).toEqual([queryKeys.conversations]);
+  it("refreshes the conversation list and the room's threads when it has new messages; the messages come from fetchNewer", () => {
+    expect(keysForEvent({ type: "room.messages", roomId })).toEqual([
+      queryKeys.conversations,
+      queryKeys.threadList(roomId),
+    ]);
   });
 
   it("refreshes the group and conversation lists when groups or their members change", () => {

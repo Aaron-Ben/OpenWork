@@ -13,9 +13,13 @@ export interface ServerContext {
   events: EventHub;
 }
 
-/** 消息写入并提交之后：通知界面这个房间有新消息，唤醒 `wakeTargets` 选出的 Agent。 */
+/**
+ * 消息写入并提交之后：通知界面这个房间有新消息（讨论串的消息同时通知它所在的群聊，那里的讨论串摘要变了），
+ * 唤醒选出的 Agent。
+ */
 export function notifyMessage(ctx: ServerContext, result: Extract<PostResult, { kind: "posted" }>): void {
   ctx.events.desktop.publish({ type: "room.messages", roomId: result.message.roomId });
+  if (result.parentRoomId) ctx.events.desktop.publish({ type: "room.messages", roomId: result.parentRoomId });
   for (const agentId of result.wakeAgentIds) {
     ctx.events.computer.publish({ type: "agent.wake", agentId });
   }

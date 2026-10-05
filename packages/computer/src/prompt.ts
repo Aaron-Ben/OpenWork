@@ -1,4 +1,11 @@
-import type { AgentId, InboxRoom, MessageView, Participant } from "@crew/protocol";
+import {
+  type AgentId,
+  assertNever,
+  clipText,
+  type InboxRoom,
+  type MessageView,
+  type Participant,
+} from "@crew/protocol";
 
 /** 带本地时区偏移的 RFC 3339 时间，精确到秒，例如 `2026-10-04T18:30:00+08:00`。 */
 export function localTimestamp(date: Date): string {
@@ -28,23 +35,47 @@ export function messageLines(message: MessageView & { mentionsYou?: boolean }, s
   return [head, ...rest.map((line) => `    ${line}`)].join("\n");
 }
 
+/** 讨论串挂着的那条消息在 prompt 里最多这么多字符：完整的内容在群聊里，这里只提示讨论串在说什么。 */
+export const THREAD_PARENT_MAX = 600;
+
 function roomHeading(room: InboxRoom): string {
-  return room.kind === "group"
-    ? `# Room ${room.roomId} (group "${room.name ?? ""}")`
-    : `# Room ${room.roomId} (direct)`;
+  switch (room.kind) {
+    case "group":
+      return `# Room ${room.roomId} (group "${room.name ?? ""}")`;
+    case "direct":
+      return `# Room ${room.roomId} (direct)`;
+    case "thread":
+      return `# Thread ${room.roomId} (in group "${room.name ?? ""}")`;
+    default:
+      return assertNever(room.kind);
+  }
+}
+
+/** 讨论串的开头：它挂在群聊里的哪条消息下。正文太长时截短。 */
+function threadParent(room: InboxRoom, self: AgentId): string[] {
+  if (!room.parent) return [];
+  const { message } = room.parent;
+  const body = clipText(message.body, THREAD_PARENT_MAX);
+  const clipped = body.length < message.body.length ? { ...message, body: `${body}…` } : message;
+  return [`Under this message in room ${room.parent.roomId}:`, messageLines(clipped, self), "Unread replies:"];
 }
 
 /**
  * 每个 Turn 写给 Engine 的 prompt：唤醒说明、当前时间与按房间分组的未读消息。
- * 群聊附上成员名册。身份与规则在 `AGENTS.md` 里，这里不重复。
+ * 群聊与讨论串附上成员名册，讨论串还附上它挂着的那条消息。身份与规则在 `AGENTS.md` 里，这里不重复。
  */
 export function turnPrompt(rooms: InboxRoom[], now: Date, self: AgentId): string {
   const sections = rooms.map((room) => {
     const roster =
-      room.kind === "group"
-        ? [`Members: ${room.members.map((member) => participantLabel(member, self)).join(", ")}`]
-        : [];
-    return [roomHeading(room), ...roster, ...room.messages.map((message) => messageLines(message, self))].join("\n");
+      room.kind === "direct"
+        ? []
+        : [`Members: ${room.members.map((member) => participantLabel(member, self)).join(", ")}`];
+    return [
+      roomHeading(room),
+      ...roster,
+      ...threadParent(room, self),
+      ...room.messages.map((message) => messageLines(message, self)),
+    ].join("\n");
   });
   return `You've been woken because there are new messages in your Crew rooms. Reply with \`crew reply\` if you have something useful to say.
 

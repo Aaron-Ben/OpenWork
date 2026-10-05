@@ -1,4 +1,4 @@
-import type { RunDetail, RunEvent, RunSummary, RunTrigger, Usage } from "@crew/protocol";
+import type { RecordedTrigger, RunDetail, RunEvent, RunSummary, Usage } from "@crew/protocol";
 
 // 运行记录在界面上的写法：结果标签、时长、token、费用，以及时间线里每一步怎样显示。
 
@@ -130,10 +130,13 @@ export function liveView(run: Pick<RunDetail, "events">, count = 3): LiveView {
   };
 }
 
-/** 一轮被哪些消息唤醒：“第 3 条消息”“第 3–5 条消息”；涉及几个房间时写“3 个房间的消息”。 */
-export function triggerText(triggers: readonly RunTrigger[]): string {
+/**
+ * 一轮被哪些消息唤醒：“第 3 条消息”“第 3–5 条消息”，讨论串里的写“讨论串里第 2 条消息”；
+ * 涉及几个房间时写“3 个房间的消息”。
+ */
+export function triggerText(triggers: readonly RecordedTrigger[]): string {
   const [only] = triggers;
   if (triggers.length !== 1 || !only) return `${triggers.length} 个房间的消息`;
   const range = only.toSeq > only.fromSeq ? `${only.fromSeq}–${only.toSeq}` : String(only.fromSeq);
-  return `第 ${range} 条消息`;
+  return `${only.parentRoomId ? "讨论串里" : ""}第 ${range} 条消息`;
 }

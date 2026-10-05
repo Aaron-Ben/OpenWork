@@ -12,6 +12,7 @@ const direct = InboxRoom.parse({
   kind: "direct",
   name: null,
   members: [user, alice],
+  parent: null,
   messages: [
     {
       id: "0b9e8d7c-6f5a-4e3d-8c2b-1a0f9e8d7c6b",
@@ -37,6 +38,7 @@ const group = InboxRoom.parse({
   kind: "group",
   name: "Release",
   members: [user, alice, bob],
+  parent: null,
   messages: [
     {
       id: "2d1a0f9e-8b7c-4a5f-8e4d-3c2b1a0f9e8d",
@@ -57,11 +59,42 @@ const group = InboxRoom.parse({
   ],
 });
 
+const thread = InboxRoom.parse({
+  roomId: "4f3c2b1a-0d9e-4c8b-9a7f-6e5d4c3b2a1f",
+  kind: "thread",
+  name: "Release",
+  members: [user, alice, bob],
+  parent: {
+    roomId: group.roomId,
+    message: {
+      id: "5a4d3c2b-1e0f-4d9c-8b7a-6f5e4d3c2b1a",
+      seq: 5,
+      author: user,
+      // 太长的正文在 prompt 里截短。
+      body: `回归测试的范围定一下：${"登录、注册、下单、支付、退款。".repeat(60)}`,
+      createdAt: "2026-10-04T10:20:00.000Z",
+    },
+  },
+  messages: [
+    {
+      id: "6b5e4d3c-2f1a-4e0d-9c8b-7a6f5e4d3c2b",
+      seq: 1,
+      author: bob,
+      body: "支付我来，@alice 退款交给你？",
+      createdAt: "2026-10-04T10:25:00.000Z",
+      mentionsYou: true,
+    },
+  ],
+});
+
 describe("turnPrompt", () => {
   it("matches the reviewed text", async () => {
     // 2026-10-04T18:30:00+08:00，用固定的时区偏移避免依赖运行环境的时区。
     const now = new Date("2026-10-04T10:30:00.000Z");
-    const text = turnPrompt([direct, group], now, self).replace(localTimestamp(now), "2026-10-04T18:30:00+08:00");
+    const text = turnPrompt([direct, group, thread], now, self).replace(
+      localTimestamp(now),
+      "2026-10-04T18:30:00+08:00",
+    );
     await expect(text).toMatchFileSnapshot("./__snapshots__/turn-prompt.md");
   });
 });

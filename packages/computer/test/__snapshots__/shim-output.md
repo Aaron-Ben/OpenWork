@@ -9,11 +9,11 @@ Usage: crew [options] [command]
 Talk in your Crew rooms.
 
 Options:
-  -h, --help       display help for command
+  -h, --help                 display help for command
 
 Commands:
-  reply <room-id>  Post a message to a room. The message is read from standard
-                   input.
+  reply [options] <room-id>  Post a message to a room. The message is read from
+                             standard input.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -32,11 +32,11 @@ Usage: crew [options] [command]
 Talk in your Crew rooms.
 
 Options:
-  -h, --help       display help for command
+  -h, --help                 display help for command
 
 Commands:
-  reply <room-id>  Post a message to a room. The message is read from standard
-                   input.
+  reply [options] <room-id>  Post a message to a room. The message is read from
+                             standard input.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -55,10 +55,13 @@ Usage: crew reply [options] <room-id>
 Post a message to a room. The message is read from standard input.
 
 Arguments:
-  room-id     the room to post in, as shown above your unread messages
+  room-id                the room or thread to post in, as shown above your
+                         unread messages
 
 Options:
-  -h, --help  display help for command
+  --thread <message-id>  post in the thread under this message of the room,
+                         starting it if needed
+  -h, --help             display help for command
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -86,10 +89,13 @@ Usage: crew reply [options] <room-id>
 Post a message to a room. The message is read from standard input.
 
 Arguments:
-  room-id     the room to post in, as shown above your unread messages
+  room-id                the room or thread to post in, as shown above your
+                         unread messages
 
 Options:
-  -h, --help  display help for command
+  --thread <message-id>  post in the thread under this message of the room,
+                         starting it if needed
+  -h, --help             display help for command
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -110,10 +116,13 @@ Usage: crew reply [options] <room-id>
 Post a message to a room. The message is read from standard input.
 
 Arguments:
-  room-id     the room to post in, as shown above your unread messages
+  room-id                the room or thread to post in, as shown above your
+                         unread messages
 
 Options:
-  -h, --help  display help for command
+  --thread <message-id>  post in the thread under this message of the room,
+                         starting it if needed
+  -h, --help             display help for command
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -134,11 +143,11 @@ Usage: crew [options] [command]
 Talk in your Crew rooms.
 
 Options:
-  -h, --help       display help for command
+  -h, --help                 display help for command
 
 Commands:
-  reply <room-id>  Post a message to a room. The message is read from standard
-                   input.
+  reply [options] <room-id>  Post a message to a room. The message is read from
+                             standard input.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -212,6 +221,41 @@ error: could not reach Crew (TypeError: fetch failed). The message was not poste
 ```text
 stderr:
 error: Crew did not answer within 10 seconds. The message may have been posted; do not send it again.
+```
+
+## sent to a thread (exit 0)
+
+```text
+stdout:
+Message sent to thread <thread>, under message <host-message>. To post there again, run crew reply <thread>.
+```
+
+## not a message id (exit 1)
+
+```text
+stderr:
+error: "first" is not a message id. Use the id shown in brackets before a message.
+```
+
+## thread in a direct room (exit 1)
+
+```text
+stderr:
+error: room <alice-room> is a direct room, and direct rooms have no threads. Reply without --thread.
+```
+
+## thread in a thread (exit 1)
+
+```text
+stderr:
+error: <thread> is a thread, and a thread can't have threads. Reply in it without --thread.
+```
+
+## message from another room (exit 1)
+
+```text
+stderr:
+error: message <direct-message> is not in room <group-room>. Start a thread under a message of that room.
 ```
 
 ## held (exit 1)
