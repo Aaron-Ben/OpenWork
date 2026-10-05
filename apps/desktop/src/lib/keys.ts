@@ -9,6 +9,7 @@ export const queryKeys = {
   /** 全部讨论串列表的前缀：用户读了一个讨论串后，所在群聊的未读数随之变化。 */
   threads: ["threads"] as const,
   threadList: (roomId: RoomId) => ["threads", roomId] as const,
+  tasks: (roomId: RoomId) => ["tasks", roomId] as const,
   models: ["models"] as const,
   /** 全部运行记录列表的前缀：让它失效时，按房间或按 Agent 的列表一起失效。 */
   runs: ["runs"] as const,
@@ -29,7 +30,8 @@ export function keysForEvent(event: DesktopEvent): ReadonlyArray<readonly unknow
     case "rooms":
       return [queryKeys.groups, queryKeys.conversations];
     case "room.messages":
-      return [queryKeys.conversations, queryKeys.threadList(event.roomId)];
+      // 任务的每次改动都写一条通知：任务列表跟着房间的新消息刷新。
+      return [queryKeys.conversations, queryKeys.threadList(event.roomId), queryKeys.tasks(event.roomId)];
     case "models":
       return [queryKeys.models];
     case "run.activity":

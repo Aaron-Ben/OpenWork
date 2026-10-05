@@ -67,6 +67,7 @@ describe("migrations", () => {
       "run_events",
       "run_triggers",
       "runs",
+      "tasks",
       "user_read_cursors",
       "users",
     ]);

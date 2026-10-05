@@ -24,7 +24,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 ### 已经实现的决策
 
-第 1 至 4 步已经实现（第 3 步的 triage 移到了第 7 步）。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
+第 1 至 5 步已经实现（第 3 步的 triage 移到了第 7 步）。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
 
 - [workspace、包划分与构建](../../implemented/architecture/2026-10-04-workspace-and-build.md)
 - [主进程监管 Server 与 Computer](../../implemented/architecture/2026-10-04-process-supervision.md)
@@ -38,6 +38,8 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - [群聊（第 3a 步）](../../implemented/feature/2026-10-05-group-chat.md)
 - [会话列表、未读数与侧栏导航](../../implemented/feature/2026-10-05-conversation-list.md)
 - [运行观测（第 4 步）](../../implemented/feature/2026-10-05-run-observability.md)
+- [讨论串（第 5a 步）](../../implemented/feature/2026-10-05-threads.md)
+- [任务（第 5b 步）](../../implemented/feature/2026-10-05-tasks.md)
 
 ### 进程与通信
 
@@ -93,7 +95,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 4. 运行观测：Agent 运行时实时显示它在思考、调用了哪个工具，状态分房间；每一轮留下运行记录（唤醒原因、耗时、用量、发出的消息、HELD），可以回看。数据来自解析 OpenCode 的事件流。
 5. 讨论串与任务，分两块，任务要用到讨论串（2026-10-05 用户决定）。
    - 5a 讨论串：消息下可以开讨论串，讨论串是一个房间，回复不进主时间线，只唤醒关注者，见 [讨论串 Note](../../implemented/feature/2026-10-05-threads.md)。
-   - 5b 任务（[任务 Note](../feature/2026-10-05-tasks.md)）：房间里的消息可以转成任务；状态固定为待办、进行中、待审、完成、关闭，按状态显示成看板或列表；Agent 领取任务是一次 compare-and-swap。分配任务时发一条系统消息并 @ 对方，复用第 3 步的唤醒与 HELD，不另做卡片唤醒。
+   - 5b 任务（[任务 Note](../../implemented/feature/2026-10-05-tasks.md)）：房间里的消息可以转成任务；状态固定为待办、进行中、待审、完成、关闭，按状态显示成看板或列表；Agent 领取任务是一次 compare-and-swap。分配任务时发一条系统消息并 @ 对方，复用第 3 步的唤醒与 HELD，不另做卡片唤醒。
 6. 提醒、记忆与静音：Agent 用 `crew` 给自己定时或周期提醒，到时唤醒它自己；Agent 目录里有 `MEMORY.md`，由 Agent 自己维护；静音房间（是用户不再看到未读，还是 Agent 不再被唤醒，到这一步再定）。
 7. triage（3b）：用第 4 步的运行记录统计“白跑”（被唤醒、完整运行一轮却没有发出消息）占的轮次与费用，作为动机数据；按“消息 × Agent”标注应该回复还是应该沉默，作为评测集；再用一次便宜的模型调用判断“这条和我有关吗”，用评测集衡量漏判与节省，并给 triage 题面加快照。
 8. 打包：见下文“打包”。

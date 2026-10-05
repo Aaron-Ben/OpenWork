@@ -4,8 +4,11 @@ import {
   type Conversation,
   type DesktopAgent,
   type DesktopGroup,
+  MessageId,
   RoomId,
   type RoomMessage,
+  type TaskStatus,
+  type TaskView,
 } from "@crew/protocol";
 import { describe, expect, it } from "vitest";
 import { AVATAR_COLORS, avatarColor, avatarInitial, RING_MAX, ringSlots } from "../src/lib/avatar";
@@ -18,6 +21,7 @@ import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-a
 import { groupMembers, groupsWithout, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
 import { isNearBottom } from "../src/lib/scroll";
 import { statusIn, statusView } from "../src/lib/status";
+import { groupByStatus, nextStatuses, openCount } from "../src/lib/tasks";
 import { formatListTime, formatMessageTime } from "../src/lib/time";
 
 // 界面里抽出来的纯逻辑。组件本身不写只断言 HTML 的测试。
@@ -29,10 +33,11 @@ describe("keysForEvent", () => {
     expect(keysForEvent({ type: "agents" })).toEqual([queryKeys.agents, queryKeys.conversations]);
   });
 
-  it("refreshes the conversation list and the room's threads when it has new messages; the messages come from fetchNewer", () => {
+  it("refreshes the conversation list, the room's threads and its tasks when it has new messages; the messages come from fetchNewer", () => {
     expect(keysForEvent({ type: "room.messages", roomId })).toEqual([
       queryKeys.conversations,
       queryKeys.threadList(roomId),
+      queryKeys.tasks(roomId),
     ]);
   });
 
@@ -394,5 +399,37 @@ describe("formatListTime", () => {
     expect(formatListTime(new Date(2026, 9, 4, 23, 0).toISOString(), now)).toBe("昨天");
     expect(formatListTime(new Date(2026, 8, 30, 8, 0).toISOString(), now)).toBe("9月30日");
     expect(formatListTime(new Date(2025, 11, 31, 8, 0).toISOString(), now)).toBe("2025/12/31");
+  });
+});
+
+describe("task helpers", () => {
+  const alice = { id: AgentId.parse("2f8c0b6e-3a1d-4c5e-9f7a-1b2c3d4e5f60"), displayName: "Alice", handle: "alice" };
+  const task = (number: number, status: TaskStatus, assigned: boolean): TaskView => ({
+    id: `00000000-0000-4000-8000-00000000000${number}`,
+    roomId,
+    number,
+    title: `任务 ${number}`,
+    status,
+    assignee: assigned ? alice : null,
+    messageId: MessageId.parse(`10000000-0000-4000-8000-00000000000${number}`),
+    threadId: null,
+    createdAt: "2026-10-05T10:00:00.000Z",
+    updatedAt: "2026-10-05T10:00:00.000Z",
+  });
+
+  it("groups by status in number order and counts unfinished tasks", () => {
+    const tasks = [task(3, "todo", false), task(1, "todo", false), task(2, "done", true)];
+    expect(
+      groupByStatus(tasks)
+        .get("todo")
+        ?.map((t) => t.number),
+    ).toEqual([1, 3]);
+    expect(openCount(tasks)).toBe(2);
+  });
+
+  it("offers only the statuses the transition table allows, and none that need an assignee when there is none", () => {
+    expect(nextStatuses({ status: "todo", assignee: null })).toEqual(["closed"]);
+    expect(nextStatuses({ status: "todo", assignee: alice })).toEqual(["in_progress", "closed"]);
+    expect(nextStatuses({ status: "done", assignee: null })).toEqual(["todo", "closed"]);
   });
 });

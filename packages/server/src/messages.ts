@@ -5,6 +5,7 @@ import {
   type MessageView,
   type Participant,
   type RoomId,
+  type TaskTag,
   THREAD_REFUSALS,
   type UserId,
 } from "@crew/protocol";
@@ -19,6 +20,7 @@ import {
   roomAgents,
   rooms,
   roomUsers,
+  tasks,
   userReadCursors,
   users,
 } from "./db/schema";
@@ -50,7 +52,7 @@ export type PostResult =
       omitted: number;
     };
 
-type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+export type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 /**
  * 写入一条消息。用户与 Agent 都经过这里。带 `threadOf` 时写到房间里这条消息的讨论串，讨论串还没有时创建。
@@ -67,8 +69,39 @@ export async function postMessage(
   body: string,
   threadOf?: MessageId,
 ): Promise<PostResult> {
-  return db.transaction(async (tx) => {
-    if (threadOf) roomId = await openThread(tx, roomId, threadOf, author);
+  return db.transaction((tx) => postMessageIn(tx, roomId, author, body, { threadOf }));
+}
+
+export interface PostOptions {
+  /** 发到房间里这条消息的讨论串，讨论串还没有时创建。 */
+  threadOf?: MessageId;
+  /**
+   * `system` 是通知：不做 HELD 检查（它记的是刚做完的操作，不是回复），不推进作者的已投递位置，
+   * 只唤醒它 @ 到的 Agent。
+   */
+  kind?: "text" | "system";
+  /**
+   * 这条消息是一次操作的一部分，不是回复：新建任务时以创建者的身份发出的标题。不做 HELD 检查，
+   * 也不推进作者的已投递位置。
+   */
+  action?: boolean;
+  /** 不唤醒任何 Agent：新建任务时已经分配了负责人，由随后的通知唤醒它，不再唤醒群里的其他 Agent。 */
+  quiet?: boolean;
+}
+
+/** 在调用方的事务里写一条消息，规则同 `postMessage`。任务操作用它把通知与任务改动写在同一个事务里。 */
+export async function postMessageIn(
+  tx: Transaction,
+  roomId: RoomId,
+  author: Author,
+  body: string,
+  options: PostOptions = {},
+): Promise<PostResult> {
+  const kind = options.kind ?? "text";
+  // 回复要经过 HELD 检查，并在发出后推进作者的已投递位置；通知与操作里发出的消息都不算回复。
+  const isReply = kind === "text" && !options.action;
+  {
+    if (options.threadOf) roomId = await openThread(tx, roomId, options.threadOf, author);
     const [room] = await tx
       .select({ nextSeq: rooms.nextSeq, kind: rooms.kind, parentRoomId: rooms.parentRoomId })
       .from(rooms)
@@ -78,7 +111,7 @@ export async function postMessage(
     const membershipRoomId = room.parentRoomId ?? roomId;
     await assertMember(tx, membershipRoomId, author);
 
-    if (author.kind === "agent") {
+    if (author.kind === "agent" && isReply) {
       // 在讨论串里发言就关注它。新关注者的已读位置从 0 开始，HELD 会先给它看讨论串里已有的消息。
       if (room.kind === "thread") await follow(tx, roomId, [author.id]);
       const held = await heldMessages(tx, roomId, author.id, room.nextSeq);
@@ -92,6 +125,7 @@ export async function postMessage(
       .values({
         roomId,
         seq,
+        kind,
         body,
         authorUserId: author.kind === "user" ? author.id : null,
         authorAgentId: author.kind === "agent" ? author.id : null,
@@ -112,7 +146,7 @@ export async function postMessage(
       if (room.kind === "thread") await follow(tx, roomId, mentioned);
     }
 
-    if (author.kind === "agent") {
+    if (author.kind === "agent" && isReply) {
       // 通过了 HELD 检查，这之前的消息不是看过的就是它自己发的。
       await tx
         .update(agentReadCursors)
@@ -124,12 +158,15 @@ export async function postMessage(
       kind: "posted",
       message,
       parentRoomId: room.parentRoomId,
-      wakeAgentIds:
-        room.kind === "thread"
-          ? await threadWakeTargets(tx, roomId, author, memberIds, mentioned)
-          : wakeTargets(author, memberIds, mentioned),
+      wakeAgentIds: options.quiet
+        ? []
+        : kind === "system"
+          ? mentioned.filter((id) => author.kind !== "agent" || id !== author.id)
+          : room.kind === "thread"
+            ? await threadWakeTargets(tx, roomId, author, memberIds, mentioned)
+            : wakeTargets(author, memberIds, mentioned),
     };
-  });
+  }
 }
 
 /**
@@ -248,7 +285,7 @@ async function heldMessages(
   return { kind: "held", roomId, newMessages: rows.map(toView), omitted };
 }
 
-async function assertMember(tx: Transaction, roomId: RoomId, author: Author): Promise<void> {
+export async function assertMember(tx: Transaction, roomId: RoomId, author: Author): Promise<void> {
   const member =
     author.kind === "user"
       ? await tx
@@ -267,6 +304,7 @@ const messageColumns = {
   id: messages.id,
   roomId: messages.roomId,
   seq: messages.seq,
+  kind: messages.kind,
   body: messages.body,
   createdAt: messages.createdAt,
   authorUserId: messages.authorUserId,
@@ -291,6 +329,7 @@ type MessageRow = {
   id: MessageId;
   roomId: RoomId;
   seq: number;
+  kind: "text" | "system";
   body: string;
   createdAt: Date;
   authorUserId: UserId | null;
@@ -306,7 +345,7 @@ function toView(row: MessageRow): MessageView {
   const author: Participant = row.authorUserId
     ? { kind: "user", id: row.authorUserId, displayName: row.userName ?? "", handle: null }
     : { kind: "agent", id: row.authorAgentId ?? "", displayName: row.agentName ?? "", handle: row.agentHandle };
-  return { id: row.id, seq: row.seq, author, body: row.body, createdAt: row.createdAt.toISOString() };
+  return { id: row.id, seq: row.seq, kind: row.kind, author, body: row.body, createdAt: row.createdAt.toISOString() };
 }
 
 export interface MessageWindow {
@@ -349,6 +388,24 @@ export async function listMessages(
 }
 
 const parentRooms = alias(rooms, "parent_rooms");
+const assignees = alias(agents, "assignees");
+
+/** 宿主消息上的任务：编号、状态与负责人的 handle。不是任务的消息这几列为空。 */
+const taskTagColumns = {
+  taskNumber: tasks.number,
+  taskStatus: tasks.status,
+  taskAssignee: assignees.handle,
+};
+
+function taskTagOf(row: {
+  taskNumber: number | null;
+  taskStatus: TaskTag["status"] | null;
+  taskAssignee: string | null;
+}): TaskTag | null {
+  return row.taskNumber === null || row.taskStatus === null
+    ? null
+    : { number: row.taskNumber, status: row.taskStatus, assignee: row.taskAssignee };
+}
 
 /**
  * 取出 Agent 在各房间已读位置之后的全部消息，并把已投递位置推进到本次的最后一条。
@@ -359,8 +416,9 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
     const rows = await tx
       .select({
         ...messageColumns,
-        kind: rooms.kind,
+        roomKind: rooms.kind,
         name: sql<string | null>`coalesce(${parentRooms.name}, ${rooms.name})`,
+        ...taskTagColumns,
         parentRoomId: rooms.parentRoomId,
         parentMessageId: rooms.parentMessageId,
         mentionsYou: messageMentions.agentId,
@@ -375,6 +433,8 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
       .leftJoin(users, eq(users.id, messages.authorUserId))
       .leftJoin(agents, eq(agents.id, messages.authorAgentId))
       .leftJoin(messageMentions, and(eq(messageMentions.messageId, messages.id), eq(messageMentions.agentId, agentId)))
+      .leftJoin(tasks, eq(tasks.messageId, messages.id))
+      .leftJoin(assignees, eq(assignees.id, tasks.assigneeAgentId))
       .where(eq(agentReadCursors.agentId, agentId))
       .orderBy(asc(messages.roomId), asc(messages.seq));
 
@@ -385,13 +445,13 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
     const byRoom = new Map<RoomId, Group>();
     for (const row of rows) {
       const room = byRoom.get(row.roomId) ?? {
-        kind: row.kind,
+        kind: row.roomKind,
         name: row.name,
         parentRoomId: row.parentRoomId,
         parentMessageId: row.parentMessageId,
         messages: [],
       };
-      room.messages.push({ ...toView(row), mentionsYou: row.mentionsYou !== null });
+      room.messages.push({ ...toView(row), mentionsYou: row.mentionsYou !== null, task: taskTagOf(row) });
       byRoom.set(row.roomId, room);
     }
     const roomIds = [...byRoom.keys()];
@@ -411,9 +471,18 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
     const parentIds = groups.flatMap((room) => (room.parentMessageId ? [room.parentMessageId] : []));
     const parents =
       parentIds.length === 0
-        ? new Map<MessageId, MessageView>()
+        ? new Map<MessageId, MessageView & { task: TaskTag | null }>()
         : new Map(
-            (await selectMessages(tx).where(inArray(messages.id, parentIds))).map((row) => [row.id, toView(row)]),
+            (
+              await tx
+                .select({ ...messageColumns, ...taskTagColumns })
+                .from(messages)
+                .leftJoin(users, eq(users.id, messages.authorUserId))
+                .leftJoin(agents, eq(agents.id, messages.authorAgentId))
+                .leftJoin(tasks, eq(tasks.messageId, messages.id))
+                .leftJoin(assignees, eq(assignees.id, tasks.assigneeAgentId))
+                .where(inArray(messages.id, parentIds))
+            ).map((row) => [row.id, { ...toView(row), task: taskTagOf(row) }]),
           );
 
     return roomIds.map((roomId): InboxRoom => {

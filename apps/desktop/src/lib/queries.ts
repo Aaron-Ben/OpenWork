@@ -1,4 +1,13 @@
-import { type AgentId, api, MESSAGE_PAGE_MAX, type MessageId, type RoomId, type RoomMessage } from "@crew/protocol";
+import {
+  type AgentId,
+  api,
+  MESSAGE_PAGE_MAX,
+  type MessageId,
+  type RoomId,
+  type RoomMessage,
+  type TaskStatus,
+  type TaskView,
+} from "@crew/protocol";
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { server } from "./api";
 import { queryKeys } from "./keys";
@@ -195,4 +204,46 @@ export function useRun(runId: string | undefined) {
     queryFn: () => server.call(api.desktop.getRun, { params: { runId: runId ?? "" } }),
     enabled: runId !== undefined,
   });
+}
+
+/** 房间里的任务，按编号排列。 */
+export function useTasks(roomId: RoomId) {
+  return useQuery({
+    queryKey: queryKeys.tasks(roomId),
+    queryFn: () => server.call(api.desktop.listTasks, { params: { roomId } }),
+  });
+}
+
+/** 任务改动后：任务列表、讨论串摘要与房间的新消息（新建任务时发出的标题消息）。 */
+function refreshAfterTask(queryClient: QueryClient, roomId: RoomId) {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.tasks(roomId) });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.threadList(roomId) });
+  return fetchNewer(queryClient, roomId);
+}
+
+/** 任务操作：新建、把消息转成任务、改状态、换负责人。成功时返回改动后的任务。 */
+export function useTaskActions(roomId: RoomId) {
+  const queryClient = useQueryClient();
+  const onSuccess = () => refreshAfterTask(queryClient, roomId);
+  const create = useMutation({
+    mutationFn: (input: { title: string; assigneeId?: AgentId }) =>
+      server.call(api.desktop.createTask, { params: { roomId }, body: input }),
+    onSuccess,
+  });
+  const convert = useMutation({
+    mutationFn: (messageId: MessageId) =>
+      server.call(api.desktop.convertToTask, { params: { roomId }, body: { messageId } }),
+    onSuccess,
+  });
+  const setStatus = useMutation({
+    mutationFn: ({ task, status }: { task: TaskView; status: TaskStatus }) =>
+      server.call(api.desktop.setTaskStatus, { params: { roomId, number: task.number }, body: { status } }),
+    onSuccess,
+  });
+  const assign = useMutation({
+    mutationFn: ({ task, agentId }: { task: TaskView; agentId: AgentId | null }) =>
+      server.call(api.desktop.assignTask, { params: { roomId, number: task.number }, body: { agentId } }),
+    onSuccess,
+  });
+  return { create, convert, setStatus, assign };
 }

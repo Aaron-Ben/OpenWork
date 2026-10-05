@@ -1,12 +1,49 @@
 import { api } from "@crew/protocol";
 import type { Express } from "express";
-import { notifyMessage, notifyRun, type ServerContext } from "../context";
+import { notifyMessage, notifyRun, notifyTaskChange, type ServerContext } from "../context";
 import { agentOf, route } from "../http";
 import { postMessage } from "../messages";
 import { recordHeld, recordReply } from "../runs";
+import { assignTask, claimTask, convertToTask, createTask, listTasks, setTaskStatus } from "../tasks";
 
 /** Agent 经 `crew` 命令调用的接口。凭证决定是哪个 Agent，请求体里不能指定身份。 */
 export function agentRoutes(app: Express, ctx: ServerContext): void {
+  const self = (response: Parameters<typeof agentOf>[0]) => ({ kind: "agent" as const, id: agentOf(response) });
+
+  route(app, api.agent.listTasks, ({ body, response }) => listTasks(ctx.db, self(response), body.roomId));
+
+  route(app, api.agent.createTask, async ({ body, response }) =>
+    notifyTaskChange(
+      ctx,
+      await createTask(ctx.db, self(response), body.roomId, {
+        title: body.title,
+        assignee: body.assign ? { handle: body.assign } : undefined,
+      }),
+    ),
+  );
+
+  route(app, api.agent.convertToTask, async ({ body, response }) =>
+    notifyTaskChange(
+      ctx,
+      await convertToTask(ctx.db, self(response), body.roomId, {
+        messageId: body.messageId,
+        assignee: body.assign ? { handle: body.assign } : undefined,
+      }),
+    ),
+  );
+
+  route(app, api.agent.claimTask, async ({ body, response }) =>
+    notifyTaskChange(ctx, await claimTask(ctx.db, agentOf(response), body.roomId, body.number)),
+  );
+
+  route(app, api.agent.setTaskStatus, async ({ body, response }) =>
+    notifyTaskChange(ctx, await setTaskStatus(ctx.db, self(response), body.roomId, body.number, body.status)),
+  );
+
+  route(app, api.agent.assignTask, async ({ body, response }) =>
+    notifyTaskChange(ctx, await assignTask(ctx.db, self(response), body.roomId, body.number, { handle: body.assign })),
+  );
+
   route(app, api.agent.reply, async ({ body, response }) => {
     const agentId = agentOf(response);
     const result = await postMessage(ctx.db, body.roomId, { kind: "agent", id: agentId }, body.body, body.threadOf);

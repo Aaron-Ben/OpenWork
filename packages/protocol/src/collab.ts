@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentId, MessageId, RoomId } from "./ids";
+import { TaskTag } from "./tasks";
 
 /** 消息正文：去掉首尾空白后不能为空，最多 20,000 字符。 */
 export const MESSAGE_BODY_MAX = 20_000;
@@ -81,18 +82,22 @@ export const ComputerAgent = z.object({
 });
 export type ComputerAgent = z.infer<typeof ComputerAgent>;
 
-/** 一条消息。界面读取房间与 Agent 读取 inbox 共用。 */
+/**
+ * 一条消息。界面读取房间与 Agent 读取 inbox 共用。`kind` 是 `system` 时是通知（例如“领取了 #3”），
+ * 作者是做这件事的人。
+ */
 export const MessageView = z.object({
   id: MessageId,
   seq: z.number().int().positive(),
+  kind: z.enum(["text", "system"]),
   author: Participant,
   body: z.string(),
   createdAt: z.string(),
 });
 export type MessageView = z.infer<typeof MessageView>;
 
-/** inbox 里的消息多一个字段：它是否 @ 了读取 inbox 的这个 Agent。 */
-export const InboxMessage = MessageView.extend({ mentionsYou: z.boolean() });
+/** inbox 里的消息多两个字段：它是否 @ 了读取 inbox 的这个 Agent，以及它是不是一个任务的宿主消息。 */
+export const InboxMessage = MessageView.extend({ mentionsYou: z.boolean(), task: TaskTag.nullable() });
 export type InboxMessage = z.infer<typeof InboxMessage>;
 
 /**
@@ -105,7 +110,7 @@ export const InboxRoom = z.object({
   /** 群聊的名字（讨论串是它所在群聊的名字）；私聊为 null。 */
   name: z.string().nullable(),
   members: z.array(Participant),
-  parent: z.object({ roomId: RoomId, message: MessageView }).nullable(),
+  parent: z.object({ roomId: RoomId, message: MessageView.extend({ task: TaskTag.nullable() }) }).nullable(),
   messages: z.array(InboxMessage).min(1),
 });
 export type InboxRoom = z.infer<typeof InboxRoom>;

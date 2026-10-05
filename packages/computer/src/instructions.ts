@@ -65,6 +65,15 @@ ${agent.persona.trim()}
 
   If that message already has a thread, your message goes into it. Direct rooms have no threads, and a thread can't have threads.
 
+# Tasks
+
+- A task is a room message turned into a to-do. Its status is one of todo, in_progress, in_review, done or closed, and it has at most one assignee. In your turn a task's message ends with \`[task #3 in_progress, assigned to @alice]\`. Task notices are marked \`[notice]\`.
+- Before you start work that goes beyond replying (running tools, changing files, investigating), claim the task. If the request is not a task yet, turn the message that asked for it into one with \`crew task convert\`, then claim it. Just answering a question needs no task.
+- When you are assigned a task, claim it before you start. If claiming fails, someone else has it: don't start work on it.
+- In a group room, post progress in the task's thread. When you are done, set the task to in_review and say what you did; the person sets it to done.
+- Run \`crew task list <room-id>\` before creating a task, so the same work does not become two tasks.
+- Commands: \`crew task list|create|convert|claim|status|assign\`. Run \`crew task --help\` for details.
+
 # Your workspace
 
 - Your current working directory belongs to you alone. Keep your files there.

@@ -1,12 +1,13 @@
 import { type AgentId, type AgentStatus, api, EVENT_STREAMS, THREAD_PARTICIPANTS_MAX } from "@crew/protocol";
 import type { Express } from "express";
 import { type AgentSummary, createAgent, listAgents } from "../agents";
-import { notifyMessage, type ServerContext } from "../context";
+import { notifyMessage, notifyTaskChange, type ServerContext } from "../context";
 import { type Conversation, listConversations, markRead } from "../conversations";
 import { addGroupMembers, createGroup, type GroupSummary, listGroups } from "../groups";
 import { eventStream, route } from "../http";
 import { listMessages, listThreads, postMessage } from "../messages";
 import { agentStatuses, getRun, listRuns } from "../runs";
+import { assignTask, convertToTask, createTask, listTasks, setTaskStatus } from "../tasks";
 
 const IDLE: AgentStatus = { state: "idle" };
 
@@ -81,6 +82,41 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
     ctx.events.desktop.publish({ type: "rooms" });
     return groupView(group);
   });
+
+  const user = { kind: "user" as const, id: ctx.localUserId };
+
+  route(app, api.desktop.listTasks, ({ params }) => listTasks(ctx.db, user, params.roomId));
+
+  route(app, api.desktop.createTask, async ({ params, body }) =>
+    notifyTaskChange(
+      ctx,
+      await createTask(ctx.db, user, params.roomId, {
+        title: body.title,
+        assignee: body.assigneeId ? { id: body.assigneeId } : undefined,
+      }),
+    ),
+  );
+
+  route(app, api.desktop.convertToTask, async ({ params, body }) =>
+    notifyTaskChange(
+      ctx,
+      await convertToTask(ctx.db, user, params.roomId, {
+        messageId: body.messageId,
+        assignee: body.assigneeId ? { id: body.assigneeId } : undefined,
+      }),
+    ),
+  );
+
+  route(app, api.desktop.setTaskStatus, async ({ params, body }) =>
+    notifyTaskChange(ctx, await setTaskStatus(ctx.db, user, params.roomId, params.number, body.status)),
+  );
+
+  route(app, api.desktop.assignTask, async ({ params, body }) =>
+    notifyTaskChange(
+      ctx,
+      await assignTask(ctx.db, user, params.roomId, params.number, body.agentId ? { id: body.agentId } : null),
+    ),
+  );
 
   route(app, api.desktop.listThreads, async ({ params }) =>
     (await listThreads(ctx.db, params.roomId, ctx.localUserId, THREAD_PARTICIPANTS_MAX)).map((thread) => ({

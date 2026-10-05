@@ -13,6 +13,7 @@ import {
 } from "./collab";
 import { AgentId, MessageId, RoomId } from "./ids";
 import { EngineEvent, RunDetail, RunSummary, RunTrigger } from "./runs";
+import { TaskRefusal, TaskStatus, TaskTitle, TaskView } from "./tasks";
 
 // Server 的 HTTP 接口契约：每个接口的方法、路径、参数、请求体与响应的 schema。
 // Server 按它注册路由并校验输入，返回值必须符合响应 schema 的类型；客户端按它发请求并校验响应。
@@ -48,8 +49,8 @@ export type ReplyOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.in
 /** 响应：客户端校验后得到的值。 */
 export type ResponseOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.output<E["response"]> : undefined;
 
-/** 错误响应一律是 `{ error: 原因 }`。 */
-export const ErrorBody = z.object({ error: z.string() });
+/** 错误响应一律是 `{ error: 原因 }`。任务操作被拒绝时另带 `refusal`，`crew` 据此写英文说明。 */
+export const ErrorBody = z.object({ error: z.string(), refusal: TaskRefusal.optional() });
 
 /**
  * 房间里的一条消息，界面读取房间时得到。Agent 的消息带着它所在的那一轮（`runId`），
@@ -147,6 +148,17 @@ export const MessageWindow = z
   .refine((window) => window.after === undefined || window.before === undefined, "after 与 before 不能同时使用");
 
 const RoomParams = z.object({ roomId: RoomId });
+/** 任务编号在 URL 里是字符串，这里转成正整数。 */
+const TaskNumber = z.union([
+  z.number().int().positive(),
+  z
+    .string()
+    .regex(/^[1-9]\d*$/, "任务编号必须是正整数")
+    .transform(Number),
+]);
+const TaskParams = z.object({ roomId: RoomId, number: TaskNumber });
+/** Agent 指定任务：房间（或任务的讨论串）与编号。 */
+const AgentTaskRef = z.object({ roomId: RoomId, number: z.number().int().positive() });
 const RunParams = z.object({ runId: z.uuid() });
 const AgentParams = z.object({ agentId: AgentId });
 
@@ -179,6 +191,45 @@ export const api = {
       body: z.object({ body: MessageBody, threadOf: MessageId.optional() }),
       response: PostedMessage,
       status: 201,
+    }),
+    /** 房间里的全部任务，按编号排列。 */
+    listTasks: endpoint({
+      method: "GET",
+      path: "/desktop/rooms/:roomId/tasks",
+      params: RoomParams,
+      response: z.array(TaskView),
+    }),
+    /** 新建任务：以用户的身份发一条正文为标题的消息，再把它变成任务。 */
+    createTask: endpoint({
+      method: "POST",
+      path: "/desktop/rooms/:roomId/tasks",
+      params: RoomParams,
+      body: z.object({ title: TaskTitle, assigneeId: AgentId.optional() }),
+      response: TaskView,
+      status: 201,
+    }),
+    convertToTask: endpoint({
+      method: "POST",
+      path: "/desktop/rooms/:roomId/tasks/convert",
+      params: RoomParams,
+      body: z.object({ messageId: MessageId, assigneeId: AgentId.optional() }),
+      response: TaskView,
+      status: 201,
+    }),
+    setTaskStatus: endpoint({
+      method: "POST",
+      path: "/desktop/rooms/:roomId/tasks/:number/status",
+      params: TaskParams,
+      body: z.object({ status: TaskStatus }),
+      response: TaskView,
+    }),
+    /** 换负责人；`agentId` 为 null 时取消负责人。 */
+    assignTask: endpoint({
+      method: "POST",
+      path: "/desktop/rooms/:roomId/tasks/:number/assignee",
+      params: TaskParams,
+      body: z.object({ agentId: AgentId.nullable() }),
+      response: TaskView,
     }),
     /** 群聊里的全部讨论串。 */
     listThreads: endpoint({
@@ -300,6 +351,37 @@ export const api = {
     }),
   },
   agent: {
+    listTasks: endpoint({
+      method: "POST",
+      path: "/agent/tasks/list",
+      body: z.object({ roomId: RoomId }),
+      response: z.array(TaskView),
+    }),
+    createTask: endpoint({
+      method: "POST",
+      path: "/agent/tasks/create",
+      body: z.object({ roomId: RoomId, title: TaskTitle, assign: Handle.optional() }),
+      response: TaskView,
+    }),
+    convertToTask: endpoint({
+      method: "POST",
+      path: "/agent/tasks/convert",
+      body: z.object({ roomId: RoomId, messageId: MessageId, assign: Handle.optional() }),
+      response: TaskView,
+    }),
+    claimTask: endpoint({ method: "POST", path: "/agent/tasks/claim", body: AgentTaskRef, response: TaskView }),
+    setTaskStatus: endpoint({
+      method: "POST",
+      path: "/agent/tasks/status",
+      body: AgentTaskRef.extend({ status: TaskStatus }),
+      response: TaskView,
+    }),
+    assignTask: endpoint({
+      method: "POST",
+      path: "/agent/tasks/assign",
+      body: AgentTaskRef.extend({ assign: Handle }),
+      response: TaskView,
+    }),
     reply: endpoint({
       method: "POST",
       path: "/agent/reply",

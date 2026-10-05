@@ -19,6 +19,7 @@
   --accent-fg: #ffffff;
   --user: #b45309;
   --warn: #b45309;
+  --blue: #2563eb;
   --danger: #b91c1c;
   --danger-soft: #fbe9e7;
   --overlay: rgb(20 24 28 / 35%);
@@ -50,6 +51,7 @@
     --accent-fg: #06210f;
     --user: #fbbf24;
     --warn: #fbbf24;
+    --blue: #60a5fa;
     --danger: #f87171;
     --danger-soft: rgb(248 113 113 / 10%);
     --overlay: rgb(0 0 0 / 55%);
@@ -80,6 +82,7 @@
   --color-accent-fg: var(--accent-fg);
   --color-user: var(--user);
   --color-warn: var(--warn);
+  --color-blue: var(--blue);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-overlay: var(--overlay);

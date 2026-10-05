@@ -116,7 +116,11 @@ export const roomAgents = pgTable(
   (t) => [primaryKey({ columns: [t.roomId, t.agentId] })],
 );
 
-/** 消息的作者是用户或 Agent 之一：两个可空外键，恰好一个有值。 */
+/**
+ * 消息的作者是用户或 Agent 之一：两个可空外键，恰好一个有值。
+ * `kind` 区分聊天（`text`）与通知（`system`，例如“领取了 #3”）。通知的作者是做这件事的人：
+ * HELD、未读与唤醒都按作者算，做这件事的人不会被自己的通知拦下，也不把它算作未读。
+ */
 export const messages = pgTable(
   "messages",
   {
@@ -132,6 +136,9 @@ export const messages = pgTable(
     authorAgentId: uuid("author_agent_id")
       .references(() => agents.id, { onDelete: "restrict" })
       .$type<AgentId>(),
+    kind: text("kind", { enum: ["text", "system"] })
+      .notNull()
+      .default("text"),
     body: text("body").notNull(),
     /** Agent 的消息是在哪一轮里发出的；用户的消息为空。 */
     runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "set null" }),
@@ -144,6 +151,58 @@ export const messages = pgTable(
     check("messages_seq_positive", sql`${t.seq} > 0`),
     check("messages_one_author", sql`num_nonnulls(${t.authorUserId}, ${t.authorAgentId}) = 1`),
     check("messages_body_not_blank", sql`btrim(${t.body}) <> ''`),
+    check("messages_kind_known", sql`${t.kind} IN ('text', 'system')`),
+  ],
+);
+
+/**
+ * 任务：房间里一条消息变成的待办，编号在房间内递增，状态固定。负责人只能是 Agent。
+ * 每个任务都有宿主消息：新建任务就是发一条正文为标题的消息再把它变成任务。
+ * 并发靠带条件的更新，历史就是讨论串（私聊是时间线）里的通知。取舍见 Agent Note：任务（2026-10-05-tasks）。
+ */
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" })
+      .$type<RoomId>(),
+    number: integer("number").notNull(),
+    title: text("title").notNull(),
+    status: text("status", { enum: ["todo", "in_progress", "in_review", "done", "closed"] })
+      .notNull()
+      .default("todo"),
+    assigneeAgentId: uuid("assignee_agent_id")
+      .references(() => agents.id, { onDelete: "restrict" })
+      .$type<AgentId>(),
+    createdByUserId: uuid("created_by_user_id")
+      .references(() => users.id, { onDelete: "restrict" })
+      .$type<UserId>(),
+    createdByAgentId: uuid("created_by_agent_id")
+      .references(() => agents.id, { onDelete: "restrict" })
+      .$type<AgentId>(),
+    messageId: uuid("message_id")
+      .notNull()
+      .unique()
+      .references(() => messages.id, { onDelete: "cascade" })
+      .$type<MessageId>(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("tasks_room_number_unique").on(t.roomId, t.number),
+    check("tasks_number_positive", sql`${t.number} > 0`),
+    check("tasks_title_not_blank", sql`btrim(${t.title}) <> ''`),
+    check("tasks_status_known", sql`${t.status} IN ('todo', 'in_progress', 'in_review', 'done', 'closed')`),
+    check("tasks_one_creator", sql`num_nonnulls(${t.createdByUserId}, ${t.createdByAgentId}) = 1`),
+    // 进行中与待审一定有负责人：领取或分配之后才能开始。
+    check(
+      "tasks_working_has_assignee",
+      sql`${t.status} NOT IN ('in_progress', 'in_review') OR ${t.assigneeAgentId} IS NOT NULL`,
+    ),
   ],
 );
 

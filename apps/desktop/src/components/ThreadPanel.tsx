@@ -57,7 +57,7 @@ export function ThreadPanel({
 }
 
 /** 放大后正文居中，最宽 720px，不拉成很长的行。 */
-const column = (expanded: boolean) => (expanded ? "mx-auto w-full max-w-[720px]" : "");
+export const column = (expanded: boolean) => (expanded ? "mx-auto w-full max-w-[720px]" : "");
 
 function ThreadList({
   threads,
@@ -107,7 +107,8 @@ function ThreadList({
   );
 }
 
-function ThreadView({
+/** 一个讨论串：宿主消息、回复与输入框。任务详情复用它，在宿主消息上面放任务的状态与负责人（`header`）。 */
+export function ThreadView({
   groupId,
   members,
   handles,
@@ -115,6 +116,7 @@ function ThreadView({
   thread,
   expanded,
   onOpenRun,
+  header,
 }: {
   groupId: RoomId;
   members: Agent[];
@@ -123,6 +125,7 @@ function ThreadView({
   thread: ThreadSummary | undefined;
   expanded: boolean;
   onOpenRun(runId: string): void;
+  header?: React.ReactNode;
 }) {
   const send = useSendMessage(groupId);
   const now = new Date();
@@ -130,6 +133,7 @@ function ThreadView({
     <>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className={column(expanded)}>
+          {header}
           <div className="rounded-xl border border-line bg-raised px-3.5 py-3 shadow-card">
             <div className="flex items-baseline gap-2 text-[11px] text-faint">
               <b className="text-[13px] font-semibold text-text">

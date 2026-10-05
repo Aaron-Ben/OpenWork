@@ -4,6 +4,7 @@ import type { EventHub } from "./events";
 import type { PostResult } from "./messages";
 import type { RunActivity } from "./runs";
 import type { RuntimeState } from "./state";
+import type { TaskChange } from "./tasks";
 
 /** 路由需要的全部依赖。由进程入口创建，测试可以自己组装。 */
 export interface ServerContext {
@@ -33,4 +34,10 @@ export function notifyRun(ctx: ServerContext, activity: RunActivity | undefined,
   if (!activity) return;
   ctx.events.desktop.publish({ type: "run.activity", runId: activity.runId, roomIds: activity.roomIds });
   if (statusChanged) ctx.events.desktop.publish({ type: "agents" });
+}
+
+/** 任务操作提交之后：逐条通知它写下的消息（宿主消息与通知）。 */
+export function notifyTaskChange(ctx: ServerContext, change: TaskChange): TaskChange["task"] {
+  for (const post of change.posts) notifyMessage(ctx, post);
+  return change.task;
 }

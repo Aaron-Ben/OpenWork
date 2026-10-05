@@ -1,15 +1,24 @@
-import type { DesktopAgent as Agent, DesktopGroup as Group, MessageView, RoomId, ThreadSummary } from "@crew/protocol";
+import type {
+  DesktopAgent as Agent,
+  DesktopGroup as Group,
+  MessageView,
+  RoomId,
+  TaskView,
+  ThreadSummary,
+} from "@crew/protocol";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { hasOlder } from "../lib/messages";
-import { useLoadOlder, useMessages, useSendMessage, useThreads } from "../lib/queries";
+import { useLoadOlder, useMessages, useSendMessage, useTaskActions, useTasks, useThreads } from "../lib/queries";
 import { isNearBottom } from "../lib/scroll";
 import { statusIn, statusView } from "../lib/status";
+import { openCount } from "../lib/tasks";
 import { AgentAvatar, GroupAvatar } from "./Avatar";
 import { Composer, LiveActivity, MessageItem, useMarkReadWhileOpen } from "./MessageParts";
 import { RunPanel } from "./RunPanel";
 import { SidePanel } from "./SidePanel";
 import { StatusTag } from "./StatusTag";
+import { type TaskLayout, TaskPanel } from "./TaskPanel";
 import { ThreadPanel } from "./ThreadPanel";
 import { Button } from "./ui/button";
 
@@ -26,14 +35,14 @@ function inRoom(room: ChatRoom): ChatRoom {
   return room.kind === "direct" ? { ...room, agent: scope(room.agent) } : { ...room, members: room.members.map(scope) };
 }
 
-/** 右栏显示什么：运行记录，或讨论串（列表，或挂在某条消息下的那一个）。 */
-type PanelView = "runs" | "threads";
+/** 右栏显示什么：运行记录、讨论串（列表或其中一个）或任务（列表、看板或其中一个）。 */
+type PanelView = "runs" | "threads" | "tasks";
 
 /** 右栏里选中的东西只属于打开它时的房间：换房间后右栏保持开着，显示新房间的列表。 */
-type Selection = { roomId: RoomId; runId?: string; parent?: MessageView };
+type Selection = { roomId: RoomId; runId?: string; parent?: MessageView; task?: number };
 
 /**
- * 聊天：一个房间的消息与输入框，以及右栏（运行记录或讨论串）。`agents` 是全部 Agent：消息的作者可能已经不在群里，
+ * 聊天：一个房间的消息与输入框，以及右栏（运行记录、讨论串或任务）。`agents` 是全部 Agent：消息的作者可能已经不在群里，
  * 头像与 @handle 的高亮都按全部 Agent 查找。`focus` 是右栏放大后收起了左侧会话栏。
  */
 export function ChatView({
@@ -55,18 +64,28 @@ export function ChatView({
   const scoped = inRoom(room);
   const [view, setView] = useState<PanelView>();
   const [expanded, setExpanded] = useState(false);
+  const [layout, setLayout] = useState<TaskLayout>("list");
   const [selection, setSelection] = useState<Selection>();
   const selected = selection?.roomId === roomId ? selection : undefined;
   // 私聊没有讨论串：从群聊换到私聊时，讨论串的右栏关上。
   const panel = room.kind === "direct" && view === "threads" ? undefined : view;
   const threads = useThreads(roomId, room.kind === "group");
+  const tasks = useTasks(roomId);
+  const { convert } = useTaskActions(roomId);
   // 聊天关上时（例如没有房间可显示）退出专注：会话栏收着、右栏又不在时，没有按钮能把会话栏找回来。
   useEffect(() => () => onFocusChange(false), [onFocusChange]);
 
+  const resize = (next: boolean) => {
+    setExpanded(next);
+    if (!next) {
+      onFocusChange(false);
+      // 看板在窄栏里放不下五列：还原时切回列表。
+      setLayout("list");
+    }
+  };
   const close = () => {
     setView(undefined);
-    setExpanded(false);
-    onFocusChange(false);
+    resize(false);
   };
   const open = (next: PanelView, picked?: Omit<Selection, "roomId">) => {
     setView(next);
@@ -74,10 +93,12 @@ export function ChatView({
   };
   const toggle = (next: PanelView) => {
     if (panel === next) close();
-    else open(next, { runId: undefined, parent: undefined });
+    else open(next, {});
   };
   const openRun = (runId: string) => open("runs", { runId });
   const openThread = (parent: MessageView) => open("threads", { parent });
+  const openTask = (task: TaskView) => open("tasks", { task: task.number });
+  const convertMessage = (message: MessageView) => convert.mutate(message.id, { onSuccess: (task) => openTask(task) });
 
   const unreadThreads = (threads.data ?? []).filter((thread) => thread.unread > 0).length;
   const tools = (
@@ -90,6 +111,10 @@ export function ChatView({
           </span>
         </Tool>
       )}
+      <Tool active={panel === "tasks"} onClick={() => toggle("tasks")}>
+        任务
+        <span className="font-mono text-[11px] text-faint">{tasks.data ? openCount(tasks.data) : ""}</span>
+      </Tool>
       <Tool active={panel === "runs"} onClick={() => toggle("runs")}>
         运行记录
       </Tool>
@@ -98,8 +123,37 @@ export function ChatView({
 
   const groupName = room.kind === "group" ? `# ${room.group.name}` : room.agent.displayName;
   const parent = panel === "threads" ? selected?.parent : undefined;
+  const taskNumber = panel === "tasks" ? selected?.task : undefined;
+  const openTaskView = taskNumber === undefined ? undefined : tasks.data?.find((task) => task.number === taskNumber);
+  // 右栏正打开着的那条消息：讨论串的宿主消息，或任务的宿主消息。
+  const openMessageId = parent?.id ?? openTaskView?.messageId;
   // 右栏放大后聊天只有一条窄列：顶栏只留名字、状态与右栏的按钮。
   const compact = panel !== undefined && expanded;
+
+  const title =
+    panel === "runs"
+      ? "运行记录"
+      : panel === "threads"
+        ? parent
+          ? "讨论串"
+          : "全部讨论串"
+        : openTaskView
+          ? `#${openTaskView.number} ${openTaskView.title}`
+          : "任务";
+  const subtitle =
+    panel === "runs"
+      ? room.kind === "group"
+        ? `${groupName} · 包括讨论串里的轮次`
+        : `${groupName} 的全部轮次`
+      : panel === "threads"
+        ? parent
+          ? `${groupName} · ${parent.author.kind === "user" ? "你" : parent.author.displayName}的消息`
+          : `${groupName} · ${threads.data?.length ?? 0} 个`
+        : taskNumber !== undefined
+          ? `${groupName} · 任务`
+          : `${groupName} · ${tasks.data ? openCount(tasks.data) : 0} 个未完成`;
+  const back =
+    parent || taskNumber !== undefined ? () => setSelection({ roomId, parent: undefined, task: undefined }) : undefined;
 
   return (
     <>
@@ -121,32 +175,27 @@ export function ChatView({
           room={scoped}
           agents={agents}
           threads={threads.data}
-          openParentId={parent?.id}
+          tasks={tasks.data}
+          openMessageId={openMessageId}
           onOpenRun={openRun}
           onOpenThread={room.kind === "group" ? openThread : undefined}
+          onOpenTask={openTask}
+          onConvert={convertMessage}
         />
+        {convert.error && (
+          <p className="max-w-[736px] px-7 pb-1 text-xs text-danger">转为任务失败：{convert.error.message}</p>
+        )}
         <RoomComposer key={`composer-${roomId}`} room={scoped} />
       </main>
       {panel && (
         <SidePanel
-          title={panel === "runs" ? "运行记录" : parent ? "讨论串" : "全部讨论串"}
-          subtitle={
-            panel === "runs"
-              ? room.kind === "group"
-                ? `${groupName} · 包括讨论串里的轮次`
-                : `${groupName} 的全部轮次`
-              : parent
-                ? `${groupName} · ${parent.author.kind === "user" ? "你" : parent.author.displayName}的消息`
-                : `${groupName} · ${threads.data?.length ?? 0} 个`
-          }
+          title={title}
+          subtitle={subtitle}
           expanded={expanded}
           focus={focus}
-          onExpandedChange={(next) => {
-            setExpanded(next);
-            if (!next) onFocusChange(false);
-          }}
+          onExpandedChange={resize}
           onFocusChange={onFocusChange}
-          onBack={parent ? () => setSelection({ roomId, parent: undefined }) : undefined}
+          onBack={back}
           onClose={close}
         >
           {panel === "runs" ? (
@@ -158,7 +207,7 @@ export function ChatView({
               expanded={expanded}
               onSelect={(runId) => setSelection({ roomId, runId })}
             />
-          ) : (
+          ) : panel === "threads" ? (
             <ThreadPanel
               groupId={roomId}
               members={room.kind === "group" ? room.members : []}
@@ -166,6 +215,26 @@ export function ChatView({
               parent={parent}
               expanded={expanded}
               onOpen={openThread}
+              onOpenRun={openRun}
+            />
+          ) : (
+            <TaskPanel
+              roomId={roomId}
+              kind={room.kind}
+              members={agentsOf(room)}
+              agents={agents}
+              layout={layout}
+              expanded={expanded}
+              selected={taskNumber}
+              onLayout={(next) => {
+                setLayout(next);
+                // 看板在窄栏里放不下五列：选看板时右栏自动放大，并收起会话栏。
+                if (next === "board") {
+                  setExpanded(true);
+                  onFocusChange(true);
+                }
+              }}
+              onSelect={(number) => setSelection({ roomId, task: number })}
               onOpenRun={openRun}
             />
           )}
@@ -285,24 +354,31 @@ function MessageList({
   room,
   agents: allAgents,
   threads,
-  openParentId,
+  tasks,
+  openMessageId,
   onOpenRun,
   onOpenThread,
+  onOpenTask,
+  onConvert,
 }: {
   room: ChatRoom;
   agents: Agent[];
   threads: ThreadSummary[] | undefined;
-  /** 右栏正打开着讨论串的那条消息。 */
-  openParentId: string | undefined;
+  tasks: TaskView[] | undefined;
+  /** 右栏正打开着的那条消息：讨论串或任务的宿主消息。 */
+  openMessageId: string | undefined;
   onOpenRun(runId: string): void;
   /** 群聊里才有：打开一条消息的讨论串。 */
   onOpenThread?(message: MessageView): void;
+  onOpenTask(task: TaskView): void;
+  onConvert(message: MessageView): void;
 }) {
   const roomId = roomIdOf(room);
   const agents = agentsOf(room);
   const { data: messages, error, isPending } = useMessages(roomId);
   const handles = useMemo(() => new Set(allAgents.map((agent) => agent.handle)), [allAgents]);
   const threadOf = useMemo(() => new Map((threads ?? []).map((thread) => [thread.parent.id, thread])), [threads]);
+  const taskOf = useMemo(() => new Map<string, TaskView>((tasks ?? []).map((task) => [task.messageId, task])), [tasks]);
   useMarkReadWhileOpen(roomId, messages);
   const loadOlder = useLoadOlder(roomId);
   const scroller = useRef<HTMLDivElement>(null);
@@ -369,7 +445,10 @@ function MessageList({
             onOpenRun={onOpenRun}
             thread={threadOf.get(message.id)}
             onOpenThread={onOpenThread}
-            highlighted={message.id === openParentId}
+            task={taskOf.get(message.id)}
+            onOpenTask={onOpenTask}
+            onConvert={onConvert}
+            highlighted={message.id === openMessageId}
           />
         ))}
         {agents.map((agent) =>

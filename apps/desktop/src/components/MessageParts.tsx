@@ -1,10 +1,13 @@
-import type {
-  DesktopAgent as Agent,
-  MessageView,
-  Participant,
-  RoomId,
-  RoomMessage,
-  ThreadSummary,
+import {
+  type DesktopAgent as Agent,
+  type MessageView,
+  type Participant,
+  type RoomId,
+  type RoomMessage,
+  type TaskStatus,
+  type TaskView,
+  type ThreadSummary,
+  taskStatusLabel,
 } from "@crew/protocol";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
@@ -29,8 +32,8 @@ export function ParticipantAvatar({ who, size = 36 }: { who: Participant; size?:
 }
 
 /**
- * 一条消息。群聊里的消息可以带着它的讨论串摘要；`onOpenThread` 存在时，鼠标移上去出现工具条。
- * `highlighted` 是右栏正打开着它的讨论串。
+ * 一条消息。群聊里的消息可以带着它的讨论串摘要，任务的宿主消息带着任务标签；有可用的操作时，鼠标移上去出现工具条。
+ * `highlighted` 是右栏正打开着它的讨论串或任务。通知（`kind` 是 `system`）显示成一行灰字。
  */
 export function MessageItem({
   message,
@@ -39,6 +42,9 @@ export function MessageItem({
   onOpenRun,
   thread,
   onOpenThread,
+  task,
+  onOpenTask,
+  onConvert,
   highlighted = false,
 }: {
   message: MessageView & Partial<Pick<RoomMessage, "runId" | "heldBefore">>;
@@ -47,10 +53,16 @@ export function MessageItem({
   onOpenRun(runId: string): void;
   thread?: ThreadSummary;
   onOpenThread?(message: MessageView): void;
+  task?: TaskView;
+  onOpenTask?(task: TaskView): void;
+  /** 把这条消息转成任务。讨论串里的消息与通知不能转，调用方不传。 */
+  onConvert?(message: MessageView): void;
   highlighted?: boolean;
 }) {
   const { author, runId } = message;
   const heldBefore = message.heldBefore ?? 0;
+  if (message.kind === "system") return <NoticeLine message={message} now={now} />;
+  const convert = onConvert && !task ? () => onConvert(message) : undefined;
   return (
     <article
       className={cn(
@@ -84,15 +96,81 @@ export function MessageItem({
             </button>
           </div>
         )}
-        {thread && onOpenThread && <ThreadChip thread={thread} now={now} onClick={() => onOpenThread(message)} />}
+        {(task || (thread && onOpenThread)) && (
+          <div className="flex flex-wrap items-center gap-x-2">
+            {task && onOpenTask && <TaskChip task={task} onClick={() => onOpenTask(task)} />}
+            {thread && onOpenThread && <ThreadChip thread={thread} now={now} onClick={() => onOpenThread(message)} />}
+          </div>
+        )}
       </div>
-      {onOpenThread && (
+      {(onOpenThread || convert) && (
         <div className="absolute -top-3.5 right-2.5 hidden gap-0.5 rounded-[9px] border border-line bg-raised p-0.5 text-xs text-muted shadow-pop group-hover:flex">
-          <ToolbarButton onClick={() => onOpenThread(message)}>↳ {thread ? "查看讨论串" : "开讨论串"}</ToolbarButton>
+          {onOpenThread && (
+            <ToolbarButton onClick={() => onOpenThread(message)}>↳ {thread ? "查看讨论串" : "开讨论串"}</ToolbarButton>
+          )}
+          {convert && <ToolbarButton onClick={convert}>☐ 转为任务</ToolbarButton>}
           <ToolbarButton onClick={() => void navigator.clipboard.writeText(message.body)}>复制</ToolbarButton>
         </div>
       )}
     </article>
+  );
+}
+
+/** 通知：一行灰字，写明是谁做的。 */
+function NoticeLine({ message, now }: { message: MessageView; now: Date }) {
+  const who = message.author.kind === "user" ? "你" : message.author.displayName;
+  return (
+    <div className="mb-3 flex items-center gap-2 pl-[2px] text-xs text-faint">
+      <span className="grid size-[18px] flex-none place-items-center rounded-md border border-line bg-panel text-[10px] text-muted">
+        ✓
+      </span>
+      <span className="min-w-0">
+        <b className="font-medium text-muted">{who}</b> {message.body}
+      </span>
+      <time className="flex-none font-mono text-[11px]" dateTime={message.createdAt}>
+        {formatMessageTime(message.createdAt, now)}
+      </time>
+    </div>
+  );
+}
+
+const statusIconClass: Record<TaskStatus, string> = {
+  todo: "border-[1.5px] border-faint",
+  in_progress: "border-[1.5px] border-blue bg-[conic-gradient(var(--blue)_0_50%,transparent_50%_100%)]",
+  in_review: "border-[1.5px] border-warn bg-[conic-gradient(var(--warn)_0_75%,transparent_75%_100%)]",
+  done: "bg-accent",
+  closed: "border-[1.5px] border-faint",
+};
+
+/** 任务状态的图标：空心圆待办、半圆进行中、四分之三圆待审、实心勾完成、斜线关闭。 */
+export function StatusIcon({ status }: { status: TaskStatus }) {
+  return (
+    <span
+      role="img"
+      aria-label={taskStatusLabel(status)}
+      className={cn("relative inline-block size-3 flex-none rounded-full", statusIconClass[status])}
+    >
+      {status === "done" && (
+        <span className="absolute top-[2px] left-[4px] h-[6px] w-[3px] rotate-45 border-r-[1.5px] border-b-[1.5px] border-accent-fg" />
+      )}
+      {status === "closed" && <span className="absolute -top-px left-[4px] h-[11px] w-[1.5px] rotate-45 bg-faint" />}
+    </span>
+  );
+}
+
+/** 宿主消息下面的任务标签：状态图标、编号、状态与负责人。 */
+export function TaskChip({ task, onClick }: { task: TaskView; onClick(): void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-1.5 inline-flex max-w-full items-center gap-1.5 overflow-hidden rounded-lg border border-line bg-panel py-[3px] pr-2.5 pl-2 text-xs whitespace-nowrap hover:border-line-strong"
+    >
+      <StatusIcon status={task.status} />
+      <span className="font-mono text-[11px] text-faint">#{task.number}</span>
+      {taskStatusLabel(task.status)}
+      <span className="truncate text-muted">{task.assignee ? `· ${task.assignee.displayName}` : "· 未分配"}</span>
+    </button>
   );
 }
 

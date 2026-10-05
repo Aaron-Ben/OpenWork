@@ -131,7 +131,9 @@ const BodyParserError = z.object({ type: z.string(), status: z.number() });
 /** 把抛出的错误转成 `{ error }` 响应。未预料的错误记日志，返回 500。 */
 export const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
   if (error instanceof RequestError) {
-    response.status(error.status).json({ error: error.message });
+    response
+      .status(error.status)
+      .json(error.refusal ? { error: error.message, refusal: error.refusal } : { error: error.message });
     return;
   }
   const parserError = BodyParserError.safeParse(error);

@@ -152,6 +152,26 @@ describe("crew reply", () => {
     expect(await bodies(RoomId.parse(threadId))).toEqual(["我来列一下", "补充一项"]);
   });
 
+  it("creates, claims and moves a task, and refuses a second claim with the holder's handle", async () => {
+    const group = await newGroup("任务");
+    const created = await crew(["task", "create", group, "写发布说明", "--assign", "bob"]);
+    expect(created.code).toBe(0);
+    expect(created.stdout).toContain('task #1 "写发布说明" (todo, assigned to @bob)');
+
+    const taken = await crew(["task", "claim", group, "#1"]);
+    expect(taken).toMatchObject({
+      code: 1,
+      stderr: "error: task #1 is already taken by @bob. Don't start work on it.\n",
+    });
+
+    expect((await crew(["task", "create", group, "检查崩溃报告"])).code).toBe(0);
+    const claimed = await crew(["task", "claim", group, "2"]);
+    expect(claimed.stdout).toContain('task #2 "检查崩溃报告" (in_progress, assigned to @alice)');
+    expect((await crew(["task", "status", group, "2", "in_review"])).stdout).toContain(
+      "(in_review, assigned to @alice)",
+    );
+  });
+
   it("does not post in a room the agent is not a member of", async () => {
     const result = await crew(["reply", bob.roomId], { stdin: "hi" });
     expect(result.code).toBe(1);
@@ -223,6 +243,34 @@ describe("crew output", () => {
       await record(title, args, run);
       sections[before] = ids(sections[before] ?? "");
     }
+    // 任务：在同一个群里新建、转换、领取、改状态、分配，以及各种拒绝。讨论串的 ID 每次运行都不同，按出现顺序编号。
+    const threadIds = new Map<string, string>();
+    const taskIds = (text: string) =>
+      ids(text).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
+        if (!threadIds.has(id)) threadIds.set(id, `<task-thread-${threadIds.size + 1}>`);
+        return threadIds.get(id) ?? id;
+      });
+    const taskCases: Array<[string, string[]]> = [
+      ["crew task --help", ["task", "--help"]],
+      ["task list, empty", ["task", "list", group]],
+      ["task create", ["task", "create", group, "Write the release notes"]],
+      ["task create, assigned", ["task", "create", group, "Check the crash reports", "--assign", "@bob"]],
+      ["task convert", ["task", "convert", group, host]],
+      ["task convert, message of another room", ["task", "convert", group, directMessage]],
+      ["task list", ["task", "list", group]],
+      ["task claim", ["task", "claim", group, "1"]],
+      ["task claim, taken", ["task", "claim", group, "2"]],
+      ["task claim, no such task", ["task", "claim", group, "99"]],
+      ["task status", ["task", "status", group, "1", "in_review"]],
+      ["task status, not allowed", ["task", "status", group, "2", "in_review"]],
+      ["task status, unknown status", ["task", "status", group, "1", "finished"]],
+      ["task assign, not in the room", ["task", "assign", group, "3", "nobody"]],
+    ];
+    for (const [title, args] of taskCases) {
+      const before = sections.length;
+      await record(title, args);
+      sections[before] = taskIds(sections[before] ?? "");
+    }
     // 最后：用户发了 Alice 还没看到的消息，回复被拦下。
     const unseen = await sendAsUser(alice.roomId, "Wait, one more thing:\ncheck the tests too.");
     await record("held", ["reply", alice.roomId], { stdin: "On it." });
@@ -235,6 +283,7 @@ describe("crew output", () => {
           {
             id: unseen,
             seq: 2,
+            kind: "text",
             author: { kind: "user", id: "u", displayName: "User", handle: null },
             body: "First of many.",
             createdAt: "2026-10-05T10:00:00.000Z",

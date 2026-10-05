@@ -5,6 +5,7 @@ import {
   type InboxRoom,
   type MessageView,
   type Participant,
+  type TaskTag,
 } from "@crew/protocol";
 
 /** 带本地时区偏移的 RFC 3339 时间，精确到秒，例如 `2026-10-04T18:30:00+08:00`。 */
@@ -27,12 +28,27 @@ export function participantLabel(participant: Participant, self?: AgentId): stri
   return `${participant.displayName} (@${participant.handle ?? "?"}${you})`;
 }
 
-/** 一条消息：`[id] 作者: 正文`。多行正文的后续行缩进四格，保持在消息之下。 */
-export function messageLines(message: MessageView & { mentionsYou?: boolean }, self?: AgentId): string {
+/** 任务后缀：`[task #3 in_progress, assigned to @alice]`。 */
+function taskSuffix(task: TaskTag): string {
+  return ` [task #${task.number} ${task.status}, ${task.assignee ? `assigned to @${task.assignee}` : "unassigned"}]`;
+}
+
+/**
+ * 一条消息：`[id] 作者: 正文`。多行正文的后续行缩进四格，保持在消息之下。
+ * 通知标 `[notice]`，作者是做这件事的人；任务的宿主消息在正文后面带任务后缀。
+ */
+export function messageLines(
+  message: MessageView & { mentionsYou?: boolean; task?: TaskTag | null },
+  self?: AgentId,
+): string {
   const [first = "", ...rest] = message.body.split("\n");
+  const notice = message.kind === "system" ? " [notice]" : "";
   const mention = message.mentionsYou ? " [mentions you]" : "";
-  const head = `  [${message.id}] ${participantLabel(message.author, self)}${mention}: ${first}`;
-  return [head, ...rest.map((line) => `    ${line}`)].join("\n");
+  const task = message.task ? taskSuffix(message.task) : "";
+  const tail = rest.length === 0 ? task : "";
+  const head = `  [${message.id}] ${participantLabel(message.author, self)}${notice}${mention}: ${first}${tail}`;
+  const body = rest.map((line, index) => `    ${line}${index === rest.length - 1 ? task : ""}`);
+  return [head, ...body].join("\n");
 }
 
 /** 讨论串挂着的那条消息在 prompt 里最多这么多字符：完整的内容在群聊里，这里只提示讨论串在说什么。 */

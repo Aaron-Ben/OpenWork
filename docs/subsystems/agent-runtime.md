@@ -27,7 +27,7 @@ Computer 在本机运行 Agent：为每个 Agent 准备目录与凭证，收到�
   - **失败：** 记为 `failed` 与原因，不确认已读；下一次唤醒时这些消息会和新消息一起重新处理。
   - **停止：** 中止 Engine，不确认已读，尽力记为 `cancelled`；记不上时，下一个 Computer 连上后它被标为中断。读取未读消息期间被停止时，不再开始这一轮。
   - **意外错误**（保存 session、确认已读或 Engine 违反约定抛出）：记为 `failed` 与“处理失败：…”。读取未读消息或登记失败时只记日志，下一次唤醒重新读取。
-- 本轮输入按房间列出未读消息，并写明本地时间。群聊写出名字与成员名册；讨论串单独成段，写出所在群聊的名字与成员，以及挂着的那条消息（正文至多 600 字符）；作者写成 `User (user)` 或 `名字 (@handle)`，本 Agent 加 `you`；@ 到本 Agent 的消息标 `[mentions you]`。文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
+- 本轮输入按房间列出未读消息，并写明本地时间。群聊写出名字与成员名册；讨论串单独成段，写出所在群聊的名字与成员，以及挂着的那条消息（正文至多 600 字符）；作者写成 `User (user)` 或 `名字 (@handle)`，本 Agent 加 `you`；@ 到本 Agent 的消息标 `[mentions you]`，通知标 `[notice]`，任务的宿主消息在正文后面带 `[task #3 in_progress, assigned to @alice]`。文本由 `packages/computer/test/__snapshots__/turn-prompt.md` 逐字锁定。
 
 ## 3. OpenCode
 
@@ -83,13 +83,14 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 
 - 目录权限 0700，文件 0600。写文件先写临时文件再改名。
 - Agent 在沙箱里能写自己的两个目录，所以 Computer 在建目录、写 session 与凭证之前，逐级用 `lstat` 确认它们是真正的目录；遇到符号链接或其他类型时拒绝。`session.json` 不是普通文件时当作没有记录。
-- `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间：身份与 handle、人设、怎样用 `crew reply` 发言、HELD 时怎么做、群聊的发言约束、讨论串（在消息来的地方回复，只在用户要求时开讨论串）。文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
+- `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间：身份与 handle、人设、怎样用 `crew reply` 发言、HELD 时怎么做、群聊的发言约束、讨论串（在消息来的地方回复，只在用户要求时开讨论串）、任务（动手之前先领取，进展发在任务的讨论串里，做完改成待审）。文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - `bin/crew` 以 `ELECTRON_RUN_AS_NODE=1` 运行 Electron 可执行文件与打包后的 `shim.js`。两者都在 `$HOME` 之外，沙箱里可以读取。
 
 ## 6. crew 命令
 
 - `crew reply <room-id>`：正文从 stdin 读取，去掉末尾的空白；带上 `CREW_TOKEN_FILE` 中的凭证调用 `CREW_SERVER_URL` 的 `POST /agent/reply`。正文不经过命令行，所以反引号与 `$` 不会被 shell 改写。
 - `crew reply <room-id> --thread <message-id>`：发到房间里这条消息的讨论串，讨论串还没有时创建。成功时写出讨论串的 ID，之后用 `crew reply <thread-id>` 接着在里面发言。私聊、讨论串里与别的房间的消息被拒绝时，写出对应的英文说明。
+- `crew task list|create|convert|claim|status|assign`：操作任务（`packages/computer/src/shim/tasks.ts`）。房间 ID 也可以是任务的讨论串；handle 可以带 `@`；成功时写出任务的编号、标题、状态、负责人与汇报的地方，被拒绝时按 Server 返回的 `refusal` 写英文说明。
 - `crew --help`：用法与 heredoc 示例。
 - 本地先检查：房间 ID 与 `--thread` 的消息 ID 是 UUID，正文不为空且不超过 20,000 字符。
 - 成功时向 stdout 写 `Message sent to room <room-id>.`，退出码 0。失败时向 stderr 写一行英文 `error: …`，说明原因与下一步，退出码 1；Server 的 401、403、404 由 `crew` 翻译成英文。
@@ -114,10 +115,11 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | Engine 事件的解析（样本取自真实输出）与截短 | `packages/computer/test/opencode-events.test.ts` |
 | 价格表复制进 Agent 的缓存，不顺着符号链接写，副本较新时跳过 | `opencode.test.ts` 的 `copies the user's model price table…`；`home.test.ts` 的 `refuses to copy into the cache through a directory replaced by a link…` |
 | 每一轮登记唤醒的消息与完整输入，事件按顺序上报，结束写结果；停止时记为已停止 | `runner.test.ts` 的 `records each turn…`、`stops a running turn…` |
-| `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；被 HELD 拦下时打印新消息，再次运行后发出；`--thread` 开出并复用讨论串；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
+| `crew` 原样提交正文，拒绝写在命令行上的正文，各类失败退出码为 1；被 HELD 拦下时打印新消息，再次运行后发出；`--thread` 开出并复用讨论串；`crew task` 新建、领取、改状态与被拒绝；输出逐字锁定 | `packages/computer/test/shim.test.ts` |
 | `AGENTS.md` 与每轮输入的文本逐字锁定 | `home.test.ts`、`packages/computer/test/prompt.test.ts` |
 | 构建产物的完整链路：用户发消息，Seatbelt 中的 Engine 经构建好的 `crew` 回复并落库 | `apps/desktop/test/smoke.e2e.ts` |
 | 真实模型的完整链路 | 手动：`CREW_E2E_MODEL=<模型> pnpm test:e2e` |
 | 真实模型的运行记录：工具调用、HELD、回复、用量与费用都记进这一轮 | 手动：2026-10-05 用 `deepseek/deepseek-flash` 在群聊里让 Alice 写文件并确认，记下 5 步、HELD 1 次、回复 1 条、费用约 0.0015 美元；没被点名的 Bob 两轮都是白跑 |
 | 真实模型的群聊：全员唤醒、Agent 之间的 @、HELD 后改写再发 | 手动：2026-10-05 用 `deepseek/deepseek-flash` 跑一个两人群聊，Alice 被 HELD 后把补充的信息写进回复再发出 |
 | 真实模型的讨论串 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，用户在群里 @alice 提问，Alice 与 Bob 都被唤醒（Bob 白跑）；用户在那条消息的讨论串里 @alice，只有 Alice 被唤醒并在讨论串里回复，群聊时间线里只多了讨论串摘要 |
+| 真实模型的任务 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，用户把一条消息转成任务并分配给 @alice，Alice 领取、写好文件、改成待审并在任务的讨论串里汇报；用户改成完成。同一轮里 Alice 也领取了用户新建的未分配任务并做完 |

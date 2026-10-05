@@ -16,7 +16,8 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 | `agents` | 名字、handle、人设、Engine（`opencode`）、模型 | handle 唯一，格式是小写字母、数字与 `-`，以字母或数字开头，最多 32 字符 |
 | `rooms` | 房间；`kind` 是 `direct`、`group` 或 `thread`；群聊有名字；`next_seq` 是最新一条的序号；讨论串有所在的群聊（`parent_room_id`）与挂着的消息（`parent_message_id`） | `direct_key` 唯一：每个用户与 Agent 之间只有一个私聊房间；群聊必须有名字；讨论串有且只有讨论串有两个父字段；每条消息最多一个讨论串 |
 | `room_users`、`room_agents` | 房间成员 | |
-| `messages` | 房间、序号、作者、正文、时间；Agent 的消息还有所在的一轮（`run_id`）与发出前被 HELD 拦下的次数（`held_before`） | 作者恰好是用户或 Agent 之一；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
+| `messages` | 房间、序号、作者、类型（`kind`：聊天 `text` 或通知 `system`）、正文、时间；Agent 的消息还有所在的一轮（`run_id`）与发出前被 HELD 拦下的次数（`held_before`） | 作者恰好是用户或 Agent 之一，通知的作者是做这件事的人；`(room_id, seq)` 唯一；正文去掉空白后不能为空 |
+| `tasks` | 任务：房间、房间内的编号、标题、状态（`todo`、`in_progress`、`in_review`、`done`、`closed`）、负责人（Agent）、创建者、宿主消息、领取与完成时间 | `(room_id, number)` 唯一；每条消息最多一个任务；创建者恰好一个；进行中与待审一定有负责人 |
 | `message_mentions` | 消息 @ 到的 Agent | 只记录写入时是房间成员的 Agent |
 | `agent_read_cursors` | 每个 Agent 在每个房间的已读位置（`last_read_seq`）与已投递位置（`delivered_seq`）；在讨论串里有一行就是关注了它 | 已投递位置不小于已读位置 |
 | `user_read_cursors` | 用户在每个房间读到的序号，用来算未读数 | |
@@ -27,7 +28,7 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - ID 都是数据库生成的 UUID，代码中用 branded 类型（`packages/protocol/src/ids.ts`）。
 - 表结构由 `packages/server/src/db/schema.ts` 定义，迁移由 drizzle-kit 生成在 `packages/server/drizzle/`。
 
-理由见 [私聊的数据模型](../../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md)、[群聊](../../.agents/notes/implemented/feature/2026-10-05-group-chat.md)、[运行观测](../../.agents/notes/implemented/feature/2026-10-05-run-observability.md) 与 [讨论串](../../.agents/notes/implemented/feature/2026-10-05-threads.md)。
+理由见 [私聊的数据模型](../../.agents/notes/implemented/architecture/2026-10-04-direct-chat-data-model.md)、[群聊](../../.agents/notes/implemented/feature/2026-10-05-group-chat.md)、[运行观测](../../.agents/notes/implemented/feature/2026-10-05-run-observability.md)、[讨论串](../../.agents/notes/implemented/feature/2026-10-05-threads.md) 与 [任务](../../.agents/notes/implemented/feature/2026-10-05-tasks.md)。
 
 ## 3. Agent 与房间
 
@@ -60,6 +61,20 @@ Server 保存用户、Agent、房间与消息，提供界面、Computer 与 Agen
 - 唤醒：讨论串里用户的消息唤醒全部关注者，不唤醒群里的其他 Agent；还没有 Agent 关注时，群里的 Agent 全部关注并被唤醒。Agent 的消息与群聊一样，只唤醒它 @ 到的其他成员。
 - 写入后通知界面讨论串与所在群聊各有新消息：群聊里的讨论串摘要变了。
 - `GET /desktop/rooms/:roomId/threads`：群聊里的全部讨论串，按创建先后排列：挂着的消息、回复数、最后回复时间、发过言的人（至多 5 个）与用户的未读回复数。
+
+### 任务
+
+代码在 `packages/server/src/tasks.ts`，状态与流转表在 `packages/protocol/src/tasks.ts`。
+
+- 每个任务都有宿主消息。新建任务：以创建者的身份在房间里发一条正文为标题的消息，再把它变成任务；分配了负责人时这条消息不唤醒任何 Agent。转成任务：标题取消息正文的第一个非空行，至多 200 字符。讨论串里的消息与通知不能转，一条消息只能转一次。
+- 编号在房间内递增；新建与转换时锁住房间行，编号不重复。给的房间是讨论串时，换成它所在的群聊。
+- 每次改动与它的通知写在同一个事务里。通知是 `kind = 'system'` 的消息，作者是做这件事的人：群聊里发到宿主消息的讨论串（还没有时创建），私聊没有讨论串，发到时间线。通知不做 HELD 检查，只唤醒它 @ 到的 Agent。
+- 通知只在两种时候 @ 负责人：分配给它；别人把它的任务退回（待审或完成退回到进行中或待办）。被 @ 的负责人关注讨论串并被唤醒。
+- 领取：带条件的更新，只有待办、并且没有负责人或负责人就是自己时成功，负责人设成自己、状态改成进行中；失败时写明原因，例如已经由谁负责。
+- 改状态：按流转表检查；进行中与待审要有负责人；带条件地更新（状态仍是读到的那个），完成时记下完成时间。
+- 换负责人：只换人；取消负责人时，进行中或待审的任务回到待办；完成或关闭的任务不再分配；负责人必须是房间里的 Agent。
+- 拒绝时返回 404 或 409，正文带 `refusal`（原因的代码与数据），`crew` 据此写英文说明。
+- 收件箱里的宿主消息带任务的编号、状态与负责人（`task`），讨论串挂着的消息也带。
 
 ## 5. 用户的会话列表与未读数
 
@@ -110,6 +125,11 @@ Agent 的状态由运行记录推出（`agentStatuses`），不单独保存：
 | `GET /desktop/rooms/:roomId/messages` | Desktop | 房间的一段消息，查询参数见第 4 节 |
 | `POST /desktop/rooms/:roomId/messages` | Desktop | 以用户身份发消息；带 `threadOf` 时发到那条消息的讨论串 |
 | `GET /desktop/rooms/:roomId/threads` | Desktop | 群聊里的讨论串摘要 |
+| `GET /desktop/rooms/:roomId/tasks` | Desktop | 房间里的任务 |
+| `POST /desktop/rooms/:roomId/tasks` | Desktop | 新建任务 |
+| `POST /desktop/rooms/:roomId/tasks/convert` | Desktop | 把消息转成任务 |
+| `POST /desktop/rooms/:roomId/tasks/:number/status` | Desktop | 改任务的状态 |
+| `POST /desktop/rooms/:roomId/tasks/:number/assignee` | Desktop | 换负责人或取消负责人 |
 | `GET /desktop/conversations` | Desktop | 会话列表：最后一条消息与未读数 |
 | `POST /desktop/rooms/:roomId/read` | Desktop | 推进用户的已读位置 |
 | `GET /desktop/groups` | Desktop | 群聊列表，含成员 |
@@ -131,6 +151,7 @@ Agent 的状态由运行记录推出（`agentStatuses`），不单独保存：
 | `POST /computer/models` | Computer | 上报可用模型 |
 | `GET /computer/events` | Computer | SSE：`agent.wake`、`agents` |
 | `POST /agent/reply` | Agent | 以凭证对应的 Agent 身份在房间里回复（带 `threadOf` 时在讨论串里），或被 HELD 拦下 |
+| `POST /agent/tasks/list`、`create`、`convert`、`claim`、`status`、`assign` | Agent | 以凭证对应的 Agent 身份操作任务 |
 
 - 凭证用 `Authorization: Bearer`。缺少或不对时返回 401 与 `{ "error": "凭证无效" }`。
 - 错误响应一律是 `{ "error": 原因 }`。请求校验失败时返回 400 与第一条校验错误；请求体不是合法 JSON 时返回 400；请求体超过 1 MB 时返回 413；没有匹配的接口时返回 404；未预料的错误返回 500 与 “Server 内部错误”。
@@ -164,3 +185,4 @@ Agent 的状态由运行记录推出（`agentStatuses`），不单独保存：
 | SSE 能被共用的读取器读到，中止后干净结束；Server 关闭通道时 SSE 立即结束 | `api.test.ts` 的 `events over SSE` |
 | 界面正在读 SSE 时，Server 也能在 1 秒内关闭 | `packages/server/test/serve.test.ts` |
 | 讨论串：在消息下开出并复用、不进群聊时间线、摘要；关注者与唤醒规则；一个 Agent 关注多个讨论串时各自的已读位置与分段；拒绝私聊、嵌套与别的房间的消息；收件箱附上所在群聊与挂着的消息；新关注者的第一条回复被 HELD；未读算进群聊；运行记录按群聊列出 | `api.test.ts` 的 `threads` |
+| 任务：编号、宿主消息与讨论串里的通知、私聊的通知在时间线；转成任务的标题与拒绝；两个 Agent 同时领取只有一个成功；流转表与负责人；只在分配与退回时唤醒负责人；Agent 不被自己的通知拦下、用户不把自己的通知算作未读；收件箱里的任务后缀；换负责人 | `api.test.ts` 的 `tasks` |

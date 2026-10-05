@@ -57,7 +57,14 @@ interface Inbox {
   kind: string;
   name: string | null;
   members: Array<{ kind: string; displayName: string; handle: string | null }>;
-  messages: Array<{ seq: number; body: string; mentionsYou: boolean; author: { handle: string | null } }>;
+  messages: Array<{
+    seq: number;
+    kind: string;
+    body: string;
+    mentionsYou: boolean;
+    author: { handle: string | null };
+    task: unknown;
+  }>;
 }
 
 async function readInbox(agentId: AgentId): Promise<Inbox[]> {
@@ -82,6 +89,11 @@ async function listMessages(roomId: RoomId, query = "") {
   const response = await desktop(`/desktop/rooms/${roomId}/messages${query}`);
   expect(response.status).toBe(200);
   return (await response.json()) as Array<{ seq: number; body: string; runId: string | null; heldBefore: number }>;
+}
+
+async function listMessagesWithIds(roomId: RoomId) {
+  const response = await desktop(`/desktop/rooms/${roomId}/messages`);
+  return (await response.json()) as Array<{ id: MessageId; kind: string; body: string }>;
 }
 
 async function agentToken(agentId: AgentId): Promise<string> {
@@ -951,6 +963,198 @@ describe("threads", () => {
     expect(listed[0]?.triggers).toEqual([expect.objectContaining({ roomId: thread, parentRoomId: group.id })]);
     expect(await statusOf(alice.id)).toEqual({ state: "working", runId, roomIds: [thread, group.id] });
     await finish(runId, { outcome: "succeeded" });
+  });
+});
+
+interface Task {
+  id: string;
+  number: number;
+  title: string;
+  status: string;
+  assignee: { id: AgentId; handle: string } | null;
+  messageId: MessageId;
+  threadId: RoomId | null;
+}
+
+async function expectTask(response: Response, status = 200): Promise<Task> {
+  expect(response.status).toBe(status);
+  return (await response.json()) as Task;
+}
+
+async function expectRefusal(response: Response, status = 409) {
+  expect(response.status).toBe(status);
+  return ((await response.json()) as { error: string; refusal: { code: string } }).refusal;
+}
+
+const newTask = (roomId: RoomId, title: string, assigneeId?: AgentId) =>
+  desktop(`/desktop/rooms/${roomId}/tasks`, "POST", { title, assigneeId });
+const setStatus = (roomId: RoomId, number: number, status: string) =>
+  desktop(`/desktop/rooms/${roomId}/tasks/${number}/status`, "POST", { status });
+const claim = (token: string, roomId: RoomId, number: number) =>
+  call(token, "/agent/tasks/claim", "POST", { roomId, number });
+const agentStatus = (token: string, roomId: RoomId, number: number, status: string) =>
+  call(token, "/agent/tasks/status", "POST", { roomId, number, status });
+
+async function bodiesWithKind(roomId: RoomId) {
+  const response = await desktop(`/desktop/rooms/${roomId}/messages`);
+  return ((await response.json()) as Array<{ kind: string; body: string }>).map((m) => `${m.kind}: ${m.body}`);
+}
+
+describe("tasks", () => {
+  it("are created from a title, numbered per room, with their notices in the task's thread", async () => {
+    const alice = await newAgent("TaskAlice", "task-alice");
+    const group = await newGroup("任务", [alice]);
+    const first = await expectTask(await newTask(group.id, "登录页加忘记密码"), 201);
+    expect(first).toMatchObject({ number: 1, title: "登录页加忘记密码", status: "todo", assignee: null });
+    expect((await expectTask(await newTask(group.id, "注册表单校验"), 201)).number).toBe(2);
+
+    expect(await bodiesWithKind(group.id)).toEqual(["text: 登录页加忘记密码", "text: 注册表单校验"]);
+    if (!first.threadId) throw new Error("群聊里的任务应当有讨论串");
+    expect(await bodiesWithKind(first.threadId)).toEqual(["system: 新建了任务 #1"]);
+    const listed = (await (await desktop(`/desktop/rooms/${group.id}/tasks`)).json()) as Task[];
+    expect(listed.map((task) => task.number)).toEqual([1, 2]);
+  });
+
+  it("put their notices in a direct room's timeline, which has no threads", async () => {
+    const alice = await newAgent("DirectTask", "direct-task");
+    const task = await expectTask(await newTask(alice.roomId, "整理周报", alice.id), 201);
+    expect(task).toMatchObject({ number: 1, threadId: null, assignee: { handle: "direct-task" } });
+    expect(await bodiesWithKind(alice.roomId)).toEqual([
+      "text: 整理周报",
+      "system: 新建了任务 #1，分配给 @direct-task",
+    ]);
+  });
+
+  it("convert a message by its first line, refusing notices, thread messages and a message that is already a task", async () => {
+    const alice = await newAgent("ConvertAlice", "convert-alice");
+    const group = await newGroup("转任务", [alice]);
+    const message = await post(group.id, "\n修一下导出按钮\n点了没反应");
+    const convert = (roomId: RoomId, messageId: MessageId) =>
+      desktop(`/desktop/rooms/${roomId}/tasks/convert`, "POST", { messageId });
+
+    const task = await expectTask(await convert(group.id, message.id), 201);
+    expect(task).toMatchObject({ title: "修一下导出按钮", messageId: message.id });
+    expect(await expectRefusal(await convert(group.id, message.id))).toEqual({ code: "already_task", number: 1 });
+
+    // 私聊的通知在时间线上，可以拿来试：通知不能转成任务。
+    await newTask(alice.roomId, "私聊里的任务");
+    const notice = (await listMessagesWithIds(alice.roomId)).find((message) => message.kind === "system");
+    if (!notice) throw new Error("私聊里应当有通知");
+    expect(await expectRefusal(await convert(alice.roomId, notice.id))).toEqual({ code: "system_message" });
+    const reply1 = await post(group.id, "讨论串里的一句", message.id);
+    expect(await expectRefusal(await convert(reply1.roomId, reply1.id))).toEqual({ code: "in_thread" });
+  });
+
+  it("let only one of two agents claim a task at the same time", async () => {
+    const alice = await newAgent("RaceAlice", "race-alice");
+    const bob = await newAgent("RaceBob", "race-bob");
+    const group = await newGroup("抢任务", [alice, bob]);
+    const task = await expectTask(await newTask(group.id, "只能有一个人做"), 201);
+    const [a, b] = await Promise.all([
+      claim(await agentToken(alice.id), group.id, task.number),
+      claim(await agentToken(bob.id), group.id, task.number),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    const loser = a.status === 409 ? a : b;
+    const winner = a.status === 200 ? "race-alice" : "race-bob";
+    expect(((await loser.json()) as { refusal: unknown }).refusal).toEqual({ code: "claimed", number: 1, by: winner });
+  });
+
+  it("follow the transition table and need an assignee to start", async () => {
+    const alice = await newAgent("FlowAlice", "flow-alice");
+    const group = await newGroup("流转", [alice]);
+    const { number } = await expectTask(await newTask(group.id, "按流程走"), 201);
+    expect(await expectRefusal(await setStatus(group.id, number, "in_review"))).toEqual({
+      code: "transition",
+      number,
+      from: "todo",
+      to: "in_review",
+    });
+    expect(await expectRefusal(await setStatus(group.id, number, "in_progress"))).toEqual({
+      code: "needs_assignee",
+      number,
+    });
+
+    const token = await agentToken(alice.id);
+    expect((await expectTask(await claim(token, group.id, number))).status).toBe("in_progress");
+    expect((await expectTask(await agentStatus(token, group.id, number, "in_review"))).status).toBe("in_review");
+    expect((await expectTask(await setStatus(group.id, number, "done"))).status).toBe("done");
+    expect((await expectTask(await setStatus(group.id, number, "todo"))).status).toBe("todo");
+  });
+
+  it("wake the assignee only when it is assigned or its task is sent back", async () => {
+    const alice = await newAgent("PingAlice", "ping-alice");
+    const bob = await newAgent("PingBob", "ping-bob");
+    const group = await newGroup("唤醒", [alice, bob]);
+    let number = 0;
+    expect(
+      await wakes(async () => {
+        number = (await expectTask(await newTask(group.id, "分给 Alice", alice.id), 201)).number;
+      }),
+    ).toEqual([alice.id]);
+
+    const token = await agentToken(alice.id);
+    expect(await wakes(() => claim(token, group.id, number))).toEqual([]);
+    expect(await wakes(() => agentStatus(token, group.id, number, "in_review"))).toEqual([]);
+    expect(await wakes(() => setStatus(group.id, number, "in_progress"))).toEqual([alice.id]);
+    expect(await wakes(() => setStatus(group.id, number, "done"))).toEqual([]);
+    // 重新打开完成的任务也是退回。
+    expect(await wakes(() => setStatus(group.id, number, "in_progress"))).toEqual([alice.id]);
+    expect(await wakes(() => setStatus(group.id, number, "closed"))).toEqual([]);
+  });
+
+  it("do not hold an agent behind its own notice, nor count the user's own notices as unread", async () => {
+    const alice = await newAgent("OwnAlice", "own-alice");
+    const group = await newGroup("自己的通知", [alice]);
+    const task = await expectTask(await newTask(group.id, "看看通知", alice.id), 201);
+    if (!task.threadId) throw new Error("应当有讨论串");
+    await desktop(`/desktop/rooms/${group.id}/read`, "POST", { seq: 99 });
+    expect((await conversation(group.id))?.unread).toBe(0);
+
+    await readInbox(alice.id);
+    const token = await agentToken(alice.id);
+    await expectTask(await claim(token, group.id, task.number));
+    expect((await reply(token, task.threadId, "开始做了")).outcome).toBe("posted");
+    // Alice 的领取通知与回复是别人发的，算未读；用户自己的“新建了任务”不算。
+    expect((await conversation(group.id))?.unread).toBe(2);
+  });
+
+  it("show the task on its host message in the agent's turn, and notices as notices", async () => {
+    const alice = await newAgent("TagAlice", "tag-alice");
+    const group = await newGroup("后缀", [alice]);
+    const task = await expectTask(await newTask(group.id, "带后缀", alice.id), 201);
+    const inbox = await readInbox(alice.id);
+    const main = inbox.find((room) => room.roomId === group.id);
+    expect(main?.messages[0]).toMatchObject({
+      body: "带后缀",
+      task: { number: task.number, status: "todo", assignee: "tag-alice" },
+    });
+    const thread = inbox.find((room) => room.roomId === task.threadId);
+    expect(thread?.messages[0]).toMatchObject({ kind: "system", mentionsYou: true, task: null });
+    expect(thread).toMatchObject({ parent: { message: { task: { number: task.number } } } });
+  });
+
+  it("change the assignee, send a running task back to todo when unassigned, and refuse outsiders and finished tasks", async () => {
+    const alice = await newAgent("AssignAlice", "assign-alice");
+    const bob = await newAgent("AssignBob", "assign-bob");
+    const outsider = await newAgent("AssignOut", "assign-out");
+    const group = await newGroup("分配", [alice, bob]);
+    const { number } = await expectTask(await newTask(group.id, "换人"), 201);
+    const assign = (agentId: AgentId | null) =>
+      desktop(`/desktop/rooms/${group.id}/tasks/${number}/assignee`, "POST", { agentId });
+
+    expect(await expectRefusal(await assign(outsider.id))).toEqual({ code: "not_member", handle: "assign-out" });
+    // 不在房间里的 Agent 也看不到房间里的任务。
+    const peek = await call(await agentToken(outsider.id), "/agent/tasks/list", "POST", { roomId: group.id });
+    expect(peek.status).toBe(403);
+    await expectTask(await assign(alice.id));
+    await expectTask(await claim(await agentToken(alice.id), group.id, number));
+    expect((await expectTask(await assign(bob.id))).assignee?.handle).toBe("assign-bob");
+    expect(await expectTask(await assign(null))).toMatchObject({ status: "todo", assignee: null });
+    await expectTask(await claim(await agentToken(bob.id), group.id, number));
+    await expectTask(await setStatus(group.id, number, "done"));
+    expect(await expectRefusal(await assign(alice.id))).toEqual({ code: "finished", number, status: "done" });
   });
 });
 

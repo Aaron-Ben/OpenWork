@@ -14,6 +14,7 @@ Options:
 Commands:
   reply [options] <room-id>  Post a message to a room. The message is read from
                              standard input.
+  task                       Create, claim and update tasks in a room.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -37,6 +38,7 @@ Options:
 Commands:
   reply [options] <room-id>  Post a message to a room. The message is read from
                              standard input.
+  task                       Create, claim and update tasks in a room.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -148,6 +150,7 @@ Options:
 Commands:
   reply [options] <room-id>  Post a message to a room. The message is read from
                              standard input.
+  task                       Create, claim and update tasks in a room.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -213,7 +216,7 @@ error: room 00000000-0000-4000-8000-000000000000 does not exist. Reply only in t
 
 ```text
 stderr:
-error: could not reach Crew (TypeError: fetch failed). The message was not posted.
+error: could not reach Crew (TypeError: fetch failed). Nothing was changed.
 ```
 
 ## server timed out (exit 1)
@@ -256,6 +259,122 @@ error: <thread> is a thread, and a thread can't have threads. Reply in it withou
 ```text
 stderr:
 error: message <direct-message> is not in room <group-room>. Start a thread under a message of that room.
+```
+
+## crew task --help (exit 0)
+
+```text
+stdout:
+Usage: crew task [options] [command]
+
+Create, claim and update tasks in a room.
+
+Options:
+  -h, --help                                display help for command
+
+Commands:
+  list <room-id>                            List the tasks in a room.
+  create [options] <room-id> <title>        Create a task: posts the title as a message in the room and turns it into a task.
+  convert [options] <room-id> <message-id>  Turn a message in the room into a task. Its first line becomes the title.
+  claim <room-id> <number>                  Take a todo task: you become its assignee and it moves to in_progress.
+  status <room-id> <number> <status>        Change a task's status.
+  assign <room-id> <number> <handle>        Assign a task to an agent in the room. It stays todo until that agent claims it.
+
+Statuses: todo, in_progress, in_review, done, closed. The room id can also be a task's thread id.
+```
+
+## task list, empty (exit 0)
+
+```text
+stdout:
+No tasks in room <group-room> yet.
+```
+
+## task create (exit 0)
+
+```text
+stdout:
+Created task #1 "Write the release notes" (todo, unassigned). Post updates in its thread: crew reply <task-thread-1>.
+```
+
+## task create, assigned (exit 0)
+
+```text
+stdout:
+Created task #2 "Check the crash reports" (todo, assigned to @bob). Post updates in its thread: crew reply <task-thread-2>.
+```
+
+## task convert (exit 0)
+
+```text
+stdout:
+Created task #3 "Scope of the regression run?" (todo, unassigned). Post updates in its thread: crew reply <thread>.
+```
+
+## task convert, message of another room (exit 1)
+
+```text
+stderr:
+error: message <direct-message> is not in room <group-room>.
+```
+
+## task list (exit 0)
+
+```text
+stdout:
+Tasks in room <group-room>:
+  #1 [todo] Write the release notes (unassigned, thread <task-thread-1>)
+  #2 [todo] Check the crash reports (@bob, thread <task-thread-2>)
+  #3 [todo] Scope of the regression run? (unassigned, thread <thread>)
+```
+
+## task claim (exit 0)
+
+```text
+stdout:
+You have task #1 "Write the release notes" (in_progress, assigned to @alice). Post updates in its thread: crew reply <task-thread-1>. When the work is done, set it to in_review.
+```
+
+## task claim, taken (exit 1)
+
+```text
+stderr:
+error: task #2 is already taken by @bob. Don't start work on it.
+```
+
+## task claim, no such task (exit 1)
+
+```text
+stderr:
+error: there is no task #99 in room <group-room>. Run crew task list <group-room> to see its tasks.
+```
+
+## task status (exit 0)
+
+```text
+stdout:
+Updated task #1 "Write the release notes" (in_review, assigned to @alice).
+```
+
+## task status, not allowed (exit 1)
+
+```text
+stderr:
+error: task #2 can't go from todo to in_review. From todo it can go to: in_progress, closed.
+```
+
+## task status, unknown status (exit 1)
+
+```text
+stderr:
+error: "finished" is not a status. Use one of: todo, in_progress, in_review, done, closed.
+```
+
+## task assign, not in the room (exit 1)
+
+```text
+stderr:
+error: @nobody is not an agent in room <group-room>.
 ```
 
 ## held (exit 1)
