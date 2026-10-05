@@ -73,8 +73,8 @@ export function TaskPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-        <div className="inline-flex rounded-lg border border-line bg-panel p-0.5 text-xs">
+      <div className={cn("flex items-center gap-2 px-4 pt-3 pb-1", column(expanded && layout === "list"))}>
+        <div className="inline-flex rounded-lg bg-panel p-[3px] text-xs">
           {(["list", "board"] as const).map((option) => (
             <button
               key={option}
@@ -121,7 +121,7 @@ function NewTask({ roomId, members, expanded }: { roomId: RoomId; members: Agent
   };
   return (
     <div className={cn("px-4 pt-2", column(expanded))}>
-      <div className="flex items-center gap-1.5 rounded-lg border border-dashed border-line-strong px-2 py-1 focus-within:border-accent">
+      <div className="flex items-center gap-1.5 rounded-[10px] bg-panel px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-accent-soft">
         <span className="text-faint">＋</span>
         <input
           value={title}
@@ -233,7 +233,7 @@ function TaskRow({
     <button
       type="button"
       onClick={() => onSelect(task.number)}
-      className="flex w-full items-center gap-2.5 rounded-[10px] border border-transparent px-2.5 py-2 text-left hover:border-line hover:bg-raised hover:shadow-card"
+      className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left hover:bg-panel"
     >
       <span className="w-6 flex-none font-mono text-[11px] text-faint">#{task.number}</span>
       <span className="min-w-0 flex-1 truncate text-[13.5px]">{task.title}</span>
@@ -437,5 +437,4 @@ function TaskProperties({ roomId, task, members }: { roomId: RoomId; task: TaskV
   );
 }
 
-const pill =
-  "inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 py-[3px] hover:border-line-strong";
+const pill = "inline-flex items-center gap-1.5 rounded-lg bg-panel px-2.5 py-[3px] hover:bg-hover";

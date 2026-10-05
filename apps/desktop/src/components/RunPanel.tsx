@@ -146,7 +146,7 @@ function RunRow({
   const now = new Date();
   const duration = formatDuration(new Date(run.endedAt ?? now).getTime() - new Date(run.startedAt).getTime());
   return (
-    <div className={cn("my-0.5 rounded-lg text-[12.5px]", open && "bg-raised shadow-card ring-1 ring-line")}>
+    <div className={cn("my-0.5 rounded-lg text-[12.5px]", open && "bg-panel")}>
       <button type="button" onClick={onToggle} className="block w-full rounded-lg px-2.5 py-2 text-left hover:bg-hover">
         <span className="flex items-center gap-2">
           {agent && <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />}

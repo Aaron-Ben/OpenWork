@@ -29,8 +29,8 @@ function Workbench() {
   const conversations = useConversations();
   const [selectedId, setSelectedId] = useState<RoomId>();
   const [dialog, setDialog] = useState<Dialog>();
-  /** 右栏放大后收起左侧会话栏。由聊天里的右栏打开与关上。 */
-  const [focus, setFocus] = useState(false);
+  /** 侧栏收起。侧栏顶部的按钮收起，聊天顶栏的按钮或 ⌘\ 展开。 */
+  const [sidebarHidden, setSidebarHidden] = useState(false);
 
   const agentList = agents.data ?? [];
   const groupList = groups.data ?? [];
@@ -45,6 +45,20 @@ function Workbench() {
   }, [selectedId, loaded, firstRoomId]);
 
   const room = openRoom(selectedId, agentList, groupList);
+  // 没有打开的聊天时侧栏总是显示，收起侧栏也就无从谈起：按钮不显示，⌘\ 不生效，免得打开聊天时侧栏突然消失。
+  const canHide = room !== undefined;
+
+  useEffect(() => {
+    if (!canHide) return;
+    const toggle = (event: KeyboardEvent) => {
+      if (event.metaKey && event.key === "\\") {
+        event.preventDefault();
+        setSidebarHidden((hidden) => !hidden);
+      }
+    };
+    window.addEventListener("keydown", toggle);
+    return () => window.removeEventListener("keydown", toggle);
+  }, [canHide]);
   const roomId = room && (room.kind === "group" ? room.group.id : room.agent.roomId);
 
   const close = (open: boolean) => {
@@ -53,7 +67,8 @@ function Workbench() {
 
   return (
     <div className="flex h-full">
-      {!(focus && room) && (
+      {/* 没有打开的聊天时侧栏总是显示：那时没有别的地方能把它找回来。 */}
+      {!(sidebarHidden && room) && (
         <Sidebar
           agents={agentList}
           groups={groupList}
@@ -63,14 +78,15 @@ function Workbench() {
           onCreateAgent={() => setDialog("agent")}
           onCreateGroup={() => setDialog("group")}
           connection={connection}
+          onHide={canHide ? () => setSidebarHidden(true) : undefined}
         />
       )}
       {room ? (
         <ChatView
           room={room}
           agents={agentList}
-          focus={focus}
-          onFocusChange={setFocus}
+          sidebarHidden={sidebarHidden}
+          onShowSidebar={() => setSidebarHidden(false)}
           onAddMembers={() => setDialog("members")}
           onJoinGroups={() => setDialog("join")}
         />

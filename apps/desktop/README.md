@@ -20,11 +20,11 @@ Electron 应用：主进程启动并监管 Server 与 Computer，窗口里是 Re
 | `apps/desktop/electron/navigation.ts` | 窗口只显示自己的页面，http 与 https 链接交给系统浏览器 |
 | `apps/desktop/electron/contract.ts` | 主进程、preload 与界面共用的 IPC 通道名与 `RendererRuntime` 类型 |
 | `apps/desktop/src/App.tsx` | 两栏布局：侧栏与打开的房间；选中的房间、各个对话框的开关、没有 Agent 时的引导 |
-| `apps/desktop/src/components/Sidebar.tsx` | 侧栏：“消息 / 群聊 / 联系人”分段、会话列表与未读数、“＋ 新建”菜单 |
+| `apps/desktop/src/components/Sidebar.tsx` | 侧栏：“隐藏侧栏”、“＋ 新建”菜单与连接状态，“消息 / 群聊 / 联系人”分段、会话列表与未读数 |
 | `apps/desktop/src/components/Avatar.tsx` | Agent、用户与群聊的头像；群聊头像是成员围成的环 |
 | `apps/desktop/src/components/` | 界面组件；`ui/` 下是按 shadcn/ui 做法写的基础组件 |
 | `apps/desktop/src/lib/` | 界面逻辑与数据层：`api.ts` 是 Server 客户端，`queries.ts` 用 TanStack Query 读写，`events.ts` 收到 SSE 提示后取新消息或让对应的缓存失效，`messages.ts` 合并分段取到的消息，`mentions.ts` 高亮正文里的 @handle，`avatar.ts` 算头像的颜色与环上的位置，`conversations.ts` 生成会话的预览，`status.ts` 算 Agent 在某个房间的状态，`runs.ts` 是运行记录的写法（结果标签、时长、token、工具调用的一行） |
-| `apps/desktop/src/components/SidePanel.tsx` | 右栏的外框：运行记录、讨论串与任务共用，可以放大与收起会话栏 |
+| `apps/desktop/src/components/SidePanel.tsx` | 右栏：运行记录、讨论串与任务共用的一张卡片，放大后占去聊天区；显示与隐藏侧栏的按钮 |
 | `apps/desktop/src/components/RunPanel.tsx` | 右栏里的运行记录：轮次列表与一轮的时间线，放大后分左右两栏 |
 | `apps/desktop/src/components/TaskPanel.tsx` | 右栏里的任务：列表、看板、新建任务与任务详情（状态与负责人的下拉菜单，下面是任务的讨论串） |
 | `apps/desktop/src/components/ThreadPanel.tsx` | 右栏里的讨论串：全部讨论串的列表，或一个讨论串的宿主消息、回复与输入框 |

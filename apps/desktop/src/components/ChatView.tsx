@@ -6,7 +6,7 @@ import type {
   TaskView,
   ThreadSummary,
 } from "@crew/protocol";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { hasOlder } from "../lib/messages";
 import { useLoadOlder, useMessages, useSendMessage, useTaskActions, useTasks, useThreads } from "../lib/queries";
@@ -16,7 +16,7 @@ import { openCount } from "../lib/tasks";
 import { AgentAvatar, GroupAvatar } from "./Avatar";
 import { Composer, LiveActivity, MessageItem, useMarkReadWhileOpen } from "./MessageParts";
 import { RunPanel } from "./RunPanel";
-import { SidePanel } from "./SidePanel";
+import { SidebarToggle, SidePanel } from "./SidePanel";
 import { StatusTag } from "./StatusTag";
 import { type TaskLayout, TaskPanel } from "./TaskPanel";
 import { ThreadPanel } from "./ThreadPanel";
@@ -43,20 +43,21 @@ type Selection = { roomId: RoomId; runId?: string; parent?: MessageView; task?: 
 
 /**
  * 聊天：一个房间的消息与输入框，以及右栏（运行记录、讨论串或任务）。`agents` 是全部 Agent：消息的作者可能已经不在群里，
- * 头像与 @handle 的高亮都按全部 Agent 查找。`focus` 是右栏放大后收起了左侧会话栏。
+ * 头像与 @handle 的高亮都按全部 Agent 查找。右栏放大时占去聊天区，聊天区让出来。侧栏收起时（`sidebarHidden`），
+ * 顶栏最左边是“显示侧栏”。
  */
 export function ChatView({
   room,
   agents,
-  focus,
-  onFocusChange,
+  sidebarHidden,
+  onShowSidebar,
   onAddMembers,
   onJoinGroups,
 }: {
   room: ChatRoom;
   agents: Agent[];
-  focus: boolean;
-  onFocusChange(focus: boolean): void;
+  sidebarHidden: boolean;
+  onShowSidebar(): void;
   onAddMembers(): void;
   onJoinGroups(): void;
 }) {
@@ -66,22 +67,19 @@ export function ChatView({
   const [expanded, setExpanded] = useState(false);
   const [layout, setLayout] = useState<TaskLayout>("list");
   const [selection, setSelection] = useState<Selection>();
+  /** 消息往上滚过了顶栏：顶栏下沿显示一道渐隐，代替分隔线。 */
+  const [scrolled, setScrolled] = useState(false);
   const selected = selection?.roomId === roomId ? selection : undefined;
   // 私聊没有讨论串：从群聊换到私聊时，讨论串的右栏关上。
   const panel = room.kind === "direct" && view === "threads" ? undefined : view;
   const threads = useThreads(roomId, room.kind === "group");
   const tasks = useTasks(roomId);
   const { convert } = useTaskActions(roomId);
-  // 聊天关上时（例如没有房间可显示）退出专注：会话栏收着、右栏又不在时，没有按钮能把会话栏找回来。
-  useEffect(() => () => onFocusChange(false), [onFocusChange]);
 
   const resize = (next: boolean) => {
     setExpanded(next);
-    if (!next) {
-      onFocusChange(false);
-      // 看板在窄栏里放不下五列：还原时切回列表。
-      setLayout("list");
-    }
+    // 看板在不放大的右栏里放不下五列：还原时切回列表。
+    if (!next) setLayout("list");
   };
   const close = () => {
     setView(undefined);
@@ -102,7 +100,7 @@ export function ChatView({
 
   const unreadThreads = (threads.data ?? []).filter((thread) => thread.unread > 0).length;
   const tools = (
-    <div className="flex flex-none gap-0.5 rounded-[9px] border border-line bg-panel p-0.5 font-sans">
+    <div className="flex flex-none gap-0.5 rounded-[10px] bg-panel p-[3px] font-sans">
       {room.kind === "group" && (
         <Tool active={panel === "threads"} onClick={() => toggle("threads")}>
           讨论串
@@ -127,8 +125,7 @@ export function ChatView({
   const openTaskView = taskNumber === undefined ? undefined : tasks.data?.find((task) => task.number === taskNumber);
   // 右栏正打开着的那条消息：讨论串的宿主消息，或任务的宿主消息。
   const openMessageId = parent?.id ?? openTaskView?.messageId;
-  // 右栏放大后聊天只有一条窄列：顶栏只留名字、状态与右栏的按钮。
-  const compact = panel !== undefined && expanded;
+  const showSidebar = sidebarHidden ? <SidebarToggle hidden onClick={onShowSidebar} /> : undefined;
 
   const title =
     panel === "runs"
@@ -157,14 +154,23 @@ export function ChatView({
 
   return (
     <>
-      <main className={cn("flex min-w-0 flex-col", panel && expanded ? "w-[340px] flex-none" : "flex-1")}>
+      <main className={cn("min-w-0 flex-1 flex-col", panel && expanded ? "hidden" : "flex")}>
         {scoped.kind === "direct" ? (
-          <DirectHeader agent={scoped.agent} compact={compact} onJoinGroups={onJoinGroups} tools={tools} />
+          <DirectHeader
+            agent={scoped.agent}
+            leading={showSidebar}
+            fade={scrolled}
+            narrow={panel !== undefined}
+            onJoinGroups={onJoinGroups}
+            tools={tools}
+          />
         ) : (
           <GroupHeader
             group={scoped.group}
             members={scoped.members}
-            compact={compact}
+            leading={showSidebar}
+            fade={scrolled}
+            narrow={panel !== undefined}
             onAddMembers={onAddMembers}
             tools={tools}
           />
@@ -181,6 +187,8 @@ export function ChatView({
           onOpenThread={room.kind === "group" ? openThread : undefined}
           onOpenTask={openTask}
           onConvert={convertMessage}
+          onScrolled={setScrolled}
+          hidden={panel !== undefined && expanded}
         />
         {convert.error && (
           <p className="max-w-[736px] px-7 pb-1 text-xs text-danger">转为任务失败：{convert.error.message}</p>
@@ -192,9 +200,9 @@ export function ChatView({
           title={title}
           subtitle={subtitle}
           expanded={expanded}
-          focus={focus}
+          tools={tools}
+          leading={showSidebar}
           onExpandedChange={resize}
-          onFocusChange={onFocusChange}
           onBack={back}
           onClose={close}
         >
@@ -228,11 +236,8 @@ export function ChatView({
               selected={taskNumber}
               onLayout={(next) => {
                 setLayout(next);
-                // 看板在窄栏里放不下五列：选看板时右栏自动放大，并收起会话栏。
-                if (next === "board") {
-                  setExpanded(true);
-                  onFocusChange(true);
-                }
+                // 看板在不放大的右栏里放不下五列：选看板时右栏自动放大。
+                if (next === "board") setExpanded(true);
               }}
               onSelect={(number) => setSelection({ roomId, task: number })}
               onOpenRun={openRun}
@@ -259,28 +264,43 @@ function Tool({ active, onClick, children }: { active: boolean; onClick(): void;
   );
 }
 
+/**
+ * 聊天顶栏与消息区同一个底色，没有分隔线；消息往上滚过顶部时，顶栏下沿出现一道渐隐。
+ * 设计稿是 out/mockups/step5-cards.html 的方案 A。
+ */
+function headerClass(fade: boolean): string {
+  return cn(
+    // 横向裁掉放不下的内容，纵向不裁：下沿的渐隐画在顶栏外面。
+    "drag relative z-10 flex h-[52px] flex-none items-center gap-3 overflow-x-clip bg-bg font-mono",
+    fade &&
+      "after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-[18px] after:bg-linear-to-b after:from-bg after:to-transparent",
+  );
+}
+
 function DirectHeader({
   agent,
-  compact,
+  leading,
+  fade,
+  narrow,
   onJoinGroups,
   tools,
 }: {
   agent: Agent;
-  compact: boolean;
+  /** 侧栏收起时的“显示侧栏”。 */
+  leading: React.ReactNode;
+  fade: boolean;
+  /** 右栏打开时聊天变窄：顶栏只留头像、名字、状态与视图切换。 */
+  narrow: boolean;
   onJoinGroups(): void;
   tools: React.ReactNode;
 }) {
   const status = statusView(agent.status);
   return (
-    <header
-      className={cn(
-        "drag flex h-[52px] flex-none items-center gap-3 border-b border-line font-mono",
-        compact ? "px-4" : "px-6",
-      )}
-    >
+    <header className={cn(headerClass(fade), leading ? "pr-6 pl-[84px]" : "px-6")}>
+      {leading}
       <AgentAvatar name={agent.displayName} handle={agent.handle} size={28} />
       <h1 className="truncate font-sans text-sm font-semibold">{agent.displayName}</h1>
-      {!compact && (
+      {!narrow && (
         <span className="truncate text-xs text-muted">
           @{agent.handle} · {agent.model}
         </span>
@@ -289,7 +309,7 @@ function DirectHeader({
         {status.label}
       </StatusTag>
       {tools}
-      {!compact && (
+      {!narrow && (
         <Button variant="ghost" size="sm" className="flex-none" onClick={onJoinGroups}>
           加入群聊…
         </Button>
@@ -301,33 +321,34 @@ function DirectHeader({
 function GroupHeader({
   group,
   members,
-  compact,
+  leading,
+  fade,
+  narrow,
   onAddMembers,
   tools,
 }: {
   group: Group;
   members: Agent[];
-  compact: boolean;
+  leading: React.ReactNode;
+  fade: boolean;
+  /** 右栏打开时聊天变窄：顶栏只留头像、名字与视图切换。 */
+  narrow: boolean;
   onAddMembers(): void;
   tools: React.ReactNode;
 }) {
   return (
-    <header
-      className={cn(
-        "drag flex h-[52px] flex-none items-center gap-3 border-b border-line font-mono",
-        compact ? "px-4" : "px-6",
-      )}
-    >
+    <header className={cn(headerClass(fade), leading ? "pr-6 pl-[84px]" : "px-6")}>
+      {leading}
       <GroupAvatar members={members.map((agent) => ({ name: agent.displayName, handle: agent.handle }))} size={28} />
-      <h1 className={cn("truncate font-sans text-sm font-semibold", !compact && "flex-none")}>
+      <h1 className={cn("truncate font-sans text-sm font-semibold", !narrow && "flex-none")}>
         <span className="text-faint">#</span> {group.name}
       </h1>
-      {!compact && <span className="flex-none text-xs text-muted">{members.length} 个 agent</span>}
-      <div className={cn("min-w-0 items-center gap-1.5 overflow-hidden", compact ? "hidden" : "flex")}>
+      {!narrow && <span className="flex-none text-xs text-muted">{members.length} 个 agent</span>}
+      <div className={cn("min-w-0 items-center gap-1.5 overflow-hidden", narrow ? "hidden" : "flex")}>
         {members.map((agent) => (
           <span
             key={agent.id}
-            className="flex flex-none items-center gap-1.5 rounded-full border border-line bg-raised py-[2px] pr-2 pl-[3px] text-[11.5px] text-muted"
+            className="flex flex-none items-center gap-1.5 rounded-full bg-panel py-[2px] pr-2 pl-[3px] text-[11.5px] text-muted"
           >
             <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />
             {agent.displayName}
@@ -341,7 +362,7 @@ function GroupHeader({
       </div>
       <span className="ml-auto" />
       {tools}
-      {!compact && (
+      {!narrow && (
         <Button variant="ghost" size="sm" className="flex-none" onClick={onAddMembers}>
           ＋ 成员
         </Button>
@@ -360,6 +381,8 @@ function MessageList({
   onOpenThread,
   onOpenTask,
   onConvert,
+  onScrolled,
+  hidden,
 }: {
   room: ChatRoom;
   agents: Agent[];
@@ -372,6 +395,10 @@ function MessageList({
   onOpenThread?(message: MessageView): void;
   onOpenTask(task: TaskView): void;
   onConvert(message: MessageView): void;
+  /** 消息区是否已经往上滚过了顶部。 */
+  onScrolled(scrolled: boolean): void;
+  /** 右栏放大时聊天区让出来：看不见的消息不标为已读，重新出现时接着贴底。 */
+  hidden: boolean;
 }) {
   const roomId = roomIdOf(room);
   const agents = agentsOf(room);
@@ -379,7 +406,7 @@ function MessageList({
   const handles = useMemo(() => new Set(allAgents.map((agent) => agent.handle)), [allAgents]);
   const threadOf = useMemo(() => new Map((threads ?? []).map((thread) => [thread.parent.id, thread])), [threads]);
   const taskOf = useMemo(() => new Map<string, TaskView>((tasks ?? []).map((task) => [task.messageId, task])), [tasks]);
-  useMarkReadWhileOpen(roomId, messages);
+  useMarkReadWhileOpen(roomId, hidden ? undefined : messages);
   const loadOlder = useLoadOlder(roomId);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -390,8 +417,9 @@ function MessageList({
   // 点击“加载更早的消息”引起的重新渲染会在数据到达前就把记下的高度用掉。
   const statusKey = agents.map((agent) => `${agent.id}:${agent.status.state}`).join(",");
 
-  // 新消息或状态变化后，原本停在底部就继续贴着底部；在前面插入更早的消息时，保持当前看到的位置。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 两者是触发滚动的条件，回调里不需要读取它们。
+  // 新消息、状态变化或重新出现后，原本停在底部就继续贴着底部；在前面插入更早的消息时，保持当前看到的位置。
+  // 隐藏期间（display: none）设置滚动位置不起作用，所以重新出现时还要再贴一次。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 三者是触发滚动的条件，回调里不需要读取它们。
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -401,7 +429,7 @@ function MessageList({
     } else if (stickToBottom.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [messages, statusKey]);
+  }, [messages, statusKey, hidden]);
 
   if (isPending) return <div className="flex-1" />;
   if (error) return <p className="flex-1 px-7 py-6 text-sm text-danger">读取消息失败：{error.message}</p>;
@@ -417,6 +445,7 @@ function MessageList({
       className="min-h-0 flex-1 overflow-y-auto"
       onScroll={(event) => {
         stickToBottom.current = isNearBottom(event.currentTarget);
+        onScrolled(event.currentTarget.scrollTop > 0);
       }}
     >
       <div className="max-w-[736px] px-7 pt-6 pb-2">

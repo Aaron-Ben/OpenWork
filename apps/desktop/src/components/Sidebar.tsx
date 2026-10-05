@@ -7,6 +7,7 @@ import { groupMembers } from "../lib/new-group";
 import { statusView } from "../lib/status";
 import { formatListTime } from "../lib/time";
 import { AgentAvatar, GroupAvatar } from "./Avatar";
+import { SidebarToggle } from "./SidePanel";
 import { StatusTag } from "./StatusTag";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
@@ -31,6 +32,7 @@ export function Sidebar({
   onCreateAgent,
   onCreateGroup,
   connection,
+  onHide,
 }: {
   agents: Agent[];
   groups: Group[];
@@ -40,6 +42,8 @@ export function Sidebar({
   onCreateAgent(): void;
   onCreateGroup(): void;
   connection: Connection;
+  /** 没有打开的聊天时为空：那时侧栏不能收起。 */
+  onHide?(): void;
 }) {
   const [tab, setTab] = useState<Tab>("messages");
   const unread = totalUnread(conversations);
@@ -50,42 +54,32 @@ export function Sidebar({
       .map((agent) => ({ name: agent.displayName, handle: agent.handle }));
 
   return (
-    <aside className="flex w-72 flex-none flex-col border-r border-line bg-panel">
-      {/* 第一行左边是系统的红黄绿按钮，右边是“新建”；两行都是窗口拖动区域。 */}
+    <aside className="flex w-72 flex-none flex-col bg-panel">
+      {/* 第一行左边是系统的红黄绿按钮，右边是“隐藏侧栏”；第二行是“新建”与连接状态。两行都是窗口拖动区域。 */}
       <div className="drag flex h-[52px] flex-none items-center justify-end px-2.5">
+        {onHide && <SidebarToggle hidden={false} onClick={onHide} />}
+      </div>
+      <div className="drag flex items-center justify-between px-3.5 pb-2.5">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="新建"
-              title="新建"
-              className="grid size-7 place-items-center rounded-[7px] text-muted outline-none hover:bg-hover hover:text-text focus-visible:ring-3 focus-visible:ring-accent-soft data-[state=open]:bg-hover data-[state=open]:text-text"
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-[9px] border border-line bg-raised pr-2.5 pl-2 text-[13px] font-medium shadow-card outline-none hover:border-line-strong focus-visible:ring-3 focus-visible:ring-accent-soft data-[state=open]:border-line-strong"
             >
-              <svg
-                viewBox="0 0 24 24"
-                className="size-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-              </svg>
+              <span className="grid size-[18px] place-items-center rounded-md bg-accent text-sm leading-none text-accent-fg">
+                +
+              </span>
+              新建
+              <span className="text-faint">⌄</span>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="start">
             <DropdownMenuItem onSelect={onCreateAgent}>新建 agent</DropdownMenuItem>
             <DropdownMenuItem onSelect={onCreateGroup} disabled={agents.length === 0}>
               新建群聊
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
-      <div className="drag flex items-baseline justify-between px-[18px] pt-0.5 pb-2.5">
-        <h1 className="text-xl font-semibold tracking-[-0.01em]">{TABS.find((item) => item.id === tab)?.label}</h1>
         <ConnectionTag connection={connection} />
       </div>
 

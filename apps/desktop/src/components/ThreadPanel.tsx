@@ -81,10 +81,7 @@ function ThreadList({
           </p>
         )}
         {[...(threads ?? [])].reverse().map((thread) => (
-          <div
-            key={thread.id}
-            className="mb-1.5 rounded-xl border border-transparent px-3 py-2.5 hover:border-line hover:bg-raised hover:shadow-card"
-          >
+          <div key={thread.id} className="mb-1.5 rounded-xl px-3 py-2.5 hover:bg-panel">
             <button type="button" className="flex w-full gap-2.5 text-left" onClick={() => onOpen(thread.parent)}>
               <ParticipantAvatar who={thread.parent.author} size={24} />
               <span className="min-w-0 flex-1">
@@ -134,7 +131,7 @@ export function ThreadView({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className={column(expanded)}>
           {header}
-          <div className="rounded-xl border border-line bg-raised px-3.5 py-3 shadow-card">
+          <div className="rounded-xl bg-panel px-3.5 py-3">
             <div className="flex items-baseline gap-2 text-[11px] text-faint">
               <b className="text-[13px] font-semibold text-text">
                 {parent.author.kind === "user" ? "你" : parent.author.displayName}

@@ -320,8 +320,8 @@ export function Composer({
       <div
         className={
           send.error
-            ? "rounded-xl border border-danger bg-raised"
-            : "rounded-xl border border-line-strong bg-raised shadow-card focus-within:border-accent"
+            ? "rounded-2xl border border-danger bg-raised"
+            : "rounded-2xl border border-line bg-raised shadow-lift focus-within:border-accent"
         }
       >
         <textarea
