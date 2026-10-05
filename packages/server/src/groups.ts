@@ -3,11 +3,14 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "./db";
 import { agentReadCursors, agents, roomAgents, rooms, roomUsers, userReadCursors } from "./db/schema";
 import { RequestError } from "./errors";
+import { mutedNow } from "./messages";
 
 export interface GroupSummary {
   id: RoomId;
   name: string;
   agentIds: AgentId[];
+  /** 现在静音着这个群的 Agent；时间是 PostgreSQL 写出的字符串。 */
+  mutes: Array<{ agentId: AgentId; since: string; until: string | null }>;
   createdAt: Date;
 }
 
@@ -73,10 +76,13 @@ const groupColumns = {
   agentIds: sql<
     AgentId[]
   >`coalesce(array_agg(${roomAgents.agentId} ORDER BY ${roomAgents.agentId}) FILTER (WHERE ${roomAgents.agentId} IS NOT NULL), '{}')`,
+  mutes: sql<
+    GroupSummary["mutes"]
+  >`coalesce(json_agg(json_build_object('agentId', ${roomAgents.agentId}, 'since', ${roomAgents.mutedAt}, 'until', ${roomAgents.mutedUntil}) ORDER BY ${roomAgents.agentId}) FILTER (WHERE ${mutedNow}), '[]')`,
   createdAt: rooms.createdAt,
 };
 
-async function groupOf(tx: Transaction, roomId: RoomId): Promise<GroupSummary> {
+export async function groupOf(tx: Transaction, roomId: RoomId): Promise<GroupSummary> {
   const [group] = await tx
     .select(groupColumns)
     .from(rooms)

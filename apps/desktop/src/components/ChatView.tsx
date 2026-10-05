@@ -9,7 +9,16 @@ import type {
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 import { hasOlder } from "../lib/messages";
-import { useLoadOlder, useMessages, useSendMessage, useTaskActions, useTasks, useThreads } from "../lib/queries";
+import { activeMutes, type Mute, muteUntilText, STILL_WAKES } from "../lib/mutes";
+import {
+  useLoadOlder,
+  useMessages,
+  useSendMessage,
+  useTaskActions,
+  useTasks,
+  useThreads,
+  useUnmuteAgent,
+} from "../lib/queries";
 import { isNearBottom } from "../lib/scroll";
 import { statusIn, statusView } from "../lib/status";
 import { openCount } from "../lib/tasks";
@@ -22,6 +31,8 @@ import { StatusTag } from "./StatusTag";
 import { type TaskLayout, TaskPanel } from "./TaskPanel";
 import { ThreadPanel } from "./ThreadPanel";
 import { Button } from "./ui/button";
+import { Icon } from "./ui/icon";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 /** 打开的房间：与一个 Agent 的私聊，或一个群聊与其中的 Agent。 */
 export type ChatRoom = { kind: "direct"; agent: Agent } | { kind: "group"; group: Group; members: Agent[] };
@@ -349,6 +360,8 @@ function GroupHeader({
   onAddMembers(): void;
   tools: React.ReactNode;
 }) {
+  const now = new Date();
+  const mutes = activeMutes(group, now);
   return (
     <header className={cn(headerClass(fade), leading ? "pr-6 pl-[84px]" : "px-6")}>
       {leading}
@@ -358,20 +371,22 @@ function GroupHeader({
       </h1>
       {!narrow && <span className="flex-none text-xs text-muted">{members.length} 个 agent</span>}
       <div className={cn("min-w-0 items-center gap-1.5 overflow-hidden", narrow ? "hidden" : "flex")}>
-        {members.map((agent) => (
-          <span
-            key={agent.id}
-            className="flex flex-none items-center gap-1.5 rounded-full bg-panel py-[2px] pr-2 pl-[3px] text-[11.5px] text-muted"
-          >
-            <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />
-            {agent.displayName}
-            {agent.status.state !== "idle" && (
-              <StatusTag tone={statusView(agent.status).tone} className="text-[11px]">
-                {statusView(agent.status).label}
-              </StatusTag>
-            )}
-          </span>
-        ))}
+        {members.map((agent) => {
+          const mute = mutes.get(agent.id);
+          return mute ? (
+            <MutedChip key={agent.id} roomId={group.id} agent={agent} mute={mute} now={now} />
+          ) : (
+            <span key={agent.id} className={chip}>
+              <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />
+              {agent.displayName}
+              {agent.status.state !== "idle" && (
+                <StatusTag tone={statusView(agent.status).tone} className="text-[11px]">
+                  {statusView(agent.status).label}
+                </StatusTag>
+              )}
+            </span>
+          );
+        })}
       </div>
       <span className="ml-auto" />
       {tools}
@@ -381,6 +396,62 @@ function GroupHeader({
         </Button>
       )}
     </header>
+  );
+}
+
+const chip =
+  "flex flex-none items-center gap-1.5 rounded-full bg-panel py-[2px] pr-2 pl-[3px] text-[11.5px] text-muted";
+
+/**
+ * 静音了这个群的成员：标签变灰、带划掉的铃铛。点开看到静音到什么时候、什么仍会叫醒它，可以解除。
+ * 只有 Agent 自己能静音，这里只能解除。
+ */
+function MutedChip({ roomId, agent, mute, now }: { roomId: RoomId; agent: Agent; mute: Mute; now: Date }) {
+  const unmute = useUnmuteAgent(roomId);
+  const until = muteUntilText(mute, now);
+  return (
+    <Popover onOpenChange={() => unmute.reset()}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(chip, "text-faint hover:bg-hover")}
+          title={`${agent.displayName} 静音了这个群`}
+        >
+          <span className="opacity-55">
+            <AgentAvatar name={agent.displayName} handle={agent.handle} size={18} />
+          </span>
+          {agent.displayName}
+          <Icon name="bellOff" className="size-3 text-violet" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start">
+        <div className="flex items-center gap-2">
+          <AgentAvatar name={agent.displayName} handle={agent.handle} size={22} />
+          <b className="font-semibold">{agent.displayName} 静音了这个群</b>
+        </div>
+        <p className="mt-2 leading-relaxed text-muted">
+          你在群里发的消息不会叫醒它，{mute.until === null ? "直到它自己或你解除" : `到${until}自动解除`}
+          。它被叫醒时，静音期间的消息会一起给它。
+        </p>
+        <div className="mt-2.5 text-[11.5px] text-faint">仍会叫醒它</div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {STILL_WAKES.map((reason) => (
+            <span key={reason} className="rounded-md bg-panel px-1.5 py-px text-[11px] text-muted">
+              {reason}
+            </span>
+          ))}
+        </div>
+        {unmute.error && <p className="mt-2 text-xs text-danger">解除失败：{unmute.error.message}</p>}
+        <div className="mt-3 flex justify-end gap-2">
+          <PopoverClose asChild>
+            <Button variant="ghost">关闭</Button>
+          </PopoverClose>
+          <Button variant="primary" disabled={unmute.isPending} onClick={() => unmute.mutate(agent.id)}>
+            解除静音
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

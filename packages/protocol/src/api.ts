@@ -12,6 +12,7 @@ import {
   RoomName,
 } from "./collab";
 import { AgentId, MessageId, RoomId } from "./ids";
+import { MuteRefusal, MuteState, NewMute } from "./mutes";
 import { NewReminder, ReminderRefusal, ReminderView } from "./reminders";
 import { EngineEvent, RunDetail, RunSummary, RunTrigger } from "./runs";
 import { TaskNote, TaskRefusal, TaskStatus, TaskTitle, TaskView } from "./tasks";
@@ -50,8 +51,11 @@ export type ReplyOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.in
 /** 响应：客户端校验后得到的值。 */
 export type ResponseOf<E extends Endpoint> = E["response"] extends z.ZodType ? z.output<E["response"]> : undefined;
 
-/** 错误响应一律是 `{ error: 原因 }`。任务与提醒被拒绝时另带 `refusal`，`crew` 据此写英文说明。 */
-export const ErrorBody = z.object({ error: z.string(), refusal: z.union([TaskRefusal, ReminderRefusal]).optional() });
+/** 错误响应一律是 `{ error: 原因 }`。任务、提醒与静音被拒绝时另带 `refusal`，`crew` 据此写英文说明。 */
+export const ErrorBody = z.object({
+  error: z.string(),
+  refusal: z.union([TaskRefusal, ReminderRefusal, MuteRefusal]).optional(),
+});
 
 /**
  * 房间里的一条消息，界面读取房间时得到。Agent 的消息带着它所在的那一轮（`runId`），
@@ -90,6 +94,8 @@ export const DesktopGroup = z.object({
   id: RoomId,
   name: z.string(),
   agentIds: z.array(AgentId),
+  /** 现在静音着这个群的 Agent；`until` 为 null 是一直静音。到期的不在其中。 */
+  mutes: z.array(z.object({ agentId: AgentId, since: z.string(), until: z.string().nullable() })),
   createdAt: z.string(),
 });
 export type DesktopGroup = z.infer<typeof DesktopGroup>;
@@ -281,6 +287,13 @@ export const api = {
       body: z.object({ agentIds: AgentIds }),
       response: DesktopGroup,
     }),
+    /** 替 Agent 解除它在群里的静音。用户不能替 Agent 静音，只能解除。 */
+    unmuteAgent: endpoint({
+      method: "POST",
+      path: "/desktop/groups/:roomId/agents/:agentId/unmute",
+      params: z.object({ roomId: RoomId, agentId: AgentId }),
+      response: DesktopGroup,
+    }),
   },
   computer: {
     /** Computer 启动时调用：确认地址与凭证可用，并把上一个 Computer 没结束的轮次标为中断。 */
@@ -352,6 +365,14 @@ export const api = {
     }),
   },
   agent: {
+    /** 静音一个群：群里的消息不再唤醒自己，@ 自己的除外。 */
+    muteRoom: endpoint({ method: "POST", path: "/agent/rooms/mute", body: NewMute, response: MuteState }),
+    unmuteRoom: endpoint({
+      method: "POST",
+      path: "/agent/rooms/unmute",
+      body: z.object({ roomId: RoomId }),
+      response: MuteState,
+    }),
     /** 给自己定一个提醒。 */
     createReminder: endpoint({
       method: "POST",

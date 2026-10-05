@@ -13,6 +13,7 @@ const direct = InboxRoom.parse({
   name: null,
   members: [user, alice],
   parent: null,
+  muted: null,
   messages: [
     {
       id: "0b9e8d7c-6f5a-4e3d-8c2b-1a0f9e8d7c6b",
@@ -45,6 +46,7 @@ const group = InboxRoom.parse({
   name: "Release",
   members: [user, alice, bob],
   parent: null,
+  muted: { until: "2026-10-04T12:30:00.000Z" },
   messages: [
     {
       id: "2d1a0f9e-8b7c-4a5f-8e4d-3c2b1a0f9e8d",
@@ -90,6 +92,7 @@ const thread = InboxRoom.parse({
       task: { number: 1, status: "in_progress", assignee: "alice" },
     },
   },
+  muted: null,
   messages: [
     {
       id: "6b5e4d3c-2f1a-4e0d-9c8b-7a6f5e4d3c2b",
@@ -120,10 +123,9 @@ describe("turnPrompt", () => {
   it("matches the reviewed text", async () => {
     // 2026-10-04T18:30:00+08:00，用固定的时区偏移避免依赖运行环境的时区。
     const now = new Date("2026-10-04T10:30:00.000Z");
-    const text = turnPrompt([direct, group, thread], now, self, { fresh: false, memoryBytes: 600 }).replace(
-      localTimestamp(now),
-      "2026-10-04T18:30:00+08:00",
-    );
+    const text = turnPrompt([direct, group, thread], now, self, { fresh: false, memoryBytes: 600 })
+      .replace(localTimestamp(now), "2026-10-04T18:30:00+08:00")
+      .replace(localTimestamp(new Date("2026-10-04T12:30:00.000Z")), "2026-10-04T20:30:00+08:00");
     await expect(text).toMatchFileSnapshot("./__snapshots__/turn-prompt.md");
   });
 });

@@ -370,6 +370,26 @@ describe("crew output", () => {
     await record("remind cancel, again", ["remind", "cancel", firstReminder ?? ""]);
     sections[cancelBefore] = reminderText(sections[cancelBefore] ?? "");
     sections[cancelBefore + 1] = reminderText(sections[cancelBefore + 1] ?? "");
+    // 静音：定时与一直静音、解除，以及私聊、讨论串与时长的拒绝。到期时间每次运行都不同，换成占位符。
+    const muteText = (text: string) =>
+      ids(text)
+        .replaceAll(alice.roomId, "<alice-room>")
+        .replace(/until \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}/, "until <time>");
+    const muteCases: Array<[string, string[]]> = [
+      ["crew mute --help", ["mute", "--help"]],
+      ["mute for a while", ["mute", group, "--for", "2h"]],
+      ["mute until unmuted", ["mute", group]],
+      ["unmute", ["unmute", group]],
+      ["mute a direct room", ["mute", alice.roomId]],
+      ["mute a thread", ["mute", threadId]],
+      ["mute, too short", ["mute", group, "--for", "5m"]],
+      ["mute, too long", ["mute", group, "--for", "8d"]],
+    ];
+    for (const [title, args] of muteCases) {
+      const before = sections.length;
+      await record(title, args);
+      sections[before] = muteText(sections[before] ?? "");
+    }
     // 最后：用户发了 Alice 还没看到的消息，回复被拦下。
     const unseen = await sendAsUser(alice.roomId, "Wait, one more thing:\ncheck the tests too.");
     await record("held", ["reply", alice.roomId], { stdin: "On it." });

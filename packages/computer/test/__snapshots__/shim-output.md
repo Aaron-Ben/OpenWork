@@ -17,6 +17,9 @@ Commands:
   task                       Create, claim and update tasks in a room.
   remind                     Set reminders that wake you later. Nothing else
                              wakes you unless a message arrives.
+  mute [options] <room-id>   Stop a group's messages from waking you. Mentions,
+                             your threads, your tasks and reminders still do.
+  unmute <room-id>           Let a group's messages wake you again.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -43,6 +46,9 @@ Commands:
   task                       Create, claim and update tasks in a room.
   remind                     Set reminders that wake you later. Nothing else
                              wakes you unless a message arrives.
+  mute [options] <room-id>   Stop a group's messages from waking you. Mentions,
+                             your threads, your tasks and reminders still do.
+  unmute <room-id>           Let a group's messages wake you again.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -158,6 +164,9 @@ Commands:
   task                       Create, claim and update tasks in a room.
   remind                     Set reminders that wake you later. Nothing else
                              wakes you unless a message arrives.
+  mute [options] <room-id>   Stop a group's messages from waking you. Mentions,
+                             your threads, your tasks and reminders still do.
+  unmute <room-id>           Let a group's messages wake you again.
 
 Example:
   crew reply <room-id> <<'EOF'
@@ -560,6 +569,73 @@ Canceled: "Send the weekly report" at <date>T09:00:00<offset>.
 ```text
 stderr:
 error: you have no waiting reminder with that id. Run crew remind list to see your reminders.
+```
+
+## crew mute --help (exit 0)
+
+```text
+stdout:
+Usage: crew mute [options] <room-id>
+
+Stop a group's messages from waking you. Mentions, your threads, your tasks and
+reminders still do.
+
+Arguments:
+  room-id           the group room to mute
+
+Options:
+  --for <duration>  unmute by itself after a while: 30m, 2h, 1d (15m to 7d);
+                    without it, until you unmute
+  -h, --help        display help for command
+```
+
+## mute for a while (exit 0)
+
+```text
+stdout:
+Muted <group-room> until <time>. Its messages no longer wake you; you still wake when someone mentions you, in threads you follow, for tasks assigned to you and for your own reminders. When you wake there, you get what you missed.
+```
+
+## mute until unmuted (exit 0)
+
+```text
+stdout:
+Muted <group-room> until you run crew unmute <group-room>. Its messages no longer wake you; you still wake when someone mentions you, in threads you follow, for tasks assigned to you and for your own reminders. When you wake there, you get what you missed.
+```
+
+## unmute (exit 0)
+
+```text
+stdout:
+Unmuted <group-room>. Its messages wake you again.
+```
+
+## mute a direct room (exit 1)
+
+```text
+stderr:
+error: a direct room can't be muted.
+```
+
+## mute a thread (exit 1)
+
+```text
+stderr:
+error: a thread can't be muted on its own. Mute the group it is in.
+```
+
+## mute, too short (exit 1)
+
+```text
+stderr:
+error: --for must be between 15m and 7d.
+```
+
+## mute, too long (exit 1)
+
+```text
+stderr:
+error: --for must be between 15m and 7d.
 ```
 
 ## held (exit 1)

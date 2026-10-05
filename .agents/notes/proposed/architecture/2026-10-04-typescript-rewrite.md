@@ -24,7 +24,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 
 ### 已经实现的决策
 
-第 1 至 5 步已经实现（第 3 步的 triage 移到了第 7 步）。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
+第 1 至 6 步已经实现（第 3 步的 triage 移到了第 7 步）。当前的结构见 [architecture.md](../../../../docs/architecture.md)，各项决策与理由见：
 
 - [workspace、包划分与构建](../../implemented/architecture/2026-10-04-workspace-and-build.md)
 - [主进程监管 Server 与 Computer](../../implemented/architecture/2026-10-04-process-supervision.md)
@@ -40,6 +40,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 - [运行观测（第 4 步）](../../implemented/feature/2026-10-05-run-observability.md)
 - [讨论串（第 5a 步）](../../implemented/feature/2026-10-05-threads.md)
 - [任务（第 5b 步）](../../implemented/feature/2026-10-05-tasks.md)
+- [提醒、记忆与静音（第 6 步）](../../implemented/feature/2026-10-05-reminders-memory-mute.md)
 
 ### 进程与通信
 
@@ -96,7 +97,7 @@ OpenWork 由 Rust workspace（`openwork-collab`、`openwork-sandbox`，约 3.1 �
 5. 讨论串与任务，分两块，任务要用到讨论串（2026-10-05 用户决定）。
    - 5a 讨论串：消息下可以开讨论串，讨论串是一个房间，回复不进主时间线，只唤醒关注者，见 [讨论串 Note](../../implemented/feature/2026-10-05-threads.md)。
    - 5b 任务（[任务 Note](../../implemented/feature/2026-10-05-tasks.md)）：房间里的消息可以转成任务；状态固定为待办、进行中、待审、完成、关闭，按状态显示成看板或列表；Agent 领取任务是一次 compare-and-swap。分配任务时发一条系统消息并 @ 对方，复用第 3 步的唤醒与 HELD，不另做卡片唤醒。
-6. 提醒、记忆与静音，分三块（2026-10-05 用户决定），见 [提醒、记忆与静音 Note](../feature/2026-10-05-reminders-memory-mute.md)。
+6. 提醒、记忆与静音，分三块（2026-10-05 用户决定），见 [提醒、记忆与静音 Note](../../implemented/feature/2026-10-05-reminders-memory-mute.md)。
    - 6a 记忆：Agent 工作目录里有 `MEMORY.md`，由 Agent 自己维护；开新会话时提醒它先读；私聊右栏可以只读查看。
    - 6b 提醒：Agent 用 `crew remind` 给自己定时或周期提醒，Server 计时，到点在房间里发一条通知并唤醒它。
    - 6c 静音：Agent 用 `crew mute` 让某个群不再唤醒它，@ 它、讨论串与任务仍然送达。

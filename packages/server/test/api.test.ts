@@ -1,5 +1,7 @@
 import { type AgentId, type ComputerEvent, DesktopEvent, type MessageId, RoomId, runEventStream } from "@crew/protocol";
+import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { roomAgents } from "../src/db/schema";
 import { ReminderScheduler } from "../src/reminders";
 import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "./support/app";
 
@@ -1456,6 +1458,146 @@ describe("reminders", () => {
     } finally {
       scheduler.stop();
     }
+  });
+});
+
+const mute = (token: string, roomId: RoomId, minutes?: number) =>
+  call(token, "/agent/rooms/mute", "POST", { roomId, minutes });
+const unmute = (token: string, roomId: RoomId) => call(token, "/agent/rooms/unmute", "POST", { roomId });
+const mutesOf = async (roomId: RoomId) => {
+  const groups = (await (await desktop("/desktop/groups")).json()) as Array<{
+    id: RoomId;
+    mutes: Array<{ agentId: AgentId; until: string | null }>;
+  }>;
+  return groups.find((group) => group.id === roomId)?.mutes ?? [];
+};
+const inboxRoom = async (agentId: AgentId, roomId: RoomId) =>
+  (await readInbox(agentId)).find((room) => room.roomId === roomId);
+
+describe("mutes", () => {
+  it("are set by the agent in a group only, with a notice, and listed on the group until they are lifted", async () => {
+    const alice = await newAgent("MuteAlice", "mute-alice");
+    const bob = await newAgent("MuteBob", "mute-bob");
+    const group = await newGroup("静音", [alice, bob]);
+    const token = await agentToken(alice.id);
+
+    expect(await (await mute(token, alice.roomId)).json()).toMatchObject({ refusal: { code: "mute_direct" } });
+    const host = await post(group.id, "开个讨论串");
+    await post(group.id, "讨论串里", host.id);
+    const threadId = (await threadsOf(group.id))[0]?.id;
+    if (!threadId) throw new Error("应当有讨论串");
+    expect(await (await mute(token, threadId)).json()).toMatchObject({ refusal: { code: "mute_thread" } });
+    expect((await mute(await agentToken(bob.id), (await newGroup("别的群", [alice])).id)).status).toBe(403);
+    expect((await mute(token, group.id, 5)).status).toBe(400);
+    expect((await mute(token, group.id, 8 * 24 * 60)).status).toBe(400);
+
+    const muted = await wakes(async () => {
+      const response = await mute(token, group.id, 120);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ roomId: group.id, muted: true, until: expect.any(String) });
+    });
+    expect(muted.filter((event) => event === alice.id || event === bob.id)).toEqual([]);
+    expect((await listMessagesWithNotices(group.id)).at(-1)).toMatchObject({
+      kind: "system",
+      notice: { type: "mute", until: expect.any(String) },
+    });
+    expect((await bodiesWithKind(group.id)).at(-1)).toMatch(/^system: 静音了这个群，到 /);
+    expect((await mutesOf(group.id)).map((m) => m.agentId)).toEqual([alice.id]);
+
+    // 解除：没有静音时什么也不写；替它解除的通知写它的名字、不唤醒它。
+    expect(
+      await wakesOf([alice, bob], () => desktop(`/desktop/groups/${group.id}/agents/${alice.id}/unmute`, "POST")),
+    ).toEqual([]);
+    expect((await bodiesWithKind(group.id)).at(-1)).toBe("system: 解除了 MuteAlice 在这个群的静音");
+    expect((await listMessagesWithNotices(group.id)).at(-1)?.notice).toEqual({ type: "unmute", handle: "mute-alice" });
+    expect(await mutesOf(group.id)).toEqual([]);
+    const before = await bodiesWithKind(group.id);
+    expect(await (await unmute(token, group.id)).json()).toEqual({ roomId: group.id, muted: false, until: null });
+    expect(await bodiesWithKind(group.id)).toEqual(before);
+
+    // 替它解除的那条通知没有记成点到它：它再静音后，这条不会让群穿透静音。
+    await mute(token, group.id);
+    expect((await mutesOf(group.id))[0]).toMatchObject({ agentId: alice.id, until: null });
+    expect(await inboxRoom(alice.id, group.id)).toBeUndefined();
+    await unmute(token, group.id);
+    expect((await bodiesWithKind(group.id)).at(-1)).toBe("system: 解除了这个群的静音");
+  });
+
+  it("keep the group's messages from waking the agent, except ones that mention it, and hold them back from its inbox", async () => {
+    const alice = await newAgent("QuietAlice", "quiet-alice");
+    const bob = await newAgent("QuietBob", "quiet-bob");
+    const group = await newGroup("安静", [alice, bob]);
+    const token = await agentToken(alice.id);
+    await mute(token, group.id);
+    await readInbox(alice.id);
+    await acknowledge(alice.id);
+
+    expect(await wakesOf([alice, bob], () => post(group.id, "大家好"))).toEqual([bob.id]);
+    // 在私聊里被叫醒：收件箱里没有静音的群。
+    expect(await wakesOf([alice, bob], () => post(alice.roomId, "私聊一句"))).toEqual([alice.id]);
+    expect(await inboxRoom(alice.id, group.id)).toBeUndefined();
+    await acknowledge(alice.id);
+    expect(await wakesOf([alice, bob], () => post(group.id, "再说一句"))).toEqual([bob.id]);
+
+    // @ 它：唤醒，整群的未读一起给它，并标明静音着。
+    expect((await wakesOf([alice, bob], () => post(group.id, "@quiet-alice 你来看看"))).sort()).toEqual(
+      [alice.id, bob.id].sort(),
+    );
+    const room = await inboxRoom(alice.id, group.id);
+    expect(room?.messages.map((message) => message.body)).toEqual([
+      "静音了这个群",
+      "大家好",
+      "再说一句",
+      "@quiet-alice 你来看看",
+    ]);
+    expect(room).toMatchObject({ muted: { until: null } });
+    await acknowledge(alice.id);
+
+    // 别的 Agent @ 它也唤醒；没 @ 它的 Agent 消息本来就不唤醒。
+    const bobToken = await agentToken(bob.id);
+    await readInbox(bob.id);
+    expect(await wakesOf([alice], () => reply(bobToken, group.id, "@quiet-alice 交给你了"))).toEqual([alice.id]);
+  });
+
+  it("let followed threads and the agent's own reminders through, and lapse when the time is up", async () => {
+    const alice = await newAgent("ThroughAlice", "through-alice");
+    const bob = await newAgent("ThroughBob", "through-bob");
+    const group = await newGroup("穿透", [alice, bob]);
+    const token = await agentToken(alice.id);
+
+    // 它关注的讨论串照常唤醒；没人关注的讨论串里的新消息不叫醒静音的它，也不让它关注。
+    const followed = await post(group.id, "要跟进的事");
+    await post(group.id, "@through-alice 你跟一下", followed.id);
+    const other = await post(group.id, "另一件事");
+    await mute(token, group.id);
+    const followedThread = (await threadsOf(group.id)).find((thread) => thread.parent.id === followed.id)?.id;
+    if (!followedThread) throw new Error("应当有讨论串");
+    expect(await wakesOf([alice, bob], () => post(followedThread, "进展如何？"))).toEqual([alice.id]);
+    expect(await wakesOf([alice, bob], () => post(group.id, "新的讨论串", other.id))).toEqual([bob.id]);
+
+    // 它自己的提醒：唤醒它，收件箱给它这个群。
+    t.setNow(new Date(2026, 9, 5, 10, 0));
+    try {
+      await remind(token, { roomId: group.id, title: "看看群里", at: new Date(2026, 9, 5, 10, 30).toISOString() });
+      t.setNow(new Date(2026, 9, 5, 10, 30));
+      await readInbox(alice.id);
+      await acknowledge(alice.id);
+      expect(await wakesOf([alice, bob], () => t.reminders.fireDue())).toEqual([alice.id]);
+      expect((await inboxRoom(alice.id, group.id))?.messages.at(-1)?.body).toBe("的提醒到了：看看群里");
+      await acknowledge(alice.id);
+    } finally {
+      t.setNow(undefined);
+    }
+
+    // 到期：不用解除，群里的消息又唤醒它，群聊也不再列出它的静音。
+    await mute(token, group.id, 15);
+    expect(await wakesOf([alice, bob], () => post(group.id, "到期前"))).toEqual([bob.id]);
+    await t.ctx.db
+      .update(roomAgents)
+      .set({ mutedUntil: new Date(Date.now() - 60_000) })
+      .where(and(eq(roomAgents.roomId, group.id), eq(roomAgents.agentId, alice.id)));
+    expect(await mutesOf(group.id)).toEqual([]);
+    expect((await wakesOf([alice, bob], () => post(group.id, "到期后"))).sort()).toEqual([alice.id, bob.id].sort());
   });
 });
 

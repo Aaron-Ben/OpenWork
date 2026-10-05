@@ -80,14 +80,14 @@ export function registerReminderCommands(program: Command, io: CliIo): void {
     });
 }
 
-function parseRoom(arg: string): RoomId {
+export function parseRoom(arg: string): RoomId {
   const roomId = RoomId.safeParse(arg);
   if (!roomId.success) throw new CliFailure(`"${arg}" is not a room id. Use the id shown above your unread messages.`);
   return roomId.data;
 }
 
 /** `30m`、`2h`、`1d` 换成分钟。 */
-function parseDuration(text: string, flag: string): number {
+export function parseDuration(text: string, flag: string): number {
   const match = /^(\d+)\s*(m|min|h|d)$/.exec(text.trim());
   if (!match) throw new CliFailure(`${flag} "${text}" is not a duration. Write it like 30m, 2h or 1d.`);
   const amount = Number(match[1]);

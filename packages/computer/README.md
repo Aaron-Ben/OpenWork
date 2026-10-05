@@ -7,7 +7,7 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 | 入口 | 使用方 | 作用 |
 |---|---|---|
 | `packages/computer/src/main.ts` | Desktop 主进程（构建为主进程旁的 `computer.js`） | 进程入口：读 bootstrap，确认能连上 Server，写 ready，然后启动 `ComputerDaemon` |
-| `packages/computer/src/shim/main.ts` | Agent，经本次运行目录的 `bin/crew`（构建为 `shim.js`） | `crew reply <room-id> [--thread <message-id>]`、`crew task …`、`crew remind …` 与 `crew --help` |
+| `packages/computer/src/shim/main.ts` | Agent，经本次运行目录的 `bin/crew`（构建为 `shim.js`） | `crew reply <room-id> [--thread <message-id>]`、`crew task …`、`crew remind …`、`crew mute|unmute …` 与 `crew --help` |
 | `EngineAdapter`（`packages/computer/src/engine/types.ts`） | 接入新的 Engine 时实现 | `probe`、`listModels`、`runTurn`。`runTurn` 不抛出，失败以 `{ ok: false }` 与失败类型返回 |
 
 ## 源码地图
@@ -41,7 +41,7 @@ Agent 宿主：为每个 Agent 准备目录与凭证，收到唤醒后在 Seatbe
 
 ### `crew` 命令的输出
 
-- **模型看到什么：** `crew reply` 成功时输出一行 `Message sent to room <room-id>.`，带 `--thread` 时写出讨论串的 ID；`crew task` 写出任务的编号、标题、状态、负责人与在哪里汇报，被拒绝时写明原因与下一步；`crew remind` 写出提醒的时间（带时区偏移）与到点会怎样；被 HELD 拦下时输出“没有发出”、新消息与下一步；失败时向 stderr 写英文的 `error: …`，说明原因与下一步，参数用错时还附上用法；`crew --help` 输出用法与 heredoc 示例。全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
+- **模型看到什么：** `crew reply` 成功时输出一行 `Message sent to room <room-id>.`，带 `--thread` 时写出讨论串的 ID；`crew task` 写出任务的编号、标题、状态、负责人与在哪里汇报，被拒绝时写明原因与下一步；`crew remind` 写出提醒的时间（带时区偏移）与到点会怎样；`crew mute` 写出静音到什么时候与什么仍会叫醒它；被 HELD 拦下时输出“没有发出”、新消息与下一步；失败时向 stderr 写英文的 `error: …`，说明原因与下一步，参数用错时还附上用法；`crew --help` 输出用法与 heredoc 示例。全部输出由 `packages/computer/test/__snapshots__/shim-output.md` 逐字锁定。
 - **Token：** 通常每次调用一行；带用法的输出约 20 行；HELD 时随新消息增长，一次最多 20 条消息，更多时说明后面还有几条。
 - **缓存：** 作为工具结果追加在对话中。
 

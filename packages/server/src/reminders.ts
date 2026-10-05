@@ -148,7 +148,7 @@ export async function cancelReminder(db: Database, agentId: AgentId, id: string)
 const pad = (value: number) => String(value).padStart(2, "0");
 
 /** 通知里的时间：今天写时分，其他日子写月日加时分，按本机时区。 */
-function clockText(time: Date, now: Date): string {
+export function clockText(time: Date, now: Date): string {
   const clock = `${pad(time.getHours())}:${pad(time.getMinutes())}`;
   return time.toDateString() === now.toDateString() ? clock : `${time.getMonth() + 1}月${time.getDate()}日 ${clock}`;
 }

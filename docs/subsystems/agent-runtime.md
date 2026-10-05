@@ -84,7 +84,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 
 - 目录权限 0700，文件 0600。写文件先写临时文件再改名。
 - Agent 在沙箱里能写自己的两个目录，所以 Computer 在建目录、写 session 与凭证之前，逐级用 `lstat` 确认它们是真正的目录；遇到符号链接或其他类型时拒绝。`session.json` 不是普通文件时当作没有记录。
-- 准备目录时，工作目录里还没有 `MEMORY.md` 就写一份模板；已有时不动，不是普通文件时也不动。记忆不放进 `AGENTS.md`，也不放进每轮输入：前者会让每次修改都重开会话，后者让每轮都多出这些 token。理由见 [提醒、记忆与静音 Note](../../.agents/notes/proposed/feature/2026-10-05-reminders-memory-mute.md)。
+- 准备目录时，工作目录里还没有 `MEMORY.md` 就写一份模板；已有时不动，不是普通文件时也不动。记忆不放进 `AGENTS.md`，也不放进每轮输入：前者会让每次修改都重开会话，后者让每轮都多出这些 token。理由见 [提醒、记忆与静音 Note](../../.agents/notes/implemented/feature/2026-10-05-reminders-memory-mute.md)。
 - `AGENTS.md` 只随 Agent 的设置变化，不含路径与时间：身份与 handle、人设、怎样用 `crew reply` 发言、HELD 时怎么做、群聊的发言约束、讨论串（在消息来的地方回复，只在用户要求时开讨论串）、任务（动手之前先领取，进展发在任务的讨论串里，做完改成待审）、提醒（说以后要做的事就定提醒，到点在房间里收到通知并被唤醒）、记忆（新会话先读 `MEMORY.md`，有长期价值的东西写进去，保持在 16KB 以内）。文本由 `packages/computer/test/__snapshots__/AGENTS.md` 逐字锁定。
 - `bin/crew` 以 `ELECTRON_RUN_AS_NODE=1` 运行 Electron 可执行文件与打包后的 `shim.js`。两者都在 `$HOME` 之外，沙箱里可以读取。
 
@@ -94,6 +94,7 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 - `crew reply <room-id> --thread <message-id>`：发到房间里这条消息的讨论串，讨论串还没有时创建。成功时写出讨论串的 ID，之后用 `crew reply <thread-id>` 接着在里面发言。私聊、讨论串里与别的房间的消息被拒绝时，写出对应的英文说明。
 - `crew task list|create|convert|claim|status|assign`：操作任务（`packages/computer/src/shim/tasks.ts`）。房间 ID 也可以是任务的讨论串；handle 可以带 `@`；`status` 的 `--note` 写进通知，退回时写要改什么、改成待审时写做了什么；成功时写出任务的编号、标题、状态、负责人与汇报的地方，被拒绝时按 Server 返回的 `refusal` 写英文说明。
 - `crew remind <room-id> <title> --in|--at|--every|--daily|--weekly`、`crew remind list`、`crew remind cancel <id>`：给自己定提醒（`packages/computer/src/shim/reminders.ts`）。时间按本机时区：`--at 18:00` 是下一个 18:00，也接受 `2026-10-06 09:00` 与带时区的 ISO 8601。成功时写出提醒的时间（带时区偏移）与到点会怎样；时间写错、周期太短在本地拒绝，其余拒绝按 Server 返回的 `refusal` 写英文说明。
+- `crew mute <room-id> [--for 2h]`、`crew unmute <room-id>`：静音一个群或解除（`packages/computer/src/shim/mutes.ts`）。时长 15 分钟到 7 天在本地检查；成功时写出静音到什么时候、什么仍会叫醒它；私聊与讨论串按 Server 返回的 `refusal` 写英文说明。本轮输入里静音群的标题后面写明 `you muted it`（定时的写到什么时候）。
 - `crew --help`：用法与 heredoc 示例。
 - 本地先检查：房间 ID 与 `--thread` 的消息 ID 是 UUID，正文不为空且不超过 20,000 字符。
 - 成功时向 stdout 写 `Message sent to room <room-id>.`，退出码 0。失败时向 stderr 写一行英文 `error: …`，说明原因与下一步，退出码 1；Server 的 401、403、404 由 `crew` 翻译成英文。
@@ -129,3 +130,4 @@ opencode run --pure --format json --print-logs --auto [--session <id>] --model <
 | 准备目录时写记忆模板，不覆盖 Agent 写的内容，不顺着符号链接写；新会话的输入里提醒先读记忆，超过 16KB 时请它精简 | `home.test.ts` 的 `seeds MEMORY.md…`、`leaves a MEMORY.md that is not a regular file alone…`；`prompt.test.ts` 的 `turnPrompt in a new session`；`runner.test.ts` 的 `tells the agent to read its memory in a new session…` |
 | 真实模型的记忆 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，告诉 Alice“我叫小王，以后用英文回答”，她写进 `MEMORY.md`；删掉会话记录让下一轮开新会话后问“我叫什么名字”，她先读记忆，用英文答出名字 |
 | 真实模型的提醒 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，19:14 请 Alice“两分钟后提醒你自己告诉我几点”，她定了提醒并回复“好的”；19:16:06 私聊里出现“Alice 的提醒到了”，她被唤醒，回复“现在是 19:16” |
+| 真实模型的静音 | 手动：2026-10-05 用 `deepseek/deepseek-flash`，用户在群里请 Bob 把与它无关的群静音，它用 `crew mute` 静音并回复“已静音”；用户随后没 @ 它的消息没有叫醒它（运行次数不变），@ 它时它被唤醒，本轮输入的标题写着 `you muted it`，静音期间的两条消息一起给了它，它的回复用上了这些上下文（“和按钮改颜色没关系”）；用户在界面上解除静音，它没有被叫醒 |

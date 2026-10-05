@@ -2,6 +2,7 @@ import { MESSAGE_BODY_MAX, MessageId, ReplyOutcome, RoomId, THREAD_REFUSALS } fr
 import { Command, CommanderError } from "commander";
 import { messageLines } from "../prompt";
 import { CliFailure, type CliIo, errorBody, indent, postAgent } from "./io";
+import { registerMuteCommands } from "./mutes";
 import { registerReminderCommands } from "./reminders";
 import { registerTaskCommands } from "./tasks";
 
@@ -41,6 +42,7 @@ export async function runCli(args: string[], io: CliIo): Promise<number> {
 
   registerTaskCommands(program, io);
   registerReminderCommands(program, io);
+  registerMuteCommands(program, io);
 
   try {
     // 参数来自 `process.argv.slice(2)`，按 "user" 解析。不让 commander 自己判断：

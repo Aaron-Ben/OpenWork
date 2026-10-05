@@ -54,10 +54,16 @@ export function messageLines(
 /** 讨论串挂着的那条消息在 prompt 里最多这么多字符：完整的内容在群聊里，这里只提示讨论串在说什么。 */
 export const THREAD_PARENT_MAX = 600;
 
+/** 静音着的群：写明静音到什么时候。它这时被 @ 或自己的提醒叫醒，收到的是静音以来的全部未读。 */
+function mutedNote(room: InboxRoom): string {
+  if (!room.muted) return "";
+  return room.muted.until ? `; you muted it until ${localTimestamp(new Date(room.muted.until))}` : "; you muted it";
+}
+
 function roomHeading(room: InboxRoom): string {
   switch (room.kind) {
     case "group":
-      return `# Room ${room.roomId} (group "${room.name ?? ""}")`;
+      return `# Room ${room.roomId} (group "${room.name ?? ""}"${mutedNote(room)})`;
     case "direct":
       return `# Room ${room.roomId} (direct)`;
     case "thread":

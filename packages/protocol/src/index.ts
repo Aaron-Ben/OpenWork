@@ -3,6 +3,7 @@ export * from "./assert";
 export * from "./client";
 export * from "./collab";
 export * from "./ids";
+export * from "./mutes";
 export * from "./notices";
 export * from "./reminders";
 export * from "./runs";

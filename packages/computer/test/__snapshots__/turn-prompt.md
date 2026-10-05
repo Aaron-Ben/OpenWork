@@ -10,7 +10,7 @@ Your unread messages:
     const a = 1;
     const b = 2;
 
-# Room 9c8b7a6f-5e4d-4c3b-8a2f-1e0d9c8b7a6f (group "Release")
+# Room 9c8b7a6f-5e4d-4c3b-8a2f-1e0d9c8b7a6f (group "Release"; you muted it until 2026-10-04T20:30:00+08:00)
 Members: User (user), Alice (@alice, you), Bob (@bob)
   [2d1a0f9e-8b7c-4a5f-8e4d-3c2b1a0f9e8d] User (user): 今天能发版吗？ [task #2 todo, unassigned]
   [3e2b1a0f-9c8d-4b6a-9f5e-4d3c2b1a0f9e] Bob (@bob) [mentions you]: 测试还差一项，@alice 你能看下 checkout 的用例吗？

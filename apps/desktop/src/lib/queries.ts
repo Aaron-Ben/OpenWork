@@ -153,6 +153,15 @@ export function useAddGroupMembers(roomId: RoomId) {
   });
 }
 
+/** 替 Agent 解除它在群里的静音。 */
+export function useUnmuteAgent(roomId: RoomId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (agentId: AgentId) => server.call(api.desktop.unmuteAgent, { params: { roomId, agentId } }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.groups }),
+  });
+}
+
 export function useConversations() {
   return useQuery({
     queryKey: queryKeys.conversations,

@@ -6,8 +6,9 @@ import {
   type RoomId,
 } from "@crew/protocol";
 import { useState } from "react";
+import { activeMutes, muteUntilText } from "../lib/mutes";
 import { groupsWithout, type NewGroupErrors, nonMembers, toggle, validateNewGroup } from "../lib/new-group";
-import { useAddGroupMembers, useCreateGroup, useJoinGroups } from "../lib/queries";
+import { useAddGroupMembers, useCreateGroup, useJoinGroups, useUnmuteAgent } from "../lib/queries";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Field, Input } from "./ui/input";
@@ -135,6 +136,8 @@ function AddMembersForm({ group, agents, onAdded }: { group: Group; agents: Agen
 
       {add.error && <p className="text-xs text-danger">添加失败：{add.error.message}</p>}
 
+      <MutedMembers group={group} agents={agents} />
+
       <div className="mt-1 flex justify-end gap-2">
         <DialogClose asChild>
           <Button>取消</Button>
@@ -144,6 +147,40 @@ function AddMembersForm({ group, agents, onAdded }: { group: Group; agents: Agen
         </Button>
       </div>
     </form>
+  );
+}
+
+/** 静音了这个群的成员，可以在这里解除。没有静音的成员时不显示。 */
+function MutedMembers({ group, agents }: { group: Group; agents: Agent[] }) {
+  const unmute = useUnmuteAgent(group.id);
+  const now = new Date();
+  const muted = agents.flatMap((agent) => {
+    const mute = activeMutes(group, now).get(agent.id);
+    return mute ? [{ agent, mute }] : [];
+  });
+  if (muted.length === 0) return null;
+  return (
+    <div className="grid gap-1.5">
+      <div className="font-mono text-[11px] text-muted">静音了这个群</div>
+      <div className="rounded border border-line-strong">
+        {muted.map(({ agent, mute }) => (
+          <div
+            key={agent.id}
+            className="flex items-center gap-2.5 border-b border-line px-2.5 py-2 text-[13px] last:border-b-0"
+          >
+            <span className="truncate">{agent.displayName}</span>
+            <span className="truncate font-mono text-[11px] text-muted">@{agent.handle}</span>
+            <span className="ml-auto truncate text-[11.5px] text-faint">
+              {mute.until === null ? "一直静音" : `静音到${muteUntilText(mute, now)}`}
+            </span>
+            <Button size="sm" disabled={unmute.isPending} onClick={() => unmute.mutate(agent.id)}>
+              解除
+            </Button>
+          </div>
+        ))}
+      </div>
+      {unmute.error && <p className="text-xs text-danger">解除失败：{unmute.error.message}</p>}
+    </div>
   );
 }
 

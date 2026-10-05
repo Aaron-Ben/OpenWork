@@ -57,6 +57,13 @@
       "when": 1791199436981,
       "tag": "0007_message_notice",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791204017200,
+      "tag": "0008_room_mutes",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@ import { conversationPreview, totalUnread, unreadLabel } from "../src/lib/conver
 import { keysForEvent, queryKeys } from "../src/lib/keys";
 import { rehypeMentions, splitMentions } from "../src/lib/mentions";
 import { hasOlder, mergeMessages, newestSeq } from "../src/lib/messages";
+import { activeMutes, muteUntilText } from "../src/lib/mutes";
 import { selectedModel, suggestHandle, validateNewAgent } from "../src/lib/new-agent";
 import { groupMembers, groupsWithout, nonMembers, toggle, validateNewGroup } from "../src/lib/new-group";
 import { isLate, noticeLook, noticeParts } from "../src/lib/notices";
@@ -501,5 +502,47 @@ describe("noticeLook", () => {
     });
     expect(noticeParts("别的文字", sentBack)).toEqual({ line: "别的文字" });
     expect(noticeParts("领取了 #3", null)).toEqual({ line: "领取了 #3" });
+  });
+});
+
+describe("mutes", () => {
+  const now = new Date(2026, 9, 5, 13, 0);
+  const alice = AgentId.parse("8b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
+  const bob = AgentId.parse("9c2a3b4c-5d6e-4f7a-8b9c-0d1e2f3a4b5c");
+  const group = (mutes: DesktopGroup["mutes"]): DesktopGroup => ({
+    id: RoomId.parse("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"),
+    name: "产品组",
+    agentIds: [alice, bob],
+    mutes,
+    createdAt: now.toISOString(),
+  });
+
+  it("treats a mute whose time is up as lifted, without waiting for the server", () => {
+    const since = new Date(2026, 9, 5, 12, 0).toISOString();
+    const mutes = activeMutes(
+      group([
+        { agentId: alice, since, until: new Date(2026, 9, 5, 18, 0).toISOString() },
+        { agentId: bob, since, until: new Date(2026, 9, 5, 12, 59).toISOString() },
+      ]),
+      now,
+    );
+    expect([...mutes.keys()]).toEqual([alice]);
+    expect(activeMutes(group([{ agentId: bob, since, until: null }]), now).has(bob)).toBe(true);
+  });
+
+  it("says until when: today, another day, or until lifted", () => {
+    const since = now.toISOString();
+    expect(muteUntilText({ agentId: alice, since, until: new Date(2026, 9, 5, 18, 0).toISOString() }, now)).toBe(
+      "今天 18:00",
+    );
+    expect(muteUntilText({ agentId: alice, since, until: new Date(2026, 9, 6, 9, 30).toISOString() }, now)).toBe(
+      "10月6日 09:30",
+    );
+    expect(muteUntilText({ agentId: alice, since, until: null }, now)).toBe("直到解除");
+  });
+
+  it("draws mute notices in violet with a bell", () => {
+    expect(noticeLook({ type: "mute", until: null })).toEqual({ icon: "bellOff", tone: "violet" });
+    expect(noticeLook({ type: "unmute", handle: "bob" })).toEqual({ icon: "bell", tone: "violet" });
   });
 });

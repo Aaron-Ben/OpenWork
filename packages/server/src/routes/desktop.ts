@@ -3,9 +3,10 @@ import type { Express } from "express";
 import { type AgentSummary, createAgent, listAgents } from "../agents";
 import { notifyMessage, notifyTaskChange, type ServerContext } from "../context";
 import { type Conversation, listConversations, markRead } from "../conversations";
-import { addGroupMembers, createGroup, type GroupSummary, listGroups } from "../groups";
+import { addGroupMembers, createGroup, type GroupSummary, groupOf, listGroups } from "../groups";
 import { eventStream, route } from "../http";
 import { listMessages, listThreads, postMessage } from "../messages";
+import { unmuteRoom } from "../mutes";
 import { agentStatuses, getRun, listRuns } from "../runs";
 import { assignTask, convertToTask, createTask, listTasks, setTaskStatus } from "../tasks";
 
@@ -20,7 +21,15 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
   });
   const statuses = () => agentStatuses(ctx.db, ctx.state.agentProblems());
 
-  const groupView = (group: GroupSummary) => ({ ...group, createdAt: group.createdAt.toISOString() });
+  const groupView = (group: GroupSummary) => ({
+    ...group,
+    mutes: group.mutes.map((mute) => ({
+      agentId: mute.agentId,
+      since: new Date(mute.since).toISOString(),
+      until: mute.until === null ? null : new Date(mute.until).toISOString(),
+    })),
+    createdAt: group.createdAt.toISOString(),
+  });
 
   route(app, api.desktop.listAgents, async () => {
     const current = await statuses();
@@ -84,6 +93,13 @@ export function desktopRoutes(app: Express, ctx: ServerContext): void {
   });
 
   const user = { kind: "user" as const, id: ctx.localUserId };
+
+  route(app, api.desktop.unmuteAgent, async ({ params }) => {
+    const { posts } = await unmuteRoom(ctx.db, user, params.roomId, params.agentId);
+    for (const post of posts) notifyMessage(ctx, post);
+    ctx.events.desktop.publish({ type: "rooms" });
+    return groupView(await ctx.db.transaction((tx) => groupOf(tx, params.roomId)));
+  });
 
   route(app, api.desktop.listTasks, ({ params }) => listTasks(ctx.db, user, params.roomId));
 

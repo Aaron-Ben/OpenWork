@@ -3,6 +3,7 @@ import type { Express } from "express";
 import { notifyMessage, notifyRun, notifyTaskChange, type ServerContext } from "../context";
 import { agentOf, route } from "../http";
 import { postMessage } from "../messages";
+import { muteRoom, unmuteRoom } from "../mutes";
 import { cancelReminder, createReminder, listReminders } from "../reminders";
 import { recordHeld, recordReply } from "../runs";
 import { assignTask, claimTask, convertToTask, createTask, listTasks, setTaskStatus } from "../tasks";
@@ -10,6 +11,21 @@ import { assignTask, claimTask, convertToTask, createTask, listTasks, setTaskSta
 /** Agent 经 `crew` 命令调用的接口。凭证决定是哪个 Agent，请求体里不能指定身份。 */
 export function agentRoutes(app: Express, ctx: ServerContext): void {
   const self = (response: Parameters<typeof agentOf>[0]) => ({ kind: "agent" as const, id: agentOf(response) });
+
+  route(app, api.agent.muteRoom, async ({ body, response }) => {
+    const { state, posts } = await muteRoom(ctx.db, agentOf(response), body.roomId, body.minutes);
+    for (const post of posts) notifyMessage(ctx, post);
+    ctx.events.desktop.publish({ type: "rooms" });
+    return state;
+  });
+
+  route(app, api.agent.unmuteRoom, async ({ body, response }) => {
+    const agentId = agentOf(response);
+    const { state, posts } = await unmuteRoom(ctx.db, { kind: "agent", id: agentId }, body.roomId, agentId);
+    for (const post of posts) notifyMessage(ctx, post);
+    ctx.events.desktop.publish({ type: "rooms" });
+    return state;
+  });
 
   route(app, api.agent.createReminder, async ({ body, response }) => {
     const reminder = await createReminder(ctx.db, agentOf(response), ctx.now(), body);

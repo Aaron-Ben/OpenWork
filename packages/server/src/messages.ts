@@ -143,13 +143,16 @@ export async function postMessageIn(
     if (!message) throw new Error("写入消息失败");
 
     const members = await tx
-      .select({ id: agents.id, handle: agents.handle })
+      .select({ id: agents.id, handle: agents.handle, muted: mutedNow })
       .from(roomAgents)
       .innerJoin(agents, eq(agents.id, roomAgents.agentId))
       .where(eq(roomAgents.roomId, membershipRoomId));
-    const memberIds = members.map((member) => member.id);
     const handles = new Set(mentionedHandles(body));
     const mentioned = members.filter((member) => handles.has(member.handle)).map((member) => member.id);
+    // 静音了这个群的 Agent 不被群里的消息唤醒，也不自动关注讨论串；@ 到它时照常。它已经关注的讨论串不受影响。
+    const awakeIds = members
+      .filter((member) => !member.muted || mentioned.includes(member.id))
+      .map((member) => member.id);
     if (mentioned.length > 0) {
       await tx.insert(messageMentions).values(mentioned.map((agentId) => ({ messageId: message.id, agentId })));
       if (room.kind === "thread") await follow(tx, roomId, mentioned);
@@ -175,8 +178,8 @@ export async function postMessageIn(
           : kind === "system"
             ? mentioned.filter((id) => author.kind !== "agent" || id !== author.id)
             : room.kind === "thread"
-              ? await threadWakeTargets(tx, roomId, author, memberIds, mentioned)
-              : wakeTargets(author, memberIds, mentioned),
+              ? await threadWakeTargets(tx, roomId, author, awakeIds, mentioned)
+              : wakeTargets(author, awakeIds, mentioned),
     };
   }
 }
@@ -251,8 +254,11 @@ async function threadWakeTargets(
   return memberIds;
 }
 
+/** 这个 Agent 现在静音着这个群（`room_agents` 的一行）。过了 `muted_until` 就当没静音，不另外计时。 */
+export const mutedNow = sql<boolean>`(${roomAgents.mutedAt} IS NOT NULL AND (${roomAgents.mutedUntil} IS NULL OR ${roomAgents.mutedUntil} > now()))`;
+
 /**
- * 一条消息唤醒哪些 Agent：用户的消息唤醒房间里全部 Agent 成员；
+ * 一条消息唤醒哪些 Agent：用户的消息唤醒房间里全部 Agent 成员（`memberIds` 已去掉静音的）；
  * Agent 的消息只唤醒它 @ 到的其他成员，Agent 之间没人点名时不会来回接话。
  */
 export function wakeTargets(author: Author, memberIds: AgentId[], mentionedIds: AgentId[]): AgentId[] {
@@ -450,10 +456,14 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
         parentRoomId: rooms.parentRoomId,
         parentMessageId: rooms.parentMessageId,
         mentionsYou: messageMentions.agentId,
+        muted: sql<boolean>`coalesce(${mutedNow}, false)`,
+        mutedUntil: roomAgents.mutedUntil,
       })
       .from(agentReadCursors)
       .innerJoin(rooms, eq(rooms.id, agentReadCursors.roomId))
       .leftJoin(parentRooms, eq(parentRooms.id, rooms.parentRoomId))
+      // 讨论串没有自己的成员关系，这里连不上，所以不受群静音影响。
+      .leftJoin(roomAgents, and(eq(roomAgents.roomId, rooms.id), eq(roomAgents.agentId, agentId)))
       .innerJoin(
         messages,
         and(eq(messages.roomId, agentReadCursors.roomId), gt(messages.seq, agentReadCursors.lastReadSeq)),
@@ -477,10 +487,21 @@ export async function readInbox(db: Database, agentId: AgentId): Promise<InboxRo
         name: row.name,
         parentRoomId: row.parentRoomId,
         parentMessageId: row.parentMessageId,
+        muted: row.muted ? { until: row.mutedUntil?.toISOString() ?? null } : null,
         messages: [],
       };
       room.messages.push({ ...toView(row), mentionsYou: row.mentionsYou !== null, task: taskTagOf(row) });
       byRoom.set(row.roomId, room);
+    }
+    // 静音的群：只有 @ 它或它自己的提醒时才给，这时整群的未读一起给它，让它有上下文；否则留着不投递，
+    // 已投递与已读位置都不动。不然它在别处被唤醒时也会读到这个群，静音形同虚设。
+    for (const [roomId, room] of byRoom) {
+      const pierced = room.messages.some(
+        (message) =>
+          message.mentionsYou ||
+          (message.notice?.type === "reminder" && message.author.kind === "agent" && message.author.id === agentId),
+      );
+      if (room.muted && !pierced) byRoom.delete(roomId);
     }
     const roomIds = [...byRoom.keys()];
     if (roomIds.length === 0) return [];

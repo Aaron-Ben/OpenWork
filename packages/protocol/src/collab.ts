@@ -114,6 +114,8 @@ export const InboxRoom = z.object({
   name: z.string().nullable(),
   members: z.array(Participant),
   parent: z.object({ roomId: RoomId, message: MessageView.extend({ task: TaskTag.nullable() }) }).nullable(),
+  /** 这个 Agent 静音了这个群：只有 @ 它或它自己的提醒时才收到，这时静音期间的未读一起给它。没有静音时为 null。 */
+  muted: z.object({ until: z.string().nullable() }).nullable(),
   messages: z.array(InboxMessage).min(1),
 });
 export type InboxRoom = z.infer<typeof InboxRoom>;

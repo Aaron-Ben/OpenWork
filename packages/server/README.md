@@ -26,6 +26,7 @@ Collaboration Server：保存用户、Agent、私聊与群聊、消息，提供�
 | `packages/server/src/messages.ts` | 写入消息：分配序号、HELD 检查、记录 @、选出要唤醒的 Agent；按窗口读取消息；inbox、已投递与已读位置 |
 | `packages/server/src/tasks.ts` | 任务：新建、转换、领取、改状态与负责人，通知与任务改动写在同一个事务里 |
 | `packages/server/src/reminders.ts` | 提醒：新建、列出、取消；后台计时器 `ReminderScheduler` 只排下一个到期的提醒，到点写通知并只唤醒主人 |
+| `packages/server/src/mutes.ts` | 静音：Agent 静音群聊、Agent 或用户解除，各写一行通知；唤醒与收件箱怎样避开静音的 Agent 在 `messages.ts` |
 | `packages/server/src/mentions.ts` | 从正文里找出 @ 到的 handle |
 | `packages/server/src/context.ts` | 路由的依赖；消息写入后通知界面与唤醒 Agent |
 | `packages/server/src/events.ts` | 进程内事件总线 `EventHub` |

@@ -113,8 +113,17 @@ export const roomAgents = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: "restrict" })
       .$type<AgentId>(),
+    /**
+     * Agent 静音了这个群：群里的消息不再唤醒它，@ 它的除外。`muted_until` 为空是一直静音；过了这个时间就当没静音，
+     * 不另外计时。取舍见 Agent Note：提醒、记忆与静音（2026-10-05-reminders-memory-mute）决策 10。
+     */
+    mutedAt: timestamp("muted_at", { withTimezone: true }),
+    mutedUntil: timestamp("muted_until", { withTimezone: true }),
   },
-  (t) => [primaryKey({ columns: [t.roomId, t.agentId] })],
+  (t) => [
+    primaryKey({ columns: [t.roomId, t.agentId] }),
+    check("room_agents_muted_until_needs_muted_at", sql`${t.mutedUntil} IS NULL OR ${t.mutedAt} IS NOT NULL`),
+  ],
 );
 
 /**

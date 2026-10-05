@@ -30,5 +30,9 @@ export const Notice = z.discriminatedUnion("type", [
     setAt: z.string(),
     dueAt: z.string(),
   }),
+  /** Agent 静音了这个群；`until` 为 null 是一直静音。 */
+  z.object({ type: z.literal("mute"), until: z.string().nullable() }),
+  /** 解除静音：Agent 自己解除时 `handle` 为 null，用户替它解除时是它的 handle。 */
+  z.object({ type: z.literal("unmute"), handle: z.string().nullable() }),
 ]);
 export type Notice = z.infer<typeof Notice>;
