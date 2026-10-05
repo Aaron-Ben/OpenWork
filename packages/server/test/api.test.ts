@@ -1,5 +1,6 @@
 import { type AgentId, type ComputerEvent, DesktopEvent, type MessageId, RoomId, runEventStream } from "@crew/protocol";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ReminderScheduler } from "../src/reminders";
 import { createTestApp, TEST_COMPUTER_TOKEN, TEST_DESKTOP_TOKEN, type TestApp } from "./support/app";
 
 // 业务接口的集成测试：真实的 PostgreSQL 临时库，应用在内存中处理请求。
@@ -1151,6 +1152,23 @@ describe("tasks", () => {
     expect(inbox.find((room) => room.roomId === threadId)?.messages.at(-1)?.body).toContain("标题太长");
   });
 
+  it("post nothing when the status does not change, even with a note", async () => {
+    const alice = await newAgent("SameAlice", "same-alice");
+    const group = await newGroup("没变", [alice]);
+    const { number, threadId } = await expectTask(await newTask(group.id, "状态没变", alice.id), 201);
+    if (!threadId) throw new Error("应当有讨论串");
+    const token = await agentToken(alice.id);
+    await claim(token, group.id, number);
+    await agentStatus(token, group.id, number, "in_review");
+    const before = await bodiesWithKind(threadId);
+
+    // Agent 把待审的任务再改成待审：成功返回，任务不变，不写通知，说明丢掉，也不唤醒谁。
+    expect(await wakes(() => agentStatus(token, group.id, number, "in_review", "又看了一遍"))).toEqual([]);
+    const same = await expectTask(await agentStatus(token, group.id, number, "in_review", "又看了一遍"));
+    expect(same.status).toBe("in_review");
+    expect(await bodiesWithKind(threadId)).toEqual(before);
+  });
+
   it("do not hold an agent behind its own notice, nor count the user's own notices as unread", async () => {
     const alice = await newAgent("OwnAlice", "own-alice");
     const group = await newGroup("自己的通知", [alice]);
@@ -1366,7 +1384,75 @@ describe("reminders", () => {
       body: "的提醒到了：回到这个讨论串",
     });
   });
+
+  it("are not missed when one is set while the timer is looking up the next due time", async () => {
+    const alice = await newAgent("TimerAlice", "timer-alice");
+    const token = await agentToken(alice.id);
+    // 放在一年前：共用数据库里别的用例留下的提醒都在很远的将来，计时器查到的是它们，要睡满一小时，
+    // 只有重查一遍才发现新建的这个；否则恰好有提醒刚到期时，计时器马上醒来，修复去掉了也能通过。
+    const base = new Date(2025, 9, 6, 10, 0, 0);
+    t.setNow(base);
+    let clock = base;
+    let scheduler: ReminderScheduler | undefined;
+    // 计时器第一次查“下一个什么时候到期”时（db.select），在查询结果交回之前新建一个提醒、把时间拨过它的到期时间，
+    // 再通知计时器“变了”：查询看不到这个提醒，计时器必须重查一遍，否则按旧的结果排、不再醒来。
+    let hooked = false;
+    let created = false;
+    const interleave = async () => {
+      await remind(token, { roomId: alice.roomId, title: "查询期间新建", at: minutes(base, 30).toISOString() });
+      created = true;
+      clock = minutes(base, 31);
+      scheduler?.changed();
+    };
+    const db = new Proxy(t.ctx.db, {
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        if (key !== "select" || hooked) return value;
+        return (...args: unknown[]) => {
+          hooked = true;
+          return afterQuery(value.apply(target, args), interleave);
+        };
+      },
+    });
+    scheduler = new ReminderScheduler({ db, events: t.ctx.events, now: () => clock });
+    try {
+      scheduler.start();
+      const deadline = Date.now() + 3000;
+      while (!created || (await reminders(token)).length > 0) {
+        if (Date.now() > deadline) throw new Error("新建的提醒没有触发");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect((await bodiesWithKind(alice.roomId)).at(-1)).toBe("system: 的提醒到了：查询期间新建");
+    } finally {
+      scheduler.stop();
+    }
+  });
 });
+
+/** 包住一个 drizzle 查询：链式调用照旧，查询结果交回调用方之前先执行 `after`。 */
+function afterQuery<T extends object>(query: T, after: () => Promise<void>): T {
+  return new Proxy(query, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === "then") {
+        // 查询本身是 thenable：先拿到结果，执行 after，再交给调用方。
+        const then = value as PromiseLike<unknown>["then"];
+        return (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+          then
+            .call(target, async (result: unknown) => {
+              await after();
+              return result;
+            })
+            .then(resolve, reject);
+      }
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const next = value.apply(target, args);
+        return typeof next === "object" && next !== null ? afterQuery(next, after) : next;
+      };
+    },
+  });
+}
 
 describe("models", () => {
   it("serve the model list reported by the computer and tell the desktop to refresh it", async () => {
